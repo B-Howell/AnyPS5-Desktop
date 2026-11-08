@@ -120,7 +120,10 @@ void main() {
       await model.openQuickMenu();
       final graphics = model.panelCategories().single.rows.singleWhere((row) => row.id == 'retroGraphics');
       (graphics.kind as ActionRow).run();
-      final resolution = model.panelCategories().single.rows.singleWhere((row) => row.title == 'Internal Resolution');
+      final scaleKey = platform == RetroPlatform.ps1 ? 'ResolutionScale' : 'upscale_multiplier';
+      final resolution = model.panelCategories().single.rows.singleWhere(
+        (row) => row.id.startsWith('retro-${platform.name}-graphics-$scaleKey-'),
+      );
       final choice = resolution.kind as ChoiceRow;
       choice.set(choice.options.indexWhere((label) => label.startsWith('3×')));
       final profile = RetroSettings.configFile(program.path, platform);

@@ -1,6 +1,7 @@
 import '../core/retro_settings.dart';
 import '../core/game_library.dart';
 import 'app_model.dart';
+import 'strings.dart';
 
 typedef _GraphicsChoice = ({String title, String detail, String defaultValue, Map<String, String> values});
 
@@ -9,19 +10,19 @@ abstract final class RetroGraphicsSettings {
   static const _ps1Section = 'GPU';
   static const _ps1Controls = <String, _GraphicsChoice>{
     'ResolutionScale': (
-      title: 'Internal Resolution',
-      detail: 'Higher resolutions smooth jagged edges and use more GPU power.',
+      title: 'retroInternalResolution',
+      detail: 'retroResolutionDetail',
       defaultValue: '1',
-      values: {'0': 'Automatic', '1': 'Native (1×)', '2': '2×', '3': '3×', '4': '4×', '5': '5×', '6': '6×'},
+      values: {'0': 'retroAutomatic', '1': 'retroNativeScale', '2': '2×', '3': '3×', '4': '4×', '5': '5×', '6': '6×'},
     ),
   };
   static const _ps2Controls = <String, _GraphicsChoice>{
     'upscale_multiplier': (
-      title: 'Internal Resolution',
-      detail: 'Higher resolutions smooth jagged edges and use more GPU power. Requires a hardware renderer.',
+      title: 'retroInternalResolution',
+      detail: 'retroHardwareResolutionDetail',
       defaultValue: '1',
       values: {
-        '1': 'Native (1×)',
+        '1': 'retroNativeScale',
         '2': '2× (~720p)',
         '3': '3× (~1080p)',
         '4': '4× (~1440p)',
@@ -36,41 +37,36 @@ abstract final class RetroGraphicsSettings {
       },
     ),
     'Renderer': (
-      title: 'Renderer',
-      detail: 'Automatic lets PCSX2 choose the graphics renderer. Software renders at native resolution.',
+      title: 'retroPs3Renderer',
+      detail: 'retroRendererDetail',
       defaultValue: '-1',
       values: {
-        '-1': 'Automatic',
+        '-1': 'retroAutomatic',
         '3': 'Direct3D 11',
         '15': 'Direct3D 12',
         '12': 'OpenGL',
         '14': 'Vulkan',
-        '13': 'Software',
+        '13': 'retroSoftwareRenderer',
       },
     ),
     'filter': (
-      title: 'Texture Filtering',
-      detail: 'PS2 follows the game’s texture settings. Forced bilinear can soften textures and sprites.',
+      title: 'retroTextureFiltering',
+      detail: 'retroTextureFilteringDetail',
       defaultValue: '2',
       values: {
-        '0': 'Nearest',
-        '1': 'Bilinear (forced)',
-        '2': 'Bilinear (PS2)',
-        '3': 'Bilinear (forced, except sprites)',
+        '0': 'retroTextureNearest',
+        '1': 'retroTextureBilinearForced',
+        '2': 'retroTextureBilinearPs2',
+        '3': 'retroTextureBilinearNoSprites',
       },
     ),
     'MaxAnisotropy': (
-      title: 'Anisotropic Filtering',
-      detail: 'Keeps textures such as roads sharper when viewed at an angle.',
+      title: 'retroPs3AnisotropicFiltering',
+      detail: 'retroAnisotropyDetail',
       defaultValue: '0',
-      values: {'0': 'Off', '2': '2×', '4': '4×', '8': '8×', '16': '16×'},
+      values: {'0': 'off', '2': '2×', '4': '4×', '8': '8×', '16': '16×'},
     ),
-    'fxaa': (
-      title: 'FXAA',
-      detail: 'Smooths edges after rendering and can soften the picture.',
-      defaultValue: 'false',
-      values: {'false': 'Off', 'true': 'On'},
-    ),
+    'fxaa': (title: 'FXAA', detail: 'retroFxaaDetail', defaultValue: 'false', values: {'false': 'off', 'true': 'on'}),
   };
 
   static bool handles(RetroOption option) => option.section == _ps2Section && _ps2Controls.containsKey(option.key);
@@ -131,19 +127,19 @@ abstract final class RetroGraphicsSettings {
     void Function(String) change,
   ) {
     final value = queued ?? option?.value ?? control.defaultValue;
-    final choices = {...control.values};
+    final choices = control.values.map((value, label) => MapEntry(value, T.text(label)));
     final canonical = switch (key) {
       'upscale_multiplier' => choices.keys.where((entry) => double.parse(entry) == double.tryParse(value)).firstOrNull,
       'fxaa' => value.toLowerCase(),
       _ => int.tryParse(value)?.toString(),
     };
     final selectedValue = choices.containsKey(canonical) ? canonical! : value;
-    choices.putIfAbsent(selectedValue, () => 'Custom · $value');
+    choices.putIfAbsent(selectedValue, () => T.format('retroCustomValue', [value]));
     final values = choices.keys.toList();
     return PanelRow(
       id: 'retro-${platform.name}-graphics-$key-${option?.line ?? 'new'}',
-      title: control.title,
-      detail: control.detail,
+      title: T.text(control.title),
+      detail: T.text(control.detail),
       kind: ChoiceRow(choices.values.toList(), values.indexOf(selectedValue), (index) {
         final next = values[index];
         if (next == selectedValue) return;

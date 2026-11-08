@@ -203,11 +203,16 @@ invalid firmware replacements. The [setup flow tests](../test/ui/retro_settings_
 exercise picker cancellation and finishing setup after selecting a local PUP.
 The Windows focused retro suite passed 74 tests. It includes a Turkish
 PS3 settings check that verifies translated choices still persist the
-original RPCS3 values. The setup and tuning copy uses the
-[English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
-dictionaries through the existing translation layer. Remaining graphics
-and controller labels, and any native error or option text that reaches
-a UI surface, need an audit in the embedded review slices. Use a new profile root for the manual PS3 acceptance run.
+original RPCS3 values. Setup, tuning, curated graphics and controller
+controls use the [English](../assets/l10n/en.json) and
+[Turkish](../assets/l10n/tr.json) dictionaries through the existing
+translation layer. The [PCSX2 graphics rows](../lib/ui/retro_graphics_settings.dart)
+and [controller bindings](../lib/ui/retro_controller_settings.dart) keep
+config keys and values independent of their translated display labels.
+The [PS3 option model](../lib/ui/ps3_settings_model.dart) also supplies
+labels to the live controls when it recognizes the core's option.
+Native diagnostics and options supplied by a core still need a
+presentation audit in the embedded review slices. Use a new profile root for the manual PS3 acceptance run.
 
 Split [the review draft](https://github.com/AnyTogether/AnyPS5-Desktop/pull/84#issuecomment-6720973129)
 into three separately tested changes. Start with the library rows and

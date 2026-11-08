@@ -11,6 +11,7 @@ import '../core/managed_retro.dart';
 import '../core/gamepad/pad_navigation.dart';
 
 import 'retro_game_tuning.dart';
+import 'strings.dart';
 
 export 'retro_game_tuning.dart' show EmbeddedOption, RetroTuningPersist;
 
@@ -66,7 +67,7 @@ class EmbeddedRetroGame extends RunningGame {
     required void Function() changed,
   }) async {
     final core = p.join(folder, ManagedRetro.libraryName(disc.platform));
-    if (!File(core).existsSync()) throw FileSystemException('The embedded emulator core is missing', core);
+    if (!File(core).existsSync()) throw FileSystemException(T.text('retroEmbeddedCoreMissing'), core);
     final saveRoot = Directory(p.join(folder, 'saves', disc.platform.name))..createSync(recursive: true);
     final id = await _channel.invokeMethod<int>('start', {
       'core': core,
@@ -76,7 +77,7 @@ class EmbeddedRetroGame extends RunningGame {
       'internalResolution': ?internalResolution,
       if (graphics.isNotEmpty) 'graphics': graphics,
     });
-    if (id == null || id < 0) throw StateError('The game surface could not start.');
+    if (id == null || id < 0) throw StateError(T.text('retroEmbeddedSurfaceFailed'));
     final session = EmbeddedRetroGame._(id, Completer<int>(), onResolutionSelected, onGraphicsSelected);
     session.tuning = RetroGameTuning(
       platform: disc.platform,

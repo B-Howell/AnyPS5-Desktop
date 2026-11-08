@@ -4023,11 +4023,7 @@ class AppModel extends ChangeNotifier {
     final managed = override == null && !standalone && managedRetroAvailable ? _managedRetro : null;
     final embeddedHome = override ?? managed?.root;
     if (embeddedHome == null && !standalone) {
-      show(
-        ps3
-            ? 'Embedded PS3 play requires Windows x64.'
-            : '${T.text('startFailed')}: choose ${disc.platform.emulator} in Settings.',
-      );
+      show(ps3 ? T.text('retroEmbeddedWindowsOnly') : T.format('retroSelectEmulator', [disc.platform.emulator]));
       return;
     }
     if (!File(disc.path).existsSync()) {
@@ -5212,7 +5208,7 @@ class AppModel extends ChangeNotifier {
       await run.exitCode.timeout(stopGrace + const Duration(seconds: 1));
     } on TimeoutException {
       if (run is EmbeddedRetroGame) {
-        show('The embedded game is still closing. Try again when it has finished saving.');
+        show(T.text('retroEmbeddedClosing'));
         return false;
       }
       run.kill();
@@ -5529,20 +5525,22 @@ class AppModel extends ChangeNotifier {
 
   PanelCategory _embeddedGraphics(EmbeddedRetroGame game) => PanelCategory(
     id: 'embedded-graphics',
-    title: 'Graphics',
+    title: T.text('retroPs3Graphics'),
     rows: [
       PanelRow(
         id: 'embedded-filter',
-        title: 'Display filtering',
-        kind: ChoiceRow(['Sharp', 'Smooth'], game.filter, (choice) {
+        title: T.text('retroDisplayFiltering'),
+        kind: ChoiceRow([T.text('retroDisplaySharp'), T.text('retroDisplaySmooth')], game.filter, (choice) {
           game.filter = choice;
           _changed();
         }),
       ),
       PanelRow(
         id: 'embedded-framing',
-        title: 'Display aspect ratio',
-        kind: ChoiceRow(['Original', '4:3', '16:9', 'Fill window'], game.framing, (choice) {
+        title: T.text('retroDisplayAspect'),
+        kind: ChoiceRow([T.text('retroDisplayOriginal'), '4:3', '16:9', T.text('retroDisplayFill')], game.framing, (
+          choice,
+        ) {
           game.framing = choice;
           _changed();
         }),
@@ -5551,10 +5549,10 @@ class AppModel extends ChangeNotifier {
         PanelRow(
           id: option.key,
           title: switch (option.key) {
-            'pcsx2_deinterlace_mode' => 'Deinterlacing',
-            'swanstation_Display_CropMode' => 'Screen crop',
-            'swanstation_GPU_ResolutionScale' || 'pcsx2_upscale_multiplier' => 'Internal resolution',
-            'swanstation_GPU_TextureFilter' => 'Texture filtering',
+            'pcsx2_deinterlace_mode' => T.text('retroDeinterlace'),
+            'swanstation_Display_CropMode' => T.text('retroScreenCrop'),
+            'swanstation_GPU_ResolutionScale' || 'pcsx2_upscale_multiplier' => T.text('retroInternalResolution'),
+            'swanstation_GPU_TextureFilter' => T.text('retroTextureFiltering'),
             _ => option.value.title.isEmpty ? option.key : option.value.title,
           },
           kind: ChoiceRow(
@@ -5568,19 +5566,23 @@ class AppModel extends ChangeNotifier {
       if (game.options.values.any((option) => option.restart))
         PanelRow(
           id: 'embedded-startup-options',
-          title: 'Startup Options',
-          detail: 'Changes apply the next time you start this game.',
+          title: T.text('retroStartupOptions'),
+          detail: T.text('retroStartupOptionsDetail'),
           kind: ActionRow(() => _emulatorMenu.openPage(() => _embeddedStartupOptions(game))),
         ),
       _emulatorMenu.tuningLink(game),
       if (game.resolutionError.isNotEmpty)
-        PanelRow(id: 'embedded-resolution-error', title: 'Internal resolution', kind: InfoRow(game.resolutionError)),
+        PanelRow(
+          id: 'embedded-resolution-error',
+          title: T.text('retroInternalResolution'),
+          kind: InfoRow(game.resolutionError),
+        ),
     ],
   );
 
   PanelCategory _embeddedStartupOptions(EmbeddedRetroGame game) => PanelCategory(
     id: 'embedded-startup-options',
-    title: 'Startup Options',
+    title: T.text('retroStartupOptions'),
     rows: [
       for (final option in game.options.entries)
         if (option.value.restart) _ps3GraphicsRow(game, option.key, option.value),
@@ -5609,9 +5611,9 @@ class AppModel extends ChangeNotifier {
       'rpcs3_vblank_rate',
     };
     String categoryFor(String key) {
-      if (textures.contains(key)) return 'Textures & Shaders';
-      if (timing.contains(key)) return 'Frame Timing';
-      return 'Rendering';
+      if (textures.contains(key)) return 'retroPs3TexturesShaders';
+      if (timing.contains(key)) return 'retroPs3FrameTiming';
+      return 'retroPs3Rendering';
     }
 
     final advanced = <String, List<String>>{};
@@ -5622,21 +5624,21 @@ class AppModel extends ChangeNotifier {
     }
     return PanelCategory(
       id: 'embedded-graphics',
-      title: 'Graphics',
+      title: T.text('retroPs3Graphics'),
       rows: [
-        const PanelRow(id: 'ps3-renderer', title: 'Renderer', kind: InfoRow('Vulkan')),
+        PanelRow(id: 'ps3-renderer', title: T.text('retroPs3Renderer'), kind: const InfoRow('Vulkan')),
         for (final key in primary)
           if (game.options[key] case final option?) _ps3GraphicsRow(game, key, option),
         _emulatorMenu.tuningLink(game),
         for (final entry in advanced.entries)
           PanelRow(
             id: 'ps3-graphics-${entry.key}',
-            title: entry.key,
+            title: T.text(entry.key),
             kind: ActionRow(
               () => _emulatorMenu.openPage(
                 () => PanelCategory(
                   id: 'ps3-graphics-section',
-                  title: 'PS3 › Graphics › ${entry.key}',
+                  title: 'PS3 › ${T.text('retroPs3Graphics')} › ${T.text(entry.key)}',
                   rows: [
                     for (final key in entry.value)
                       if (game.options[key] case final option?) _ps3GraphicsRow(game, key, option),
@@ -5651,10 +5653,13 @@ class AppModel extends ChangeNotifier {
 
   PanelRow _ps3GraphicsRow(EmbeddedRetroGame game, String key, EmbeddedOption option) => PanelRow(
     id: key,
-    title: option.title,
-    detail: option.restart ? 'Applies on next launch.' : 'Applies when you resume.',
+    title: Ps3SettingsModel.optionTitle(key) ?? option.title,
+    detail: option.restart ? T.text('retroNextLaunch') : T.text('retroWhenResumed'),
     kind: ChoiceRow(
-      option.labels.length == option.values.length ? option.labels : option.values,
+      [
+        for (final (index, value) in option.values.indexed)
+          Ps3SettingsModel.optionLabel(key, value) ?? option.labels.elementAtOrNull(index) ?? value,
+      ],
       option.selected,
       (choice) => unawaited(game.setOption(key, option.values[choice])),
     ),
@@ -5805,8 +5810,8 @@ class AppModel extends ChangeNotifier {
               if (running?.$1.retro != null)
                 PanelRow(
                   id: 'retroGraphics',
-                  title: 'Graphics',
-                  detail: embeddedGame == null ? 'Queue changes for the next launch.' : 'Adjust the running game.',
+                  title: T.text('retroPs3Graphics'),
+                  detail: embeddedGame == null ? T.text('retroQueueGraphics') : T.text('retroAdjustLiveGraphics'),
                   kind: ActionRow(() => open(Layer.retroGraphics)),
                 ),
               if (embeddedGame == null) ...media.gameRows(),

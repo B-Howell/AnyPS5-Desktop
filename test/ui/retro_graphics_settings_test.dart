@@ -37,14 +37,14 @@ void main() {
       '[EmuCore/GS]\nupscale_multiplier = 1.000000\nRenderer = -1\nfilter = 2\nMaxAnisotropy = 0\nfxaa = false\n'
       '[Other]\nfilter = unchanged\n',
     );
-    final native = control('Internal Resolution');
+    final native = control('Internal resolution');
     expect(native.options[native.selected], 'Native (1×)');
     expect(saves, 0);
 
-    choose('Internal Resolution', '3× (~1080p)');
+    choose('Internal resolution', '3× (~1080p)');
     choose('Renderer', 'Vulkan');
-    choose('Texture Filtering', 'Bilinear (forced, except sprites)');
-    choose('Anisotropic Filtering', '16×');
+    choose('Texture filtering', 'Bilinear (forced, except sprites)');
+    choose('Anisotropic filtering', '16×');
     choose('FXAA', 'On');
 
     final options = RetroSettings.read(file).options;
@@ -59,7 +59,7 @@ void main() {
   test('an existing custom multiplier is preserved until replaced, with defaults for missing entries', () {
     final ini = '[EmuCore/GS]\nupscale_multiplier = 2.5\n';
     file.writeAsStringSync(ini);
-    final custom = control('Internal Resolution');
+    final custom = control('Internal resolution');
     expect(custom.options[custom.selected], 'Custom · 2.5');
     custom.set(custom.selected);
     final renderer = control('Renderer');

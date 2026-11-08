@@ -308,7 +308,7 @@ void main() {
         final graphics = model.retroSettings
             .categories(platform)
             .singleWhere((panel) => panel.id == 'retro-ps2-graphics');
-        final resolution = graphics.rows.singleWhere((row) => row.title == 'Internal Resolution').kind as ChoiceRow;
+        final resolution = graphics.rows.singleWhere((row) => row.title == 'Internal resolution').kind as ChoiceRow;
         resolution.set(resolution.options.indexOf('3× (~1080p)'));
         expect(RetroSettings.read(config).options.singleWhere((entry) => entry.key == 'upscale_multiplier').value, '3');
       }

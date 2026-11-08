@@ -41,13 +41,13 @@ Games rendered by the embedded cores use the launcher window and its Quick Menu.
 
 | Console | Embedded core | Setup |
 | --- | --- | --- |
-| PS1 | SwanStation | Install from Setup, then select your dumped BIOS and games folder. |
-| PS2 | LRPS2 | Install from Setup, then select your dumped BIOS and games folder. |
-| PS3 | RPCS3 Libretro | Build the reviewer package, then install from Setup. Requires official firmware and a Vulkan driver. |
+| PS1 | SwanStation | Provide the pinned ZIP, install from Setup, then select your dumped BIOS and games folder. |
+| PS2 | LRPS2 | Provide the pinned ZIP, install from Setup, then select your dumped BIOS and games folder. |
+| PS3 | RPCS3 Libretro | Build the reviewer package, install from Setup, then select your local PS3UPDAT.PUP. Requires a Vulkan driver. |
 
 During play, press **PS / Guide** or **Escape** to open the Quick Menu. The available
-live graphics settings and **Tune This Game** return to the same session. The launcher
-remembers graphics settings per title. **Restart Trials** are a separate workflow for
+live graphics settings and **Tune this game** return to the same session. The launcher
+remembers graphics settings per title. **Restart trials** are a separate workflow for
 settings that take effect on startup. PS3 trophies are read from the local RPCS3 profile.
 
 The preview is for Windows x64. The [emulator configuration guide](docs/AnyPS5%20Desktop%20-%20Emulator%20Configuration.md)

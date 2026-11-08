@@ -2,6 +2,21 @@ import 'app_model.dart';
 import 'strings.dart';
 
 abstract final class Ps3SettingsModel {
+  static final _options = {
+    for (final section in _sections.values)
+      for (final option in section.options) 'rpcs3_${option.id}': option,
+  };
+
+  static String? optionTitle(String key) => switch (_options[key]) {
+    final option? => T.text(option.title),
+    null => null,
+  };
+
+  static String? optionLabel(String key, String value) => switch (_options[key]?.choices[value]) {
+    final label? => T.text(label),
+    null => null,
+  };
+
   static final graphicsKeys = Set<String>.unmodifiable({
     for (final entry in _sections.entries)
       if (entry.key.startsWith('graphics'))
