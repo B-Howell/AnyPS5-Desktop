@@ -297,3 +297,44 @@ finished race remain unverified. The next gate is to observe both peers
 connect from the saved profiles with the host role active and capture the
 discovery reply or first unicast exchange. All interaction used the private
 scratch displays and scratch memory cards.
+
+### Headless GT4 LAN race attempt (2026-11-08, 16:26–16:37 local)
+
+The next isolated retry used the same USA v2.00 disc (CRC `77E61C8A`), PCSX2
+v2.8.2, native Software renderer (`Renderer = 13`), private Xvfb displays and
+the existing scratch-only network namespace. The saved profiles used distinct
+intercepted DHCP leases `10.231.0.101` and `10.231.0.102`. The launcher and
+installed AnyPS5 profile were not involved.
+
+Both peers reached the title menu and the title-selection gate verified
+**Arcade Mode** before confirmation. Both advanced through **Multi-LAN Race**;
+the saved `qqq` network profile was connected with the gamepad cursor visibly
+on Connect. Each peer initially displayed “Waiting for connection…”, then both
+arrived at the same **Course Select** screen (FISCO 90's selected) and then
+the same Toyota MR-S car-selection screen. This is stronger evidence than the
+earlier title/broadcast-only run: the two peers exchanged UDP/3658 traffic in
+both directions and each advanced through the shared course and car flow.
+The final mirrored PCAPs `captures/gt4k.pcap` and `captures/gt4l.pcap` were
+64,796 bytes each; `tcpdump -nn -r captures/gt4k.pcap 'udp port 3658'` counted
+680 packets, including traffic in both directions between `.101` and `.102`.
+
+Both peers confirmed Driving Options (Automatic transmission, TCS & ASM, Racing
+Hard tires). The post-confirm captures were black except for the PCSX2 speed
+OSD at roughly 59.9 VPS and 100% speed. After more than two minutes, K remained
+black. A documented PCSX2 F9 renderer-toggle input had no visible effect on K;
+after the same input was sent to L, L showed a GT4 opening-credit movie while K
+was still black. The causal relationship, actual race state, and reason for the
+divergence are unknown. The run did not show either car on track, a finish, or
+results. High CPU use (~181% and ~188%) and increasing process `rchar` showed
+ongoing emulator work, so this is not established as a static crash; it is a
+race-transition/rendering blocker. Do not describe this as a completed LAN race.
+
+The final XWD-derived captures and PCAPs remain in the owned WSL scratch folder
+`/tmp/anyps5-gt4-fOqRtVew`. The parent input runner's quit path emitted an
+unhandled SIGSEGV while shutting K down; L stopped on an exact-PID SIGTERM.
+A final process scan found no remaining task-owned PCSX2, Xvfb, tcpdump or
+xdotool processes. No host display, host network adapter, firewall, driver,
+user save, or installed application was changed. The next useful retry should
+first determine why a course/car-confirmed pair does not render the race, with
+separate evidence for each peer; do not repeat the already-proven lobby steps
+unless the saved profiles or PCAP show that the handshake regressed.
