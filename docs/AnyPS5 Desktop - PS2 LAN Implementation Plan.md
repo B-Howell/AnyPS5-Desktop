@@ -40,9 +40,10 @@ describe the archive layout. The source ISO was not modified. Track naming
 in `bgmads.inf` identifies this as the GT4 quick/menu music; it does not
 provide a more descriptive song title.
 These files are machine-local test assets and must not be included in source
-control or redistributed with AnyPS5. The launcher can be checked against this
-local scanner fixture without booting the game, but that does not prove PS2
-LAN functionality. A one-PC two-instance race remains the LAN exit gate below.
+control or redistributed with AnyPS5. A headless call to
+[GameLibrary.scan](../lib/core/game_library.dart) on the review checkpoint
+found one PS2 title, `PS2-SCUS97328`, and resolved the disc, both images,
+and the WAV. A one-PC two-instance race remains the LAN exit gate below.
 
 ## Choose the transport after a native LAN baseline
 
