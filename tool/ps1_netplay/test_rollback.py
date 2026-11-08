@@ -1,5 +1,7 @@
 import ctypes as c
+from concurrent.futures import ThreadPoolExecutor
 import unittest
+from unittest.mock import patch
 
 from headless_core import Core
 from rollback import Impairment, simulate
@@ -67,7 +69,14 @@ class CounterCore:
         self.frame, self.image = frame, state[0]
 
     def signature(self):
-        return {"frame": self.frame, "state": self.image}
+        return self.hash_signature(self.frame, self.signature_snapshot())
+
+    def signature_snapshot(self):
+        return self.image
+
+    @staticmethod
+    def hash_signature(frame, snapshot):
+        return {"frame": frame, "state": snapshot}
 
 
 class RollbackTests(unittest.TestCase):
@@ -109,6 +118,23 @@ class RollbackTests(unittest.TestCase):
             self.assertEqual(result["max_replay_steps"], 1)
             self.assertGreater(result["replay_slices"], result["rollbacks"])
 
+    def test_prediction_lane_keeps_presenting_during_a_deep_rewind(self):
+        class SpeculativeCore(CounterCore):
+            def advance(self, count, p1, p2):
+                super().advance(count, p1, p2)
+                self.image = -1
+
+        network = Impairment(66, 0, 0, (18, 28))
+        for seat in (0, 1):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                result = simulate(CounterCore(), self.inputs, self.baseline, seat, network,
+                                  2, 16, 7, replay_steps=3,
+                                  presentation=(SpeculativeCore(), executor))
+            self.assertTrue(result["matched"], result)
+            self.assertGreater(result["prediction_lane_ticks"], 0)
+            self.assertEqual(result["stall_ticks"], 0)
+            self.assertEqual(result["input_ticks"]["max"], 2)
+
     def test_loss_beyond_history_times_out_and_does_not_confirm_prediction(self):
         result = simulate(CounterCore(), self.inputs, self.baseline, 0, Impairment(0, 0, 1, None), 0, 4, 7)
         self.assertFalse(result["matched"])
@@ -130,6 +156,29 @@ class RollbackTests(unittest.TestCase):
         self.assertFalse(result["matched"])
         self.assertEqual(result["first_difference"]["frame"], 6)
         self.assertEqual(result["confirmed"], 5)
+
+    def test_async_validation_cannot_report_finish_on_a_bad_snapshot(self):
+        wrong = self.baseline.copy()
+        wrong[-1] = {"frame": len(wrong), "state": -1}
+        with ThreadPoolExecutor(max_workers=1) as audit:
+            result = simulate(CounterCore(), self.inputs, wrong, 0,
+                              Impairment(0, 0, 0, None), 2, 8, 7, audit=audit)
+        self.assertEqual(result["reason"], "desync")
+        self.assertEqual(result["confirmed"], len(wrong) - 1)
+
+    def test_paced_deadline_counts_a_late_wakeup_even_when_work_is_fast(self):
+        now = 0.0
+
+        def oversleep(seconds):
+            nonlocal now
+            now += seconds + 0.020
+
+        with patch("rollback.perf_counter", side_effect=lambda: now), patch("rollback.sleep", side_effect=oversleep):
+            result = simulate(CounterCore(), self.inputs, self.baseline, 0,
+                              Impairment(0, 0, 0, None), 2, 8, 7, paced=True)
+        self.assertTrue(result["matched"])
+        self.assertGreater(result["deadline_misses"], 0)
+        self.assertEqual(result["over_budget_ticks"], 0)
 
 
 if __name__ == "__main__":

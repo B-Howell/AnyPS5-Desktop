@@ -1,5 +1,6 @@
 """Headless PS1 rollback trial with deterministic virtual packet delivery."""
 import argparse
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 import heapq
@@ -7,9 +8,10 @@ import json
 import math
 from pathlib import Path
 import random
+import shutil
 import subprocess
 import sys
-from time import perf_counter
+from time import perf_counter, sleep
 
 from determinism import CTR_USA_CUE, ctr_finish, cue_identity, file_digest, normalize_trace
 from headless_core import Core
@@ -17,6 +19,7 @@ from headless_core import Core
 TICK_MS = 1000 / 60
 HISTORY = 16
 MAX_TAIL_TICKS = 120
+MAX_PENDING_AUDITS = 24
 
 
 @dataclass(frozen=True)
@@ -69,7 +72,7 @@ class PacketLink:
 @dataclass
 class PlayedFrame:
     remote: int
-    signature: dict
+    evidence: object
     checkpoint: tuple | None
 
 
@@ -84,7 +87,8 @@ def distribution(samples):
     }
 
 
-def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, replay_steps=8):
+def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, replay_steps=8,
+             presentation=None, audit=None, paced=False):
     """Run one peer. Its remote input becomes visible only on packet delivery."""
     local, remote = zip(*((frame[seat], frame[1 - seat]) for frame in inputs))
     link = PacketLink(network, seed)
@@ -92,8 +96,13 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
     pending = {}
     checkpoint_buffers = [None] * window
     confirmed = 0
+    validated = 0
+    audit_jobs = deque()
     difference = None
     timings = []
+    tick_times = []
+    slow_ticks = []
+    deadline_misses = 0
     rollback_times = []
     input_ticks = []
     rollbacks = replayed = max_depth = max_checkpoints = stall_ticks = 0
@@ -101,40 +110,81 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
     stall_streak = max_streak = 0
     finish_tick = None
     count = len(inputs)
+    presented = prediction_lane_ticks = max_presentation_lag = 0
+    presenting = False
+    presentation_state = None
+
+    def remote_value(frame):
+        while frame and frame not in known:
+            frame -= 1
+        return known.get(frame, 0)
+
+    def buttons_for(frame, value):
+        buttons = (local[frame - 1], value)
+        return buttons if seat == 0 else buttons[::-1]
+
+    def present(spare, start, buttons):
+        if start is not None:
+            spare.restore(*start)
+        for masks in buttons:
+            spare.advance(1, *masks)
+        return spare.frame
 
     def advance():
+        nonlocal max_checkpoints
         frame = core.frame + 1
         value = known.get(frame)
         checkpoint = None
         started = perf_counter()
         if value is None:
-            earlier = frame - 1
-            while earlier and earlier not in known:
-                earlier -= 1
-            value = known.get(earlier, 0)
+            value = remote_value(frame - 1)
             # The confirmed frontier bounds the pending frames to one window.
             # During replay the old state is read before its slot is overwritten.
             slot = (frame - 1) % window
             buffer = core.checkpoint(checkpoint_buffers[slot])
             checkpoint_buffers[slot] = buffer
             checkpoint = buffer, core.image
-        buttons = (local[frame - 1], value)
-        core.advance(1, *(buttons if seat == 0 else buttons[::-1]))
+        core.advance(1, *buttons_for(frame, value))
         elapsed = (perf_counter() - started) * 1000
-        pending[frame] = PlayedFrame(value, core.signature(), checkpoint)
+        evidence = core.signature() if audit is None else core.signature_snapshot()
+        pending[frame] = PlayedFrame(value, evidence, checkpoint)
+        max_checkpoints = max(max_checkpoints, sum(record.checkpoint is not None for record in pending.values()))
         return elapsed
 
+    def validate(frame, signature):
+        nonlocal validated, difference
+        if signature != baseline[frame - 1]:
+            difference = {"frame": frame, "expected": baseline[frame - 1], "actual": signature}
+        else:
+            validated = frame
+
+    def poll_audit(wait=False):
+        while audit_jobs and not difference and (wait or audit_jobs[0][1].done()):
+            frame, job = audit_jobs.popleft()
+            validate(frame, job.result())
+            wait = False
+
     def confirm():
-        nonlocal confirmed, difference
-        while confirmed < core.frame and confirmed + 1 in known:
+        nonlocal confirmed
+        poll_audit()
+        while not difference and confirmed < core.frame and confirmed + 1 in known:
             frame = confirmed + 1
-            signature = pending.pop(frame).signature
-            if signature != baseline[frame - 1]:
-                difference = {"frame": frame, "expected": baseline[frame - 1], "actual": signature}
-                break
+            evidence = pending.pop(frame).evidence
+            if audit is None:
+                validate(frame, evidence)
+            else:
+                audit_jobs.append((frame, audit.submit(core.hash_signature, frame, evidence)))
+                poll_audit(wait=len(audit_jobs) >= MAX_PENDING_AUDITS)
             confirmed = frame
 
+    epoch = perf_counter()
     for tick in range(count + delay + MAX_TAIL_TICKS):
+        if paced:
+            ready = epoch + tick * (TICK_MS / 1000)
+            remaining = ready - perf_counter()
+            if remaining > 0:
+                sleep(remaining)
+        tick_start = perf_counter()
         newest = min(tick + 1, count)
         start = max(1, newest - HISTORY + 1)
         link.send(tick, start, remote[start - 1:newest])
@@ -146,6 +196,24 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
                 known[frame] = value
                 if frame <= core.frame and frame in pending and pending[frame].remote != value:
                     correction = frame if correction is None else min(correction, frame)
+
+        target = min(count, tick + 1 - delay)
+        old_presented = presented
+        pending_presentation = None
+        start = None
+        if (presentation is not None and not presenting and correction is not None
+                and core.frame - correction + 1 > replay_steps):
+            presentation_state = core.checkpoint(presentation_state)
+            start = (core.frame, presentation_state, core.image)
+            presenting = True
+        if presenting:
+            spare, executor = presentation
+            # Keep generating new speculative frames while the verified lane
+            # works from the corrected input. The spare is never confirmed.
+            tip = min(target, presented + 2, confirmed + window)
+            buttons = [buttons_for(frame, remote_value(frame)) for frame in range(presented + 1, tip + 1)]
+            pending_presentation = executor.submit(present, spare, start, buttons)
+            replay_tip = max(replay_tip, tip)
 
         work_ms = 0
         if correction is not None:
@@ -166,45 +234,72 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
             rollback_times.append(work_ms)
 
         confirm()
-        target = min(count, tick + 1 - delay)
         previous_tip = core.frame
         # At most two new frames per tick, including recovery after a stall.
-        while not difference and replay_tip <= core.frame < min(target, previous_tip + 2):
+        while not presenting and not difference and replay_tip <= core.frame < min(target, previous_tip + 2):
             next_frame = core.frame + 1
             if next_frame - confirmed > max(window, 1) or (window == 0 and next_frame not in known):
                 break
             work_ms += advance()
             input_ticks.append(tick - (next_frame - 1))
-            max_checkpoints = max(max_checkpoints, sum(record.checkpoint is not None for record in pending.values()))
             confirm()
+        if pending_presentation is not None:
+            presented = pending_presentation.result()
+            input_ticks.extend(tick - (frame - 1) for frame in range(old_presented + 1, presented + 1))
+            prediction_lane_ticks += 1
+            max_presentation_lag = max(max_presentation_lag, presented - core.frame)
+            presenting = core.frame < presented
+        else:
+            presented = max(presented, core.frame)
         if work_ms:
             timings.append(work_ms)
-        if previous_tip < target and core.frame == previous_tip:
+        if old_presented < target and presented == old_presented:
             stall_ticks += 1
             stall_streak += 1
             max_streak = max(max_streak, stall_streak)
         else:
             stall_streak = 0
-        if core.frame == count and finish_tick is None:
+        if presented == count and finish_tick is None:
             finish_tick = tick
+        ended = perf_counter()
+        tick_ms = (ended - tick_start) * 1000
+        if paced and ended > ready + TICK_MS / 1000:
+            deadline_misses += 1
+        tick_times.append(tick_ms)
+        if tick_ms > TICK_MS:
+            heapq.heappush(slow_ticks, (tick_ms, tick, presented, work_ms, pending_presentation is not None))
+            if len(slow_ticks) > 8:
+                heapq.heappop(slow_ticks)
         if difference or confirmed == count:
             break
 
+    while audit_jobs and not difference:
+        poll_audit(wait=True)
     return {
-        "matched": difference is None and confirmed == count,
-        "reason": "desync" if difference else ("finished" if confirmed == count else "timeout"),
+        "matched": difference is None and validated == count,
+        "reason": "desync" if difference else ("finished" if validated == count else "timeout"),
         "first_difference": difference,
-        "seat": seat + 1, "confirmed": confirmed, "total_frames": count,
+        "seat": seat + 1, "confirmed": validated, "total_frames": count,
         "finish_tick": finish_tick, "confirmation_tick": tick,
         "stall_ticks": stall_ticks, "max_stall_streak": max_streak,
         "input_ticks": distribution(input_ticks),
         "work_ms": distribution(timings), "rollback_work_ms": distribution(rollback_times),
+        "tick_ms": distribution(tick_times),
+        "over_budget_ticks": sum(value > TICK_MS for value in tick_times),
+        "deadline_misses": deadline_misses if paced else None,
+        "slow_ticks": [
+            {"tick": tick, "frame": frame, "elapsed_ms": round(elapsed, 3),
+             "primary_core_ms": round(work, 3), "prediction_lane": on_lane}
+            for elapsed, tick, frame, work, on_lane in sorted(slow_ticks, reverse=True)
+        ],
         "over_budget_work_ticks": sum(value > TICK_MS for value in timings),
         "over_budget_rollback_ticks": sum(value > TICK_MS for value in rollback_times),
         "rollbacks": rollbacks, "replayed_frames": replayed, "max_rollback_depth": max_depth,
         "replay_slices": replay_slices, "max_replay_steps": max_replay_steps,
+        "prediction_lane_ticks": prediction_lane_ticks, "max_presentation_lag": max_presentation_lag,
         "max_checkpoints": max_checkpoints, "checkpoint_payload_bytes": max_checkpoints * core.state_size,
         "checkpoint_pool_bytes": sum(buffer is not None for buffer in checkpoint_buffers) * core.state_size,
+        "prediction_transfer_bytes": core.state_size if presentation_state is not None else 0,
         "network": {"sent": link.sent, "dropped": link.dropped, "reordered": link.reordered},
     }
 
@@ -218,13 +313,19 @@ def main():
     parser.add_argument("--profile", choices=PROFILES, required=True)
     parser.add_argument("--delay", type=int, default=2)
     parser.add_argument("--window", type=int, default=8)
-    parser.add_argument("--replay-steps", type=int, choices=range(1, 9), default=8,
+    parser.add_argument("--replay-steps", type=int, choices=range(1, HISTORY + 1), default=8,
                         help="Maximum replay frames per virtual tick")
+    parser.add_argument("--prediction-lane", action="store_true",
+                        help="Use a separate software core to present predictions during long corrections")
+    parser.add_argument("--benchmark-priority", choices=("idle", "below-normal"), default="idle")
+    parser.add_argument("--pace", action="store_true", help="Run virtual ticks on scheduled 60 Hz wall-clock deadlines")
+    parser.add_argument("--require-frame-budget", action="store_true",
+                        help="Fail if a peer stalls or a whole tick exceeds 16.67 ms")
     parser.add_argument("--seed", type=int, default=2401)
     parser.add_argument("--seat", type=int, choices=(0, 1), help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if sys.platform != "win32" or not 0 <= args.delay <= 8 or not 0 <= args.window <= 8:
-        parser.error("Windows required, with delay and window in 0-8 frames")
+    if sys.platform != "win32" or not 0 <= args.delay <= 8 or not 0 <= args.window <= HISTORY:
+        parser.error(f"Windows required, with delay in 0-8 and window in 0-{HISTORY} frames")
     fixture = json.loads(args.baseline.read_text())
     signatures = fixture["signatures"]
     spans = normalize_trace(json.loads(args.trace.read_text(encoding="utf-8-sig")))
@@ -241,8 +342,22 @@ def main():
         try:
             if {key.decode(): value.decode() for key, value in core.settings.items()} != fixture["options"]:
                 raise ValueError("Core options do not match the baseline")
-            result = simulate(core, inputs, signatures, args.seat, profile, args.delay, args.window,
-                              args.seed + args.seat, replay_steps=args.replay_steps)
+            trial_args = (core, inputs, signatures, args.seat, profile, args.delay, args.window, args.seed + args.seat)
+            if args.prediction_lane:
+                spare_dll = args.output / args.core.name
+                shutil.copyfile(args.core, spare_dll)
+                spare = Core(spare_dll, args.disc, args.bios, args.output / "prediction", args.cpu,
+                             memory_checkpoints=True, same_binary=True, block_linking=not args.no_block_linking)
+                try:
+                    if spare.settings != core.settings:
+                        raise ValueError("Prediction core options do not match the primary core")
+                    with ThreadPoolExecutor(max_workers=1) as executor, ThreadPoolExecutor(max_workers=1) as audit:
+                        result = simulate(*trial_args, replay_steps=args.replay_steps, presentation=(spare, executor),
+                                          audit=audit, paced=args.pace)
+                finally:
+                    spare.close()
+            else:
+                result = simulate(*trial_args, replay_steps=args.replay_steps, paced=args.pace)
             if result["matched"]:
                 result["finish"] = ctr_finish(core.read_ram)
                 if result["finish"] != fixture["finish"]:
@@ -269,23 +384,33 @@ def main():
         command.extend(("--output", str(worker), "--seat", str(seat)))
         if args.no_block_linking:
             command.append("--no-block-linking")
+        if args.prediction_lane:
+            command.append("--prediction-lane")
+        if args.pace:
+            command.append("--pace")
+        priority = (subprocess.IDLE_PRIORITY_CLASS if args.benchmark_priority == "idle"
+                    else subprocess.BELOW_NORMAL_PRIORITY_CLASS)
         with (args.output / f"peer-{seat + 1}.log").open("w") as log:
             subprocess.run(command, cwd=args.output, stdout=log, stderr=subprocess.STDOUT,
                            check=True, timeout=600,
-                           creationflags=subprocess.CREATE_NO_WINDOW | subprocess.IDLE_PRIORITY_CLASS)
+                           creationflags=subprocess.CREATE_NO_WINDOW | priority)
         return json.loads((worker / "trial.json").read_text())
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         peers = list(pool.map(launch, (0, 1)))
     result = {
         "matched": all(peer["matched"] for peer in peers), "identity": identity,
+        "frame_budget_met": all(peer["matched"] and not (peer["over_budget_ticks"] or peer["stall_ticks"]
+                                                       or peer["deadline_misses"])
+                                for peer in peers),
         "profile": args.profile, "network": asdict(profile), "delay": args.delay,
         "window": args.window, "replay_steps": args.replay_steps, "seed": args.seed, "cpu": args.cpu,
-        "block_linking_disabled": args.no_block_linking, "peers": peers,
+        "block_linking_disabled": args.no_block_linking, "prediction_lane": args.prediction_lane, "peers": peers,
+        "benchmark_priority": args.benchmark_priority, "paced": args.pace,
     }
     (args.output / "summary.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))
-    return 0 if result["matched"] else 1
+    return 0 if result["matched"] and (not args.require_frame_budget or result["frame_budget_met"]) else 1
 
 
 if __name__ == "__main__":

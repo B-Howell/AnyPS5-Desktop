@@ -12,6 +12,7 @@ POLL = c.CFUNCTYPE(None)
 INPUT = c.CFUNCTYPE(c.c_int16, c.c_uint, c.c_uint, c.c_uint, c.c_uint)
 GET_SAVESTATE_CONTEXT = 72 | 0x10000
 RUNAHEAD_SAME_INSTANCE = 1
+RUNAHEAD_SAME_BINARY = 2
 
 
 class Variable(c.Structure):
@@ -24,10 +25,13 @@ class GameInfo(c.Structure):
 
 class Core:
     _checkpoint_active = False
+    _checkpoint_context = RUNAHEAD_SAME_INSTANCE
 
     def __init__(self, dll, disc, bios, root, cpu="Recompiler", *, memory_checkpoints=False,
-                 block_linking=True):
+                 block_linking=True, same_binary=False):
         self.memory_checkpoints = memory_checkpoints
+        if same_binary:
+            self._checkpoint_context = RUNAHEAD_SAME_BINARY
         root.mkdir()
         system = root / "system"
         save = root / "save"
@@ -97,7 +101,7 @@ class Core:
             if address is None:
                 return True
             self._checkpoint_context_queried = True
-            c.cast(address, c.POINTER(c.c_int))[0] = RUNAHEAD_SAME_INSTANCE
+            c.cast(address, c.POINTER(c.c_int))[0] = self._checkpoint_context
             return True
         if command in (14, 0x10000 | 14, 0x10000 | 43, 0x10000 | 44):
             self.hw_requested = True
@@ -162,13 +166,21 @@ class Core:
         return c.string_at(self.ram + offset, length)
 
     def signature(self):
+        return self.hash_signature(self.frame, self.signature_snapshot())
+
+    def signature_snapshot(self):
+        return self.read_ram(), self.image
+
+    @staticmethod
+    def hash_signature(frame, snapshot):
+        ram, image = snapshot
         video_hash = None
-        if self.image is not None:
-            width, height, pitch, pixel, raw = self.image
+        if image is not None:
+            width, height, pitch, pixel, raw = image
             row_bytes = width * (4 if pixel == 1 else 2)
             visible = b"".join(raw[i:i + row_bytes] for i in range(0, height * pitch, pitch))
             video_hash = hashlib.sha256(f"{width},{height},{pixel}:".encode() + visible).hexdigest()
-        return {"frame": self.frame, "ram": hashlib.sha256(self.read_ram()).hexdigest(), "video": video_hash}
+        return {"frame": frame, "ram": hashlib.sha256(ram).hexdigest(), "video": video_hash}
 
     def checkpoint(self, buffer=None):
         if buffer is None:
@@ -183,7 +195,7 @@ class Core:
         if not self._checkpoint_call(self.unserialize, state, len(state)):
             raise RuntimeError("Core rejected checkpoint")
         if self.memory_checkpoints and not self._checkpoint_context_queried:
-            raise RuntimeError("Core ignored the same-instance save-state context")
+            raise RuntimeError("Core ignored the requested save-state context")
         self.frame = frame
         self.image = image
 

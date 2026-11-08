@@ -307,3 +307,79 @@ instrumented unsliced run also saw a 125 ms save on a tick with no correction.
 The measurements qualify the timed correction slices for the listed runs.
 They leave Windows scheduling, full-tick deadlines, and the cost of
 presenting a corrected frame in the desktop launcher unqualified.
+
+### Continuing frame production through a loss burst
+
+The 120 ms profile withheld new input for the ten-tick burst and the
+following delivery delay. With an eight-frame window, both peers reached
+frame 5,608 while their last contiguous remote input was frame 5,600.
+The wider window (`--window 16`) covers that observed gap. At tick 5,615,
+port 2 needed to replay 13 frames. An unsliced control completed without
+virtual stalls but took 31.01 ms of core work on that tick, before validation.
+The packet loss schedule, history length, and two-tick input buffer stayed
+the same.
+
+`--prediction-lane` starts a second software core from a private copy of
+the exact same DLL. When a correction needs more frames than the replay
+limit, the secondary core starts at the previously presented checkpoint
+using Libretro's same-binary context. It advances speculative frames with
+the next local inputs and the remote inputs available at each tick. The
+primary core replays the corrected inputs concurrently and resumes frame
+production after catching up. The secondary core never supplies confirmed
+state. This keeps producing new headless frame buffers while the visible
+prediction can temporarily differ from the corrected timeline. The trial
+reports that lag separately from local input scheduling and stalls.
+
+The prediction-lane trial captures immutable RAM and framebuffer evidence
+on the primary core. It drops snapshots superseded by replay and hashes
+each confirmed snapshot on an ordered audit worker, using the original
+SHA-256 checks. The audit queue is bounded, and the trial drains it before
+reporting a match. `tick_ms` is elapsed time for each whole virtual tick,
+including packet processing, evidence capture, and any waits for the
+prediction or audit workers. The final diagnostic audit drain happens
+after the last tick. `work_ms` retains the earlier primary-core metric.
+
+Use the Release baseline with block linking disabled from the previous
+section. Both below-normal workers are headless. `--pace` aligns tick
+starts to a 60 Hz wall clock and counts late finishes against the
+scheduled deadline, including late wakeups. `--require-frame-budget`
+returns failure if either peer stalls, exceeds the whole-tick limit, or
+misses a paced deadline, even when all frames synchronize.
+
+```powershell
+python -B tool/ps1_netplay/rollback.py --core "$core" --disc "$cue" --bios "$bios" `
+  --trace tool/ps1_netplay/fixtures/ctr_usa_coco_park_versus.json `
+  --baseline "$output/worker-1/run.json" --output "$trial" --profile 120ms-loss `
+  --no-block-linking --delay 2 --window 16 --seed 2401 --replay-steps 2 `
+  --prediction-lane --benchmark-priority below-normal --pace --require-frame-budget
+```
+
+Both unpaced below-normal runs verified all 13,706 authoritative frames
+with the original placements, two ticks of local input delay, and zero
+virtual stalls. Neither met the strict whole-tick budget.
+
+| Replay cap | Whole-tick p95 in ms | Whole-tick max in ms | Whole-tick overruns |
+| --- | --- | --- | --- |
+| 2 | 6.36 / 8.22 | 88.83 / 92.25 | 4 / 2 |
+| 3 | 6.72 / 10.38 | 103.85 / 109.86 | 5 / 7 |
+
+In the two-frame run, five of the six overruns occurred with the
+prediction lane idle and most of their elapsed time was spent inside
+primary core calls. The single lane-active overrun was 17.34 ms at tick
+5,625. This instrumentation does not identify what blocked the native
+calls or establish an actual on-screen frame cadence.
+
+The paced two-frame run also matched all 13,706 frames, maintained the
+two-tick local buffer throughout, and had zero virtual stalls. Its whole-tick
+p95 was 6.84 / 9.16 ms and its maximum was 65.53 / 96.43 ms. It recorded
+7 / 8 work overruns and 27 / 28 scheduled deadline misses. Several peaks
+occurred at the same race frames on both peers. During the burst, the
+authoritative simulation trailed the speculative frontier by as many as
+four frames on port 1 and 12 on port 2. The strict gate failed.
+
+Two unpaced diagnostic controls changed only disc I/O settings and still
+matched the same full reference with zero virtual stalls. Preloading the
+disc while retaining asynchronous reads left 2 / 1 overruns with maxima
+of 113.49 / 111.78 ms. Preloading with synchronous reads left 3 / 3
+overruns with maxima of 30.25 / 25.62 ms. Neither configuration passed the
+whole-tick budget, and the I/O settings remain at the baseline values.
