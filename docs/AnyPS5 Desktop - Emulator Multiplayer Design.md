@@ -79,6 +79,10 @@ synchronized-emulation path.
 
 ## First proof of synchronized PS1 multiplayer
 
+The [PS1 netplay implementation plan](<AnyPS5 Desktop - PS1 Netplay Implementation Plan.md>)
+defines player hosting, relay decisions, the local determinism harness,
+frame protocol, rollback and two-PC release gates.
+
 Start two local core processes with identical fixtures and replay the same
 frame-stamped input log. Compare a repeatable emulated state or game-visible
 checksum through a complete race, then restore a checkpoint and replay to
