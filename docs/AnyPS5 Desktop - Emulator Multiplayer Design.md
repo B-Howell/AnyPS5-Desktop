@@ -15,6 +15,40 @@ emulation, also require a matching content hash, core build and relevant
 emulation settings. Reject incompatible joins with a specific reason before
 launching. Keep the existing PS5 engine path separate.
 
+## Shared implementation and validation
+
+The [PS1 netplay plan](<AnyPS5 Desktop - PS1 Netplay Implementation Plan.md>),
+[PS2 LAN plan](<AnyPS5 Desktop - PS2 LAN Implementation Plan.md>) and
+[PS3 native co-op plan](<AnyPS5 Desktop - PS3 Native Co-op Implementation Plan.md>)
+use the same invite and preflight experience with different gameplay adapters.
+
+| Component | Shared contract | Mode-specific work |
+| --- | --- | --- |
+| Party and invite | Host an invite-only room, accept or decline, show seat and readiness, expire stale offers and tear down on exit | Confirm the service supports typed retro sessions and old clients refuse unknown modes. Keep current PS5 sessions and wire format separate. |
+| Preflight | Select a matching local copy and show the first actionable incompatibility before boot | PS1 requires matching deterministic inputs and fingerprints. PS2 checks title revision and backend compatibility. PS3 checks title/update, approved provider profile, patch and effective game settings. |
+| Session lifecycle | Prepare, check, connect or hand off, launch, verify readiness, end | PS1 is ready after both frame peers acknowledge start. PS2 needs an attached virtual segment and native LAN discovery. PS3 needs evidence of a native game join. A successful launcher start is a separate state. |
+| Transport | Common diagnostics for route, setup time and disconnect when observable | PS1 exchanges controller inputs. PS2 carries approved guest LAN traffic. Both may reuse WebRTC signaling and relay. PS3 leaves gameplay traffic to RPCS3 and the game provider. |
+| Isolation | Separate profile, storage and process boundaries for a local harness. Redact diagnostics and restore offline settings after exit. | PS1 isolates temporary cards. PS2 isolates virtual network identities and the segment. PS3 isolates core endpoints and provider configuration. |
+
+Keep the shared layer small. [GameSessions](../lib/core/together/game_sessions.dart)
+owns session API calls and party membership. Its current `lan` contract is for
+PS5. Negotiate a typed extension with the service maintainer instead of
+encoding emulator settings as PS5 engine fields. Use a shared preflight result
+and match controller, then hand off to the relevant mode. Do not combine
+frame replay, Ethernet and provider traffic into one game protocol.
+
+| Future test | PS1 | PS2 | PS3 |
+| --- | --- | --- | --- |
+| One PC, fakes | Invite and mismatch, packet validation, failure and teardown | Same launcher checks, virtual segment and packet isolation | Same launcher checks, provider errors, profile verification and redaction |
+| One PC, two isolated game processes | Complete and replay a deterministic CTR race under simulated network conditions | Complete a GT4 native LAN race and a virtual-segment race with injected network conditions | Verify distinct profiles and endpoints. A private two-client live pilot depends on provider rules, identities and hardware. |
+| Two PCs on separate networks | Validate direct and approved relay routes, latency and rollback | Validate direct and approved relay routes, native discovery and race stability | Validate native private lobby and full level, including reconnect and divergence checks |
+
+Implement the shared flow against [fake peer transport](../test/support/online_fakes.dart)
+and [fake party service](../test/support/fake_together.dart) when one mode
+passes its local technical gate. Add the other modes as they qualify rather
+than waiting for all three. The plans require no hosted service, build or live
+test during design. Keep multiplayer work separate from PR #84.
+
 ## What we can reuse
 
 - **PS3:** The RPCS3 core already offers [network and RPCN options](https://docs.libretro.com/library/rpcs3/#network).
