@@ -272,30 +272,28 @@ Use two Windows PCs on separate networks. Complete full races on direct and appr
 
 ### Headless GT4 retry result (2026-11-08)
 
-A clean two-peer retry reused separate saved scratch cards and profiles without
-copying one peer's memory card over the other. Both isolated PCSX2 v2.8.2
-instances booted the same USA v2.00 image (CRC `77E61C8A`) and reached Arcade
-Mode → Multi-LAN Race. Their private Xvfb screenshots showed the Multi-LAN tile
-selected on both before confirmation. After confirming, both screens remained
-on the GT logo/spinner; neither reached the in-game LAN profile menu on this
-retry. The latest saved captures are `screens/peer-k/latest.png` and
-`screens/peer-l/latest.png` under `/tmp/anyps5-gt4-fOqRtVew`.
+A clean two-peer retry reused separate saved scratch cards and profiles. Both
+isolated PCSX2 v2.8.2 instances booted the same USA v2.00 disc (CRC `77E61C8A`)
+and reached Arcade Mode → Multi-LAN Race. Loading briefly showed the GT
+spinner. The later 14:52 local-time captures, `screens/peer-k/current.png` and
+`screens/peer-l/current.png` under `/tmp/anyps5-gt4-fOqRtVew`, show the saved
+`qqq` network profile in both instances at about 60 VPS and 100% speed. The
+older `latest.png` files predate this retry.
 
-Both logs confirm `DEV9: Adapter Ok` and the game ELF started, but each log
-stops shortly after the adapter detection reset. At inspection, no PCSX2
-process remained; only the two owned Xvfb processes were alive. The retry
-pcaps were 4,288 bytes each, insufficient evidence of a host/join exchange.
-Earlier in the first run both peers reached the network-profile menu and
-received distinct intercepted DHCP leases (`10.231.0.101` and
-`10.231.0.102`); their broadcast packets to UDP port 3658 proved only local
-network traffic, not lobby discovery. The K profile had been configured in
-the game as Host Yes with two players and a distinct console name, while L was
-Host No, but the clean retry did not reach the lobby to verify that pairing.
+In the earlier run, both profiles received distinct intercepted DHCP leases
+(`10.231.0.101` and `10.231.0.102`). A read of the live `gt4k` capture counted
+29 and 16 UDP/3658 broadcasts, respectively, to `10.231.0.255`, plus ARP.
+Neither screen showed a joined lobby. The title options were then set to
+`Player1xn` as host with two players and `Player1` as client.
 
-**Result:** the full LAN race remains unproven. Do not report a successful
-host/join, race start, finish, or results. The clean retry isolated the first
-current blocker to the Multi-LAN loading transition after confirmation; the
-earlier run's later blocker was waiting for a connection without observed
-discovery. No user display, profile, save, controller, host network, driver,
-firewall, or system setting was changed. Stop the two owned Xvfb processes
-when closing the scratch harness.
+The retry PCAP files ended at 4,288 bytes each. The latest logs and captures
+do not establish a completed connection with the new roles. The emulator
+and Xvfb processes exited, and a final exact-path process check confirmed
+the scratch runner and both packet capture helpers also stopped.
+
+**Result:** the input fix, access to the game's LAN profile screen and
+guest broadcasts were verified. Host discovery, a shared lobby and a
+finished race remain unverified. The next gate is to observe both peers
+connect from the saved profiles with the host role active and capture the
+discovery reply or first unicast exchange. All interaction used the private
+scratch displays and scratch memory cards.
