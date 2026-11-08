@@ -188,6 +188,49 @@ in both peers, then configure the game's own network profiles and verify LAN
 host/join discovery over the private veth segment. Do not claim multiplayer
 support until both peers finish a race and the results screen is recorded.
 
+### Follow-up: headless input and title-menu progress (2026-11-08)
+
+The keyboard-input gate is now resolved for the two scratch displays. The
+original `xdotool windowfocus --sync` path could block indefinitely without a
+window manager; the working harness instead uses `windowfocus` without
+`--sync`, verifies the focused game window, and holds an XTest key for 250 ms.
+Screenshots verified directional selection and Cross acceptance during the
+first-run dialog flow. Peer K visibly advanced through the GT3 save-data
+question, first-run profile/memory-card flow, and into the title intro. Peer L
+reached the title menu; a Down press visibly moved selection from Arcade Mode
+to Gran Turismo Mode. Thus game-window focus and synthetic control delivery
+are proven independently per private Xvfb display.
+
+The two PCSX2 v2.8.2 processes and distinct PCAP/veth endpoints remained
+alive simultaneously in their isolated network namespace, with separate
+per-peer configuration and scratch memory cards. The process-private `/dev/shm`
+mounts avoid the fixed `/GS.mem` collision. Audio was directed to the null
+backend. There were no host display, user save, controller, firewall, driver,
+or emulator-install changes.
+
+At this checkpoint, Cross/Start from the title menu entered a black GT loading
+screen with an animated spinner, but it had not completed after a bounded
+interval; the other peer was still in its intro sequence. The emulators were
+under heavy software-rendering load (roughly 200% CPU each as reported by
+`ps`), and no in-game LAN lobby, host/join discovery, race, packet exchange,
+finish screen, or results screen was captured. The full GT4 LAN race therefore
+remains unverified. Do not interpret reaching the title screen or opening the
+PCAP adapters as multiplayer success.
+
+The reproducible scratch harness is
+`/tmp/anyps5-gt4-fOqRtVew/run-private-pair.sh` with peer configuration and
+captures under the same owned scratch root. Its supported commands are
+`i-left`, `i-right`, `i-cross`, `i-start`, `i-up`, `i-down` and their `l-*`
+counterparts; it saves XWD captures after each input. Keep Xvfb TCP displays
+private to the already isolated network namespace. If resuming, first inspect
+the saved per-peer cards and XWDs, then consider a one-peer renderer/speed-OSD
+probe before starting both peers again. The next acceptance gate is an actual
+Arcade Mode → Multi LAN Race host/join pair, observed packet traffic on the
+private veth, and both peers reaching finish/results. The publisher's US
+manual identifies Circle or Cross as confirm and Triangle or Square as cancel;
+Circle remains an alternate title-menu confirm to test if the current load
+resumes.
+
 ## 1. Pin a title and inventory the actual core
 
 **Read:** [ManagedRetro](../lib/core/managed_retro.dart), [native runner](../windows/runner/retro_core_host.cpp), and the [Gran Turismo 4 LAN manual](https://www.gran-turismo.com/local/jp/data1/pdf/gt4_lan.pdf).
@@ -226,3 +269,33 @@ once the new suite exists. Keep real title data in the private harness.
 ## 4. Qualify internet play before release
 
 Use two Windows PCs on separate networks. Complete full races on direct and approved relayed routes, then disconnect and rematch. Record delay and stalls against the local baseline and specify which title revision and backend passed. A one-PC pass cannot establish real NAT traversal, independent machine load or an acceptable WAN experience. Games without a supported LAN mode stay outside the title allowlist. Native PS2 games that rely on an online service need their own provider and title qualification.
+
+### Headless GT4 retry result (2026-11-08)
+
+A clean two-peer retry reused separate saved scratch cards and profiles without
+copying one peer's memory card over the other. Both isolated PCSX2 v2.8.2
+instances booted the same USA v2.00 image (CRC `77E61C8A`) and reached Arcade
+Mode → Multi-LAN Race. Their private Xvfb screenshots showed the Multi-LAN tile
+selected on both before confirmation. After confirming, both screens remained
+on the GT logo/spinner; neither reached the in-game LAN profile menu on this
+retry. The latest saved captures are `screens/peer-k/latest.png` and
+`screens/peer-l/latest.png` under `/tmp/anyps5-gt4-fOqRtVew`.
+
+Both logs confirm `DEV9: Adapter Ok` and the game ELF started, but each log
+stops shortly after the adapter detection reset. At inspection, no PCSX2
+process remained; only the two owned Xvfb processes were alive. The retry
+pcaps were 4,288 bytes each, insufficient evidence of a host/join exchange.
+Earlier in the first run both peers reached the network-profile menu and
+received distinct intercepted DHCP leases (`10.231.0.101` and
+`10.231.0.102`); their broadcast packets to UDP port 3658 proved only local
+network traffic, not lobby discovery. The K profile had been configured in
+the game as Host Yes with two players and a distinct console name, while L was
+Host No, but the clean retry did not reach the lobby to verify that pairing.
+
+**Result:** the full LAN race remains unproven. Do not report a successful
+host/join, race start, finish, or results. The clean retry isolated the first
+current blocker to the Multi-LAN loading transition after confirmation; the
+earlier run's later blocker was waiting for a connection without observed
+discovery. No user display, profile, save, controller, host network, driver,
+firewall, or system setting was changed. Stop the two owned Xvfb processes
+when closing the scratch harness.
