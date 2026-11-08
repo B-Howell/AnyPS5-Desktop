@@ -1,4 +1,5 @@
 import 'app_model.dart';
+import 'strings.dart';
 
 abstract final class Ps3SettingsModel {
   static final graphicsKeys = Set<String>.unmodifiable({
@@ -17,17 +18,21 @@ abstract final class Ps3SettingsModel {
     for (final section in _sections.entries)
       PanelCategory(
         id: 'retro-ps3-${section.key}',
-        title: section.value.title,
+        title: T.text(section.value.title),
         rows: [
           if (section.key == 'graphics')
-            const PanelRow(
+            PanelRow(
               id: 'rpcs3_renderer',
-              title: 'Renderer',
-              kind: InfoRow('Vulkan'),
-              detail: 'The embedded PS3 game view uses Vulkan.',
+              title: T.text('retroPs3Renderer'),
+              kind: const InfoRow('Vulkan'),
+              detail: T.text('retroPs3RendererDetail'),
             ),
           if (section.key == 'audio')
-            const PanelRow(id: 'rpcs3_audio_format', title: 'Audio Format', kind: InfoRow('Stereo')),
+            PanelRow(
+              id: 'rpcs3_audio_format',
+              title: T.text('retroPs3AudioFormat'),
+              kind: InfoRow(T.text('retroPs3Stereo')),
+            ),
           for (final option in section.value.options) _row(option, defaults, overrides, save),
         ],
       ),
@@ -46,15 +51,19 @@ abstract final class Ps3SettingsModel {
     final override = overrides?[key];
     final local = overrides != null;
     final selected = local ? values.indexOf(override ?? '') + 1 : values.indexOf(shared);
+    final choices = option.choices.map((value, label) => MapEntry(value, T.text(label)));
     return PanelRow(
       id: key,
-      title: option.title,
+      title: T.text(option.title),
       detail: [
-        ?option.detail,
-        if (local) 'Applies to this game on next launch.' else 'Shared PS3 default. Applies on next launch.',
+        if (option.detail case final detail?) T.text(detail),
+        if (local) T.text('retroPs3GameLaunchDetail') else T.text('retroPs3SharedLaunchDetail'),
       ].join(' '),
       kind: ChoiceRow(
-        [if (local) 'Use shared default (${option.choices[shared]})', ...option.choices.values],
+        [
+          if (local) T.format('retroPs3UseSharedDefault', [choices[shared]!]),
+          ...choices.values,
+        ],
         selected,
         (index) {
           if (local && index == 0) {
@@ -82,35 +91,35 @@ class _Ps3Option {
 // Options and defaults from RPCS3 Libretro revision 74b3fa37.
 const _sections = <String, ({String title, List<_Ps3Option> options})>{
   'graphics': (
-    title: 'Graphics',
+    title: 'retroPs3Graphics',
     options: [
-      _Ps3Option('resolution_scale', 'Resolution Scale', '100', {
+      _Ps3Option('resolution_scale', 'retroPs3ResolutionScale', '100', {
         '25': '25%',
         '50': '50%',
         '66': '66%',
         '75': '75%',
-        '100': '100% (Native)',
+        '100': 'retroPs3100Native',
         '150': '150%',
         '200': '200%',
-      }, detail: 'Controls internal render resolution.'),
-      _Ps3Option('default_resolution', 'Default Resolution', '720p', {
-        '720p': '720p (Default)',
+      }, detail: 'retroPs3ResolutionScaleDetail'),
+      _Ps3Option('default_resolution', 'retroPs3DefaultResolution', '720p', {
+        '720p': 'retroPs3720pDefault',
         '1080p': '1080p',
         '480p': '480p',
         '576p': '576p',
-      }, detail: 'Changes the resolution reported to the game. Use Resolution Scale for upscaling.'),
-      _Ps3Option('anisotropic_filter', 'Anisotropic Filtering', 'auto', {
-        'auto': 'Auto',
+      }, detail: 'retroPs3DefaultResolutionDetail'),
+      _Ps3Option('anisotropic_filter', 'retroPs3AnisotropicFiltering', 'auto', {
+        'auto': 'retroPs3Auto',
         '2': '2x',
         '4': '4x',
         '8': '8x',
         '16': '16x',
       }),
-      _Ps3Option('msaa', 'Anti-Aliasing', 'auto', {'auto': 'Auto', 'disabled': 'Disabled'}),
-      _Ps3Option('frame_limit', 'Frame Limit', 'auto', {
-        'auto': 'Auto',
-        'ps3': 'PS3 Native',
-        'off': 'Off',
+      _Ps3Option('msaa', 'retroPs3AntiAliasing', 'auto', {'auto': 'retroPs3Auto', 'disabled': 'retroPs3Disabled'}),
+      _Ps3Option('frame_limit', 'retroPs3FrameLimit', 'auto', {
+        'auto': 'retroPs3Auto',
+        'ps3': 'retroPs3PS3Native',
+        'off': 'off',
         '30': '30 FPS',
         '50': '50 FPS',
         '60': '60 FPS',
@@ -121,17 +130,17 @@ const _sections = <String, ({String title, List<_Ps3Option> options})>{
     ],
   ),
   'graphics-rendering': (
-    title: 'Rendering',
+    title: 'retroPs3Rendering',
     options: [
-      _Ps3Option('aspect_ratio', 'Aspect Ratio', '16:9', {'16:9': '16:9 (default)', '4:3': '4:3'}),
-      _Ps3Option('zcull_accuracy', 'ZCULL Accuracy', 'precise', {
-        'precise': 'Precise (Default)',
-        'approximate': 'Approximate',
-        'relaxed': 'Relaxed (Fastest)',
+      _Ps3Option('aspect_ratio', 'retroPs3AspectRatio', '16:9', {'16:9': 'retroPs3169Default', '4:3': '4:3'}),
+      _Ps3Option('zcull_accuracy', 'retroPs3ZCULLAccuracy', 'precise', {
+        'precise': 'retroPs3PreciseDefault',
+        'approximate': 'retroPs3Approximate',
+        'relaxed': 'retroPs3RelaxedFastest',
       }),
-      _Ps3Option('scale_threshold', 'Resolution Scale Threshold', '16', {
+      _Ps3Option('scale_threshold', 'retroPs3ResolutionScaleThreshold', '16', {
         '1': '1x1',
-        '16': '16x16 (Default)',
+        '16': 'retroPs316x16Default',
         '64': '64x64',
         '128': '128x128',
         '160': '160x160',
@@ -142,16 +151,16 @@ const _sections = <String, ({String title, List<_Ps3Option> options})>{
         '640': '640x640',
         '1024': '1024x1024',
       }),
-      _Ps3Option('write_color_buffers', 'Write Color Buffers', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
+      _Ps3Option('write_color_buffers', 'retroPs3WriteColorBuffers', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
       }),
-      _Ps3Option('strict_rendering', 'Strict Rendering Mode', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
-      }, detail: 'Some games require this for correct rendering.'),
-      _Ps3Option('stretch_to_display', 'Stretch to Display Area', 'disabled', {
-        'disabled': 'Disabled',
+      _Ps3Option('strict_rendering', 'retroPs3StrictRenderingMode', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
+      }, detail: 'retroPs3StrictRenderingDetail'),
+      _Ps3Option('stretch_to_display', 'retroPs3StretchToDisplayArea', 'disabled', {
+        'disabled': 'retroPs3Disabled',
         'enabled': '16:9',
         '16:10': '16:10',
         '21:9': '21:9',
@@ -159,77 +168,84 @@ const _sections = <String, ({String title, List<_Ps3Option> options})>{
         '4:3': '4:3',
         '5:4': '5:4',
       }),
-      _Ps3Option('host_gpu_labels', 'Allow Host GPU Labels', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
+      _Ps3Option('host_gpu_labels', 'retroPs3AllowHostGPULabels', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
       }),
-      _Ps3Option('disable_blit_upscaling', 'Disable Blit Engine Upscaling', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
+      _Ps3Option('disable_blit_upscaling', 'retroPs3DisableBlitEngineUpscaling', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
       }),
-      _Ps3Option('emulate_depth_compare', 'Emulate Special Depth Comparison', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
+      _Ps3Option('emulate_depth_compare', 'retroPs3EmulateSpecialDepthComparison', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
       }),
-      _Ps3Option('force_hw_msaa_resolve', 'Force Hardware MSAA Resolve', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
+      _Ps3Option('force_hw_msaa_resolve', 'retroPs3ForceHardwareMSAAResolve', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
       }),
-      _Ps3Option('handle_tiled_memory', 'Handle RSX Memory Tiling', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
+      _Ps3Option('handle_tiled_memory', 'retroPs3HandleRSXMemoryTiling', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
       }),
-      _Ps3Option('read_depth_buffers', 'Read Depth Buffers', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
+      _Ps3Option('read_depth_buffers', 'retroPs3ReadDepthBuffers', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
       }),
-      _Ps3Option('read_color_buffers', 'Read Color Buffers', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
+      _Ps3Option('read_color_buffers', 'retroPs3ReadColorBuffers', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
       }),
-      _Ps3Option('write_depth_buffers', 'Write Depth Buffers', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
+      _Ps3Option('write_depth_buffers', 'retroPs3WriteDepthBuffers', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
       }),
     ],
   ),
   'graphics-textures': (
-    title: 'Textures & Shaders',
+    title: 'retroPs3TexturesShaders',
     options: [
-      _Ps3Option('shader_mode', 'Shader Mode', 'async', {
-        'async': 'Async (Recommended)',
-        'async_interpreter': 'Async with Shader Interpreter (no stalls)',
-        'async_recompiler': 'Async with Recompiler',
-        'interpreter': 'Shader Interpreter only',
-        'sync': 'Synchronous',
+      _Ps3Option('shader_mode', 'retroPs3ShaderMode', 'async', {
+        'async': 'retroPs3AsyncRecommended',
+        'async_interpreter': 'retroPs3AsyncWithShaderInterpreter',
+        'async_recompiler': 'retroPs3AsyncWithRecompiler',
+        'interpreter': 'retroPs3ShaderInterpreterOnly',
+        'sync': 'retroPs3Synchronous',
       }),
-      _Ps3Option('shader_quality', 'Shader Quality', 'high', {'low': 'Low', 'high': 'High', 'ultra': 'Ultra'}),
-      _Ps3Option('async_texture_streaming', 'Asynchronous Texture Streaming', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
+      _Ps3Option('shader_quality', 'retroPs3ShaderQuality', 'high', {
+        'low': 'retroPs3Low',
+        'high': 'retroPs3High',
+        'ultra': 'retroPs3Ultra',
       }),
-      _Ps3Option('disable_vertex_cache', 'Disable Vertex Cache', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
+      _Ps3Option('async_texture_streaming', 'retroPs3AsynchronousTextureStreaming', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
       }),
-      _Ps3Option('use_rebar', 'Use Re-BAR Memory for GPU Uploads', 'enabled', {
-        'enabled': 'Enabled',
-        'disabled': 'Disabled',
+      _Ps3Option('disable_vertex_cache', 'retroPs3DisableVertexCache', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
+      }),
+      _Ps3Option('use_rebar', 'retroPs3UseReBARMemoryForGPUUploads', 'enabled', {
+        'enabled': 'retroPs3Enabled',
+        'disabled': 'retroPs3Disabled',
       }),
     ],
   ),
   'graphics-timing': (
-    title: 'Frame Timing',
+    title: 'retroPs3FrameTiming',
     options: [
-      _Ps3Option('multithreaded_rsx', 'Multithreaded RSX', 'disabled', {'disabled': 'Disabled', 'enabled': 'Enabled'}),
-      _Ps3Option('rsx_fifo_accuracy', 'RSX FIFO Accuracy', 'atomic', {
-        'fast': 'Fast',
-        'atomic': 'Atomic',
-        'atomic_ordered': 'Ordered & Atomic',
+      _Ps3Option('multithreaded_rsx', 'retroPs3MultithreadedRSX', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
+      }),
+      _Ps3Option('rsx_fifo_accuracy', 'retroPs3RSXFIFOAccuracy', 'atomic', {
+        'fast': 'retroPs3Fast',
+        'atomic': 'retroPs3Atomic',
+        'atomic_ordered': 'retroPs3OrderedAndAtomic',
         'as_ps3': 'PS3',
       }),
-      _Ps3Option('driver_wakeup_delay', 'Driver Wake-Up Delay', '0', {
-        '0': '0 (Default)',
+      _Ps3Option('driver_wakeup_delay', 'retroPs3DriverWakeUpDelay', '0', {
+        '0': 'retroPs30Default',
         '20': '20',
         '50': '50',
         '100': '100',
@@ -237,49 +253,49 @@ const _sections = <String, ({String title, List<_Ps3Option> options})>{
         '400': '400',
         '800': '800',
       }),
-      _Ps3Option('vblank_rate', 'VBlank Frequency', '60', {
+      _Ps3Option('vblank_rate', 'retroPs3VBlankFrequency', '60', {
         '50': '50 Hz (PAL)',
         '60': '60 Hz (NTSC)',
         '120': '120 Hz',
         '144': '144 Hz',
         '240': '240 Hz',
-        'list': 'From List',
+        'list': 'retroPs3FromList',
       }),
     ],
   ),
   'cpu': (
-    title: 'CPU',
+    title: 'retroPs3CPU',
     options: [
-      _Ps3Option('ppu_decoder', 'PPU Decoder', 'llvm', {
-        'llvm': 'Recompiler (LLVM)',
-        'interpreter': 'Interpreter (static)',
+      _Ps3Option('ppu_decoder', 'retroPs3PPUDecoder', 'llvm', {
+        'llvm': 'retroPs3RecompilerLLVM',
+        'interpreter': 'retroPs3InterpreterStatic',
       }),
-      _Ps3Option('spu_decoder', 'SPU Decoder', 'llvm', {
-        'llvm': 'Recompiler (LLVM)',
-        'asmjit': 'Recompiler (ASMJIT)',
-        'dynamic': 'Interpreter (dynamic)',
-        'interpreter': 'Interpreter (static)',
+      _Ps3Option('spu_decoder', 'retroPs3SPUDecoder', 'llvm', {
+        'llvm': 'retroPs3RecompilerLLVM',
+        'asmjit': 'retroPs3RecompilerASMJIT',
+        'dynamic': 'retroPs3InterpreterDynamic',
+        'interpreter': 'retroPs3InterpreterStatic',
       }),
-      _Ps3Option('llvm_precompilation', 'PPU/SPU LLVM Precompilation', 'enabled', {
-        'enabled': 'Enabled',
-        'disabled': 'Disabled',
+      _Ps3Option('llvm_precompilation', 'retroPs3PPUSPULLVMPrecompilation', 'enabled', {
+        'enabled': 'retroPs3Enabled',
+        'disabled': 'retroPs3Disabled',
       }),
     ],
   ),
   'scheduling': (
-    title: 'Scheduling',
+    title: 'retroPs3Scheduling',
     options: [
-      _Ps3Option('preferred_spu_threads', 'Preferred SPU Threads', '0', {
-        '0': 'Auto',
+      _Ps3Option('preferred_spu_threads', 'retroPs3PreferredSPUThreads', '0', {
+        '0': 'retroPs3Auto',
         '1': '1',
         '2': '2',
         '3': '3',
         '4': '4',
         '5': '5',
         '6': '6',
-      }, detail: 'Auto lets RPCS3 choose.'),
-      _Ps3Option('llvm_threads', 'PPU/SPU LLVM Compiler Threads', '0', {
-        '0': 'Auto',
+      }, detail: 'retroPs3PreferredSpuThreadsDetail'),
+      _Ps3Option('llvm_threads', 'retroPs3PPUSPULLVMCompilerThreads', '0', {
+        '0': 'retroPs3Auto',
         '1': '1',
         '2': '2',
         '3': '3',
@@ -287,8 +303,8 @@ const _sections = <String, ({String title, List<_Ps3Option> options})>{
         '6': '6',
         '8': '8',
       }),
-      _Ps3Option('shader_compiler_threads', 'Shader Compiler Threads', 'auto', {
-        'auto': 'Auto',
+      _Ps3Option('shader_compiler_threads', 'retroPs3ShaderCompilerThreads', 'auto', {
+        'auto': 'retroPs3Auto',
         '1': '1',
         '2': '2',
         '3': '3',
@@ -299,28 +315,31 @@ const _sections = <String, ({String title, List<_Ps3Option> options})>{
     ],
   ),
   'io': (
-    title: 'I/O & Cache',
+    title: 'retroPs3IOCache',
     options: [
-      _Ps3Option('emulate_hdd_speed', 'Emulate HDD Read Speed', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
-      }, detail: 'Use for games that need original hard-drive timing.'),
-      _Ps3Option('emulate_bdvd_speed', 'Emulate BD-ROM Read Speed', 'disabled', {
-        'disabled': 'Disabled',
-        'enabled': 'Enabled',
-      }, detail: 'Use for games that need original disc-drive timing.'),
-      _Ps3Option('disk_cache_size', 'Disk Cache Size', '1gb', {
-        'unlimited': 'Unlimited',
+      _Ps3Option('emulate_hdd_speed', 'retroPs3EmulateHDDReadSpeed', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
+      }, detail: 'retroPs3HddReadSpeedDetail'),
+      _Ps3Option('emulate_bdvd_speed', 'retroPs3EmulateBDROMReadSpeed', 'disabled', {
+        'disabled': 'retroPs3Disabled',
+        'enabled': 'retroPs3Enabled',
+      }, detail: 'retroPs3BdReadSpeedDetail'),
+      _Ps3Option('disk_cache_size', 'retroPs3DiskCacheSize', '1gb', {
+        'unlimited': 'retroPs3Unlimited',
         '1gb': '1 GB',
         '5gb': '5 GB',
-      }, detail: 'A lower limit can remove old game caches. Save files are separate.'),
-      _Ps3Option('spu_cache', 'SPU Cache', 'enabled', {'enabled': 'Enabled', 'disabled': 'Disabled'}),
+      }, detail: 'retroPs3DiskCacheDetail'),
+      _Ps3Option('spu_cache', 'retroPs3SPUCache', 'enabled', {
+        'enabled': 'retroPs3Enabled',
+        'disabled': 'retroPs3Disabled',
+      }),
     ],
   ),
   'audio': (
-    title: 'Audio',
+    title: 'retroPs3Audio',
     options: [
-      _Ps3Option('master_volume', 'Master Volume', '100', {
+      _Ps3Option('master_volume', 'retroPs3MasterVolume', '100', {
         '0': '0%',
         '10': '10%',
         '20': '20%',
@@ -336,33 +355,33 @@ const _sections = <String, ({String title, List<_Ps3Option> options})>{
     ],
   ),
   'system': (
-    title: 'System',
+    title: 'retroPs3System',
     options: [
-      _Ps3Option('language', 'System Language', 'english', {
-        'english': 'English',
-        'japanese': 'Japanese',
-        'french': 'French',
-        'spanish': 'Spanish',
-        'german': 'German',
-        'italian': 'Italian',
-        'dutch': 'Dutch',
-        'portuguese': 'Portuguese',
-        'russian': 'Russian',
-        'korean': 'Korean',
-        'chinese_trad': 'Chinese (Traditional)',
-        'chinese_simp': 'Chinese (Simplified)',
+      _Ps3Option('language', 'retroPs3SystemLanguage', 'english', {
+        'english': 'retroPs3English',
+        'japanese': 'retroPs3Japanese',
+        'french': 'retroPs3French',
+        'spanish': 'retroPs3Spanish',
+        'german': 'retroPs3German',
+        'italian': 'retroPs3Italian',
+        'dutch': 'retroPs3Dutch',
+        'portuguese': 'retroPs3Portuguese',
+        'russian': 'retroPs3Russian',
+        'korean': 'retroPs3Korean',
+        'chinese_trad': 'retroPs3ChineseTraditional',
+        'chinese_simp': 'retroPs3ChineseSimplified',
       }),
-      _Ps3Option('license_area', 'Console Region', 'usa', {
-        'usa': 'SCEA (Americas)',
-        'eu': 'SCEE (Europe, Oceania)',
-        'jp': 'SCEJ (Japan)',
-        'hk': 'SCEH (Hong Kong, Southeast Asia)',
-        'kr': 'SCEK (Korea)',
-        'cn': 'SCH (China)',
+      _Ps3Option('license_area', 'retroPs3ConsoleRegion', 'usa', {
+        'usa': 'retroPs3SCEAAmericas',
+        'eu': 'retroPs3SCEEEuropeOceania',
+        'jp': 'retroPs3SCEJJapan',
+        'hk': 'retroPs3SCEHHongKongSoutheastAsia',
+        'kr': 'retroPs3SCEKKorea',
+        'cn': 'retroPs3SCHChina',
       }),
-      _Ps3Option('enter_button', 'Enter Button Assignment', 'cross', {
-        'cross': 'Cross (Western)',
-        'circle': 'Circle (Japanese)',
+      _Ps3Option('enter_button', 'retroPs3EnterButtonAssignment', 'cross', {
+        'cross': 'retroPs3CrossWestern',
+        'circle': 'retroPs3CircleJapanese',
       }),
     ],
   ),

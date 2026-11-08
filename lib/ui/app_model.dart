@@ -8,7 +8,7 @@ import 'dart:ui' as ui show Image;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Color;
-import 'package:flutter/services.dart' show LogicalKeyboardKey;
+import 'package:flutter/services.dart' show LogicalKeyboardKey, PlatformException;
 import 'package:path/path.dart' as p;
 
 import '../core/audio/atrac9.dart';
@@ -3092,7 +3092,7 @@ class AppModel extends ChangeNotifier {
   Future<void> addGamesFolder({RetroPlatform? console}) async {
     final label = console == null ? null : ManagedRetro.platformName(console);
     final folder = await services.pickFolder?.call(
-      label == null ? T.text('chooseFolder') : 'Choose your $label games folder',
+      label == null ? T.text('chooseFolder') : T.format('retroChooseGamesFolder', [label]),
     );
     if (folder == null) return;
     final alreadyAdded = preferences.gamesFolders.any((known) => p.equals(known, folder));
@@ -3109,11 +3109,7 @@ class AppModel extends ChangeNotifier {
     }
     if (console != null) {
       final found = retroGamesInFolder(console, folder).isNotEmpty;
-      show(
-        found
-            ? '$label games folder ready.'
-            : 'No playable $label games found here yet. Extract any archives before playing.',
-      );
+      show(found ? T.format('retroGamesFolderReady', [label!]) : T.format('retroNoGamesFound', [label!]));
     }
   }
 
@@ -3905,7 +3901,7 @@ class AppModel extends ChangeNotifier {
 
   Future<bool> chooseManagedBios(RetroPlatform platform) async {
     final label = ManagedRetro.platformName(platform);
-    final selected = await services.pickFile?.call('Select your $label BIOS', ['bin', 'rom', 'rom0']);
+    final selected = await services.pickFile?.call(T.format('retroSelectBios', [label]), ['bin', 'rom', 'rom0']);
     if (selected == null) return false;
     await _managedRetro.importBios(platform, selected);
     preferences.retroBiosSources[platform.name] = selected;
@@ -3934,20 +3930,24 @@ class AppModel extends ChangeNotifier {
     managedSetupConsole = platform;
     try {
       final installed = managed.isInstalled(platform);
-      if (!installed || platform == RetroPlatform.ps3) await _installManagedCore(managed, platform);
+      await _installManagedCore(managed, platform);
       if (platform == RetroPlatform.ps3) {
-        await _downloadPs3Firmware(managed);
-      } else if (!managed.hasBios(platform)) {
-        if (!installed) {
-          show('Select your $label BIOS to continue setup.');
+        if (!managed.hasPs3Firmware && !managed.hasPs3FirmwarePackage) {
+          show(T.text('retroPs3FirmwareRequired'));
           return;
         }
-        _setRetroSetup('Select your $label BIOS');
+      } else if (!managed.hasBios(platform)) {
+        if (!installed) {
+          show(T.format('retroBiosRequired', [label]));
+          return;
+        }
+        _setRetroSetup(T.format('retroSelectBios', [label]));
         if (!await chooseManagedBios(platform)) return;
       }
-      show('$label emulator ready. Add games now or finish setup.');
+      show(T.format('retroEmulatorReady', [label]));
     } catch (error) {
-      show('$label setup failed: $error');
+      debugPrint('Emulator setup failed for $label: $error');
+      show(error is ManagedPackageException ? _managedPackageMessage(error) : T.format('retroSetupFailed', [label]));
     } finally {
       managedSetupConsole = null;
       _setRetroSetup(null);
@@ -3960,25 +3960,45 @@ class AppModel extends ChangeNotifier {
 
   Future<void> _installManagedCore(ManagedRetro managed, RetroPlatform platform) async {
     final label = ManagedRetro.platformName(platform);
-    _setRetroSetup('Preparing $label emulator');
+    _setRetroSetup(T.format('retroPreparingEmulator', [label]));
     await managed.install(
       platform,
       progress: (bytes, total) => _setRetroSetup(
-        'Installing $label emulator',
+        T.format('retroInstallingEmulator', [label]),
         percent: total > 0 ? (bytes * 100 ~/ total).clamp(0, 100) : null,
       ),
     );
   }
 
-  Future<void> _downloadPs3Firmware(ManagedRetro managed) async {
-    _setRetroSetup('Checking PS3 firmware');
-    await managed.installPs3Firmware(
-      progress: (bytes, total) =>
-          _setRetroSetup('Downloading PS3 firmware', percent: total > 0 ? (bytes * 100 ~/ total).clamp(0, 100) : null),
-    );
-  }
+  String _managedPackageMessage(ManagedPackageException error) => T.text(switch (error.problem) {
+    ManagedPackageProblem.missing => 'retroCorePackageMissing',
+    ManagedPackageProblem.invalid => 'retroCorePackageInvalid',
+  });
 
-  bool get managedPs3FirmwareDownloaded => _managedRetro.hasPs3FirmwarePackage;
+  bool get managedPs3FirmwareSelected => _managedRetro.hasPs3FirmwarePackage;
+
+  Future<void> chooseManagedPs3Firmware() async {
+    if (!managedRetroAvailable || managedSetupConsole != null || starting != null || running != null) return;
+    final managed = _managedRetro;
+    if (!managed.isInstalled(RetroPlatform.ps3) || managed.hasPs3Firmware) return;
+    managedSetupConsole = RetroPlatform.ps3;
+    try {
+      final selected = await services.pickFile?.call(T.text('retroPs3FirmwareSelect'), ['pup']);
+      if (selected == null) return;
+      _setRetroSetup(T.text('retroPs3FirmwareImporting'));
+      await managed.importPs3Firmware(selected);
+      show(T.text('retroPs3FirmwareSelected'));
+    } on FormatException {
+      show(T.text('retroPs3FirmwareInvalid'));
+    } on PlatformException {
+      show(T.text('retroPs3FirmwarePickerFailed'));
+    } on FileSystemException {
+      show(T.text('retroPs3FirmwareCopyFailed'));
+    } finally {
+      managedSetupConsole = null;
+      _setRetroSetup(null);
+    }
+  }
 
   Future<void> _playRetro(
     Game game,
@@ -4015,6 +4035,11 @@ class AppModel extends ChangeNotifier {
       return;
     }
 
+    if (ps3 && managed != null && !managed.hasPs3Firmware && !managed.hasPs3FirmwarePackage) {
+      show(T.text('retroPs3FirmwareRequired'));
+      return;
+    }
+
     final settled = Completer<void>();
     _retroSettled = settled;
     final launchTime = Stopwatch()..start();
@@ -4026,14 +4051,13 @@ class AppModel extends ChangeNotifier {
         final label = ManagedRetro.platformName(disc.platform);
         if (ps3) {
           await _installManagedCore(managed, disc.platform);
-          await _downloadPs3Firmware(managed);
         } else if (!managed.hasBios(disc.platform)) {
-          _setRetroSetup('Select your $label BIOS');
+          _setRetroSetup(T.format('retroSelectBios', [label]));
           if (!await chooseManagedBios(disc.platform)) {
             starting = null;
             if (overlay == Layer.quickMenu) overlay = null;
             _setRetroSetup(null);
-            show('Select a $label BIOS to play ${game.name}.');
+            show(T.format('retroBiosRequiredForGame', [label, game.name]));
             return;
           }
         }
@@ -4223,7 +4247,7 @@ class AppModel extends ChangeNotifier {
       _retroSetupDetail = null;
       _retroSetupPercent = null;
       if (running == null && overlay == Layer.quickMenu) overlay = null;
-      show('${T.text('startFailed')}: $error');
+      show(error is ManagedPackageException ? _managedPackageMessage(error) : '${T.text('startFailed')}: $error');
     } finally {
       if (booted != null && !booted.isCompleted) booted.complete(null);
       if (identical(_retroSettled, settled)) _retroSettled = null;

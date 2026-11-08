@@ -18,12 +18,28 @@ void main() {
     expect(managed.isInstalled(RetroPlatform.ps3), isFalse);
     await expectLater(
       ManagedRetro(managed.root).install(RetroPlatform.ps3),
-      throwsA(isA<FormatException>().having((error) => error.message, 'message', contains('verified RPCS3 package'))),
+      throwsA(
+        isA<FormatException>().having((error) => error.message, 'message', contains('verified emulator packages')),
+      ),
     );
     await expectLater(managed.install(RetroPlatform.ps3), throwsFormatException);
     File(p.join(packages.path, 'rpcs3_libretro.dll.zip')).writeAsBytesSync([0, 1, 2]);
     await expectLater(managed.install(RetroPlatform.ps3), throwsFormatException);
     expect(managed.isInstalled(RetroPlatform.ps3), isFalse);
+  });
+
+  test('PS1 and PS2 reject an unverified package without contacting a server', () async {
+    final root = Directory.systemTemp.createTempSync('anyps5-managed-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final packages = Directory(p.join(root.path, 'packages'))..createSync();
+    final managed = ManagedRetro(p.join(root.path, 'emulators'), packageDirectory: packages.path);
+    for (final platform in [RetroPlatform.ps1, RetroPlatform.ps2]) {
+      final name = ManagedRetro.libraryName(platform);
+      final archive = File(p.join(packages.path, '$name.zip'))..writeAsBytesSync([0, 1, 2]);
+      await expectLater(managed.install(platform), throwsFormatException);
+      expect(managed.isInstalled(platform), isFalse);
+      expect(await archive.exists(), isTrue);
+    }
   });
 
   test('an existing PS3 DLL still needs a matching digest', () async {
@@ -72,6 +88,36 @@ void main() {
     expect(await File(p.join(emulatorRoot, name)).readAsBytes(), bytes);
     await zip.delete();
     await managed.install(RetroPlatform.ps3);
+  });
+
+  test('user-supplied PS3 firmware is staged and rejected replacements preserve it', () async {
+    final temp = Directory.systemTemp.createTempSync('anyps5-firmware-');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final managed = ManagedRetro(p.join(temp.path, 'emulators'));
+    final source = File(p.join(temp.path, 'downloaded.pup'));
+    final header = ByteData(113)
+      ..setUint64(0, 0x5343455546000000)
+      ..setUint64(24, 1)
+      ..setUint64(32, 112)
+      ..setUint64(40, 1);
+    final bytes = header.buffer.asUint8List();
+    expect(managed.hasPs3FirmwarePackage, isFalse);
+    await source.writeAsBytes(bytes);
+    await managed.importPs3Firmware(source.path);
+    expect(managed.hasPs3FirmwarePackage, isTrue);
+    expect(managed.hasPs3Firmware, isFalse);
+
+    final imported = File(p.join(managed.systemPath, 'PS3UPDAT.PUP'));
+    expect(await imported.readAsBytes(), bytes);
+    for (final invalid in [
+      [0],
+      bytes.sublist(0, 112),
+    ]) {
+      await source.writeAsBytes(invalid);
+      await expectLater(managed.importPs3Firmware(source.path), throwsFormatException);
+      expect(await imported.readAsBytes(), bytes);
+    }
+    expect(await Directory(managed.systemPath).list().length, 1);
   });
 
   test('a rejected BIOS replacement preserves the private copy', () async {

@@ -12,19 +12,25 @@ to configure a library later.
 2. Select the embedded emulator. PS1 uses SwanStation and PS2 uses LRPS2.
    PS3 uses a verified RPCS3 Libretro package and needs a Vulkan driver.
 3. For PS1 or PS2, select a BIOS dumped from your console. The launcher
-   imports a private copy. PS3 Setup downloads Sony's official firmware
-   after the RPCS3 package has been verified.
+   imports a private copy. For PS3, use **PS3 firmware** in Setup to select
+   your own `PS3UPDAT.PUP`. The launcher stages a private copy. RPCS3
+   validates and installs it when a PS3 game first starts.
 4. Optionally select a games folder. Setup shows its path and a preview
    of the recognized games. **Finish setup** returns to Home, including
    when the folder is empty.
 
 [Managed setup](../lib/core/managed_retro.dart) installs Windows x64 cores
-into launcher storage. The PS1 and PS2 prototype uses Libretro Buildbot
-over HTTPS, validates the archive's expected size and the indexed DLL CRC,
-and checks SHA-256 for known archive revisions. Before a general release,
-the maintainers should decide how to pin, verify and license core
-distribution. Cores, games, BIOS images, firmware and memory cards are
-separate from the launcher source.
+into launcher storage. The review build reads ZIPs from the absolute folder
+in `ANYPS5_MANAGED_CORE_PACKAGES` and requires repository-pinned SHA-256
+values for both the ZIP and DLL. An installed DLL is rechecked before use. Select the emulator in Setup
+to verify or repair its installed copy.
+For PS1, use `swanstation_libretro.dll.zip` (SwanStation 1.0.0 631f0fb).
+For PS2, use `pcsx2_libretro.dll.zip` (ParaLLEl PS2 v2.0.0-da5b07e).
+The small official Buildbot ZIPs have rolling URLs. Their hashes identify
+the exact artifacts tested here. An immutable public distribution source
+and the licensing review are still needed for a one-click public install.
+Cores, games, BIOS images, firmware and memory cards stay separate from
+the launcher source.
 
 ## Library and media
 
@@ -139,8 +145,8 @@ $env:ANYPS5_PS3_CORE_DIGESTS = (Get-Content "$env:ANYPS5_MANAGED_CORE_PACKAGES/p
 
 Finish normal launcher onboarding. For a PS3-only test, skip the games
 folder and PS5 engine steps and choose Offline. Open
-**Settings → Emulators → PS3 → Setup**, install the core and let the
-launcher fetch the checksum-verified official Sony firmware. Add a folder
+**Settings → Emulators → PS3 → Setup**, install the core and select your local
+`PS3UPDAT.PUP` through the firmware picker. Add a folder
 containing your extracted PS3 disc and finish setup. On the first launch,
 check compilation progress, the embedded viewport and PS/Guide or Escape
 opening the Quick Menu. Resume should return to the same session.
@@ -148,7 +154,20 @@ opening the Quick Menu. Resume should return to the same session.
 For a public one-click install, the maintainers need to approve the RPCS3 fork
 and patch, where to publish the package and its corresponding source and
 notices, and how to pin and update the downloadable ZIP and DLL. The reviewer
-workflow uses a local build and explicit hashes. It needs no published binary.
+workflow uses a local build and explicit hashes. A clean source build
+produced the ZIP, installed in a new profile, and loaded as Libretro API 1.
+The import path staged an existing PUP with an identical SHA-256.
+First game boot with that rebuilt DLL still needs a runtime check.
+
+The stock Windows x64 Buildbot RPCS3 core (74b3fa3, DLL SHA-256
+`27ad0dccc2b9c464b7fa78c60cc4ce1717e2c31ca31836f337e2981bb9efe64b`)
+reported Libretro API 1 and booted LittleBigPlanet GOTY through its intro
+in RetroArch. That run logged an IPv4 wildcard UDP bind even with
+network status disabled. The [stock core source](https://github.com/WizzardSK/rpcs3-libretro/tree/74b3fa37beb294418230b1f039bab4de97f18479)
+also lacks the preview's launcher compilation messages and disconnect
+handling for unused pads. The stock DLL has not passed an embedded
+AnyPS5 play test. These findings leave a choice between upstream changes
+and approving the patched core for distribution.
 
 The [Vulkan bridge](../windows/runner/retro_vulkan_video.cpp) presents the
 RPCS3 frame to Flutter and rejects synchronization it cannot support.
@@ -179,11 +198,32 @@ checks, not a compatibility matrix. The upstream draft is a separate
 port and should be tested on its own commit.
 
 The [package installer tests](../test/core/managed_retro_test.dart) cover
-missing packages, invalid pins, ZIP and DLL mismatches, and retrying with
-an installed core. Use a new profile root for the manual PS3 acceptance run.
+missing packages, invalid pins, ZIP and DLL mismatches, retries, and
+invalid firmware replacements. The [setup flow tests](../test/ui/retro_settings_setup_test.dart)
+exercise picker cancellation and finishing setup after selecting a local PUP.
+The Windows focused retro suite passed 73 tests after these changes. Use a new profile root for the manual PS3 acceptance run.
 
-Start review with Windows PS1 and PS2 library, setup and embedded
-controls. Review the PS3 host and packaging separately. Keep core-license
-compatibility, reproducible packages and complete upstream CI as release
-gates. PS5 and Linux behavior require regression coverage on the proposed
-branch.
+Split [the review draft](https://github.com/AnyTogether/AnyPS5-Desktop/pull/84#issuecomment-6720973129)
+into three separately tested changes. Start with the library rows and
+user-installed standalone emulators on Windows and Linux. Follow with
+embedded PS1/PS2 and the native host on both Flutter platforms. Put the
+Vulkan bridge, PS3 firmware picker and RPCS3 package decision in the third
+change. The maintainer owns the companion Swift port for macOS. Each
+change needs its own CI result. Core-license compatibility and approved
+immutable package hosting remain release gates.
+
+The Linux embedded host should share the Libretro worker, save handling,
+options, and input with the Windows host. The platform adapters own
+dynamic loading, texture delivery, sound, and hardware contexts. Use a
+worker-owned EGL desktop OpenGL context and RGBA frame readback for PS1
+and PS2, a Flutter Linux pixel-buffer texture, and bounded PulseAudio
+output. Prefer OpenGL 4.2 or check the extensions ParaLLEl PS2 needs on a
+3.3 context. This keeps the Vulkan bridge in the PS3 change.
+
+Both pinned-build candidates for Linux PS1 and PS2 loaded and returned
+Libretro API 1 on Ubuntu 22.04. That establishes loader compatibility.
+The embedded Linux runner still needs a build and offscreen tests of
+video, audio, input, and teardown. Run a fake-core lifecycle test before
+qualifying real cores. The current stock PS3 Linux candidate needs
+OpenGL, EGL, Vulkan, ALSA and a libstdc++ providing GLIBCXX_3.4.32. Its
+loader test stopped at the missing libOpenGL.so.0 dependency.

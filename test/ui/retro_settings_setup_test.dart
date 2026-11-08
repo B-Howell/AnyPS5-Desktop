@@ -54,6 +54,45 @@ void main() {
     expect(model.spot?.category, 'emulators');
   }, skip: Abi.current() != Abi.windowsX64);
 
+  test('PS3 setup asks for a local PUP and allows finishing after selection', () async {
+    String? selected;
+    final fixture = makeFixture(
+      system: HostSystem.windows,
+      pickFile: (title, extensions) async {
+        expect(title, 'Select PS3 firmware');
+        expect(extensions, ['pup']);
+        return selected;
+      },
+    );
+    final model = fixture.model;
+    addTearDown(() {
+      model.dispose();
+      fixture.dispose();
+    });
+    final emulator = _installFixtureCore(model, RetroPlatform.ps3);
+    List<PanelRow> rows() => model.retroSettings.categories(RetroPlatform.ps3).first.rows;
+    final firmware = rows().singleWhere((row) => row.id == 'retro-ps3-firmware');
+    expect(firmware.kind, isA<ActionRow>());
+    expect(rows().any((row) => row.id == 'retro-ps3-finish-setup'), isFalse);
+    await model.chooseManagedPs3Firmware();
+    expect(model.managedPs3FirmwareSelected, isFalse);
+    expect(model.managedSetupConsole, isNull);
+
+    final source = File(p.join(fixture.temp.path, 'selected.pup'));
+    final header = ByteData(113)
+      ..setUint64(0, 0x5343455546000000)
+      ..setUint64(24, 1)
+      ..setUint64(32, 112)
+      ..setUint64(40, 1);
+    await source.writeAsBytes(header.buffer.asUint8List());
+    selected = source.path;
+    await model.chooseManagedPs3Firmware();
+    expect(File(p.join(emulator.path, 'system', 'PS3UPDAT.PUP')).existsSync(), isTrue);
+    expect(model.managedPs3FirmwareSelected, isTrue);
+    expect(model.managedRetroStatus(RetroPlatform.ps3).systemReady, isFalse);
+    expect(rows().last.id, 'retro-ps3-finish-setup');
+  }, skip: Abi.current() != Abi.windowsX64);
+
   test('managed setup can finish with an empty or previously added games folder', () async {
     late Fixture fixture;
     String? selectedBios;
@@ -84,7 +123,7 @@ void main() {
 
     _installFixtureCore(model, RetroPlatform.ps1);
     expect(rows().map((row) => row.title), ['SwanStation (DuckStation-based)', 'BIOS selection']);
-    await model.setupManagedRetro(RetroPlatform.ps1);
+    await model.chooseManagedBios(RetroPlatform.ps1);
     expect(picks, ['Select your PS1 BIOS']);
     expect(rows().any((row) => row.id.endsWith('-games-folder')), isFalse);
 
@@ -92,7 +131,7 @@ void main() {
     final image = Uint8List(512 * 1024)..[0] = 1;
     await bios.writeAsBytes(image);
     selectedBios = bios.path;
-    await model.setupManagedRetro(RetroPlatform.ps1);
+    await model.chooseManagedBios(RetroPlatform.ps1);
     expect(model.managedRetroStatus(RetroPlatform.ps1).systemReady, isTrue);
     expect(model.preferences.gamesFolders, isEmpty);
     expect(rows().map((row) => row.title), [

@@ -2,11 +2,18 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart' show getCrc32;
 import 'package:path/path.dart' as p;
 
 import 'game_library.dart';
 import 'toolkit_download.dart';
+
+enum ManagedPackageProblem { missing, invalid }
+
+class ManagedPackageException extends FormatException {
+  const ManagedPackageException(this.problem, String message) : super(message);
+
+  final ManagedPackageProblem problem;
+}
 
 class ManagedRetro {
   ManagedRetro(this.root, {this.packageDirectory, this.ps3CoreDigests});
@@ -33,65 +40,52 @@ class ManagedRetro {
 
   Future<void> install(RetroPlatform platform, {void Function(int, int)? progress}) async {
     final name = libraryName(platform);
-    final installed = isInstalled(platform);
-    if (platform == RetroPlatform.ps3) {
-      final (archiveDigest, libraryDigest) = _ps3Digests();
-      if (installed && await AssetDownload.sha256Of(p.join(root, name)) == libraryDigest) return;
-      final directory = packageDirectory;
-      if (directory == null) {
-        throw const FormatException('The PS3 preview requires a verified RPCS3 package.');
-      }
-      final archive = File(p.join(directory, '$name.zip'));
-      if (!p.isAbsolute(directory) || !archive.existsSync()) {
-        throw const FormatException('The configured PS3 emulator package is missing.');
-      }
-      if (await AssetDownload.sha256Of(archive.path) != archiveDigest) {
-        throw const FormatException('The configured PS3 emulator package did not pass verification.');
-      }
-      final size = await archive.length();
-      await _publishCore(
-        name,
-        archive.path,
-        verify: (file) async {
-          if (await AssetDownload.sha256Of(file.path) != libraryDigest) {
-            throw const FormatException('The installed PS3 emulator did not pass verification.');
-          }
-        },
-      );
-      progress?.call(size, size);
-      return;
-    }
-    if (installed) return;
-    final url = Uri.https('buildbot.libretro.com', '/nightly/windows/x86_64/latest/$name.zip');
-    final (size, revision) = await _buildbotPackage(url);
-    final digest = switch (revision) {
-      0x356fa26d => 'b640a70f660fd0b5ca4adecad5c90281f481a46802a752b9f66e2aa2791474dc',
-      0xa7025679 => '1193159038bd8b77bbe099f1b1f46ff3add61ce6b44d6ec5a66611f0cbfe8c10',
-      _ => null,
+    final (archiveDigest, libraryDigest) = switch (platform) {
+      // Libretro Buildbot Windows x64, SwanStation 1.0.0 631f0fb.
+      RetroPlatform.ps1 => (
+        'b640a70f660fd0b5ca4adecad5c90281f481a46802a752b9f66e2aa2791474dc',
+        '1aaa621dab9f53b130ac29d17e9a12ea4c0df975d4b02b53faec3b52c717fd12',
+      ),
+      // Libretro Buildbot Windows x64, ParaLLEl PS2 v2.0.0-da5b07e.
+      RetroPlatform.ps2 => (
+        '1193159038bd8b77bbe099f1b1f46ff3add61ce6b44d6ec5a66611f0cbfe8c10',
+        '47ffaedbaa0d488039feda57d9c8e57ffd3fb97626e67af4780f9219e2bd901c',
+      ),
+      RetroPlatform.ps3 => _ps3Digests(),
     };
-    final zip = p.join(root, 'Downloads', '${revision.toRadixString(16)}-$name.zip');
-    await AssetDownload.fetch(
-      url,
-      zip,
-      size: size,
-      sha256: digest,
-      httpsOnly: true,
-      onProgress: (bytes) => progress?.call(bytes, size),
-    );
+    if (isInstalled(platform) && await AssetDownload.sha256Of(p.join(root, name)) == libraryDigest) return;
+
+    final directory = packageDirectory;
+    if (directory == null || !p.isAbsolute(directory)) {
+      throw const ManagedPackageException(
+        ManagedPackageProblem.missing,
+        'Configure an absolute directory with verified emulator packages.',
+      );
+    }
+    final archive = File(p.join(directory, '$name.zip'));
+    if (!await archive.exists()) {
+      throw const ManagedPackageException(ManagedPackageProblem.missing, 'The configured emulator package is missing.');
+    }
+    if (await AssetDownload.sha256Of(archive.path) != archiveDigest) {
+      throw const ManagedPackageException(
+        ManagedPackageProblem.invalid,
+        'The configured emulator package did not pass verification.',
+      );
+    }
+    final size = await archive.length();
     await _publishCore(
       name,
-      zip,
-      verify: (candidate) async {
-        var checksum = 0;
-        await for (final bytes in candidate.openRead()) {
-          checksum = getCrc32(bytes, checksum);
-        }
-        if (checksum != revision) {
-          await File(zip).delete();
-          throw const FormatException('The core did not match Libretro’s download index. Try again.');
+      archive.path,
+      verify: (file) async {
+        if (await AssetDownload.sha256Of(file.path) != libraryDigest) {
+          throw const ManagedPackageException(
+            ManagedPackageProblem.invalid,
+            'The installed emulator did not pass verification.',
+          );
         }
       },
     );
+    progress?.call(size, size);
   }
 
   (String, String) _ps3Digests() {
@@ -117,34 +111,6 @@ class ManagedRetro {
     }
   }
 
-  static Future<(int, int)> _buildbotPackage(Uri url) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
-    try {
-      final listing = await client.getUrl(url.resolve('.index-extended'));
-      listing.followRedirects = false;
-      final index = await listing.close().timeout(const Duration(seconds: 20));
-      if (index.statusCode != HttpStatus.ok) throw const FormatException('Libretro’s download index is unavailable.');
-      final text = await utf8.decoder.bind(index).join().timeout(const Duration(seconds: 20));
-      final name = url.pathSegments.last;
-      for (final line in const LineSplitter().convert(text)) {
-        final parts = line.trim().split(RegExp(r'\s+'));
-        if (parts.length != 3 || parts.last != name) continue;
-        final revision = int.tryParse(parts[1], radix: 16);
-        if (revision == null) break;
-        final head = await client.headUrl(url);
-        head.followRedirects = false;
-        final info = await head.close().timeout(const Duration(seconds: 20));
-        final size = info.contentLength;
-        await info.drain<void>();
-        if (info.statusCode == HttpStatus.ok && size > 0 && size <= 128 * 1024 * 1024) return (size, revision);
-        break;
-      }
-      throw FormatException('Libretro’s download index has no usable package for $name.');
-    } finally {
-      client.close(force: true);
-    }
-  }
-
   String get systemPath => p.join(root, 'system');
 
   bool get hasPs3Firmware => File(p.join(systemPath, 'rpcs3', 'dev_flash', 'vsh', 'module', 'vsh.self')).existsSync();
@@ -153,19 +119,38 @@ class ManagedRetro {
 
   bool get hasPs3FirmwarePackage => File(_ps3FirmwarePackage).existsSync();
 
-  Future<void> installPs3Firmware({void Function(int, int)? progress}) async {
-    if (hasPs3Firmware) return;
-    const size = 206197916;
-    await AssetDownload.fetch(
-      Uri.http(
-        'dus01.ps3.update.playstation.net',
-        '/update/ps3/image/us/2026_0318_a2b60b6ac1d2e49e230144345616927c/PS3UPDAT.PUP',
-      ),
-      _ps3FirmwarePackage,
-      size: size,
-      sha256: '158471fd834f8ea8036136b6aab43cd86c7ba73d79ca30e0af3c0fe0001cf365',
-      onProgress: (bytes) => progress?.call(bytes, size),
-    );
+  /// Stage a user-supplied PUP. RPCS3 validates and installs it on first boot.
+  Future<void> importPs3Firmware(String path) async {
+    final folder = await Directory(systemPath).create(recursive: true);
+    final stage = await folder.createTemp('firmware-');
+    try {
+      final candidate = await File(path).copy(p.join(stage.path, 'PS3UPDAT.PUP'));
+      final file = await candidate.open();
+      try {
+        final header = await file.read(48);
+        if (header.length != 48 || ascii.decode(header.take(8).toList(), allowInvalid: true) != 'SCEUF\x00\x00\x00') {
+          throw const FormatException('Invalid PS3 update header');
+        }
+        final fields = ByteData.sublistView(header);
+        final entryCount = fields.getUint64(24);
+        final headerSize = fields.getUint64(32);
+        final dataSize = fields.getUint64(40);
+        final length = await file.length();
+        if (entryCount <= 0 ||
+            headerSize < 48 ||
+            headerSize > length ||
+            entryCount > (headerSize - 48) ~/ 64 ||
+            dataSize <= 0 ||
+            dataSize > length - headerSize) {
+          throw const FormatException('Incomplete PS3 update package');
+        }
+      } finally {
+        await file.close();
+      }
+      await candidate.rename(_ps3FirmwarePackage);
+    } finally {
+      await stage.delete(recursive: true);
+    }
   }
 
   Directory _biosFolder(RetroPlatform platform) =>

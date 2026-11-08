@@ -13,6 +13,7 @@ import 'ps3_settings_model.dart';
 import 'retro_controller_settings.dart';
 import 'retro_graphics_settings.dart';
 import 'retro_quick_optimize.dart';
+import 'strings.dart';
 
 class RetroSettingsModel {
   RetroSettingsModel(this.app, {required void Function() refresh}) : _optimize = RetroQuickOptimize(app, refresh);
@@ -59,7 +60,7 @@ class RetroSettingsModel {
       id: '$prefix-program',
       title: '$name executable',
       detail: executable ?? 'Choose an existing portable installation.',
-      kind: inUse ? const InfoRow('In use') : ActionRow(() => unawaited(_chooseProgram(platform))),
+      kind: inUse ? InfoRow(T.text('retroEmulatorInUse')) : ActionRow(() => unawaited(_chooseProgram(platform))),
     );
     final settings = executable == null ? null : _read(executable, platform);
     final graphicsQueued = app.preferences.pendingRetroGraphics[settings?.file.path]?.isNotEmpty == true;
@@ -84,7 +85,7 @@ class RetroSettingsModel {
             if (platform == RetroPlatform.ps1)
               PanelRow(
                 id: '$prefix-bios-region',
-                title: 'BIOS region to configure',
+                title: T.text('retroBiosRegion'),
                 kind: ChoiceRow(['NTSC-U', 'NTSC-J', 'PAL'], _biosRegion, (index) {
                   _biosRegion = index;
                   app.show('Selected ${['NTSC-U', 'NTSC-J', 'PAL'][index]} BIOS slot.');
@@ -93,14 +94,14 @@ class RetroSettingsModel {
           if (executable != null && !inUse)
             PanelRow(
               id: '$prefix-bios',
-              title: 'Import console BIOS',
-              detail: 'Copy a BIOS file into the emulator profile.',
+              title: T.text('retroImportBios'),
+              detail: T.text('retroImportBiosDetail'),
               kind: ActionRow(() => unawaited(_chooseBios(platform, executable))),
             ),
           if (settings != null && !inUse && !graphicsQueued)
             PanelRow(
               id: '$prefix-add',
-              title: 'Add emulator setting',
+              title: T.text('retroMenuAddSetting'),
               detail: 'Use Section/Setting=value. Press Enter to save.',
               kind: TextRow(
                 _newOptions[platform] ?? '',
@@ -181,8 +182,8 @@ class RetroSettingsModel {
     final folder = app.retroSetupFolder(platform);
     return PanelRow(
       id: 'retro-${platform.name}-games-folder',
-      title: '$label games library folder',
-      detail: folder ?? 'Optional. Choose a folder for extracted games, or add one later.',
+      title: T.format('retroGamesFolder', [label]),
+      detail: folder ?? T.text('retroGamesFolderDetail'),
       previewGames: folder == null ? const [] : app.retroGamesInFolder(platform, folder),
       kind: ActionRow(() => unawaited(app.addGamesFolder(console: platform))),
     );
@@ -191,7 +192,7 @@ class RetroSettingsModel {
   List<PanelRow> _managedSetupRows(RetroPlatform platform) {
     final status = app.managedRetroStatus(platform);
     final ps3 = platform == RetroPlatform.ps3;
-    final ready = status.installed && (status.systemReady || (ps3 && app.managedPs3FirmwareDownloaded));
+    final ready = status.installed && (status.systemReady || (ps3 && app.managedPs3FirmwareSelected));
     final busy = app.managedSetupConsole != null || app.starting != null || app.running != null;
     final progress = app.managedSetupConsole == platform ? app.retroSetupProgress : null;
     final backend = switch (platform) {
@@ -202,35 +203,39 @@ class RetroSettingsModel {
     return [
       PanelRow(
         id: 'retro-${platform.name}-setup',
-        title: status.installed || progress != null ? backend : 'Install $backend',
-        detail: 'Runs inside AnyPS5.',
-        kind: !status.installed && progress == null
-            ? (busy ? const InfoRow('In use') : ActionRow(() => unawaited(app.setupManagedRetro(platform))))
-            : InfoRow(status.installed ? 'Installed' : 'Installing'),
+        title: status.installed || progress != null ? backend : T.format('retroInstallCore', [backend]),
+        detail: T.text(status.installed ? 'retroCoreVerifyDetail' : 'retroEmbeddedCoreDetail'),
+        kind: progress != null
+            ? InfoRow(T.text('retroCoreInstalling'))
+            : busy
+            ? InfoRow(T.text('retroEmulatorInUse'))
+            : ActionRow(() => unawaited(app.setupManagedRetro(platform))),
       ),
       if (progress != null)
         PanelRow(
           id: 'retro-${platform.name}-setup-progress',
           title: progress.label,
-          kind: InfoRow(progress.percent == null ? '' : '${progress.percent}%'),
+          kind: InfoRow(progress.percent == null ? '' : T.percent(progress.percent!)),
         ),
       if (status.installed)
         if (ps3)
           PanelRow(
             id: 'retro-ps3-firmware',
-            title: 'PS3 firmware',
-            detail: 'AnyPS5 downloads the firmware for you.',
-            kind: ready
-                ? const InfoRow('Ready')
-                : busy
-                ? const InfoRow('Preparing')
-                : ActionRow(() => unawaited(app.setupManagedRetro(platform))),
+            title: T.text('retroPs3Firmware'),
+            detail: status.systemReady
+                ? T.text('retroPs3FirmwareInstalled')
+                : app.managedPs3FirmwareSelected
+                ? T.text('retroPs3FirmwareSelected')
+                : T.text('retroPs3FirmwareDetail'),
+            kind: busy || status.systemReady
+                ? const InfoRow('')
+                : ActionRow(() => unawaited(app.chooseManagedPs3Firmware())),
           )
         else
           PanelRow(
             id: 'retro-${platform.name}-managed-bios',
-            title: 'BIOS selection',
-            detail: status.systemReady ? app.managedBiosPath(platform) : 'Select your console BIOS file.',
+            title: T.text('retroBiosSelection'),
+            detail: status.systemReady ? app.managedBiosPath(platform) : T.text('retroBiosSelectionDetail'),
             kind: busy ? const InfoRow('') : ActionRow(() => unawaited(_chooseManagedBios(platform))),
           ),
       if (ready) ...[
@@ -238,8 +243,8 @@ class RetroSettingsModel {
         if (app.running == null && app.starting == null)
           PanelRow(
             id: 'retro-${platform.name}-finish-setup',
-            title: 'Finish setup',
-            detail: 'Return to Home.',
+            title: T.text('retroFinishSetup'),
+            detail: T.text('retroFinishSetupDetail'),
             pinToBottom: true,
             kind: ActionRow(() => app.finishRetroSetup(platform)),
           ),
@@ -452,7 +457,7 @@ class RetroSettingsModel {
 
   Future<void> _chooseManagedBios(RetroPlatform platform) async {
     try {
-      if (await app.chooseManagedBios(platform)) app.show('Console BIOS imported.');
+      if (await app.chooseManagedBios(platform)) app.show(T.text('retroBiosImported'));
     } on Object catch (error) {
       app.show('Could not import BIOS: $error');
     }

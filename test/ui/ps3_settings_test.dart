@@ -22,10 +22,10 @@ void main() {
     );
     final rows = panels.expand((panel) => panel.rows).toList();
     expect(rows.singleWhere((row) => row.title == 'Renderer').kind, isA<InfoRow>());
-    final decoder = rows.singleWhere((row) => row.title == 'SPU Decoder');
+    final decoder = rows.singleWhere((row) => row.title == 'SPU decoder');
     expect(decoder.detail, contains('next launch'));
     expect((decoder.kind as ChoiceRow).options, contains('Recompiler (LLVM)'));
-    final diskCache = rows.singleWhere((row) => row.title == 'Disk Cache Size').kind as ChoiceRow;
+    final diskCache = rows.singleWhere((row) => row.title == 'Disk cache size').kind as ChoiceRow;
     expect(diskCache.options, isNot(contains('Wipe on Exit')));
 
     model.openSettingsCategory('emulators');
@@ -33,7 +33,7 @@ void main() {
     model.panelCommand(Command.select);
     expect(
       model.panelCategories().single.rows.map((row) => row.title),
-      containsAll(['Setup', 'Graphics', 'Performance & Compatibility', 'I/O', 'Audio', 'Advanced']),
+      containsAll(['Setup', 'Graphics', 'Performance & compatibility', 'I/O', 'Audio', 'Advanced']),
     );
   });
 

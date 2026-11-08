@@ -1,19 +1,21 @@
 part of 'app_model.dart';
 
 enum _EmulatorGroup {
-  setup('Setup'),
-  optimize('Optimize'),
-  graphics('Graphics'),
-  performance('Performance & Compatibility'),
-  controls('Controls'),
-  audio('Audio'),
-  io('I/O'),
-  storage('Saves & Storage'),
-  advanced('Advanced');
+  setup('retroMenuSetup'),
+  optimize('retroMenuOptimize'),
+  graphics('retroPs3Graphics'),
+  performance('retroMenuPerformance'),
+  controls('retroMenuControls'),
+  audio('retroPs3Audio'),
+  io('retroMenuIo'),
+  storage('retroMenuStorage'),
+  advanced('retroMenuAdvanced');
 
-  const _EmulatorGroup(this.label);
+  const _EmulatorGroup(this.textKey);
 
-  final String label;
+  final String textKey;
+
+  String get label => T.text(textKey);
 
   static _EmulatorGroup forSection(String section) {
     final key = section.toLowerCase();
@@ -55,7 +57,7 @@ class _EmulatorMenu {
 
   PanelCategory get entry => PanelCategory(
     id: 'emulators',
-    title: 'Emulators',
+    title: T.text('retroEmulators'),
     rows: [
       for (final platform in RetroPlatform.values)
         PanelRow(
@@ -70,8 +72,8 @@ class _EmulatorMenu {
         ),
       PanelRow(
         id: 'emulators-show-folders',
-        title: 'Show as folders',
-        detail: 'Group PS1, PS2 and PS3 games into console folders on Home.',
+        title: T.text('retroShowFolders'),
+        detail: T.text('retroShowFoldersDetail'),
         kind: ToggleRow(app.preferences.showRetroFolders, app.setShowRetroFolders, checkbox: true),
       ),
     ],
@@ -85,7 +87,8 @@ class _EmulatorMenu {
     for (final platform in RetroPlatform.values) {
       for (final group in _groups(platform).entries) {
         for (final section in group.value) {
-          final title = 'Emulators › ${_consoleTitle(platform, null)} › ${group.key.label} › ${_sectionTitle(section)}';
+          final title =
+              '${T.text('retroEmulators')} › ${_consoleTitle(platform, null)} › ${group.key.label} › ${_sectionTitle(section)}';
           yield PanelCategory(
             id: section.id,
             title: title,
@@ -172,11 +175,13 @@ class _EmulatorMenu {
         final setup = section.rows.where((row) => row.id != '$prefix-add').toList();
         final custom = section.rows.where((row) => row.id == '$prefix-add').toList();
         if (setup.isNotEmpty) {
-          (groups[_EmulatorGroup.setup] ??= []).add(PanelCategory(id: section.id, title: 'Setup', rows: setup));
+          (groups[_EmulatorGroup.setup] ??= []).add(
+            PanelCategory(id: section.id, title: T.text('retroMenuSetup'), rows: setup),
+          );
         }
         if (custom.isNotEmpty) {
           (groups[_EmulatorGroup.advanced] ??= []).add(
-            PanelCategory(id: '$prefix-custom', title: 'Add emulator setting', rows: custom),
+            PanelCategory(id: '$prefix-custom', title: T.text('retroMenuAddSetting'), rows: custom),
           );
         }
         continue;
@@ -207,8 +212,8 @@ class _EmulatorMenu {
               detail: game == null || group == _EmulatorGroup.optimize
                   ? null
                   : platform == RetroPlatform.ps3 && group != _EmulatorGroup.setup
-                  ? 'Settings for this game'
-                  : 'Shared console settings',
+                  ? T.text('retroGameSettings')
+                  : T.text('retroConsoleSettings'),
               kind: ActionRow(() => _push(() => _group(platform, game, group))),
             ),
       ],
@@ -217,19 +222,19 @@ class _EmulatorMenu {
 
   PanelRow tuningLink(EmbeddedRetroGame session) => PanelRow(
     id: 'emulator-tune-game',
-    title: 'Tune This Game',
-    detail: 'Compare two samples of the same gameplay segment.',
+    title: T.text('retroTuneGame'),
+    detail: T.text('retroTuneGameDetail'),
     kind: ActionRow(() => openPage(() => _tuningPage(session))),
   );
 
   PanelCategory _tuningPage(EmbeddedRetroGame session) {
     final playing = app.running;
     if (playing == null || playing.$2 != session) {
-      return const PanelCategory(
+      return PanelCategory(
         id: 'emulator-tune-game',
-        title: 'Tune This Game',
+        title: T.text('retroTuneGame'),
         rows: [
-          PanelRow(id: 'tuning-closed', title: 'Game closed', kind: InfoRow('Start the game to record a sample.')),
+          PanelRow(id: 'tuning-closed', title: T.text('retroGameClosed'), kind: InfoRow(T.text('retroStartToSample'))),
         ],
       );
     }
@@ -256,21 +261,21 @@ class _EmulatorMenu {
           if (session != null)
             PanelRow(
               id: 'emulator-tune-game',
-              title: 'Tune This Game',
-              detail: 'Compare two samples of the same gameplay segment.',
+              title: T.text('retroTuneGame'),
+              detail: T.text('retroTuneGameDetail'),
               kind: ActionRow(() => _push(() => _tuningPage(session))),
             )
           else
-            const PanelRow(
+            PanelRow(
               id: 'emulator-tune-game',
-              title: 'Tune This Game',
-              kind: InfoRow('Start the game and open Graphics from the Quick Menu.'),
+              title: T.text('retroTuneGame'),
+              kind: InfoRow(T.text('retroOpenGameGraphics')),
             ),
           for (final section in sections)
             PanelRow(
               id: section.id,
-              title: 'Quick Optimize',
-              detail: 'Shared console settings',
+              title: T.text('retroQuickOptimize'),
+              detail: T.text('retroConsoleSettings'),
               kind: ActionRow(() => _push(() => _section(platform, game, group, section.id))),
             ),
         ],
