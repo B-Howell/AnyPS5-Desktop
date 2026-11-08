@@ -514,3 +514,12 @@ uses the prediction lane even if it fits the numerical step cap. The
 receipt counts these early handoffs separately from elapsed replay yields.
 The estimate can be wrong when the cost of the next native call changes
 abruptly.
+
+The paced headroom rerun used the same two-tick buffer, 60 ms one-way
+delay, 25 ms jitter, 5% random loss, and ten-tick burst loss. Each peer
+confirmed all 13,706 frames against the reference with no simulated stalls
+and a two-tick maximum input delay. The early route fired 111 and 144 times.
+Peak tick work was 18.480 ms and 15.771 ms. Seat 1 missed one scheduled
+deadline at tick 9721 and seat 2 missed none. The remaining overrun combined
+13.926 ms in one primary step, 1.227 ms saving the handoff, and 2.780 ms
+waiting on prediction. The strict 16.67 ms requirement remains open.
