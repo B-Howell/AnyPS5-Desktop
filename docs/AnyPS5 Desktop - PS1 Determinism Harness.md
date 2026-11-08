@@ -383,3 +383,64 @@ disc while retaining asynchronous reads left 2 / 1 overruns with maxima
 of 113.49 / 111.78 ms. Preloading with synchronous reads left 3 / 3
 overruns with maxima of 30.25 / 25.62 ms. Neither configuration passed the
 whole-tick budget, and the I/O settings remain at the baseline values.
+
+### Native spike attribution and mitigation
+
+The native probe measured `retro_run`, serialize and restore, with nested
+timers for software GPU synchronization, GPU queue space, CD reader waits,
+CD worker operations, and recompiler block compilation. One 49.62 ms
+step spent 36.96 ms in `GPUBackend::Sync`. Another 20.16 ms step spent
+16.49 ms in `CompileBlock`. The latter came from the prediction core
+during its first run after a transfer. CD wait time in these calls was
+under 0.02 ms. A separate Windows thread-cycle probe also observed long
+delays with low calling-thread cycle counts, including with inline GPU.
+Those samples show that active CPU work alone does not explain every peak.
+The cycle counts do not distinguish off-CPU scheduling from other waits.
+
+`--inline-gpu` disables SwanStation's software-rendering worker and its
+per-frame queue fences. `--cpu CachedInterpreter` selects cached guest
+instruction execution without native JIT compilation. Both options apply
+to the baseline, primary and prediction cores. Recompiler plus inline GPU
+still matched all original signatures. Cached interpretation diverged
+from the recompiler RAM at frame 574, so it uses its own two-run baseline.
+Both cached runs used the original 13,706-frame input tape and reached the
+same first and second placements. Port 2 won after three laps and port 1
+was placed second with one lap completed, versus two in the recompiler
+reference.
+
+With the prediction lane enabled, the replay cap now covers corrected
+and new primary-core steps together. For example, a two-frame replay with
+one new frame due uses the separate prediction lane with a cap of two.
+This avoids packing three primary steps into one tick while the lane can
+produce the next speculative frame concurrently. The receipt reports the
+actual maximum primary step count. The whole-tick metric still includes
+checkpoint transfers, evidence capture, and waits for the prediction or
+audit workers.
+
+Generate a fresh Release baseline from the same DLL, disc, BIOS, and input
+tape with `--runs 2 --interval 1 --ctr-finish --cpu CachedInterpreter
+--inline-gpu --no-block-linking`. Then use the paced 120 ms command above
+with `--cpu CachedInterpreter --inline-gpu --benchmark-priority normal`
+and the new baseline. Normal priority applies only to the two headless
+benchmark processes. Neither timing mode changes the packet history,
+random seeds, packet loss, jitter, or the two-tick input buffer.
+
+On the original scheduler, cached interpretation with inline GPU finished
+both paced races without virtual stalls. Its whole-tick p95 was 10.35 /
+12.92 ms and its maximum was 22.47 / 21.75 ms. The peers still exceeded
+16.67 ms on 105 / 216 ticks and missed 120 / 249 scheduled deadlines.
+This isolates the lower peaks from the effect of the new shared step cap.
+
+The same paced configuration with the shared cap verified all 13,706
+frames on both peers, with two primary steps at most, zero virtual stalls,
+and two ticks of local input delay throughout. The peers recorded p95
+whole-tick work of 11.00 / 11.94 ms, 6 / 7 work overruns and 18 / 20
+scheduled deadline misses. Maximum work was 50.21 / 58.77 ms. The cap
+reduced recurring overruns while the strict gate still failed.
+
+An unpaced normal-priority recompiler control with inline GPU and the
+shared cap also matched all original signatures and placements, with no
+virtual stalls and a two-tick maximum local delay. Its p95 work was
+8.17 / 9.75 ms. Each peer had five work overruns, with maxima of
+21.66 / 29.37 ms. The control still showed expensive native calls in
+the prediction core, consistent with the retained recompiler path.

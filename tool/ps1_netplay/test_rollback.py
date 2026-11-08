@@ -135,6 +135,19 @@ class RollbackTests(unittest.TestCase):
             self.assertEqual(result["stall_ticks"], 0)
             self.assertEqual(result["input_ticks"]["max"], 2)
 
+    def test_prediction_lane_limits_replay_and_new_primary_steps_together(self):
+        network = Impairment(66, 12, 0.03, (18, 28))
+        for cap in (1, 2):
+            for seat in (0, 1):
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    result = simulate(CounterCore(), self.inputs, self.baseline, seat, network,
+                                      2, 16, 7, replay_steps=cap,
+                                      presentation=(CounterCore(), executor))
+                self.assertTrue(result["matched"], result)
+                self.assertEqual(result["max_primary_steps"], cap)
+                if cap == 2:
+                    self.assertEqual(result["stall_ticks"], 0)
+
     def test_loss_beyond_history_times_out_and_does_not_confirm_prediction(self):
         result = simulate(CounterCore(), self.inputs, self.baseline, 0, Impairment(0, 0, 1, None), 0, 4, 7)
         self.assertFalse(result["matched"])

@@ -13,6 +13,7 @@ INPUT = c.CFUNCTYPE(c.c_int16, c.c_uint, c.c_uint, c.c_uint, c.c_uint)
 GET_SAVESTATE_CONTEXT = 72 | 0x10000
 RUNAHEAD_SAME_INSTANCE = 1
 RUNAHEAD_SAME_BINARY = 2
+CPU_MODES = ("Recompiler", "CachedInterpreter", "Interpreter")
 
 
 class Variable(c.Structure):
@@ -28,7 +29,7 @@ class Core:
     _checkpoint_context = RUNAHEAD_SAME_INSTANCE
 
     def __init__(self, dll, disc, bios, root, cpu="Recompiler", *, memory_checkpoints=False,
-                 block_linking=True, same_binary=False):
+                 block_linking=True, same_binary=False, inline_gpu=False):
         self.memory_checkpoints = memory_checkpoints
         if same_binary:
             self._checkpoint_context = RUNAHEAD_SAME_BINARY
@@ -47,6 +48,8 @@ class Core:
         }
         if not block_linking:
             self.overrides[b"swanstation_CPU_RecompilerBlockLinking"] = b"false"
+        if inline_gpu:
+            self.overrides[b"swanstation_GPU_UseThread"] = b"false"
         self.frame = 0
         self.pixel = 0
         self.image = None

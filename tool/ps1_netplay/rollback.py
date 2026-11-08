@@ -14,7 +14,7 @@ import sys
 from time import perf_counter, sleep
 
 from determinism import CTR_USA_CUE, ctr_finish, cue_identity, file_digest, normalize_trace
-from headless_core import Core
+from headless_core import CPU_MODES, Core
 
 TICK_MS = 1000 / 60
 HISTORY = 16
@@ -107,6 +107,7 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
     input_ticks = []
     rollbacks = replayed = max_depth = max_checkpoints = stall_ticks = 0
     replay_tip = replay_slices = max_replay_steps = 0
+    max_primary_steps = 0
     stall_streak = max_streak = 0
     finish_tick = None
     count = len(inputs)
@@ -201,8 +202,12 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
         old_presented = presented
         pending_presentation = None
         start = None
+        depth = core.frame - correction + 1 if correction is not None else 0
+        new_steps = min(2, max(0, target - core.frame))
+        # A new frame and its corrections share a tick. Account for both
+        # before choosing the lane rather than spending the entire cap on replay.
         if (presentation is not None and not presenting and correction is not None
-                and core.frame - correction + 1 > replay_steps):
+                and depth + new_steps > replay_steps):
             presentation_state = core.checkpoint(presentation_state)
             start = (core.frame, presentation_state, core.image)
             presenting = True
@@ -218,12 +223,12 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
         work_ms = 0
         if correction is not None:
             replay_tip = max(replay_tip, core.frame)
-            depth = core.frame - correction + 1
             max_depth = max(max_depth, depth)
             rollbacks += 1
             started = perf_counter()
             core.restore(correction - 1, *pending[correction].checkpoint)
             work_ms = (perf_counter() - started) * 1000
+        primary_start = core.frame
         if core.frame < replay_tip:
             steps = min(replay_steps, replay_tip - core.frame)
             for _ in range(steps):
@@ -236,7 +241,10 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
         confirm()
         previous_tip = core.frame
         # At most two new frames per tick, including recovery after a stall.
-        while not presenting and not difference and replay_tip <= core.frame < min(target, previous_tip + 2):
+        forward_limit = min(target, previous_tip + 2)
+        if presentation is not None:
+            forward_limit = min(forward_limit, primary_start + replay_steps)
+        while not presenting and not difference and replay_tip <= core.frame < forward_limit:
             next_frame = core.frame + 1
             if next_frame - confirmed > max(window, 1) or (window == 0 and next_frame not in known):
                 break
@@ -251,6 +259,7 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
             presenting = core.frame < presented
         else:
             presented = max(presented, core.frame)
+        max_primary_steps = max(max_primary_steps, core.frame - primary_start)
         if work_ms:
             timings.append(work_ms)
         if old_presented < target and presented == old_presented:
@@ -296,6 +305,7 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
         "over_budget_rollback_ticks": sum(value > TICK_MS for value in rollback_times),
         "rollbacks": rollbacks, "replayed_frames": replayed, "max_rollback_depth": max_depth,
         "replay_slices": replay_slices, "max_replay_steps": max_replay_steps,
+        "max_primary_steps": max_primary_steps,
         "prediction_lane_ticks": prediction_lane_ticks, "max_presentation_lag": max_presentation_lag,
         "max_checkpoints": max_checkpoints, "checkpoint_payload_bytes": max_checkpoints * core.state_size,
         "checkpoint_pool_bytes": sum(buffer is not None for buffer in checkpoint_buffers) * core.state_size,
@@ -308,16 +318,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("core", "disc", "bios", "trace", "baseline", "output"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve(), required=True)
-    parser.add_argument("--cpu", choices=("Recompiler", "Interpreter"), default="Recompiler")
+    parser.add_argument("--cpu", choices=CPU_MODES, default="Recompiler")
+    parser.add_argument("--inline-gpu", action="store_true", help="Run software GPU commands on the core thread")
     parser.add_argument("--no-block-linking", action="store_true", help="Disable recompiler block linking")
     parser.add_argument("--profile", choices=PROFILES, required=True)
     parser.add_argument("--delay", type=int, default=2)
     parser.add_argument("--window", type=int, default=8)
     parser.add_argument("--replay-steps", type=int, choices=range(1, HISTORY + 1), default=8,
-                        help="Maximum replay frames per virtual tick")
+                        help="Maximum replay frames per tick, shared with new frames when using the prediction lane")
     parser.add_argument("--prediction-lane", action="store_true",
                         help="Use a separate software core to present predictions during long corrections")
-    parser.add_argument("--benchmark-priority", choices=("idle", "below-normal"), default="idle")
+    parser.add_argument("--benchmark-priority", choices=("idle", "below-normal", "normal"), default="idle")
     parser.add_argument("--pace", action="store_true", help="Run virtual ticks on scheduled 60 Hz wall-clock deadlines")
     parser.add_argument("--require-frame-budget", action="store_true",
                         help="Fail if a peer stalls or a whole tick exceeds 16.67 ms")
@@ -338,7 +349,7 @@ def main():
         # A peer only reloads its own in-memory checkpoints. SwanStation uses
         # the file-style restore path for libretro's ROLLBACK_NETPLAY context.
         core = Core(args.core, args.disc, args.bios, args.output, args.cpu,
-                    memory_checkpoints=True, block_linking=not args.no_block_linking)
+                    memory_checkpoints=True, block_linking=not args.no_block_linking, inline_gpu=args.inline_gpu)
         try:
             if {key.decode(): value.decode() for key, value in core.settings.items()} != fixture["options"]:
                 raise ValueError("Core options do not match the baseline")
@@ -347,7 +358,8 @@ def main():
                 spare_dll = args.output / args.core.name
                 shutil.copyfile(args.core, spare_dll)
                 spare = Core(spare_dll, args.disc, args.bios, args.output / "prediction", args.cpu,
-                             memory_checkpoints=True, same_binary=True, block_linking=not args.no_block_linking)
+                             memory_checkpoints=True, same_binary=True, block_linking=not args.no_block_linking,
+                             inline_gpu=args.inline_gpu)
                 try:
                     if spare.settings != core.settings:
                         raise ValueError("Prediction core options do not match the primary core")
@@ -384,12 +396,17 @@ def main():
         command.extend(("--output", str(worker), "--seat", str(seat)))
         if args.no_block_linking:
             command.append("--no-block-linking")
+        if args.inline_gpu:
+            command.append("--inline-gpu")
         if args.prediction_lane:
             command.append("--prediction-lane")
         if args.pace:
             command.append("--pace")
-        priority = (subprocess.IDLE_PRIORITY_CLASS if args.benchmark_priority == "idle"
-                    else subprocess.BELOW_NORMAL_PRIORITY_CLASS)
+        priority = {
+            "idle": subprocess.IDLE_PRIORITY_CLASS,
+            "below-normal": subprocess.BELOW_NORMAL_PRIORITY_CLASS,
+            "normal": subprocess.NORMAL_PRIORITY_CLASS,
+        }[args.benchmark_priority]
         with (args.output / f"peer-{seat + 1}.log").open("w") as log:
             subprocess.run(command, cwd=args.output, stdout=log, stderr=subprocess.STDOUT,
                            check=True, timeout=600,
@@ -407,6 +424,7 @@ def main():
         "window": args.window, "replay_steps": args.replay_steps, "seed": args.seed, "cpu": args.cpu,
         "block_linking_disabled": args.no_block_linking, "prediction_lane": args.prediction_lane, "peers": peers,
         "benchmark_priority": args.benchmark_priority, "paced": args.pace,
+        "inline_gpu": args.inline_gpu,
     }
     (args.output / "summary.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))
