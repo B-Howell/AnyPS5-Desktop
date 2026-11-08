@@ -15,6 +15,34 @@ emulation, also require a matching content hash, core build and relevant
 emulation settings. Reject incompatible joins with a specific reason before
 launching. Keep the existing PS5 engine path separate.
 
+## What we can reuse
+
+- **PS3:** The RPCS3 core already offers [network and RPCN options](https://docs.libretro.com/library/rpcs3/#network).
+  The game and its online service own matchmaking and gameplay traffic.
+  AnyTogether can coordinate the party, check compatibility and launch the
+  configured game. Reuse a supported join mechanism if the service exposes one.
+- **PS2:** Standalone PCSX2 [emulates a PS2 Ethernet adapter through DEV9](https://pcsx2.net/blog/2023/q1-2022-progress-report/#dev9).
+  The [LRPS2 build source](https://github.com/libretro/ps2/blob/master/Makefile.common)
+  also contains DEV9 and a sockets backend, with packet capture as an opt-in
+  build option. Verify which backends and settings the exact Windows DLL
+  exposes before designing a bridge. Native LAN can carry a game's own
+  multiplayer traffic if the chosen backend supports its discovery and packets.
+- **PS1:** SwanStation gives the frontend save-state hooks. [RetroArch's
+  netplay layer](https://docs.libretro.com/development/retroarch/netplay/)
+  owns input exchange, prediction and replay. Evaluate reuse of its protocol
+  or implementation after the core determinism test. Loading SwanStation alone
+  does not bring RetroArch's frontend networking into AnyPS5.
+
+## Validation stages
+
+Planning does not require a second computer. A future one-PC harness can use
+two isolated processes, with separate profiles and distinct endpoints, to
+exercise compatibility checks, replay determinism and synthetic packet delay
+or loss. A local pass cannot establish WAN matchmaking, NAT traversal or the
+performance of two independent machines. Schedule that acceptance check when
+a second tester is available. Keep this as a design until implementation is
+requested.
+
 ## Multiplayer paths
 
 | Path | First candidate | Engineering gate |
