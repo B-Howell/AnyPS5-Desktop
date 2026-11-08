@@ -246,3 +246,64 @@ virtual input delay at 120 ms was seven ticks. Native rendering, audio, physical
 and two-PC play still need measurement. File-style loads share the SPU
 fix. Legacy saves and loads across different core settings were outside
 this experiment.
+
+### Reducing correction work
+
+In a 6,400-frame 120 ms loss probe, median checkpoint time was 3.99 ms,
+including 1.09 ms in `retro_serialize`. The [headless core](../tool/ps1_netplay/headless_core.py)
+now serializes directly into a writable buffer and passes that buffer back
+to the core on restore. The [rollback worker](../tool/ps1_netplay/rollback.py)
+reuses at most one buffer per frame of its prediction window. The live
+checkpoints span at most one window beyond the confirmed frontier. Replay
+reads a checkpoint before it can overwrite that slot. The same probe with
+buffer reuse measured 1.19 ms median checkpoint time.
+
+Native timing showed repeated code-cache invalidation work on each restore.
+With recompiler block linking enabled, unlinking cached branches flushes the
+host instruction cache per patched branch. The Windows Release build with
+block linking disabled reduced p95 correction work from 20.47 ms to 9.29 ms
+in the same 6,400-frame probe with pooled buffers. The recompiler, renderer,
+game inputs, packet schedule and state checks were retained. A prototype
+batch flush was slower than disabling linking and was left out of the build.
+
+For this configuration build the SPU-patched core using
+`-DCMAKE_BUILD_TYPE=Release`. Use `--no-block-linking` in both the baseline
+and rollback commands. The core must advertise that option and the rollback
+worker checks all effective options against its fresh baseline. The measured
+Release DLL hash was
+`9e72d4ded35ed5308916e16448edc1c3c39651969c2f6fde68b4e3293eea6347`.
+
+`--replay-steps 2` also limits a correction to two replayed frames per
+virtual tick. Packets keep arriving during recovery. A new correction can
+rewind the replay already executed. Inputs that arrive for frames still
+ahead of that cursor are used when the replay reaches them. The worker
+catches up to the original speculative frontier before advancing new frames.
+This can stretch a deep correction over multiple ticks. It leaves the
+configured input buffer at two ticks. `rollback_work_ms` reports the work
+of each correction slice, and `work_ms` includes any new frame advanced on
+the same tick. Both retain the earlier measurement boundary, with diagnostic
+hashing and virtual packet simulation measured outside core work.
+
+The two-worker Release baseline matched all 13,706 original signatures
+and the final placements. The full trials below used that baseline,
+`--delay 2 --window 8 --seed 2401`, and block linking disabled. All peers
+confirmed the complete race and kept two ticks of p95 input delay.
+
+| Profile | Replay frames per tick | p95 correction work in ms | Max correction work in ms | Correction overruns | Simulated stalls |
+| --- | ---: | --- | --- | --- | --- |
+| 80 ms with jitter | 8 | 6.26 / 6.25 | 11.90 / 15.30 | 0 / 0 | 0 / 0 |
+| 80 ms with jitter and loss | 8 | 6.17 / 5.84 | 7.57 / 12.96 | 0 / 0 | 0 / 0 |
+| 80 ms with jitter | 2 | 5.78 / 5.76 | 7.10 / 12.25 | 0 / 0 | 0 / 0 |
+| 80 ms with jitter and loss | 2 | 6.12 / 5.72 | 137.95 / 8.96 | 1 / 0 | 2 / 7 |
+| 120 ms with jitter and loss | 8 | 10.79 / 9.85 | 67.43 / 31.28 | 11 / 15 | 5 / 5 |
+| 120 ms with jitter and loss | 3 | 8.54 / 8.55 | 12.82 / 69.88 | 0 / 1 | 24 / 42 |
+| 120 ms with jitter and loss | 2 | 6.83 / 6.62 | 7.88 / 15.26 | 0 / 0 | 197 / 424 |
+
+In the two-frame 120 ms trial, seat 2's maximum virtual input delay was
+10 ticks, up from seven without slicing. The three-frame cap reduced the
+stall count, with one measured correction over budget. A few whole ticks
+still went over budget in the profiles with zero correction overruns. A separately
+instrumented unsliced run also saw a 125 ms save on a tick with no correction.
+The measurements qualify the timed correction slices for the listed runs.
+They leave Windows scheduling, full-tick deadlines, and the cost of
+presenting a corrected frame in the desktop launcher unqualified.

@@ -84,18 +84,20 @@ def distribution(samples):
     }
 
 
-def simulate(core, inputs, baseline, seat, network, delay, window, seed):
+def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, replay_steps=8):
     """Run one peer. Its remote input becomes visible only on packet delivery."""
     local, remote = zip(*((frame[seat], frame[1 - seat]) for frame in inputs))
     link = PacketLink(network, seed)
     known = {}
     pending = {}
+    checkpoint_buffers = [None] * window
     confirmed = 0
     difference = None
     timings = []
     rollback_times = []
     input_ticks = []
     rollbacks = replayed = max_depth = max_checkpoints = stall_ticks = 0
+    replay_tip = replay_slices = max_replay_steps = 0
     stall_streak = max_streak = 0
     finish_tick = None
     count = len(inputs)
@@ -110,7 +112,12 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed):
             while earlier and earlier not in known:
                 earlier -= 1
             value = known.get(earlier, 0)
-            checkpoint = core.checkpoint(), core.image
+            # The confirmed frontier bounds the pending frames to one window.
+            # During replay the old state is read before its slot is overwritten.
+            slot = (frame - 1) % window
+            buffer = core.checkpoint(checkpoint_buffers[slot])
+            checkpoint_buffers[slot] = buffer
+            checkpoint = buffer, core.image
         buttons = (local[frame - 1], value)
         core.advance(1, *(buttons if seat == 0 else buttons[::-1]))
         elapsed = (perf_counter() - started) * 1000
@@ -137,28 +144,32 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed):
                 if frame in known:
                     continue
                 known[frame] = value
-                if frame in pending and pending[frame].remote != value:
+                if frame <= core.frame and frame in pending and pending[frame].remote != value:
                     correction = frame if correction is None else min(correction, frame)
 
         work_ms = 0
         if correction is not None:
-            prior_tip = core.frame
-            depth = prior_tip - correction + 1
+            replay_tip = max(replay_tip, core.frame)
+            depth = core.frame - correction + 1
             max_depth = max(max_depth, depth)
             rollbacks += 1
-            replayed += depth
             started = perf_counter()
             core.restore(correction - 1, *pending[correction].checkpoint)
             work_ms = (perf_counter() - started) * 1000
-            while core.frame < prior_tip:
+        if core.frame < replay_tip:
+            steps = min(replay_steps, replay_tip - core.frame)
+            for _ in range(steps):
                 work_ms += advance()
+            replayed += steps
+            replay_slices += 1
+            max_replay_steps = max(max_replay_steps, steps)
             rollback_times.append(work_ms)
 
         confirm()
         target = min(count, tick + 1 - delay)
         previous_tip = core.frame
         # At most two new frames per tick, including recovery after a stall.
-        while not difference and core.frame < min(target, previous_tip + 2):
+        while not difference and replay_tip <= core.frame < min(target, previous_tip + 2):
             next_frame = core.frame + 1
             if next_frame - confirmed > max(window, 1) or (window == 0 and next_frame not in known):
                 break
@@ -191,7 +202,9 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed):
         "over_budget_work_ticks": sum(value > TICK_MS for value in timings),
         "over_budget_rollback_ticks": sum(value > TICK_MS for value in rollback_times),
         "rollbacks": rollbacks, "replayed_frames": replayed, "max_rollback_depth": max_depth,
+        "replay_slices": replay_slices, "max_replay_steps": max_replay_steps,
         "max_checkpoints": max_checkpoints, "checkpoint_payload_bytes": max_checkpoints * core.state_size,
+        "checkpoint_pool_bytes": sum(buffer is not None for buffer in checkpoint_buffers) * core.state_size,
         "network": {"sent": link.sent, "dropped": link.dropped, "reordered": link.reordered},
     }
 
@@ -201,9 +214,12 @@ def main():
     for name in ("core", "disc", "bios", "trace", "baseline", "output"):
         parser.add_argument(f"--{name}", type=lambda path: Path(path).resolve(), required=True)
     parser.add_argument("--cpu", choices=("Recompiler", "Interpreter"), default="Recompiler")
+    parser.add_argument("--no-block-linking", action="store_true", help="Disable recompiler block linking")
     parser.add_argument("--profile", choices=PROFILES, required=True)
     parser.add_argument("--delay", type=int, default=2)
     parser.add_argument("--window", type=int, default=8)
+    parser.add_argument("--replay-steps", type=int, choices=range(1, 9), default=8,
+                        help="Maximum replay frames per virtual tick")
     parser.add_argument("--seed", type=int, default=2401)
     parser.add_argument("--seat", type=int, choices=(0, 1), help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -221,11 +237,12 @@ def main():
         # A peer only reloads its own in-memory checkpoints. SwanStation uses
         # the file-style restore path for libretro's ROLLBACK_NETPLAY context.
         core = Core(args.core, args.disc, args.bios, args.output, args.cpu,
-                    memory_checkpoints=True)
+                    memory_checkpoints=True, block_linking=not args.no_block_linking)
         try:
             if {key.decode(): value.decode() for key, value in core.settings.items()} != fixture["options"]:
                 raise ValueError("Core options do not match the baseline")
-            result = simulate(core, inputs, signatures, args.seat, profile, args.delay, args.window, args.seed + args.seat)
+            result = simulate(core, inputs, signatures, args.seat, profile, args.delay, args.window,
+                              args.seed + args.seat, replay_steps=args.replay_steps)
             if result["matched"]:
                 result["finish"] = ctr_finish(core.read_ram)
                 if result["finish"] != fixture["finish"]:
@@ -247,9 +264,11 @@ def main():
     def launch(seat):
         worker = args.output / f"peer-{seat + 1}"
         command = [sys.executable, "-B", str(Path(__file__).resolve())]
-        for name in ("core", "disc", "bios", "trace", "baseline", "profile", "delay", "window", "seed", "cpu"):
-            command.extend((f"--{name}", str(getattr(args, name))))
+        for name in ("core", "disc", "bios", "trace", "baseline", "profile", "delay", "window", "replay_steps", "seed", "cpu"):
+            command.extend((f"--{name.replace('_', '-')}", str(getattr(args, name))))
         command.extend(("--output", str(worker), "--seat", str(seat)))
+        if args.no_block_linking:
+            command.append("--no-block-linking")
         with (args.output / f"peer-{seat + 1}.log").open("w") as log:
             subprocess.run(command, cwd=args.output, stdout=log, stderr=subprocess.STDOUT,
                            check=True, timeout=600,
@@ -261,7 +280,8 @@ def main():
     result = {
         "matched": all(peer["matched"] for peer in peers), "identity": identity,
         "profile": args.profile, "network": asdict(profile), "delay": args.delay,
-        "window": args.window, "seed": args.seed, "cpu": args.cpu, "peers": peers,
+        "window": args.window, "replay_steps": args.replay_steps, "seed": args.seed, "cpu": args.cpu,
+        "block_linking_disabled": args.no_block_linking, "peers": peers,
     }
     (args.output / "summary.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))

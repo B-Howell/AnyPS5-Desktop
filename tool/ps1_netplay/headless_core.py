@@ -25,7 +25,8 @@ class GameInfo(c.Structure):
 class Core:
     _checkpoint_active = False
 
-    def __init__(self, dll, disc, bios, root, cpu="Recompiler", *, memory_checkpoints=False):
+    def __init__(self, dll, disc, bios, root, cpu="Recompiler", *, memory_checkpoints=False,
+                 block_linking=True):
         self.memory_checkpoints = memory_checkpoints
         root.mkdir()
         system = root / "system"
@@ -40,6 +41,8 @@ class Core:
             b"swanstation_GPU_ResolutionScale": b"1",
             b"swanstation_CPU_ExecutionMode": cpu.encode(),
         }
+        if not block_linking:
+            self.overrides[b"swanstation_CPU_RecompilerBlockLinking"] = b"false"
         self.frame = 0
         self.pixel = 0
         self.image = None
@@ -167,11 +170,14 @@ class Core:
             video_hash = hashlib.sha256(f"{width},{height},{pixel}:".encode() + visible).hexdigest()
         return {"frame": self.frame, "ram": hashlib.sha256(self.read_ram()).hexdigest(), "video": video_hash}
 
-    def checkpoint(self):
-        buffer = c.create_string_buffer(self.state_size)
+    def checkpoint(self, buffer=None):
+        if buffer is None:
+            buffer = c.create_string_buffer(self.state_size)
+        if not isinstance(buffer, c.Array) or buffer._type_ is not c.c_char or len(buffer) != self.state_size:
+            raise ValueError("Expected a writable checkpoint buffer matching the core's state size")
         if not self._checkpoint_call(self.serialize, buffer, self.state_size):
             raise RuntimeError("Core rejected serialization")
-        return buffer.raw
+        return buffer
 
     def restore(self, frame, state, image=None):
         if not self._checkpoint_call(self.unserialize, state, len(state)):

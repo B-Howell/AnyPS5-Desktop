@@ -102,7 +102,8 @@ def ctr_finish(read_ram):
 
 
 def run_worker(args, frames, windows):
-    core = Core(args.core, args.disc, args.bios, args.output, args.cpu)
+    core = Core(args.core, args.disc, args.bios, args.output, args.cpu,
+                block_linking=not args.no_block_linking)
     try:
         boundaries = set(range(args.interval, len(frames), args.interval)) | {len(frames)}
         boundaries.update(end for _, end in windows)
@@ -165,6 +166,8 @@ def compare_workers(args, windows):
         ]
         if args.ctr_finish:
             command.append("--ctr-finish")
+        if args.no_block_linking:
+            command.append("--no-block-linking")
         for start, end in windows:
             command.extend(["--replay", f"{start}:{end}"])
         with (args.output / f"worker-{index + 1}.log").open("w") as log:
@@ -203,6 +206,7 @@ def main():
     for name in ("core", "disc", "bios", "trace", "output"):
         parser.add_argument(f"--{name}", required=True, type=lambda path: Path(path).resolve())
     parser.add_argument("--cpu", choices=("Recompiler", "Interpreter"), default="Recompiler")
+    parser.add_argument("--no-block-linking", action="store_true", help="Disable recompiler block linking")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--interval", type=int, default=60)
     parser.add_argument("--replay", action="append", default=[], metavar="START:END")

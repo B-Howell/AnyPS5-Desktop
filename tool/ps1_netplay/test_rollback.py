@@ -6,6 +6,19 @@ from rollback import Impairment, simulate
 
 
 class CheckpointContextTests(unittest.TestCase):
+    def test_checkpoint_can_reuse_the_core_buffer_without_copying_it(self):
+        core = Core.__new__(Core)
+        core.memory_checkpoints = False
+        core.state_size = 8
+        core.serialize = lambda buffer, size: c.memset(buffer, 42, size)
+        first = core.checkpoint()
+        self.assertIs(core.checkpoint(first), first)
+        self.assertEqual(bytes(first), b"*" * 8)
+        with self.assertRaisesRegex(ValueError, "writable checkpoint buffer"):
+            core.checkpoint(b" " * 8)
+        with self.assertRaisesRegex(ValueError, "writable checkpoint buffer"):
+            core.checkpoint((c.c_uint32 * 2)())
+
     def test_same_instance_context_is_scoped_to_checkpoint_calls(self):
         core = Core.__new__(Core)
         core.memory_checkpoints = True
@@ -44,11 +57,14 @@ class CounterCore:
             self.image = (self.image * 5 + p1 * 11 + p2 * 17) % 65521
             self.frame += 1
 
-    def checkpoint(self):
-        return self.image
+    def checkpoint(self, buffer=None):
+        if buffer is None:
+            buffer = [None]
+        buffer[0] = self.image
+        return buffer
 
     def restore(self, frame, state, image):
-        self.frame, self.image = frame, state
+        self.frame, self.image = frame, state[0]
 
     def signature(self):
         return {"frame": self.frame, "state": self.image}
@@ -72,6 +88,7 @@ class RollbackTests(unittest.TestCase):
             self.assertGreater(result["network"]["dropped"], 0)
             self.assertGreater(result["network"]["reordered"], 0)
             self.assertLessEqual(result["max_checkpoints"], 8)
+            self.assertLessEqual(result["checkpoint_pool_bytes"], 8 * 8)
 
     def test_rollback_reduces_stalls_against_lockstep(self):
         network = Impairment(35, 0, 0, None)
@@ -81,6 +98,16 @@ class RollbackTests(unittest.TestCase):
         self.assertEqual(lockstep["rollbacks"], 0)
         self.assertLess(rollback["stall_ticks"], lockstep["stall_ticks"])
         self.assertLess(rollback["input_ticks"]["p95"], lockstep["input_ticks"]["p95"])
+
+    def test_replay_slices_keep_receiving_inputs_and_confirm_every_frame(self):
+        network = Impairment(50, 24, 0.05, (18, 24))
+        for seat in (0, 1):
+            result = simulate(CounterCore(), self.inputs, self.baseline, seat, network, 2, 8, 7,
+                              replay_steps=1)
+            self.assertTrue(result["matched"], result)
+            self.assertEqual(result["confirmed"], len(self.inputs))
+            self.assertEqual(result["max_replay_steps"], 1)
+            self.assertGreater(result["replay_slices"], result["rollbacks"])
 
     def test_loss_beyond_history_times_out_and_does_not_confirm_prediction(self):
         result = simulate(CounterCore(), self.inputs, self.baseline, 0, Impairment(0, 0, 1, None), 0, 4, 7)
