@@ -75,3 +75,107 @@ consume the same recorded inputs from local files. No network transport,
 hardware renderer or cross-machine behavior is qualified. Timing from
 the replay harness includes host work and concurrency effects. It is a
 diagnostic, not a latency benchmark or a rollback frame budget.
+
+## Simulated network trial
+
+The [rollback harness](../tool/ps1_netplay/rollback.py) uses the same pinned
+inputs and the offline run's per-frame RAM and video hashes. It starts two
+isolated software workers. Each worker knows its own input tape and only
+receives the other port's inputs through a seeded virtual link. There is no
+socket between the processes. The link sends one packet per virtual 60 Hz
+tick with up to 16 recent inputs. It delays, drops and reorders packets by
+the selected profile. Each direction uses a different seed.
+
+The default trial uses two ticks of local input delay and an eight-frame
+prediction window. On missing input, a worker holds the latest known remote
+mask from before the predicted frame. A late correction restores the
+checkpoint before the earliest mismatched frame and replays to the prior
+tip. The worker stalls when its outstanding frames reach the window and
+can advance at most two new frames per tick to catch up. The test compares
+every newly confirmed frame against the offline control, checks the game
+finish and refuses to count predictions beyond an unfilled gap. Window zero
+waits for confirmed input and serves as the lockstep control.
+
+After the offline command above, use its `worker-1/run.json` as the baseline.
+The enclosing `summary.json` must identify the same fixture and the worker
+must have a signature for every frame. Use a fresh output directory per
+trial.
+
+```powershell
+python -B tool/ps1_netplay/rollback.py `
+  --core "$core" --disc "$cue" --bios "$bios" --output "$trial" `
+  --trace tool/ps1_netplay/fixtures/ctr_usa_coco_park_versus.json `
+  --baseline "$output/worker-1/run.json" --profile 80ms-loss
+```
+
+Use `--window 0` for the corresponding lockstep control. The profiles use
+nominal round-trip times. Each one-way delivery rounds up to a virtual tick.
+For example, 20 ms one way arrives after two ticks, so the nominal 40 ms
+profile has an effective four-tick round trip in this model. `80ms-jitter`
+uses ±15 ms one-way jitter. `80ms-loss` adds 2% random loss and a seven-tick
+burst. `120ms-loss` uses ±25 ms jitter, 5% random loss and a ten-tick burst.
+
+The [rollback unit tests](../tool/ps1_netplay/test_rollback.py) exercise
+correction, reordering, loss, lockstep, a missing frame older than the packet
+history, and a deliberately incorrect baseline. The per-peer receipt tracks
+replays, maximum depth, checkpoint payload, stall counts and longest stall.
+Input scheduling delay is the virtual time until first simulation, including
+the configured input buffer. The harness separately measures elapsed host
+work for save, restore and emulation steps, including callback copies. Hashing
+and network simulation are outside that timer. Elapsed work can exceed the
+16.67 ms frame budget without slowing the virtual clock. These figures do
+not measure actual controller-to-display latency, audio quality, WAN play or
+native launcher performance.
+
+### Recompiler control
+
+Both peers matched all 13,706 frames at zero delay and at the nominal
+40 ms profile. The latter never needed a rewind with the two-tick buffer.
+At 80 ms with jitter, the first divergent frames were 5,624 and 1,114.
+At 80 and 120 ms with loss, they were 5,759 and 1,114. The first differences
+were in RAM while the video hash still matched. With prediction disabled,
+both peers finished under both loss profiles. Lockstep waited on 3,844–3,966
+ticks at 80 ms and 4,559–4,601 ticks at 120 ms.
+
+Reproducing the frame-1,114 difference did not require packet faults. In
+the recompiler mode, a save followed immediately by a restore at frame
+600 or 602 led to the same first mismatch under the same input trace.
+The packet trial differed in three RAM bytes at that frame. An
+uninterrupted control matched. The interpreter passed that
+short restore probe. This isolates a restore-sensitive difference in the
+tested recompiler configuration. It does not identify an internal core
+mechanism or make the differing RAM bytes safe to ignore.
+
+Increasing the buffer to four ticks at 80 ms with loss still produced a
+confirmed mismatch for one peer at frame 5,601. At 120 ms with loss, a
+six-tick buffer kept both peers matched through the full race with seeds
+2401 and 2405. Each peer rewound once per seed. The p95 simulated local
+input delay was six ticks (100 ms), and each correction took 34.7–81.8 ms
+of measured work. That qualifies synchronization in those trials, with
+substantial delay and occasional work exceeding the frame budget.
+
+### Interpreter control
+
+The [interpreter trace](../tool/ps1_netplay/fixtures/ctr_usa_coco_park_interpreter.json)
+is a separately recorded controller-only race on the same track. The
+recompiler input tape did not finish a two-player race in interpreter mode,
+so it is unsuitable as a full-race interpreter fixture. Two cold interpreter
+runs matched all 14,175 frames of the new trace and finished with Crash
+first after three laps. To reproduce, use the interpreter trace in both
+commands and pass `--cpu Interpreter`. Use a new baseline output and omit
+the original race's checkpoint arguments. The worker verifies that the CPU
+mode and other effective options match the baseline.
+
+The interpreter did not fix full-race rollback. With a two-tick buffer,
+both peers diverged in RAM at frame 6,458 in the 80 ms loss trial. In the
+120 ms loss trial, the first differences were at frames 6,458 and 6,386.
+Video matched at those first differing frames. The short same-trace
+restore probe remains the controlled CPU-mode comparison. The full races
+used different controller tapes and establish the limits of each tested
+configuration.
+
+The local rollback experiment therefore passes only the qualified
+six-tick recompiler trials with the tested loss schedules. The two-tick
+low-delay path is blocked on making core restores reproduce the
+uninterrupted reference through the race. Real-time responsiveness and
+transport qualification remain separate gates.

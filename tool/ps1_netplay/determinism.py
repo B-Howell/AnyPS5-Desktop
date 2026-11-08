@@ -102,7 +102,7 @@ def ctr_finish(read_ram):
 
 
 def run_worker(args, frames, windows):
-    core = Core(args.core, args.disc, args.bios, args.output)
+    core = Core(args.core, args.disc, args.bios, args.output, args.cpu)
     try:
         boundaries = set(range(args.interval, len(frames), args.interval)) | {len(frames)}
         boundaries.update(end for _, end in windows)
@@ -161,6 +161,7 @@ def compare_workers(args, windows):
             sys.executable, "-B", str(Path(__file__).resolve()), "--worker",
             "--core", str(args.core), "--disc", str(args.disc), "--bios", str(args.bios),
             "--trace", str(args.trace), "--output", str(worker), "--interval", str(args.interval),
+            "--cpu", args.cpu,
         ]
         if args.ctr_finish:
             command.append("--ctr-finish")
@@ -201,6 +202,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("core", "disc", "bios", "trace", "output"):
         parser.add_argument(f"--{name}", required=True, type=lambda path: Path(path).resolve())
+    parser.add_argument("--cpu", choices=("Recompiler", "Interpreter"), default="Recompiler")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--interval", type=int, default=60)
     parser.add_argument("--replay", action="append", default=[], metavar="START:END")
@@ -208,7 +210,7 @@ def main():
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if sys.platform != "win32" or not 2 <= args.runs <= 8 or args.interval < 1:
-        parser.error("Windows required, with 2–8 runs and a positive sample interval")
+        parser.error("Windows required, with 2-8 runs and a positive sample interval")
     try:
         spans = normalize_trace(json.loads(args.trace.read_text(encoding="utf-8-sig")))
         windows = [tuple(map(int, window.split(":"))) for window in args.replay]

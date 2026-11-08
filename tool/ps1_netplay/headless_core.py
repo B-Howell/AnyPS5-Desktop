@@ -21,7 +21,7 @@ class GameInfo(c.Structure):
 
 
 class Core:
-    def __init__(self, dll, disc, bios, root):
+    def __init__(self, dll, disc, bios, root, cpu="Recompiler"):
         root.mkdir()
         system = root / "system"
         save = root / "save"
@@ -33,6 +33,7 @@ class Core:
         self.overrides = {
             b"swanstation_GPU_Renderer": b"Software",
             b"swanstation_GPU_ResolutionScale": b"1",
+            b"swanstation_CPU_ExecutionMode": cpu.encode(),
         }
         self.frame = 0
         self.pixel = 0
@@ -73,7 +74,7 @@ class Core:
             raise RuntimeError("Expected PS1 main RAM and a bounded save state")
         if any(self.settings.get(key) != value for key, value in self.overrides.items()):
             self.close()
-            raise RuntimeError("The requested software renderer options are unavailable")
+            raise RuntimeError("The requested renderer or CPU options are unavailable")
 
     def bind(self, name, result, *args):
         fn = getattr(self.dll, name)
