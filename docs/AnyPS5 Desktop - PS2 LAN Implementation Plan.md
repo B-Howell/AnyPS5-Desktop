@@ -100,8 +100,93 @@ patched core and exercising this adapter still requires checking out
 the reported revision and coordinating the full core build. For a headless game harness,
 the core's `Software (SW)` renderer can avoid the production frontend's D3D11
 context; a separate libretro runner must supply the BIOS, isolated system/save
-directories, and deterministic synthetic controller input. None of those
-game-run gates has passed yet.
+directories, and deterministic synthetic controller input. At this source-only
+checkpoint, none of those game-run gates had passed yet.
+
+### WSL isolated PCAP feasibility (2026-11-08)
+
+The existing WSL 2 Ubuntu instance (kernel `6.18.33.2-microsoft-standard-WSL2`)
+supports an unprivileged user and network namespace. Inside
+`unshare --user --map-root-user --net`, an ephemeral veth pair was created;
+libpcap opened one endpoint, and `pcap_sendpacket`/capture delivered a 37-byte
+broadcast Ethernet frame to the other. The namespace supplied the required
+`CAP_NET_ADMIN` and `CAP_NET_RAW` without `sudo` or host network changes. The
+namespace and veth pair disappeared when the probe exited. This is a stronger
+transport check than localhost UDP: the host kernel can provide a private,
+driver-free Ethernet segment usable by PCAP.
+
+That path matches upstream PCSX2's [PCAPAdapter](https://github.com/PCSX2/pcsx2/blob/master/pcsx2/DEV9/pcap_io.cpp#L261-L307),
+which opens its selected interface with `pcap_open_live`, and sends full
+frames through [`pcap_sendpacket`](https://github.com/PCSX2/pcsx2/blob/master/pcsx2/DEV9/pcap_io.cpp#L137-L179).
+Its Linux diagnostics state that PCAP needs `CAP_NET_RAW` and `CAP_NET_ADMIN`;
+the rootless namespace probe exercised both. PCSX2's
+[`ENABLE_SETCAP`](https://github.com/PCSX2/pcsx2/blob/master/cmake/BuildParameters.cmake#L903-L910)
+build option defaults off, so this route does not need to grant capabilities
+to a host-installed executable when the process runs inside that namespace.
+The upstream source says raw packet capture is unavailable in its Flatpak
+build; use a native or AppImage build for this path ([official Linux running
+guide](https://pcsx2.net/docs/setup/running/)).
+
+At the time of this initial probe, the local WSL environment had no standalone
+PCSX2 or Xvfb. It had the libpcap runtime but not its development header. WSLg's
+`DISPLAY` and `WAYLAND_DISPLAY` were set, but neither was used. The kernel and
+libpcap checks passed, while game-level testing had not started. The follow-up
+below records the later private AppImage run.
+
+### Official PCSX2 headless two-peer gate (2026-11-08)
+
+I fetched the official [PCSX2 v2.8.2 release](https://github.com/PCSX2/pcsx2/releases/tag/v2.8.2)
+x64 Linux Qt AppImage into owned WSL scratch
+`/tmp/anyps5-gt4-fOqRtVew/downloads` and verified its SHA-256 against the
+official release digest:
+`0c46bb6a88aa2782b10853a7b07cf3387ba99cbef2b966372cd2315b8571abea`. I
+extracted the AppImage and downloaded/extracted Xvfb, xdotool, xwd and Mesa
+packages into the same scratch area using `apt download` and `dpkg-deb -x`;
+nothing was installed and no host display, driver, firewall, service or system
+configuration was changed. I explicitly unset the WSLg display variables and
+used two private TCP-only Xvfb displays, one per peer, with Mesa llvmpipe and
+muted audio. Screenshots came from those Xvfb displays only.
+
+The game fixture was opened read-only from
+`D:\PS2\Gran Turismo 4\Gran Turismo 4 (USA) (v2.00)`. Both peers recognized
+the same GT4 v2.00 disc, serial `SCUS-97328`, CRC `77E61C8A`, and the user-owned
+SCPH-39001 BIOS. Each used `-datapath <peer> -nogui -- <ISO>` with its own
+scratch memory cards and INI.
+PCSX2's actual `-datapath` layout created
+`<datapath>/PCSX2/inis/PCSX2.ini` and
+`<datapath>/PCSX2/logs/emulog.txt`. The per-peer INI selected its veth via
+`[DEV9/Eth]` (`EthEnable = true`, `EthApi = PCAP Bridged`, distinct
+`EthDevice`, `InterceptDHCP = false`).
+
+Two instances initially collided because upstream PCSX2 v2.8.2 hard-codes
+`shm_open("/GS.mem", O_CREAT | O_EXCL)` for GS local memory in
+[`GSLocalMemory.cpp`](https://github.com/PCSX2/pcsx2/blob/v2.8.2/pcsx2/GS/GSLocalMemory.cpp).
+The second process failed with `File exists`. Giving each emulator process its
+own private mount namespace and a 1 GiB tmpfs mounted at `/dev/shm` isolated
+that fixed shared-memory name without touching the host's `/dev/shm`; both
+instances then coexisted.
+
+Both emulator logs independently show `DEV9: Opening adapter 'gt4i'` / `'gt4j'`,
+`Device uses DLT 1: EN10MB`, and `Adapter Ok.` Both opened the same ISO and
+logged that the GT4 ELF was executing. The official PCSX2 binary includes its
+`PCAPAdapter`/libpcap path, and these messages prove each configured endpoint
+opened. They do not prove that GT4 sent or received LAN packets.
+
+The maximum game gate reached was GT4's first-run memory-card dialog: “No GT4
+game data found ... Game data is required to play GT mode. Do you wish to create
+game data?” An offscreen XWD capture showed `OK` selected. I added isolated
+`[Pad1]` keyboard bindings and sent a synthetic `K` press to each private game
+window, but the captured screen still showed the dialog; therefore the input
+was not verified as accepted. No GT4 main menu, LAN host/join screen, discovery,
+race start, finish/results, or rematch was observed. This is not a LAN race
+pass. PCSX2 and Xvfb processes were closed at the end of the scratch run; no
+host display was touched and no persistent setup changes were made. Logs and
+offscreen captures remain under the scratch path above for reproducibility.
+
+**Current next gate:** make the first-run input reproducibly dismiss the dialog
+in both peers, then configure the game's own network profiles and verify LAN
+host/join discovery over the private veth segment. Do not claim multiplayer
+support until both peers finish a race and the results screen is recorded.
 
 ## 1. Pin a title and inventory the actual core
 
