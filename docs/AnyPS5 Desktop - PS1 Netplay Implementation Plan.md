@@ -55,6 +55,8 @@ mid-match joins, host migration, and sync across arbitrary settings can wait.
 
 ## 1. Pin the fixture and prove determinism on one PC
 
+The [PS1 determinism harness](<AnyPS5 Desktop - PS1 Determinism Harness.md>) records the local proof and its limits.
+
 **Existing code:** [ManagedRetro](../lib/core/managed_retro.dart) resolves a
 moving Buildbot package for PS1. The [native runner](../windows/runner/retro_core_host.cpp)
 calls `retro_run`, installs input and output callbacks, and already exercises
