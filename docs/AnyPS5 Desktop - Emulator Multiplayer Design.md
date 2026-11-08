@@ -1,68 +1,82 @@
 # AnyPS5 Desktop emulator multiplayer design
 
-## Proposed first release
+## Product direction
 
-Extend **Share Play** to support remote couch multiplayer on Windows. The host
-runs one emulator and keeps the save. The host selects Share Play from the
-in-game Quick Menu, invites a friend and grants Player 2. The guest watches the
-game stream and plays through the controller on their computer. The guest needs
-the launcher and an AnyTogether account. The game and emulator run on the host.
+Use AnyTogether's **Play Together** to invite friends into a game session.
+Every player launches a compatible local copy, renders locally, and plays
+through their own controller. The session exchanges game traffic or frame
+inputs. The streaming path is outside this design.
 
-Crash Team Racing split-screen is the first target. It exercises local
-competitive play with an independently controlled second seat. Follow with a
-PS2 title that supports two local players and LittleBigPlanet couch co-op. Add
-more seats only as each core and title proves it can accept them.
+The existing [Play Together flow](../lib/ui/together_play.dart) owns party
+offers, join checks and session teardown. Add a versioned compatibility
+descriptor for each supported multiplayer mode. It should identify the
+platform, title, compatible game revision and mode. For synchronized
+emulation, also require a matching content hash, core build and relevant
+emulation settings. Reject incompatible joins with a specific reason before
+launching. Keep the existing PS5 engine path separate.
 
-## Three different multiplayer models
+## Multiplayer paths
 
-| Model | What it reuses | Main constraint |
+| Path | First candidate | Engineering gate |
 | --- | --- | --- |
-| Share Play for local multiplayer | Invitations, WebRTC media, TURN, and host-granted controller seats | The guest's video and inputs cross the network. The game must already support local multiplayer. |
-| Two-copy link cable or LAN | AnyTogether discovery and the [Play Together session model](../lib/ui/together_play.dart) | Every player needs a compatible copy. Each core has to expose the console's serial or network interface. |
-| Synchronized emulator netplay | Invitations, and a core's verified serialization and replay support where available | A separate emulator runs on each PC. Core, content, firmware, settings and initial state must agree. Desync detection and recovery need their own design. |
+| Game's native online protocol | LittleBigPlanet GOTY on PS3 | Two embedded RPCS3 clients can enter the same private online level using a compatible title update, protected server patch, RPCN and matching gameplay-sensitive settings. |
+| Game's native LAN protocol | A PS2 LAN title such as Gran Turismo 4 | Two emulated consoles can discover and join each other on a local LAN first. Then evaluate a title-scoped virtual LAN over the [AnyTogether peer mesh](../lib/core/online/online_peer_mesh.dart). |
+| Synchronized emulation | Crash Team Racing split-screen on PS1 | Two instances of the pinned SwanStation core stay in sync with the same disc, BIOS, settings, start state and frame-stamped inputs, including after restoring and replaying a checkpoint. |
 
-The [PS5 peer mesh](../lib/core/online/online_peer_mesh.dart) connects peers for
-the PS5 engine's virtual LAN. Reuse its session concepts for a later emulator
-networking spike. The current RPCS3 preview keeps offline peer traffic on
-loopback. PS3 LAN and RPCN are separate from the Share Play proposal and need
-their own approval and testing. The [RPCS3 Libretro feature list](https://docs.libretro.com/library/rpcs3/#features)
-lists frontend netplay and save states as unsupported.
+LAN requires an emulated NIC or link interface that supports the title's
+protocol. The [LRPS2 feature table](https://docs.libretro.com/library/lrps2/#features)
+does not list frontend netplay support. The [Gran Turismo 4 LAN manual](https://www.gran-turismo.com/local/jp/data1/pdf/gt4_lan.pdf)
+establishes the game's native LAN mode. Whether the chosen embedded PS2
+backend can carry that traffic remains a separate gate.
 
-## Media and input boundaries
+## First proof of native PS3 co-op
 
-Reuse the [Share Play model](../lib/ui/share_play_model.dart) for invites,
-signaling, relay credentials, admission and the life of the call. It currently
-captures an external window through [the WebRTC adapter](../lib/ui/share_webrtc.dart).
-The [embedded host](../windows/runner/retro_core_host.cpp) already receives game
-frames and PCM. First prove that a bounded native frame feed can supply a
-Windows WebRTC video track. A Flutter texture ID is insufficient. Keep the most
-recent frame, bound audio buffering, and only activate capture while hosting.
-Send the game texture and game audio so the guest receives no launcher menus,
-notifications or desktop audio.
+LittleBigPlanet already has an online protocol. [Bonsai documents an RPCS3 path](https://docs.lbpbonsai.com/rpcs3.html)
+using a current game update and a title-specific Patchwork patch. Its [support notes](https://docs.lbpbonsai.com/faq.html)
+also call out RPCN and matching XFloat settings. Verify the exact GOTY disc ID
+and update against the provider before assuming the standalone path works
+with the embedded core. Preserve the offline default and loopback behavior
+in the [frontend patch](../tool/patches/rpcs3-libretro-frontend.patch).
+Use opt-in, isolated profiles and the provider's current client protections
+for an invite-only test. Review the [published client security advisory](https://www.lbpunion.com/post/security-advisory-about-littlebigplanet-online-play/)
+before enabling a public option.
 
-Use [SharePadRouter](../lib/core/together/share_play.dart) for host seat grants.
-The [embedded session](../lib/ui/embedded_retro_game.dart) currently sends only
-Player 1. Add an input sink keyed by the active session and player port. Keep
-P1 local and enable P2 when the host grants the seat. Ignore packets for an old
-session or grant and discard reordered input. Clear the port immediately on
-revocation, disconnect or session stop. A short timeout clears input if the
-release packet is lost. Reconnecting requires a fresh seat grant. Guest input
-stays within the game and cannot open the host's Quick Menu or launch another
-title.
+First verify native sign-in, join and play through a private level on two
+Windows PCs. Record the exact game update, patch, core and relevant settings.
+Then add an AnyTogether invitation that launches the configured title and
+guides players to the same session. Automate room joining only if the game
+or provider exposes a supported way to do it. The [RPCS3 Libretro feature table](https://docs.libretro.com/library/rpcs3/#features)
+does not support frontend save states or netplay, so PS3 is outside the
+synchronized-emulation path.
 
-## Acceptance for the first playable test
+## First proof of synchronized PS1 multiplayer
 
-- Two Windows PCs on separate networks can invite, join and play a full CTR
-  split-screen race. Exercise both direct and relayed calls.
-- Verify separate P1 and P2 steering, one guest seat, no stuck inputs after a
-  drop, and an immediate stop when the host revokes control.
-- Verify the stream carries game video and audio. Open the host Quick Menu and
-  confirm the guest receives only the game surface.
-- Record capture-to-display and input response delay, frame pacing and stalls.
-  Use the observed delay in a race to decide whether the first version is ready.
-- Check that standalone PS5 Share Play still works, and run the existing
-  [seat authorization tests](../test/core/share_play_test.dart) and
-  [launcher invite tests](../test/ui/share_play_test.dart).
+Start two local core processes with identical fixtures and replay the same
+frame-stamped input log. Compare a repeatable emulated state or game-visible
+checksum through a complete race, then restore a checkpoint and replay to
+the same result. The [Windows embedded host](../windows/runner/retro_core_host.cpp)
+already uses serialization for some graphics transitions. That establishes a
+checkpoint mechanism to investigate. Netplay needs determinism and a measured
+checkpoint and replay cost under the exact selected renderer and core options.
 
-Phone Remote Play can consume the same game-only media and input interfaces
-after the first desktop guest path works.
+Once determinism is proven, use synchronized input as a correctness control.
+Measure whether a small input buffer plus bounded rollback keeps the controls
+responsive under delay, jitter and loss. The [Libretro protocol design](https://docs.libretro.com/development/retroarch/netplay/)
+documents the replay model. Track simulation-affecting options in the session
+contract and block changing them during a race. Detect desync and end the
+match cleanly if recovery fails. Split-screen remains split-screen because
+that is the mode the original game supplies.
+
+## Acceptance before exposing Play Together
+
+- Two players on separate networks each run a local copy and complete a level
+  or race with their own controller. Verify invites, compatibility refusals,
+  disconnects and a second session after cleanup.
+- Record local button-to-display latency, RTT, jitter, stalls and desyncs.
+  For synchronized emulation, also record rollback depth and replay cost.
+  Compare with offline local play. Local rendering removes streaming delay;
+  distance and network instability still affect multiplayer.
+- Show availability by verified title, core and mode. Games without a native
+  or local multiplayer mode need a separate game-specific mod.
+- Keep existing PS5 Play Together behavior covered by the
+  [launcher session tests](../test/ui/together_test.dart).
