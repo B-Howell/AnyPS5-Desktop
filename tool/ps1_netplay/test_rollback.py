@@ -1,13 +1,23 @@
 import ctypes as c
 from concurrent.futures import ThreadPoolExecutor
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from headless_core import Core
-from rollback import Impairment, simulate
+from rollback import Impairment, set_current_thread_priority, simulate
 
 
 class CheckpointContextTests(unittest.TestCase):
+    def test_prediction_priority_is_applied_only_to_the_requested_thread(self):
+        kernel = MagicMock()
+        kernel.GetCurrentThread.return_value = 73
+        kernel.SetThreadPriority.return_value = 1
+        with patch("rollback.sys.platform", "win32"), patch(
+            "rollback.ctypes.windll", MagicMock(kernel32=kernel), create=True
+        ):
+            set_current_thread_priority("highest")
+        kernel.SetThreadPriority.assert_called_once_with(73, 2)
+
     def test_headless_core_batches_input_and_requests_video_only(self):
         core = Core.__new__(Core)
         core.paths = {}

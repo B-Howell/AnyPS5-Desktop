@@ -1,5 +1,6 @@
 """Headless PS1 rollback trial with deterministic virtual packet delivery."""
 import argparse
+import ctypes
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
@@ -85,6 +86,25 @@ def distribution(samples):
         "p95": round(values[math.ceil(len(values) * .95) - 1], 3),
         "max": round(values[-1], 3),
     }
+
+
+def set_current_thread_priority(priority):
+    if priority is None:
+        return
+    if sys.platform != "win32":
+        raise RuntimeError("Prediction thread priority is supported only on Windows")
+    priorities = {"above-normal": 1, "highest": 2}
+    if priority not in priorities:
+        raise ValueError(f"Unsupported prediction thread priority: {priority}")
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GetCurrentThread.restype = ctypes.c_void_p
+    kernel32.GetCurrentThread.argtypes = []
+    kernel32.SetThreadPriority.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    kernel32.SetThreadPriority.restype = ctypes.c_int
+    if not kernel32.SetThreadPriority(
+        kernel32.GetCurrentThread(), priorities[priority]
+    ):
+        raise ctypes.WinError()
 
 
 def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, replay_steps=8,
@@ -356,6 +376,8 @@ def main():
                         help="Defer extra replay steps once an active prediction tick reaches this elapsed time")
     parser.add_argument("--benchmark-priority", choices=("idle", "below-normal", "normal", "above-normal"),
                         default="idle", help="Windows priority class for the headless test workers only")
+    parser.add_argument("--prediction-thread-priority", choices=("above-normal", "highest"),
+                        help="Optional priority for the prediction worker thread only")
     parser.add_argument("--pace", action="store_true", help="Run virtual ticks on scheduled 60 Hz wall-clock deadlines")
     parser.add_argument("--require-frame-budget", action="store_true",
                         help="Fail if a peer stalls or a whole tick exceeds 16.67 ms")
@@ -366,6 +388,8 @@ def main():
         parser.error(f"Windows required, with delay in 0-8 and window in 0-{HISTORY} frames")
     if args.replay_yield_ms is not None and not (args.prediction_lane and 0 < args.replay_yield_ms < TICK_MS):
         parser.error("Replay yield requires the prediction lane and a threshold between zero and one tick")
+    if args.prediction_thread_priority is not None and not args.prediction_lane:
+        parser.error("Prediction thread priority requires --prediction-lane")
     fixture = json.loads(args.baseline.read_text())
     signatures = fixture["signatures"]
     spans = normalize_trace(json.loads(args.trace.read_text(encoding="utf-8-sig")))
@@ -392,7 +416,11 @@ def main():
                 try:
                     if spare.settings != core.settings:
                         raise ValueError("Prediction core options do not match the primary core")
-                    with ThreadPoolExecutor(max_workers=1) as executor, ThreadPoolExecutor(max_workers=1) as audit:
+                    with ThreadPoolExecutor(
+                        max_workers=1,
+                        initializer=set_current_thread_priority,
+                        initargs=(args.prediction_thread_priority,),
+                    ) as executor, ThreadPoolExecutor(max_workers=1) as audit:
                         result = simulate(*trial_args, replay_steps=args.replay_steps, presentation=(spare, executor),
                                           audit=audit, paced=args.pace, replay_yield_ms=args.replay_yield_ms)
                 finally:
@@ -429,6 +457,8 @@ def main():
             command.append("--inline-gpu")
         if args.prediction_lane:
             command.append("--prediction-lane")
+        if args.prediction_thread_priority is not None:
+            command.extend(("--prediction-thread-priority", args.prediction_thread_priority))
         if args.replay_yield_ms is not None:
             command.extend(("--replay-yield-ms", str(args.replay_yield_ms)))
         if args.pace:
@@ -458,6 +488,7 @@ def main():
         "benchmark_priority": args.benchmark_priority, "paced": args.pace,
         "inline_gpu": args.inline_gpu,
         "replay_yield_ms": args.replay_yield_ms,
+        "prediction_thread_priority": args.prediction_thread_priority,
     }
     (args.output / "summary.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))

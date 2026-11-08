@@ -523,3 +523,35 @@ Peak tick work was 18.480 ms and 15.771 ms. Seat 1 missed one scheduled
 deadline at tick 9721 and seat 2 missed none. The remaining overrun combined
 13.926 ms in one primary step, 1.227 ms saving the handoff, and 2.780 ms
 waiting on prediction. The strict 16.67 ms requirement remains open.
+
+### Prediction-worker scheduling proof
+
+To test whether scheduler delay in the prediction lane accounted for the
+remaining deadline miss, the harness now accepts
+`--prediction-thread-priority above-normal|highest`. On Windows, its
+`ThreadPoolExecutor` initializer applies the selected priority only to that
+executor's worker thread using `SetThreadPriority`; it does not change the
+main thread or process priority. `--benchmark-priority above-normal` remains
+the separate, opt-in process-class control for the two hidden headless peer
+workers. A Windows worker-thread smoke check and the unit test verify the
+thread-scoped call. The host UI, display, and other processes are not used.
+
+The formal paced rerun used the same hash-pinned core, cue, BIOS, trace and
+reference, with seed 2401, the 120 ms-loss profile (60 ms one-way, 25 ms
+jitter, 5% random loss plus burst ticks 5600–5609), two-tick input delay,
+16-frame history, two replay steps, 7.5 ms replay yield, cached interpreter,
+inline GPU, disabled block linking, `--prediction-lane`,
+`--prediction-thread-priority highest`, and `--benchmark-priority above-normal`.
+The CLI rejects a prediction-thread priority unless the prediction lane is
+enabled; future run summaries record the selected priority explicitly. Both
+peers confirmed and matched all
+13,706 frames, finished the three-lap race, and recorded zero stalls, zero
+work overruns, and zero scheduled deadline misses. Maximum full-tick duration
+was 15.197 ms / 15.299 ms; maximum measured work was 14.646 ms / 14.342 ms.
+The strict `--require-frame-budget` gate passed. This result is for the
+headless deterministic harness under this PC's load and does not establish
+real-time performance on other systems. Receipt:
+`%LOCALAPPDATA%/AnyPS5-Desktop-Experiment/TestArtifacts/CTR-Deadline-c06517f020834371bcf66a06dda9270d/priority-prediction-paced-2/summary.json`;
+the separate `command.json` sidecar records all invocation options and input
+hashes, including the selected prediction-thread priority, without changing
+the original measured summary.

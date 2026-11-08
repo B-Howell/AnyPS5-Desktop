@@ -22,6 +22,28 @@ The [server operator's PS2 guide](https://www.swbfii.com/ps2/online) and
 [SWBFSpy implementation](https://github.com/SWBFSpy/SWBFSpy) describe that
 path. Qualify it separately from the Gran Turismo 4 virtual LAN.
 
+### Local Gran Turismo 4 media fixture
+
+The local NTSC-U v2.00 dump is identified as `SCUS_973.28` and lives under
+`D:\PS2\Gran Turismo 4\Gran Turismo 4 (USA) (v2.00)`. Its folder contains
+the original ISO plus the user-provided `cover.webp` and `wallpaper.png`.
+`retro.json` in that same folder points to the disc and local artwork, and
+`theme-48k-loop.wav` is a local library-music asset. The AnyPS5 scanner reads
+that manifest and resolves all media paths relative to the game directory.
+
+The music was extracted offline from the game's own `GT4.VOL` using the
+open-source [GT4FS volume extractor](https://github.com/Razer2015/GT4FS),
+then decoded from the streamed `gt4qm-01` ADS menu track with
+[vgmstream](https://github.com/vgmstream/vgmstream) and made loopable as
+48 kHz stereo WAV. The [GT4 volume-format notes](https://nenkai.github.io/gt-modding-hub/formats/volume/ps2_gt4_volume/)
+describe the archive layout. The source ISO was not modified. Track naming
+in `bgmads.inf` identifies this as the GT4 quick/menu music; it does not
+provide a more descriptive song title.
+These files are machine-local test assets and must not be included in source
+control or redistributed with AnyPS5. The launcher can be checked against this
+local scanner fixture without booting the game, but that does not prove PS2
+LAN functionality. A one-PC two-instance race remains the LAN exit gate below.
+
 ## Choose the transport after a native LAN baseline
 
 - **Preferred embedded path:** Use a small adapter at LRPS2's DEV9 network boundary. Carry the Ethernet frames required by the title across an isolated virtual segment. Verify the pinned build exposes a usable boundary first. A core patch is a separate maintainer and distribution decision if the shipped DLL lacks one.
