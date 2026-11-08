@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
@@ -47,9 +48,9 @@ class RetroSettingsModel {
         ? [
             PanelRow(
               id: '$prefix-core-override',
-              title: 'External core folder',
+              title: T.text('retroExternalCore'),
               detail: override,
-              kind: const InfoRow('Configured'),
+              kind: InfoRow(T.text('retroExternalCoreConfigured')),
             ),
             if (ManagedRetro(override).isInstalled(platform) && !inUse) _gamesFolderRow(platform),
           ]
@@ -58,8 +59,8 @@ class RetroSettingsModel {
         : const <PanelRow>[];
     final portableProgram = PanelRow(
       id: '$prefix-program',
-      title: '$name executable',
-      detail: executable ?? 'Choose an existing portable installation.',
+      title: T.format('retroExecutable', [name]),
+      detail: executable ?? T.text('retroChoosePortableDetail'),
       kind: inUse ? InfoRow(T.text('retroEmulatorInUse')) : ActionRow(() => unawaited(_chooseProgram(platform))),
     );
     final settings = executable == null ? null : _read(executable, platform);
@@ -88,7 +89,11 @@ class RetroSettingsModel {
                 title: T.text('retroBiosRegion'),
                 kind: ChoiceRow(['NTSC-U', 'NTSC-J', 'PAL'], _biosRegion, (index) {
                   _biosRegion = index;
-                  app.show('Selected ${['NTSC-U', 'NTSC-J', 'PAL'][index]} BIOS slot.');
+                  app.show(
+                    T.format('retroBiosSlotSelected', [
+                      ['NTSC-U', 'NTSC-J', 'PAL'][index],
+                    ]),
+                  );
                 }),
               ),
           if (executable != null && !inUse)
@@ -102,7 +107,7 @@ class RetroSettingsModel {
             PanelRow(
               id: '$prefix-add',
               title: T.text('retroMenuAddSetting'),
-              detail: 'Use Section/Setting=value. Press Enter to save.',
+              detail: T.text('retroSettingSyntaxDetail'),
               kind: TextRow(
                 _newOptions[platform] ?? '',
                 (text) => _newOptions[platform] = text,
@@ -111,7 +116,7 @@ class RetroSettingsModel {
                   final equals = text.indexOf('=');
                   final slash = equals < 0 ? -1 : text.lastIndexOf('/', equals);
                   if (slash < 1 || equals <= slash + 1) {
-                    app.show('Enter Section/Setting=value.');
+                    app.show(T.text('retroSettingSyntaxInvalid'));
                     return;
                   }
                   _edit(platform, () {
@@ -128,14 +133,14 @@ class RetroSettingsModel {
         ],
       ),
       if (app.managedRetroAvailable)
-        PanelCategory(id: '$prefix-portable', title: 'Existing portable installation', rows: [portableProgram]),
+        PanelCategory(id: '$prefix-portable', title: T.text('retroPortableTitle'), rows: [portableProgram]),
       if (settings != null && !inUse && !graphicsQueued)
         _optimize.category(
           platform,
           settings,
           save: (apply) {
             if (app.preferences.pendingRetroGraphics[settings.file.path]?.isNotEmpty == true) {
-              app.show('Discard the queued graphics changes before using Quick Optimize.');
+              app.show(T.text('retroOptimizeQueuedChanges'));
               return;
             }
             _edit(platform, apply);
@@ -147,7 +152,7 @@ class RetroSettingsModel {
           PanelCategory(
             id: '$prefix-${section.key}',
             title: platform == RetroPlatform.ps2 && section.key == 'EmuCore/GS'
-                ? '$name · Advanced Graphics'
+                ? T.format('retroAdvancedGraphics', [name])
                 : '$name · ${section.key}',
             rows: [
               if (section.key == 'Pad1' || section.key == 'Pad2')
@@ -168,7 +173,7 @@ class RetroSettingsModel {
             if (section.value.any((option) => RetroControllerSettings.handles(option.key)))
               PanelCategory(
                 id: '$prefix-${section.key}-bindings',
-                title: '$name · ${section.key} Advanced Bindings',
+                title: T.format('retroAdvancedBindings', [name, section.key]),
                 rows: [
                   for (final option in section.value)
                     if (RetroControllerSettings.handles(option.key)) _row(prefix, settings, option, platform),
@@ -260,8 +265,12 @@ class RetroSettingsModel {
       overrides: titleId == null ? null : preferences.retroPs3Graphics[titleId] ?? const {},
       setup: app.managedRetroAvailable
           ? _managedSetupRows(RetroPlatform.ps3)
-          : const [
-              PanelRow(id: 'retro-ps3-install', title: 'Embedded emulator', kind: InfoRow('Requires Windows x64')),
+          : [
+              PanelRow(
+                id: 'retro-ps3-install',
+                title: T.text('retroEmbeddedEmulator'),
+                kind: InfoRow(T.text('retroRequiresWindows')),
+              ),
             ],
       save: (key, value) {
         final settings = titleId == null
@@ -286,10 +295,14 @@ class RetroSettingsModel {
     final defer = _inUse(platform) || pending.isNotEmpty;
     return PanelCategory(
       id: 'retro-${platform.name}-graphics',
-      title: '${platform.emulator} · Graphics',
+      title: T.format('retroEmulatorGraphics', [platform.emulator]),
       rows: [
         if (settings == null)
-          const PanelRow(id: 'graphicsUnavailable', title: 'Graphics profile', kind: InfoRow('Unavailable'))
+          PanelRow(
+            id: 'graphicsUnavailable',
+            title: T.text('retroGraphicsProfile'),
+            kind: InfoRow(T.text('retroGraphicsUnavailable')),
+          )
         else
           ...RetroGraphicsSettings.rows(
             platform: platform,
@@ -304,15 +317,15 @@ class RetroSettingsModel {
                 : null,
           ),
         if (defer)
-          const PanelRow(
+          PanelRow(
             id: 'graphicsTiming',
-            title: 'Applies the next time this emulator starts',
-            kind: InfoRow('Shared emulator profile'),
+            title: T.text('retroGraphicsOnNextStart'),
+            kind: InfoRow(T.text('retroSharedProfile')),
           ),
         if (pending.isNotEmpty)
           PanelRow(
             id: 'discardGraphics',
-            title: 'Discard queued changes',
+            title: T.text('retroDiscardQueue'),
             kind: ActionRow(() {
               app.preferences.pendingRetroGraphics.remove(profile);
               app.savePreferences();
@@ -343,10 +356,10 @@ class RetroSettingsModel {
         (app.preferences.pendingRetroGraphics[settings.file.path]?.containsKey(option.key) ?? false);
     return PanelRow(
       id: id,
-      title: fastBoot ? 'Fast BIOS Boot' : option.key,
-      detail: fastBoot ? 'Skip the PlayStation startup animation when the BIOS supports it.' : option.section,
+      title: fastBoot ? T.text('retroFastBios') : option.key,
+      detail: fastBoot ? T.text('retroFastBiosDetail') : option.section,
       kind: switch (value.toLowerCase()) {
-        _ when graphicsQueued => const InfoRow('Queued in Graphics'),
+        _ when graphicsQueued => InfoRow(T.text('retroQueuedGraphics')),
         'true' || 'false' => ToggleRow(value.toLowerCase() == 'true', (on) {
           _edit(platform, () => settings.replace(option, '$on'));
         }),
@@ -375,15 +388,16 @@ class RetroSettingsModel {
 
   void _edit(RetroPlatform platform, void Function() apply) {
     if (_inUse(platform)) {
-      app.show('Close the game before changing its emulator profile.');
+      app.show(T.text('retroCloseBeforeProfileChange'));
       return;
     }
     try {
       apply();
       _drafts.clear();
-      app.show('Emulator setting saved.');
+      app.show(T.text('retroSettingSaved'));
     } on Object catch (error) {
-      app.show('Could not save emulator setting: $error');
+      debugPrint('Could not save emulator setting: $error');
+      app.show(T.text('retroSettingSaveFailed'));
     }
   }
 
@@ -391,7 +405,7 @@ class RetroSettingsModel {
     final selected = await app.services.pickFile?.call(platform.emulator, ['exe']);
     if (selected == null || !p.isAbsolute(selected)) return;
     if (_inUse(platform)) {
-      app.show('Close the game before changing its emulator profile.');
+      app.show(T.text('retroCloseBeforeProfileChange'));
       return;
     }
     try {
@@ -401,7 +415,7 @@ class RetroSettingsModel {
         final asset = platform == RetroPlatform.ps1 ? 'duckstation' : 'pcsx2';
         final defaults = await rootBundle.loadString('assets/retro/$asset.ini');
         if (_inUse(platform)) {
-          app.show('Close the game before changing its emulator profile.');
+          app.show(T.text('retroCloseBeforeProfileChange'));
           return;
         }
         file.parent.createSync(recursive: true);
@@ -411,15 +425,19 @@ class RetroSettingsModel {
       app.preferences.retroEmulators[platform.name] = selected;
       app.savePreferences();
     } on Object catch (error) {
-      app.show('Could not configure ${platform.emulator}: $error');
+      debugPrint('Could not configure ${platform.emulator}: $error');
+      app.show(T.format('retroConfigureFailed', [platform.emulator]));
     }
   }
 
   Future<void> _chooseBios(RetroPlatform platform, String executable) async {
-    final selected = await app.services.pickFile?.call('${platform.emulator} BIOS', ['bin', 'rom0']);
+    final selected = await app.services.pickFile?.call(T.format('retroSelectBios', [platform.emulator]), [
+      'bin',
+      'rom0',
+    ]);
     if (selected == null) return;
     if (_inUse(platform)) {
-      app.show('Close the game before changing its emulator profile.');
+      app.show(T.text('retroCloseBeforeProfileChange'));
       return;
     }
     try {
@@ -427,14 +445,14 @@ class RetroSettingsModel {
       final target = File(p.join(folder.path, p.basename(selected)));
       if (target.existsSync()) {
         if (sha256.convert(target.readAsBytesSync()) != sha256.convert(File(selected).readAsBytesSync())) {
-          app.show('A different BIOS with that name already exists.');
+          app.show(T.text('retroDifferentBios'));
           return;
         }
       } else {
         await File(selected).copy(target.path);
       }
       if (_inUse(platform)) {
-        app.show('The BIOS was copied. Close the game before selecting it.');
+        app.show(T.text('retroBiosCopiedBusy'));
         return;
       }
       final file = RetroSettings.configFile(executable, platform);
@@ -449,9 +467,10 @@ class RetroSettingsModel {
         case RetroPlatform.ps3:
           break;
       }
-      app.show('${platform.emulator} BIOS imported.');
+      app.show(T.text('retroBiosImported'));
     } on Object catch (error) {
-      app.show('Could not import BIOS: $error');
+      debugPrint('Could not import BIOS: $error');
+      app.show(T.text('retroBiosImportFailed'));
     }
   }
 
@@ -459,7 +478,8 @@ class RetroSettingsModel {
     try {
       if (await app.chooseManagedBios(platform)) app.show(T.text('retroBiosImported'));
     } on Object catch (error) {
-      app.show('Could not import BIOS: $error');
+      debugPrint('Could not import BIOS: $error');
+      app.show(T.text('retroBiosImportFailed'));
     }
   }
 }

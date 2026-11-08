@@ -2,6 +2,7 @@ import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/ps3_settings_model.dart';
+import 'package:anyps5_desktop/ui/strings.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/ui_support.dart';
@@ -78,6 +79,24 @@ void main() {
     decoder(game: first).set(0);
     expect(model.preferences.retroPs3Graphics.containsKey(first.titleId), isFalse);
     expect(decoder(game: first).selected, 0);
+  });
+
+  test('Turkish PS3 settings translate labels without changing stored values', () {
+    final fixture = makeFixture(system: HostSystem.windows, language: Language.byCode('tr'));
+    final model = fixture.model;
+    addTearDown(() {
+      T.language = Language.english;
+      model.dispose();
+      fixture.dispose();
+    });
+
+    final rows = model.retroSettings.categories(RetroPlatform.ps3).expand((panel) => panel.rows);
+    final decoder = rows.singleWhere((row) => row.id == 'rpcs3_spu_decoder');
+    expect(decoder.title, 'SPU kod çözücüsü');
+    final choice = decoder.kind as ChoiceRow;
+    expect(choice.options[choice.selected], 'Yeniden derleyici (LLVM)');
+    choice.set(choice.options.indexOf('Yeniden derleyici (ASMJIT)'));
+    expect(model.preferences.retroPs3Defaults['rpcs3_spu_decoder'], 'asmjit');
   });
 
   test('only GPU choices are listed as in-game graphics keys', () {

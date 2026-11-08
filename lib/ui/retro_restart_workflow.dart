@@ -18,7 +18,7 @@ class _RetroRestartTrials {
   int _restartGeneration = 0;
 
   void cancelPendingRestart() => _restartGeneration++;
-  String _status = 'Record the current settings while playing a repeatable segment.';
+  String _status = T.text('retroRestartInitial');
 
   bool isTrial(EmbeddedRetroGame session) => identical(_trialSession, session);
 
@@ -32,37 +32,41 @@ class _RetroRestartTrials {
     final current = choices.isEmpty ? null : choices[selected < 0 ? 0 : selected];
     return PanelCategory(
       id: 'emulator-restart-tuning',
-      title: 'Tune This Game › Restart Trials',
+      title: '${T.text('retroTuneGame')} › ${T.text('retroRestartTrials')}',
       rows: [
-        const PanelRow(
+        PanelRow(
           id: 'restart-instructions',
-          title: 'Save in the game before restarting',
-          kind: InfoRow('Restarting loses unsaved progress. Load the same save and repeat the same gameplay segment.'),
+          title: T.text('retroRestartSaveFirst'),
+          kind: InfoRow(T.text('retroRestartInstructions')),
         ),
         PanelRow(
           id: 'restart-status',
-          title: 'Comparison',
-          kind: InfoRow(!sameGame && !_busy ? 'Record a baseline with your current settings.' : _status),
+          title: T.text('retroTuningComparison'),
+          kind: InfoRow(!sameGame && !_busy ? T.text('retroRestartBaselinePrompt') : _status),
         ),
         if (game.retro!.platform == RetroPlatform.ps3)
-          const PanelRow(
+          PanelRow(
             id: 'restart-renderer',
-            title: 'PS3 renderer',
-            kind: InfoRow('Vulkan is the renderer supported by this AnyPS5 host.'),
+            title: T.text('retroRestartRenderer'),
+            kind: InfoRow(T.text('retroRestartRendererInfo')),
           ),
         if (baseline != null || (trial && _baseline != null))
-          PanelRow(id: 'restart-baseline', title: 'Baseline', kind: InfoRow((baseline ?? _baseline!).summary)),
+          PanelRow(
+            id: 'restart-baseline',
+            title: T.text('retroTuningBaseline'),
+            kind: InfoRow((baseline ?? _baseline!).summary),
+          ),
         if (!_busy && !trial && !applied && choices.isNotEmpty)
           PanelRow(
             id: 'restart-record-baseline',
-            title: 'Record baseline',
-            detail: 'Play the same segment for about 12 seconds.',
+            title: T.text('retroRecordBaseline'),
+            detail: T.text('retroRestartBaselineDetail'),
             kind: ActionRow(() => unawaited(_record(game, session, trial: false))),
           ),
         if (!_busy && baseline != null && current != null && !applied) ...[
           PanelRow(
             id: 'restart-choice',
-            title: 'Setting to test',
+            title: T.text('retroRestartSetting'),
             kind: ChoiceRow(
               [for (final choice in choices) '${choice.group} · ${choice.label}'],
               selected < 0 ? 0 : selected,
@@ -74,8 +78,8 @@ class _RetroRestartTrials {
           ),
           PanelRow(
             id: 'restart-start',
-            title: 'Restart with temporary setting',
-            detail: 'Save first. CPU and disc timing changes can affect game compatibility.',
+            title: T.text('retroStartTrial'),
+            detail: T.text('retroStartTrialDetail'),
             kind: ActionRow(() => unawaited(_startTrial(game, session, current))),
           ),
         ],
@@ -83,37 +87,41 @@ class _RetroRestartTrials {
           PanelRow(
             id: 'restart-candidate',
             title: _choice!.label,
-            kind: InfoRow(applied ? 'Saved for this game' : 'Temporary'),
+            kind: InfoRow(applied ? T.text('retroTrialSaved') : T.text('retroTrialTemporary')),
           ),
         if (_candidate case final result? when trial)
-          PanelRow(id: 'restart-result', title: 'Candidate', kind: InfoRow(result.summary)),
+          PanelRow(id: 'restart-result', title: T.text('retroTuningCandidate'), kind: InfoRow(result.summary)),
         if (!_busy && trial && !applied)
           PanelRow(
             id: 'restart-record-candidate',
-            title: 'Record candidate',
-            detail: 'After loading the same save, repeat the baseline segment.',
+            title: T.text('retroRecordCandidate'),
+            detail: T.text('retroRestartCandidateDetail'),
             kind: ActionRow(() => unawaited(_record(game, session, trial: true))),
           ),
         if (!_busy && trial && !applied && _passesComparison)
-          PanelRow(id: 'restart-apply', title: 'Apply to this game', kind: ActionRow(() => _apply(game, session))),
+          PanelRow(
+            id: 'restart-apply',
+            title: T.text('retroApplyToGame'),
+            kind: ActionRow(() => _apply(game, session)),
+          ),
         if (!_busy && trial && !applied)
           PanelRow(
             id: 'restart-restore',
-            title: 'Restart with saved settings',
-            detail: 'Save in the game before restarting.',
+            title: T.text('retroRestartSaved'),
+            detail: T.text('retroRestartSaveFirstDetail'),
             kind: ActionRow(() => unawaited(_restore(game, session))),
           ),
         if (!_busy && applied) ...[
           PanelRow(
             id: 'restart-undo',
-            title: 'Undo and restart',
-            detail: 'Save in the game before restarting.',
+            title: T.text('retroRestartUndo'),
+            detail: T.text('retroRestartSaveFirstDetail'),
             kind: ActionRow(() => unawaited(_undo(game, session))),
           ),
           PanelRow(
             id: 'restart-finish',
-            title: 'Finish and restart',
-            detail: 'Keep the tested setting and close this comparison. Save in the game first.',
+            title: T.text('retroRestartFinish'),
+            detail: T.text('retroRestartFinishDetail'),
             kind: ActionRow(() {
               _applied = false;
               unawaited(_restore(game, session));
@@ -121,10 +129,10 @@ class _RetroRestartTrials {
           ),
         ],
         if (!trial && choices.isEmpty)
-          const PanelRow(
+          PanelRow(
             id: 'restart-unavailable',
-            title: 'No supported restart candidates',
-            kind: InfoRow('This core has not reported an eligible alternative for this game.'),
+            title: T.text('retroRestartUnavailable'),
+            kind: InfoRow(T.text('retroRestartUnavailableInfo')),
           ),
       ],
     );
@@ -164,12 +172,12 @@ class _RetroRestartTrials {
   Future<void> _record(Game game, EmbeddedRetroGame session, {required bool trial}) async {
     if (_busy || app.embeddedGame != session || !session.presented || isTrial(session) != trial) return;
     if (trial && !_trialMatches(session)) {
-      _setStatus('The core is no longer using the requested setting. Restart with the saved profile.');
+      _setStatus(T.text('retroRestartSettingChanged'));
       return;
     }
     final result = session.tuning.captureRestartSample();
     if (result == null) {
-      _setStatus('Wait for the game to finish loading and any other recording to stop.');
+      _setStatus(T.text('retroRestartBusy'));
       return;
     }
     if (_game?.id != game.id) {
@@ -185,7 +193,7 @@ class _RetroRestartTrials {
     _game = game;
     final active = Map<String, String>.of(session.activeOptions);
     final saved = _profile(game);
-    _status = 'Recording gameplay…';
+    _status = T.text('retroRecording');
     app.resumeGame();
     final sample = await result;
     _busy = false;
@@ -198,16 +206,12 @@ class _RetroRestartTrials {
       } else {
         _baseline = null;
       }
-      _setStatus('The sample was interrupted or the game settings changed. Record the segment again.');
+      _setStatus(T.text('retroTrialInterrupted'));
       return;
     }
     if (trial) {
       _candidate = sample;
-      _setStatus(
-        _passesComparison
-            ? 'The candidate improved the measured result. Review it before applying.'
-            : 'The candidate did not show a clear improvement. Restart with the saved settings.',
-      );
+      _setStatus(_passesComparison ? T.text('retroTrialImproved') : T.text('retroTrialNoImprovement'));
     } else {
       _baselineSession = session;
       _baseline = sample;
@@ -215,7 +219,7 @@ class _RetroRestartTrials {
       _choice = null;
       _baselineValues = active;
       _savedValues = saved;
-      _setStatus('Baseline recorded. Save in the game, then choose one setting to test.');
+      _setStatus(T.text('retroRestartBaselineRecorded'));
     }
   }
 
@@ -241,34 +245,35 @@ class _RetroRestartTrials {
     if (_busy || app.embeddedGame != session || _baselineSession != session || _baseline == null) return;
     if (!mapEquals(_baselineValues, session.activeOptions) || !mapEquals(_savedValues, _profile(game))) {
       _baseline = null;
-      _setStatus('Settings changed after the baseline. Record it again.');
+      _setStatus(T.text('retroRestartBaselineInvalid'));
       return;
     }
     _busy = true;
     _choice = choice;
     _candidate = null;
-    _setStatus('Restarting with the temporary setting…');
+    _setStatus(T.text('retroTrialRestarting'));
     final generation = _restartGeneration;
     try {
       final trial = await _restart(game, session, {choice.key: choice.value});
       if (generation != _restartGeneration || app._disposed) return;
       if (trial != null && _trialMatches(trial)) {
         _trialSession = trial;
-        _setStatus('Temporary setting is active. Load the same save and record the candidate from Tune This Game.');
-        app.show('Restart trial ready. Load the same save, then open Tune This Game.');
+        _setStatus(T.text('retroTrialActive'));
+        app.show(T.text('retroTrialReady'));
       } else {
         if (trial != null && app.embeddedGame == trial && app.starting == null && !app.stopping) {
           await _restart(game, trial, const {});
         }
         _baseline = null;
-        _setStatus('The trial could not use the requested setting. The saved settings are unchanged.');
+        _setStatus(T.text('retroTrialSettingUnavailable'));
         if (!app._disposed) app.show(_status);
       }
     } on TimeoutException catch (failure) {
-      _setStatus(failure.message ?? 'The restart did not complete. The saved settings are unchanged.');
+      _setStatus(failure.message ?? T.text('retroTrialStopTimeout'));
       if (!app._disposed) app.show(_status);
     } on StateError catch (failure) {
-      _setStatus(failure.message);
+      debugPrint('Emulator restart failed: ${failure.message}');
+      _setStatus(T.text('retroTrialRestartFailed'));
       if (!app._disposed) app.show(_status);
     } finally {
       _busy = false;
@@ -285,7 +290,7 @@ class _RetroRestartTrials {
     unawaited(app.stopRunningGame());
     await settled.future.timeout(
       const Duration(seconds: 30),
-      onTimeout: () => throw TimeoutException('The previous game session did not close in time.'),
+      onTimeout: () => throw TimeoutException(T.text('retroTrialStopTimeout')),
     );
     if (!current() || app.running != null || app.starting != null) return null;
     if (previous.error.isNotEmpty) throw StateError(previous.error);
@@ -304,20 +309,20 @@ class _RetroRestartTrials {
     final choice = _choice;
     if (_busy || choice == null || !_passesComparison || !_trialMatches(session)) return;
     if (!mapEquals(_savedValues, _profile(game))) {
-      _setStatus('The saved profile changed. Restart with the saved settings and record a new baseline.');
+      _setStatus(T.text('retroTrialProfileChanged'));
       return;
     }
     _priorOverride = _overrides(game)[_profileId(game)]?[choice.key];
     if (_save(game, choice.key, choice.value)) {
       _applied = true;
-      _setStatus('Applied to this game. Undo is available until AnyPS5 closes.');
+      _setStatus(T.text('retroTrialApplied'));
     }
   }
 
   Future<void> _restore(Game game, EmbeddedRetroGame session) async {
     if (_busy || app.embeddedGame != session) return;
     _busy = true;
-    _setStatus('Restarting with the saved settings…');
+    _setStatus(T.text('retroTrialRestoreRestarting'));
     final generation = _restartGeneration;
     try {
       final restored = await _restart(game, session, const {});
@@ -326,15 +331,16 @@ class _RetroRestartTrials {
         _trialSession = null;
         _baseline = null;
         _candidate = null;
-        _setStatus('The game is back on its saved profile.');
+        _setStatus(T.text('retroTrialRestored'));
       } else {
-        _setStatus('The saved profile is unchanged. Start the game again to load it.');
+        _setStatus(T.text('retroTrialStartAgain'));
       }
     } on TimeoutException catch (failure) {
-      _setStatus(failure.message ?? 'The restart did not complete.');
+      _setStatus(failure.message ?? T.text('retroTrialStopTimeout'));
       if (!app._disposed) app.show(_status);
     } on StateError catch (failure) {
-      _setStatus(failure.message);
+      debugPrint('Emulator restart failed: ${failure.message}');
+      _setStatus(T.text('retroTrialRestartFailed'));
       if (!app._disposed) app.show(_status);
     } finally {
       _busy = false;
@@ -346,7 +352,7 @@ class _RetroRestartTrials {
     final choice = _choice;
     if (_busy || !_applied || choice == null || app.embeddedGame != session) return;
     if (_overrides(game)[_profileId(game)]?[choice.key] != choice.value) {
-      _setStatus('The tested setting has since changed. Undo would overwrite that change.');
+      _setStatus(T.text('retroTrialUndoChanged'));
       return;
     }
     if (_save(game, choice.key, _priorOverride)) {
@@ -378,7 +384,7 @@ class _RetroRestartTrials {
       } else {
         profiles[id] = original;
       }
-      _setStatus('AnyPS5 could not save the change. The saved profile is unchanged.');
+      _setStatus(T.text('retroTrialSaveFailed'));
       return false;
     }
     return true;

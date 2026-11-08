@@ -8,6 +8,7 @@ import '../core/retro_optimizer.dart';
 import '../core/retro_optimizer_undo.dart';
 import '../core/retro_settings.dart';
 import 'app_model.dart';
+import 'strings.dart';
 
 class RetroQuickOptimize {
   RetroQuickOptimize(this.app, this.refresh);
@@ -31,58 +32,63 @@ class RetroQuickOptimize {
     final profile = _profile(platform, settings);
     final recommendation = _recommend(platform, mode, profile, hardware);
     final current = profile?.scale ?? (platform == RetroPlatform.ps1 ? '0' : '1');
-    final currentLabel = current == '0' ? 'Auto' : '$current×';
+    final currentLabel = current == '0' ? T.text('retroPs3Auto') : '$current×';
     final alreadyApplied = double.tryParse(current) == recommendation?.scale;
     return PanelCategory(
       id: id,
-      title: '${platform.emulator} · Quick Optimize',
+      title: '${platform.emulator} · ${T.text('retroQuickOptimize')}',
       rows: [
         PanelRow(
           id: '$id-mode',
-          title: 'Optimization profile',
-          detail: 'Choose how much internal resolution to trade for graphics headroom.',
-          kind: ChoiceRow(const ['Performance', 'Balanced', 'Quality'], mode.index, (index) {
-            _modes[platform] = RetroOptimizationMode.values[index];
-            refresh();
-          }),
+          title: T.text('retroOptimizeProfile'),
+          detail: T.text('retroOptimizeProfileDetail'),
+          kind: ChoiceRow(
+            [T.text('retroOptimizePerformance'), T.text('retroOptimizeBalanced'), T.text('retroOptimizeQuality')],
+            mode.index,
+            (index) {
+              _modes[platform] = RetroOptimizationMode.values[index];
+              refresh();
+            },
+          ),
         ),
         PanelRow(
           id: '$id-preview',
-          title: checking ? 'Detecting your PC' : 'Preview recommended settings',
-          detail: 'Reads your graphics adapter and the display showing AnyPS5.',
-          kind: checking ? const InfoRow('Please wait') : ActionRow(() => unawaited(_detect(platform))),
+          title: checking ? T.text('retroOptimizeDetect') : T.text('retroOptimizePreview'),
+          detail: T.text('retroOptimizePreviewDetail'),
+          kind: checking ? InfoRow(T.text('retroOptimizeWait')) : ActionRow(() => unawaited(_detect(platform))),
         ),
         if (recommendation != null)
           PanelRow(
             id: '$id-summary',
             title: alreadyApplied
-                ? 'Internal Resolution is ${recommendation.scale}×'
-                : 'Internal Resolution · $currentLabel → ${recommendation.scale}×',
-            detail:
-                '${recommendation.adapter.name} · '
-                '${(recommendation.adapter.dedicatedBytes / (1 << 30)).toStringAsFixed(1)} GiB · '
-                '${recommendation.displayHeight}p display',
-            kind: const InfoRow('Suggested starting point'),
+                ? T.format('retroOptimizeResolutionSet', [recommendation.scale])
+                : T.format('retroOptimizeResolutionChange', [currentLabel, recommendation.scale]),
+            detail: T.format('retroOptimizeDisplay', [
+              recommendation.adapter.name,
+              T.decimal(recommendation.adapter.dedicatedBytes / (1 << 30), 1),
+              recommendation.displayHeight,
+            ]),
+            kind: InfoRow(T.text('retroOptimizeStartingPoint')),
           )
         else if (_hardware.containsKey(platform) && !checking)
           PanelRow(
             id: '$id-unavailable',
-            title: 'Hardware recommendation unavailable',
-            detail: 'Quick Optimize needs an identifiable graphics adapter, a display and a hardware renderer.',
-            kind: const InfoRow('Use manual graphics settings'),
+            title: T.text('retroOptimizeUnavailable'),
+            detail: T.text('retroOptimizeUnavailableDetail'),
+            kind: InfoRow(T.text('retroOptimizeManual')),
           ),
         if (recommendation != null && !alreadyApplied && !checking)
           PanelRow(
             id: '$id-apply',
-            title: 'Apply recommendation',
-            detail: 'Applies to this emulator on its next launch.',
+            title: T.text('retroOptimizeApply'),
+            detail: T.text('retroOptimizeApplyDetail'),
             kind: ActionRow(() => unawaited(_apply(platform, mode, settings, recommendation, save))),
           ),
         if (!checking && _undo.canUndo(platform: platform, settings: settings))
           PanelRow(
             id: '$id-undo',
-            title: 'Undo Quick Optimize',
-            detail: 'Restore the previous internal resolution.',
+            title: T.text('retroOptimizeUndo'),
+            detail: T.text('retroOptimizeUndoDetail'),
             kind: ActionRow(() => save(() => _undo.undo(platform: platform, settings: settings))),
           ),
       ],
@@ -165,7 +171,7 @@ class RetroQuickOptimize {
           _mode(platform) != mode ||
           program == null ||
           !p.equals(RetroSettings.configFile(program, platform).absolute.path, settings.file.absolute.path)) {
-        app.show('The display or emulator selection changed. Review the updated preview.');
+        app.show(T.text('retroOptimizeSelectionChanged'));
         return;
       }
       save(() => _undo.apply(platform: platform, settings: settings, recommendation: current));

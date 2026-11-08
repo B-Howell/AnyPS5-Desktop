@@ -201,7 +201,13 @@ The [package installer tests](../test/core/managed_retro_test.dart) cover
 missing packages, invalid pins, ZIP and DLL mismatches, retries, and
 invalid firmware replacements. The [setup flow tests](../test/ui/retro_settings_setup_test.dart)
 exercise picker cancellation and finishing setup after selecting a local PUP.
-The Windows focused retro suite passed 73 tests after these changes. Use a new profile root for the manual PS3 acceptance run.
+The Windows focused retro suite passed 74 tests. It includes a Turkish
+PS3 settings check that verifies translated choices still persist the
+original RPCS3 values. The setup and tuning copy uses the
+[English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
+dictionaries through the existing translation layer. Remaining graphics
+and controller labels, and any native error or option text that reaches
+a UI surface, need an audit in the embedded review slices. Use a new profile root for the manual PS3 acceptance run.
 
 Split [the review draft](https://github.com/AnyTogether/AnyPS5-Desktop/pull/84#issuecomment-6720973129)
 into three separately tested changes. Start with the library rows and

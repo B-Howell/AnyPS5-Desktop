@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import '../core/game_library.dart';
+import 'strings.dart';
 
 typedef EmbeddedOption = ({List<String> values, List<String> labels, String title, bool restart, int selected});
 typedef RetroTuningWrite = Future<bool> Function(Map<String, String> expected, Map<String, String> values);
@@ -48,10 +49,14 @@ class RetroTuningSample {
 
   String get summary {
     final audio = audioRatio;
-    final frameTime = frameTime95 == 1000 ? 'over 500 ms' : 'up to $frameTime95 ms';
-    return '${videoFps.toStringAsFixed(1)} core output FPS · p95 frame interval $frameTime'
-        '${audio == null ? '' : ' · ${(audio * 100).round()}% audio rate'}'
-        '${droppedAudio == 0 ? '' : ' · $droppedAudio dropped audio frames'}';
+    final frameTime = frameTime95 == 1000
+        ? T.text('retroTuningIntervalOverflow')
+        : T.format('retroTuningInterval', [frameTime95]);
+    return [
+      T.format('retroTuningRate', [T.decimal(videoFps, 1), frameTime]),
+      if (audio != null) T.format('retroTuningAudioRate', [T.percent((audio * 100).round())]),
+      if (droppedAudio > 0) T.format('retroTuningDroppedAudio', [droppedAudio]),
+    ].join(' · ');
   }
 }
 
@@ -184,21 +189,21 @@ class RetroGameTuning {
   ];
 
   String get status {
-    if (_busy) return 'Updating this game’s settings…';
-    if (_trial != null) {
-      final stage = switch (_trial!) {
-        _Trial.baseline => 'baseline',
-        _Trial.candidate => 'candidate',
-        _Trial.restartSample => 'restart trial',
-      };
-      return _warmupFrom == null
-          ? 'Resume and play the same gameplay segment for the $stage sample.'
-          : 'Recording the $stage gameplay sample. Keep playing until it finishes.';
+    if (_busy) return T.text('retroTuningUpdating');
+    if (_trial case final trial?) {
+      return T.text(switch ((trial, _warmupFrom != null)) {
+        (_Trial.baseline, false) => 'retroTuningResumeBaseline',
+        (_Trial.candidate, false) => 'retroTuningResumeCandidate',
+        (_Trial.restartSample, false) => 'retroTuningResumeRestart',
+        (_Trial.baseline, true) => 'retroTuningRecordingBaseline',
+        (_Trial.candidate, true) => 'retroTuningRecordingCandidate',
+        (_Trial.restartSample, true) => 'retroTuningRecordingRestart',
+      });
     }
     if (_message case final message?) return message;
-    if (!_observed || !ready()) return 'Wait until the game has finished starting.';
-    if (!canStartBaseline) return 'No supported live tuning candidates are available for these settings.';
-    return 'Play a repeatable segment to record your current performance.';
+    if (!_observed || !ready()) return T.text('retroTuningWaiting');
+    if (!canStartBaseline) return T.text('retroTuningNoCandidates');
+    return T.text('retroTuningRepeatSegment');
   }
 
   Future<RetroTuningSample?>? captureRestartSample() {
@@ -233,7 +238,7 @@ class RetroGameTuning {
     final accepted = await _write(_before, _candidate);
     _busy = false;
     if (!accepted) {
-      _message = 'The game or settings changed. Record a new baseline.';
+      _message = T.text('retroTuningBaselineChanged');
       baseline = null;
       changed();
       return false;
@@ -286,26 +291,22 @@ class RetroGameTuning {
       final restored = await _write(_candidate, _before);
       _busy = false;
       if (!restored) {
-        _message = 'The baseline could not be restored. Reopen the game to reload its saved settings.';
+        _message = T.text('retroTuningRestoreFailed');
         baseline = null;
         changed();
         return;
       }
     }
     if (sample == null) {
-      _message = 'Gameplay recording was interrupted or produced too few frames. Try the same segment again.';
+      _message = T.text('retroTuningInterrupted');
     } else if (trial == _Trial.baseline) {
       baseline = sample;
       _candidate = _plan(headroom: sample.needsHeadroom);
       _before = {for (final key in _candidate.keys) key: _value(key)!};
-      _message = _candidate.isEmpty
-          ? 'Baseline recorded. No supported live changes match this sample.'
-          : 'Baseline recorded. Repeat the same gameplay segment for the candidate.';
+      _message = _candidate.isEmpty ? T.text('retroTuningNoChanges') : T.text('retroTuningBaselineRecorded');
     } else {
       candidate = sample;
-      _message = canApply
-          ? 'The candidate passed the comparison. The original settings are restored until you apply.'
-          : 'The candidate did not pass the comparison. The original settings were restored.';
+      _message = canApply ? T.text('retroTuningCandidatePassed') : T.text('retroTuningCandidateFailed');
     }
     changed();
   }
@@ -346,15 +347,13 @@ class RetroGameTuning {
       try {
         persist(from, to, undo: !applied);
         _applied = applied;
-        _message = applied ? 'Applied to this game.' : 'Restored the previous settings for this game.';
+        _message = applied ? T.text('retroTuningApplied') : T.text('retroTuningRestored');
       } on Exception {
         final restored = await _write(to, from);
-        _message = restored
-            ? 'The settings could not be saved. The previous values were restored.'
-            : 'The settings could not be saved. Reopen the game to reload its saved settings.';
+        _message = restored ? T.text('retroTuningSaveRestored') : T.text('retroTuningSaveFailed');
       }
     } else {
-      _message = 'The live settings changed. No values were overwritten.';
+      _message = T.text('retroTuningLiveChanged');
     }
     _busy = false;
     changed();
@@ -396,10 +395,10 @@ class RetroGameTuning {
     return switch (key) {
       'swanstation_GPU_ResolutionScale' ||
       'pcsx2_upscale_multiplier' ||
-      'rpcs3_resolution_scale' => 'Internal resolution',
-      'swanstation_GPU_TextureFilter' => 'Texture filtering',
-      'pcsx2_trilinear_filtering' => 'Trilinear filtering',
-      _ => 'Anisotropic filtering',
+      'rpcs3_resolution_scale' => T.text('retroInternalResolution'),
+      'swanstation_GPU_TextureFilter' => T.text('retroTextureFiltering'),
+      'pcsx2_trilinear_filtering' => T.text('retroTrilinearFiltering'),
+      _ => T.text('retroPs3AnisotropicFiltering'),
     };
   }
 
