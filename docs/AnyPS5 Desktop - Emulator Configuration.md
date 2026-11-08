@@ -65,6 +65,30 @@ setup. The [folder projection](../lib/ui/retro_home_folders.dart) uses real
 library titles and preserves their IDs. Console indicators in this
 submission use text labels. Experiment artwork stays in its local profile.
 
+### Multi-disc PS1 games
+
+Use one UTF-8 M3U playlist with one relative CUE or CHD filename per line
+in disc order. Point the title's manifest at the playlist and keep its
+existing title ID, folder, and artwork. This gives the library one game
+entry. In standalone DuckStation, the playlist makes those discs
+available in Change Disc and lets the title share its memory card.
+[DuckStation's playlist implementation](https://github.com/stenzek/duckstation/blob/master/src/util/cd_image_m3u.cpp)
+opens each disc separately and switches the active image.
+
+The local library scan found one Metal Gear Solid entry with discs 1–2
+and one Final Fantasy VII entry with discs 1–3. The FFVII playlist uses
+the exact former Disc 1 filename stem with the `.m3u` extension.
+The existing [Windows core host](../windows/runner/retro_core_host.cpp)
+derives its PS1 card filename from the launch path's stem, so this
+preserves the card filename without changing any saves.
+
+The embedded host still needs a Quick Menu disc selector. The intended
+flow shows the inserted disc and ordered choices. It uses the core's
+disc-control interface to eject, select, and reinsert within the same
+session. Keep the tile and memory card identity fixed, and leave the
+game running at its own change-disc prompt. Verify each swap and a
+subsequent save in a scratch profile before shipping the control.
+
 ## Play and tune
 
 Press PS/Guide or Escape to open the Quick Menu over the embedded game.

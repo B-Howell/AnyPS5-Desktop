@@ -53,6 +53,56 @@ and the WAV. A one-PC two-instance race remains the LAN exit gate below.
 
 The [LRPS2 build source](https://github.com/libretro/ps2/blob/master/Makefile.common) contains DEV9, and [its CMake configuration](https://github.com/libretro/ps2/blob/master/CMakeLists.txt) makes PCAP opt-in. That establishes source capabilities. Check the exact AnyPS5 Windows artifact and its options separately. The [LRPS2 feature table](https://docs.libretro.com/library/lrps2/#features) lists frontend netplay as unsupported. This plan uses the game's own networking, with no PS1-style frame replay.
 
+### Local backend probe (2026-11-08)
+
+The available Windows LRPS2 artifact was inspected without starting AnyPS5 or
+the game. Its SHA-256 is
+`47FFAEDBAA0D488039FEDA57D9C8E57FFD3FB97626E67AF4780F9219E2BD901C`.
+It exposes `pcsx2_dev9_eth` as the DEV9 Sockets backend. The binary contains
+the diagnostic messages `TAP backend not present in this core` and `PCAP
+backend not built into this core, use the Sockets api`. The source behavior is
+explicit in upstream [`net.cpp`](https://github.com/libretro/ps2/blob/master/pcsx2/DEV9/net.cpp#L180-L212):
+TAP is absent, PCAP is conditional on `HAVE_PCAP`, and Sockets constructs a
+`SocketAdapter`. The current [`Makefile.common`](https://github.com/libretro/ps2/blob/master/Makefile.common#L1880-L1986)
+always includes the socket implementation and includes `pcap_io.cpp` only
+when `HAVE_PCAP` is set. The exact DLL reports ParaLLEl PS2
+`v2.0.0-da5b07e` through Libretro system info. The
+[reported revision](https://github.com/libretro/parallel-ps2/commit/da5b07ebebc18016e1ca5b401188a283971a0e8d)
+is the starting point for a patched core build. The hash identifies the
+distributed binary independently of that version string.
+
+PCSX2's [DEV9 report](https://pcsx2.net/blog/2023/q1-2022-progress-report/#dev9)
+says the Sockets backend can join a LAN game hosted by hardware or by a PCSX2
+instance using TAP/PCAP, while hosting through Sockets is unsupported. This
+artifact therefore cannot host the reference LAN needed for the one-PC GT4
+baseline. No emulator, game, driver, firewall, or desktop state was changed,
+and no race was attempted. This is a backend capability blocker, not a GT4
+compatibility result.
+
+The upstream extension seam is concrete: [`NetAdapter`](https://github.com/libretro/ps2/blob/master/pcsx2/DEV9/net.h#L78-L124)
+defines Ethernet `NetPacket` send/receive plus wake/wait and internal-server
+hooks; [`net.cpp`](https://github.com/libretro/ps2/blob/master/pcsx2/DEV9/net.cpp#L80-L128)
+receives packets on the DEV9 RX thread and hands them to emulated SMAP, and
+[`GetNetAdapter`](https://github.com/libretro/ps2/blob/master/pcsx2/DEV9/net.cpp#L180-L212)
+is the backend factory. A custom `NetAdapter` can carry complete Ethernet
+frames over a private local IPC link to an in-memory switch, with broadcast
+confined to the match. This does not require TAP, PCAP, a host NIC, or an OS
+driver. Each core process must have an isolated endpoint and guest identity;
+the launcher/host must own segment membership, bounded queues, and teardown.
+This is an implementation path to test, not an existing LRPS2 feature.
+
+WSL Ubuntu was available for headless socket work. A process-to-process UDP
+echo on `127.0.0.1` passed with a 13-byte payload and required no host network
+interface configuration or firewall change. That only verifies the local IPC
+building block; it does not verify the proposed adapter, DEV9 integration, or
+a GT4 race. The repo does not contain the LRPS2 source checkout, so building a
+patched core and exercising this adapter still requires checking out
+the reported revision and coordinating the full core build. For a headless game harness,
+the core's `Software (SW)` renderer can avoid the production frontend's D3D11
+context; a separate libretro runner must supply the BIOS, isolated system/save
+directories, and deterministic synthetic controller input. None of those
+game-run gates has passed yet.
+
 ## 1. Pin a title and inventory the actual core
 
 **Read:** [ManagedRetro](../lib/core/managed_retro.dart), [native runner](../windows/runner/retro_core_host.cpp), and the [Gran Turismo 4 LAN manual](https://www.gran-turismo.com/local/jp/data1/pdf/gt4_lan.pdf).
