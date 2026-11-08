@@ -127,7 +127,7 @@ and network simulation are outside that timer. Elapsed work can exceed the
 not measure actual controller-to-display latency, audio quality, WAN play or
 native launcher performance.
 
-### Recompiler control
+### Original DLL controls
 
 Both peers matched all 13,706 frames at zero delay and at the nominal
 40 ms profile. The latter never needed a rewind with the two-tick buffer.
@@ -154,7 +154,7 @@ input delay was six ticks (100 ms), and each correction took 34.7–81.8 ms
 of measured work. That qualifies synchronization in those trials, with
 substantial delay and occasional work exceeding the frame budget.
 
-### Interpreter control
+### Original DLL interpreter control
 
 The [interpreter trace](../tool/ps1_netplay/fixtures/ctr_usa_coco_park_interpreter.json)
 is a separately recorded controller-only race on the same track. The
@@ -174,8 +174,75 @@ restore probe remains the controlled CPU-mode comparison. The full races
 used different controller tapes and establish the limits of each tested
 configuration.
 
-The local rollback experiment therefore passes only the qualified
-six-tick recompiler trials with the tested loss schedules. The two-tick
-low-delay path is blocked on making core restores reproduce the
-uninterrupted reference through the race. Real-time responsiveness and
-transport qualification remain separate gates.
+### Checkpoint restore fix
+
+The rollback workers now request Libretro's `RUNAHEAD_SAME_INSTANCE`
+save-state context during checkpoint calls. Each worker only restores states
+it created in its own live core. The original DLL uses its in-memory restore
+path for this context. Its `ROLLBACK_NETPLAY` context still takes the
+file-style path, as does the offline harness by default. In a no-network
+test, an immediate restore at frame 600 reproduced the RAM mismatch at
+frame 1,114 with the file-style contexts. The same-instance restore matched
+through frame 1,200.
+
+The original DLL still failed a real rewind with the same-instance context.
+Save after frame 1,662, advance one frame using the correct recorded inputs,
+then restore and replay. The original DLL changed the restored sound unit
+(SPU) tick carry from 83 to 353 when the intervening frame changed the sample
+interval. The next replayed frame changed the SPU timer phase by 270 CPU
+cycles. Main RAM first differed at frame 1,664. Restoring immediately after
+saving at 1,662 did not reproduce this failure.
+
+The [SwanStation SPU checkpoint patch](../tool/patches/swanstation-spu-checkpoint.patch)
+removes the sample event reschedule from `SPU::DoState`. That reschedule could
+execute the live timeline's sample timer against the checkpoint's restored
+SPU state. The sample event stays active and `TimingEvents::DoState` restores
+its saved timing. The separate SPU transfer event is still reconstructed.
+The patch is for the standalone test core and can be reproduced from
+[SwanStation `631f0fb31b809e0f889d7c551fe695788e39c1d3`](https://github.com/libretro/swanstation/tree/631f0fb31b809e0f889d7c551fe695788e39c1d3).
+From an x64 Visual Studio developer shell with CMake and Ninja, run these
+commands from the Desktop worktree. Choose a fresh directory outside this
+worktree for `$coreSource`.
+
+```powershell
+$patch = (Resolve-Path tool/patches/swanstation-spu-checkpoint.patch).Path
+git clone https://github.com/libretro/swanstation.git "$coreSource"
+git -C "$coreSource" checkout --detach 631f0fb31b809e0f889d7c551fe695788e39c1d3
+git -C "$coreSource" apply --check "$patch"
+git -C "$coreSource" apply "$patch"
+cmake -S "$coreSource" -B "$coreSource/build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build "$coreSource/build" --parallel 4
+$core = "$coreSource/build/swanstation_libretro.dll"
+```
+
+Generate a fresh two-worker offline baseline using the patched DLL before
+running the network profiles. The rollback tool binds its baseline to the
+DLL hash. The locally built DLL had SHA-256
+`edf09b2188eec014eafbb4653ab0ddb6d8eb026a483057738a0740a57c436994`.
+Both cold runs matched the original DLL's 13,706 frame signatures, effective
+options and finish result. A targeted comparison between unmodified and
+patched local builds reproduced the tick carry change only with the
+unmodified build. Seat 2 also passed the first 1,680 frames of the 80 ms
+loss trace on the patched build with the same three rewinds as the red run.
+
+### Patched full-race trials
+
+Each profile used the recompiler, `--delay 2 --window 8 --seed 2401`, and
+one worker per controller port. Both workers confirmed all 13,706 frames
+against the patched offline baseline and produced the original placements.
+Cortex finished first after three laps and Crash was placed second. The
+table gives each peer's results in port order.
+
+| Profile | Corrections | Simulated stalls | p95 input delay in ticks | p95 host work in ms | Host work ticks over 16.67 ms |
+| --- | --- | --- | --- | --- | --- |
+| 80 ms with jitter | 504 / 1,043 | 0 / 0 | 2 / 2 | 10.93 / 19.64 | 526 / 961 |
+| 80 ms with jitter and loss | 493 / 1,029 | 0 / 0 | 2 / 2 | 8.98 / 20.97 | 493 / 985 |
+| 120 ms with jitter and loss | 669 / 1,348 | 5 / 5 | 2 / 2 | 11.93 / 25.76 | 675 / 1,330 |
+
+Two virtual ticks are about 33.3 ms of input scheduling delay. These
+trials qualify synchronization under the tested packet schedules. Some
+replay work exceeds a real 60 Hz frame budget. Each peer's maximum
+virtual input delay at 120 ms was seven ticks. Native rendering, audio, physical input latency,
+and two-PC play still need measurement. File-style loads share the SPU
+fix. Legacy saves and loads across different core settings were outside
+this experiment.

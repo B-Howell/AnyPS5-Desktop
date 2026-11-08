@@ -10,6 +10,8 @@ AUDIO = c.CFUNCTYPE(None, c.c_int16, c.c_int16)
 BATCH = c.CFUNCTYPE(c.c_size_t, c.c_void_p, c.c_size_t)
 POLL = c.CFUNCTYPE(None)
 INPUT = c.CFUNCTYPE(c.c_int16, c.c_uint, c.c_uint, c.c_uint, c.c_uint)
+GET_SAVESTATE_CONTEXT = 72 | 0x10000
+RUNAHEAD_SAME_INSTANCE = 1
 
 
 class Variable(c.Structure):
@@ -21,7 +23,10 @@ class GameInfo(c.Structure):
 
 
 class Core:
-    def __init__(self, dll, disc, bios, root, cpu="Recompiler"):
+    _checkpoint_active = False
+
+    def __init__(self, dll, disc, bios, root, cpu="Recompiler", *, memory_checkpoints=False):
+        self.memory_checkpoints = memory_checkpoints
         root.mkdir()
         system = root / "system"
         save = root / "save"
@@ -83,6 +88,14 @@ class Core:
         return fn
 
     def environment(self, command, address):
+        if command == GET_SAVESTATE_CONTEXT:
+            if not self._checkpoint_active:
+                return False
+            if address is None:
+                return True
+            self._checkpoint_context_queried = True
+            c.cast(address, c.POINTER(c.c_int))[0] = RUNAHEAD_SAME_INSTANCE
+            return True
         if command in (14, 0x10000 | 14, 0x10000 | 43, 0x10000 | 44):
             self.hw_requested = True
             return False
@@ -156,15 +169,25 @@ class Core:
 
     def checkpoint(self):
         buffer = c.create_string_buffer(self.state_size)
-        if not self.serialize(buffer, self.state_size):
+        if not self._checkpoint_call(self.serialize, buffer, self.state_size):
             raise RuntimeError("Core rejected serialization")
         return buffer.raw
 
     def restore(self, frame, state, image=None):
-        if not self.unserialize(state, len(state)):
+        if not self._checkpoint_call(self.unserialize, state, len(state)):
             raise RuntimeError("Core rejected checkpoint")
+        if self.memory_checkpoints and not self._checkpoint_context_queried:
+            raise RuntimeError("Core ignored the same-instance save-state context")
         self.frame = frame
         self.image = image
+
+    def _checkpoint_call(self, operation, data, size):
+        self._checkpoint_context_queried = False
+        self._checkpoint_active = self.memory_checkpoints
+        try:
+            return operation(data, size)
+        finally:
+            self._checkpoint_active = False
 
     def close(self):
         self.bind("retro_unload_game", None)()

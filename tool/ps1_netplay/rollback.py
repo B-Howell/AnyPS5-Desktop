@@ -218,7 +218,10 @@ def main():
 
     profile = PROFILES[args.profile]
     if args.seat is not None:
-        core = Core(args.core, args.disc, args.bios, args.output, args.cpu)
+        # A peer only reloads its own in-memory checkpoints. SwanStation uses
+        # the file-style restore path for libretro's ROLLBACK_NETPLAY context.
+        core = Core(args.core, args.disc, args.bios, args.output, args.cpu,
+                    memory_checkpoints=True)
         try:
             if {key.decode(): value.decode() for key, value in core.settings.items()} != fixture["options"]:
                 raise ValueError("Core options do not match the baseline")

@@ -1,6 +1,37 @@
+import ctypes as c
 import unittest
 
+from headless_core import Core
 from rollback import Impairment, simulate
+
+
+class CheckpointContextTests(unittest.TestCase):
+    def test_same_instance_context_is_scoped_to_checkpoint_calls(self):
+        core = Core.__new__(Core)
+        core.memory_checkpoints = True
+        core.state_size = 1
+        context = c.c_int(-1)
+        command = 72 | 0x10000
+
+        def query_context(_state, _size):
+            self.assertTrue(core.environment(command, None))
+            self.assertFalse(core._checkpoint_context_queried)
+            self.assertTrue(core.environment(command, c.addressof(context)))
+            self.assertEqual(context.value, 1)
+            return True
+
+        core.serialize = core.unserialize = query_context
+        self.assertFalse(core.environment(command, c.addressof(context)))
+        core.restore(12, core.checkpoint(), "framebuffer")
+        self.assertEqual((core.frame, core.image), (12, "framebuffer"))
+        self.assertFalse(core.environment(command, c.addressof(context)))
+
+    def test_rollback_rejects_a_core_that_ignores_context(self):
+        core = Core.__new__(Core)
+        core.memory_checkpoints = True
+        core.unserialize = lambda _state, _size: True
+        with self.assertRaisesRegex(RuntimeError, "save-state context"):
+            core.restore(12, b"state")
 
 
 class CounterCore:
