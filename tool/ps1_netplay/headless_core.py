@@ -11,6 +11,8 @@ BATCH = c.CFUNCTYPE(c.c_size_t, c.c_void_p, c.c_size_t)
 POLL = c.CFUNCTYPE(None)
 INPUT = c.CFUNCTYPE(c.c_int16, c.c_uint, c.c_uint, c.c_uint, c.c_uint)
 GET_SAVESTATE_CONTEXT = 72 | 0x10000
+GET_INPUT_BITMASKS = 51 | 0x10000
+JOYPAD_MASK = 256
 RUNAHEAD_SAME_INSTANCE = 1
 RUNAHEAD_SAME_BINARY = 2
 CPU_MODES = ("Recompiler", "CachedInterpreter", "Interpreter")
@@ -98,6 +100,8 @@ class Core:
         return fn
 
     def environment(self, command, address):
+        if command == GET_INPUT_BITMASKS:
+            return True
         if command == GET_SAVESTATE_CONTEXT:
             if not self._checkpoint_active:
                 return False
@@ -133,7 +137,8 @@ class Core:
             row.value = self.settings.get(row.key)
             return row.value is not None
         if command in (47, 52):
-            c.cast(address, c.POINTER(c.c_uint))[0] = 3 if command == 47 else 0
+            # Keep video for validation. The headless frontend discards audio.
+            c.cast(address, c.POINTER(c.c_uint))[0] = 1 if command == 47 else 0
             return True
         return command in (11, 18, 32, 35, 37)
 
@@ -147,7 +152,13 @@ class Core:
             self.image = (width, height, pitch, self.pixel, c.string_at(data, height * pitch))
 
     def input(self, port, device, index, button):
-        if port >= 2 or device != 1 or index != 0 or button >= 16:
+        if port >= 2 or device != 1 or index != 0:
+            return 0
+        if button == JOYPAD_MASK:
+            mask = self.buttons[port]
+            self.pressed_reads[port] += mask.bit_count()
+            return c.c_int16(mask).value
+        if button >= 16:
             return 0
         pressed = bool(self.buttons[port] & (1 << button))
         if pressed:

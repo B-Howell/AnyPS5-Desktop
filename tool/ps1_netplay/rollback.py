@@ -88,7 +88,7 @@ def distribution(samples):
 
 
 def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, replay_steps=8,
-             presentation=None, audit=None, paced=False):
+             presentation=None, audit=None, paced=False, replay_yield_ms=None):
     """Run one peer. Its remote input becomes visible only on packet delivery."""
     local, remote = zip(*((frame[seat], frame[1 - seat]) for frame in inputs))
     link = PacketLink(network, seed)
@@ -106,8 +106,10 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
     rollback_times = []
     input_ticks = []
     rollbacks = replayed = max_depth = max_checkpoints = stall_ticks = 0
-    replay_tip = replay_slices = max_replay_steps = 0
+    replay_tip = replay_slices = max_replay_steps = replay_yield_ticks = 0
     max_primary_steps = 0
+    last_step_ms = 0.0
+    headroom_prediction_starts = 0
     stall_streak = max_streak = 0
     finish_tick = None
     count = len(inputs)
@@ -132,7 +134,7 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
         return spare.frame
 
     def advance():
-        nonlocal max_checkpoints
+        nonlocal max_checkpoints, last_step_ms
         frame = core.frame + 1
         value = known.get(frame)
         checkpoint = None
@@ -150,6 +152,7 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
         evidence = core.signature() if audit is None else core.signature_snapshot()
         pending[frame] = PlayedFrame(value, evidence, checkpoint)
         max_checkpoints = max(max_checkpoints, sum(record.checkpoint is not None for record in pending.values()))
+        last_step_ms = elapsed
         return elapsed
 
     def validate(frame, signature):
@@ -202,13 +205,22 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
         old_presented = presented
         pending_presentation = None
         start = None
+        handoff_save_ms = prediction_wait_ms = 0
         depth = core.frame - correction + 1 if correction is not None else 0
         new_steps = min(2, max(0, target - core.frame))
+        planned_steps = depth + new_steps
+        # Reserve time for restores, snapshots and callbacks when a recent
+        # step suggests replay plus forward work may be too expensive inline.
+        low_headroom = (replay_yield_ms is not None and new_steps > 0
+                        and planned_steps * last_step_ms >= TICK_MS - replay_yield_ms)
         # A new frame and its corrections share a tick. Account for both
         # before choosing the lane rather than spending the entire cap on replay.
         if (presentation is not None and not presenting and correction is not None
-                and depth + new_steps > replay_steps):
+                and (planned_steps > replay_steps or low_headroom)):
+            headroom_prediction_starts += int(planned_steps <= replay_steps)
+            started = perf_counter()
             presentation_state = core.checkpoint(presentation_state)
+            handoff_save_ms = (perf_counter() - started) * 1000
             start = (core.frame, presentation_state, core.image)
             presenting = True
         if presenting:
@@ -230,9 +242,15 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
             work_ms = (perf_counter() - started) * 1000
         primary_start = core.frame
         if core.frame < replay_tip:
-            steps = min(replay_steps, replay_tip - core.frame)
-            for _ in range(steps):
+            limit = min(replay_steps, replay_tip - core.frame)
+            steps = 0
+            while steps < limit:
+                if (steps and presenting and replay_yield_ms is not None
+                        and (perf_counter() - tick_start) * 1000 >= replay_yield_ms):
+                    replay_yield_ticks += 1
+                    break
                 work_ms += advance()
+                steps += 1
             replayed += steps
             replay_slices += 1
             max_replay_steps = max(max_replay_steps, steps)
@@ -252,7 +270,9 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
             input_ticks.append(tick - (next_frame - 1))
             confirm()
         if pending_presentation is not None:
+            started = perf_counter()
             presented = pending_presentation.result()
+            prediction_wait_ms = (perf_counter() - started) * 1000
             input_ticks.extend(tick - (frame - 1) for frame in range(old_presented + 1, presented + 1))
             prediction_lane_ticks += 1
             max_presentation_lag = max(max_presentation_lag, presented - core.frame)
@@ -276,7 +296,8 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
             deadline_misses += 1
         tick_times.append(tick_ms)
         if tick_ms > TICK_MS:
-            heapq.heappush(slow_ticks, (tick_ms, tick, presented, work_ms, pending_presentation is not None))
+            heapq.heappush(slow_ticks, (tick_ms, tick, presented, work_ms, pending_presentation is not None,
+                                       handoff_save_ms, prediction_wait_ms, core.frame - primary_start))
             if len(slow_ticks) > 8:
                 heapq.heappop(slow_ticks)
         if difference or confirmed == count:
@@ -298,13 +319,16 @@ def simulate(core, inputs, baseline, seat, network, delay, window, seed, *, repl
         "deadline_misses": deadline_misses if paced else None,
         "slow_ticks": [
             {"tick": tick, "frame": frame, "elapsed_ms": round(elapsed, 3),
-             "primary_core_ms": round(work, 3), "prediction_lane": on_lane}
-            for elapsed, tick, frame, work, on_lane in sorted(slow_ticks, reverse=True)
+             "primary_core_ms": round(work, 3), "prediction_lane": on_lane, "primary_steps": steps,
+             "handoff_save_ms": round(save, 3), "prediction_wait_ms": round(wait, 3)}
+            for elapsed, tick, frame, work, on_lane, save, wait, steps in sorted(slow_ticks, reverse=True)
         ],
         "over_budget_work_ticks": sum(value > TICK_MS for value in timings),
         "over_budget_rollback_ticks": sum(value > TICK_MS for value in rollback_times),
         "rollbacks": rollbacks, "replayed_frames": replayed, "max_rollback_depth": max_depth,
         "replay_slices": replay_slices, "max_replay_steps": max_replay_steps,
+        "replay_yield_ticks": replay_yield_ticks,
+        "headroom_prediction_starts": headroom_prediction_starts,
         "max_primary_steps": max_primary_steps,
         "prediction_lane_ticks": prediction_lane_ticks, "max_presentation_lag": max_presentation_lag,
         "max_checkpoints": max_checkpoints, "checkpoint_payload_bytes": max_checkpoints * core.state_size,
@@ -328,7 +352,10 @@ def main():
                         help="Maximum replay frames per tick, shared with new frames when using the prediction lane")
     parser.add_argument("--prediction-lane", action="store_true",
                         help="Use a separate software core to present predictions during long corrections")
-    parser.add_argument("--benchmark-priority", choices=("idle", "below-normal", "normal"), default="idle")
+    parser.add_argument("--replay-yield-ms", type=float,
+                        help="Defer extra replay steps once an active prediction tick reaches this elapsed time")
+    parser.add_argument("--benchmark-priority", choices=("idle", "below-normal", "normal", "above-normal"),
+                        default="idle", help="Windows priority class for the headless test workers only")
     parser.add_argument("--pace", action="store_true", help="Run virtual ticks on scheduled 60 Hz wall-clock deadlines")
     parser.add_argument("--require-frame-budget", action="store_true",
                         help="Fail if a peer stalls or a whole tick exceeds 16.67 ms")
@@ -337,6 +364,8 @@ def main():
     args = parser.parse_args()
     if sys.platform != "win32" or not 0 <= args.delay <= 8 or not 0 <= args.window <= HISTORY:
         parser.error(f"Windows required, with delay in 0-8 and window in 0-{HISTORY} frames")
+    if args.replay_yield_ms is not None and not (args.prediction_lane and 0 < args.replay_yield_ms < TICK_MS):
+        parser.error("Replay yield requires the prediction lane and a threshold between zero and one tick")
     fixture = json.loads(args.baseline.read_text())
     signatures = fixture["signatures"]
     spans = normalize_trace(json.loads(args.trace.read_text(encoding="utf-8-sig")))
@@ -365,7 +394,7 @@ def main():
                         raise ValueError("Prediction core options do not match the primary core")
                     with ThreadPoolExecutor(max_workers=1) as executor, ThreadPoolExecutor(max_workers=1) as audit:
                         result = simulate(*trial_args, replay_steps=args.replay_steps, presentation=(spare, executor),
-                                          audit=audit, paced=args.pace)
+                                          audit=audit, paced=args.pace, replay_yield_ms=args.replay_yield_ms)
                 finally:
                     spare.close()
             else:
@@ -400,12 +429,15 @@ def main():
             command.append("--inline-gpu")
         if args.prediction_lane:
             command.append("--prediction-lane")
+        if args.replay_yield_ms is not None:
+            command.extend(("--replay-yield-ms", str(args.replay_yield_ms)))
         if args.pace:
             command.append("--pace")
         priority = {
             "idle": subprocess.IDLE_PRIORITY_CLASS,
             "below-normal": subprocess.BELOW_NORMAL_PRIORITY_CLASS,
             "normal": subprocess.NORMAL_PRIORITY_CLASS,
+            "above-normal": subprocess.ABOVE_NORMAL_PRIORITY_CLASS,
         }[args.benchmark_priority]
         with (args.output / f"peer-{seat + 1}.log").open("w") as log:
             subprocess.run(command, cwd=args.output, stdout=log, stderr=subprocess.STDOUT,
@@ -425,6 +457,7 @@ def main():
         "block_linking_disabled": args.no_block_linking, "prediction_lane": args.prediction_lane, "peers": peers,
         "benchmark_priority": args.benchmark_priority, "paced": args.pace,
         "inline_gpu": args.inline_gpu,
+        "replay_yield_ms": args.replay_yield_ms,
     }
     (args.output / "summary.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))

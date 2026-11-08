@@ -8,6 +8,20 @@
 
 **Stack:** Windows x64, pinned LRPS2, DEV9, the embedded runner, AnyTogether game sessions and WebRTC data channels.
 
+## Test titles
+
+Use Gran Turismo 4 first. Its two-player split-screen mode checks both
+controller ports in one instance. Its native LAN mode checks discovery,
+hosting, joining and racing with two separately rendered copies. The same
+LAN path can be tested on one PC and then carried over an isolated internet
+link without a matchmaking service. [Sony's release announcement](https://sony.mediaroom.com/2005-02-22-Gran-Turismo-4-for-PlayStation-2-Hits-Stores-Nationwide) · [Official LAN manual](https://www.gran-turismo.com/local/jp/data1/pdf/gt4_lan.pdf)
+
+For a separate test of an original game's Internet menu and a replacement
+matchmaking service, use the PS2 version of Star Wars Battlefront II (2005).
+The [server operator's PS2 guide](https://www.swbfii.com/ps2/online) and
+[SWBFSpy implementation](https://github.com/SWBFSpy/SWBFSpy) describe that
+path. Qualify it separately from the Gran Turismo 4 virtual LAN.
+
 ## Choose the transport after a native LAN baseline
 
 - **Preferred embedded path:** Use a small adapter at LRPS2's DEV9 network boundary. Carry the Ethernet frames required by the title across an isolated virtual segment. Verify the pinned build exposes a usable boundary first. A core patch is a separate maintainer and distribution decision if the shipped DLL lacks one.

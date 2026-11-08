@@ -444,3 +444,73 @@ virtual stalls and a two-tick maximum local delay. Its p95 work was
 8.17 / 9.75 ms. Each peer had five work overruns, with maxima of
 21.66 / 29.37 ms. The control still showed expensive native calls in
 the prediction core, consistent with the retained recompiler path.
+
+### Yielding replay when a tick is already busy
+
+The replay cap bounds the number of steps. Their elapsed cost can vary.
+With `--replay-yield-ms 7.5`, an active prediction tick always executes
+its first replay step, then defers any remaining replay work when elapsed
+time since the start of the tick has reached 7.5 ms. The prediction core
+continues producing speculative frames while the primary core catches up.
+This is a soft trigger checked between native calls. The strict 16.67 ms
+gate still measures the whole tick and the scheduled deadline.
+
+The paced CachedInterpreter and inline GPU configuration matched both
+13,706-frame reference runs with zero simulated stalls and two ticks of
+local input delay throughout. The yield fired on 403 / 722 ticks. Whole
+tick p95 fell from 11.00 / 11.94 ms to 10.15 / 10.86 ms compared with the
+fixed cap run. The paced gate still failed with 6 / 7 work overruns and
+19 / 20 scheduled deadline misses. The 56.41 / 70.56 ms maxima each
+contained one primary advance with the prediction lane idle. Slow-tick
+receipts now separate primary work, prediction handoff save time, waits
+for the prediction worker, and the number of primary steps.
+
+An unpaced diagnostic control preloaded the disc and read it synchronously
+while retaining the original fixed cap. It matched the same full cached
+reference and still had 24 / 35 work overruns, with maxima of 34.37 /
+32.07 ms. Those controls rule out asynchronous CD reads as a necessary
+condition for the overruns. The tested paced configuration retains the
+baseline disc settings.
+
+The headless frontend now supplies each controller's button mask in one
+Libretro callback when the core supports it. Older cores can still read
+one button at a time. The frontend requests video-only delivery so it no
+longer receives audio batches it would discard. SwanStation still runs
+the sound unit and drains its frontend audio queue. The race validation
+continues to check the same per-frame RAM and framebuffer signatures.
+
+With batched input and frontend audio delivery disabled, the paced trial
+still matched all 13,706 reference frames on both peers. It kept zero
+simulated stalls and two ticks of local input delay. It recorded 6 / 9
+work overruns and 34 / 35 scheduled deadline misses. The 82.27 / 62.14 ms
+maxima leave the strict budget unqualified for that run.
+
+An external diagnostic sampler queried only the two benchmark processes'
+active core threads. It validated process and thread IDs with the returned
+record. In the 60.08 ms `retro_run` call after frame 9,191, port 2's thread
+was at normal priority 8 and sampled in the Ready state at every poll from
+6.55 to 55.67 ms after entry. Port 1's overlapping 47.06 ms call was mostly
+Ready in samples from 9.39 to 44.58 ms. This identifies CPU dispatch delay
+in those calls. The probes do not identify which work occupied the CPU or
+attribute every overrun to the same cause. [Windows CPU analysis](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/cpu-analysis)
+
+`--benchmark-priority above-normal` applies the Windows Above Normal class
+for the lifetime of the two benchmark workers. The paced comparison uses
+`--replay-steps 2 --replay-yield-ms 7.5`, the cached inline configuration,
+both packet seeds, and the strict elapsed-time gate.
+
+The first Above Normal run matched all frames with zero simulated stalls
+and the original two-tick input delay. It reduced the peaks to 17.61 /
+17.03 ms, with 1 / 2 work overruns and 2 / 2 scheduled deadline misses.
+All three work overruns ran two primary steps with the prediction lane
+idle.
+
+The replay-yield option now also checks the projected work when a
+correction and a new frame are due together. It estimates the two steps
+using the last primary advance time and reserves the configured yield
+margin for restoring state and collecting evidence. A low-headroom tick
+uses the prediction lane even if it fits the numerical step cap. The
+7.5 ms margin starts that check at about 9.17 ms of estimated work. The
+receipt counts these early handoffs separately from elapsed replay yields.
+The estimate can be wrong when the cost of the next native call changes
+abruptly.

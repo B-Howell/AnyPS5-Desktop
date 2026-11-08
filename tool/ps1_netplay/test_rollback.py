@@ -8,6 +8,20 @@ from rollback import Impairment, simulate
 
 
 class CheckpointContextTests(unittest.TestCase):
+    def test_headless_core_batches_input_and_requests_video_only(self):
+        core = Core.__new__(Core)
+        core.paths = {}
+        core.buttons = (0x8001, 0x4000)
+        core.pressed_reads = [0, 0]
+        flags = c.c_uint()
+        self.assertTrue(core.environment(51 | 0x10000, None))
+        self.assertTrue(core.environment(47 | 0x10000, c.addressof(flags)))
+        self.assertEqual(flags.value, 1)
+        self.assertEqual(core.input(0, 1, 0, 256) & 0xFFFF, 0x8001)
+        self.assertEqual(core.input(1, 1, 0, 14), 1)
+        self.assertEqual(core.input(2, 1, 0, 256), 0)
+        self.assertEqual(core.pressed_reads, [2, 1])
+
     def test_checkpoint_can_reuse_the_core_buffer_without_copying_it(self):
         core = Core.__new__(Core)
         core.memory_checkpoints = False
@@ -147,6 +161,39 @@ class RollbackTests(unittest.TestCase):
                 self.assertEqual(result["max_primary_steps"], cap)
                 if cap == 2:
                     self.assertEqual(result["stall_ticks"], 0)
+
+    def test_slow_replay_yields_without_losing_verified_frames(self):
+        now = 0.0
+
+        class SlowCore(CounterCore):
+            def advance(self, count, p1, p2):
+                nonlocal now
+                now += 0.008 if 20 <= self.frame <= 23 else 0.001
+                super().advance(count, p1, p2)
+
+        network = Impairment(66, 0, 0, (18, 28))
+        with ThreadPoolExecutor(max_workers=1) as executor, patch("rollback.perf_counter", side_effect=lambda: now):
+            result = simulate(SlowCore(), self.inputs, self.baseline, 1, network, 2, 16, 7,
+                              replay_steps=2, presentation=(CounterCore(), executor), replay_yield_ms=5)
+        self.assertTrue(result["matched"], result)
+        self.assertGreater(result["replay_yield_ticks"], 0)
+        self.assertEqual(result["stall_ticks"], 0)
+
+    def test_slow_primary_steps_trigger_prediction_before_the_count_cap(self):
+        now = 0.0
+
+        class SlowCore(CounterCore):
+            def advance(self, count, p1, p2):
+                nonlocal now
+                now += 0.005
+                super().advance(count, p1, p2)
+
+        with ThreadPoolExecutor(max_workers=1) as executor, patch("rollback.perf_counter", side_effect=lambda: now):
+            result = simulate(SlowCore(), self.inputs, self.baseline, 0,
+                              Impairment(40, 0, 0, None), 2, 8, 7, replay_steps=2,
+                              presentation=(CounterCore(), executor), replay_yield_ms=7.5)
+        self.assertTrue(result["matched"], result)
+        self.assertGreater(result["headroom_prediction_starts"], 0)
 
     def test_loss_beyond_history_times_out_and_does_not_confirm_prediction(self):
         result = simulate(CounterCore(), self.inputs, self.baseline, 0, Impairment(0, 0, 1, None), 0, 4, 7)
