@@ -83,11 +83,45 @@ same ticket under the public key shipped by RPCN. Both keys used the
 same curve. This isolates the trust boundary between two otherwise
 working services. A private deployment needs an explicit, RPCN-only
 trusted public key in Refresh, with ticket verification, expiration
-checks, and Patchwork enforcement enabled. The combined test should
-submit real tickets from both fixture users to Refresh and reject an
-untrusted, altered, or expired ticket before attempting in-game login.
+checks, and Patchwork enforcement enabled.
 The RPCN probe exercised the wire protocol without loading the emulator
 or playing a level.
+
+The combined backend probe passed with RPCN 1.9.0, Refresh v3.7.2
+(`4060ec45340dad6b8cfd608ec437d78a9a0e52eb`), and PostgreSQL 14.24.
+It used a scratch Refresh interface assembly that accepts a deployment
+public key only for RPCN tickets. Without a deployment key it selected
+the existing upstream RPCN key. A malformed deployment key failed
+verification. The test set `UseTicketVerification` and `EnforcePatchwork`
+to true and disabled IP authentication and public registration.
+
+RPCN issued tickets for two disposable users with the GOTY title ID
+`BCUS98208`. Refresh's `POST /lbp/login` issued a game session token to
+each with the deployment key configured. It returned HTTP 403 with the
+default RPCN key, a malformed configured key, an altered ticket, an
+expired ticket with a valid signature, and a missing Patchwork user
+agent. It also denied a valid private ticket when the server was
+deliberately configured to skip verification, permit IP fallback, and
+disable Patchwork. The private RPCN policy checks those settings before
+looking up the user. All listeners stayed on loopback and were released
+on shutdown.
+The Patchwork check exercised the HTTP contract with a fixture header.
+The next runtime test must use the actual patched game to supply that
+header and obtain the token.
+
+This was an authentication prototype, not a deployable Refresh build.
+The v3.7.2 source restore reports advisories for its ImageSharp and
+MailKit pins. The fixed ImageSharp 3.2.0 package requires a license key
+at build time. The probe instead compiled only the changed
+`Refresh.Interfaces.Game` assembly against the pinned v3.7.2 release
+dependencies, with the matching assembly version, and used that copy
+only in the isolated test. The final assembly's SHA-256 was
+`65ff428376e24a876996aee24280ae441e33386697401dd5e460051ff9b1a5b4`.
+A deployment needs a supported dependency build and an explicit
+startup check for the private issuer key and required verification
+settings. A private-only deployment also needs PSN login disabled.
+The request guard applies to tickets classified as RPCN. Client and
+lobby checks remain open.
 
 Once the exact title update and protected client patch qualify, point the
 isolated client profile at the private server using
