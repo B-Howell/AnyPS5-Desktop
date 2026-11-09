@@ -1,4 +1,5 @@
 #include "retro_core_host.h"
+#include "ps1_netplay_timeline.h"
 #include "retro_vulkan_video.h"
 
 #include <windows.h>
@@ -20,6 +21,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -114,7 +116,85 @@ enum EnvironmentCommand {
   kPreferredHardware = 56, kSetCoreOptionsV2 = 67, kSetCoreOptionsV2Intl = 68,
   kMessageVersion = 59, kExtendedMessage = 60,
   kFrontendCompileProgress = 0x20000 | 0x4150,
+  kGetInputBitmasks = 51 | 0x10000,
 };
+
+constexpr std::pair<std::string_view, std::string_view> kPs1NetplayOptions[] = {
+    {"swanstation_GPU_Renderer", "Software"},
+    {"swanstation_GPU_ResolutionScale", "1"},
+    {"swanstation_CPU_ExecutionMode", "CachedInterpreter"},
+    {"swanstation_CPU_RecompilerBlockLinking", "false"},
+    {"swanstation_GPU_UseThread", "false"},
+    {"swanstation_BIOS_PatchFastBoot", "false"},
+};
+
+class Ps1MatchStorage {
+ public:
+  explicit Ps1MatchStorage(const std::string& bios) {
+    const auto input = std::filesystem::u8path(bios);
+    if (!input.is_absolute() || !std::filesystem::is_regular_file(input) ||
+        std::filesystem::file_size(input) != 512 * 1024)
+      throw std::runtime_error("PS1 netplay requires a verified SCPH1001 BIOS.");
+    const auto temp = std::filesystem::canonical(std::filesystem::temp_directory_path());
+    std::random_device random;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+      const auto candidate = temp / ("anyps5-ps1-netplay-" + std::to_string(random()) + "-" +
+                                     std::to_string(random()));
+      if (!std::filesystem::create_directory(candidate)) continue;
+      root_ = candidate;
+      break;
+    }
+    if (root_.empty()) throw std::runtime_error("Could not create PS1 netplay scratch storage.");
+    try {
+      std::filesystem::create_directory(root_ / "system");
+      std::filesystem::create_directory(root_ / "save");
+      std::filesystem::copy_file(input, root_ / "system" / "scph1001.bin");
+    } catch (...) {
+      Cleanup();
+      throw;
+    }
+  }
+  ~Ps1MatchStorage() { Cleanup(); }
+  Ps1MatchStorage(const Ps1MatchStorage&) = delete;
+  Ps1MatchStorage& operator=(const Ps1MatchStorage&) = delete;
+
+  std::string system() const { return (root_ / "system").u8string(); }
+  std::string saves() const { return (root_ / "save").u8string(); }
+  std::string content() const { return root_.u8string(); }
+
+ private:
+  void Cleanup() noexcept {
+    if (root_.empty()) return;
+    std::error_code error;
+    const auto resolved = std::filesystem::canonical(root_, error);
+    if (!error && resolved == root_) std::filesystem::remove_all(root_, error);
+  }
+
+  std::filesystem::path root_;
+};
+
+std::optional<int64_t> IntegerValue(const Value& value) {
+  if (const auto* narrow = std::get_if<int32_t>(&value)) return *narrow;
+  if (const auto* wide = std::get_if<int64_t>(&value)) return *wide;
+  return std::nullopt;
+}
+
+Value FrameValue(const std::optional<uint32_t>& frame) {
+  return frame ? Value(static_cast<int64_t>(*frame)) : Value();
+}
+
+std::string NetplayFingerprint(const uint8_t* memory, size_t size) {
+  uint64_t hash = 14695981039346656037ULL;
+  for (size_t index = 0; index < size; ++index)
+    hash = (hash ^ memory[index]) * 1099511628211ULL;
+  std::string result(16, '0');
+  constexpr char digits[] = "0123456789abcdef";
+  for (size_t index = result.size(); index > 0; --index) {
+    result[index - 1] = digits[hash & 15];
+    hash >>= 4;
+  }
+  return result;
+}
 
 struct Frame {
   std::vector<uint8_t> pixels;
@@ -387,10 +467,16 @@ class RetroCoreSession {
   RetroCoreSession(flutter::TextureRegistrar* registrar, std::string core,
                    std::string disc, std::string system, std::string saves,
                    std::string initial_resolution = {},
-                   std::map<std::string, std::string> initial_graphics = {})
+                   std::map<std::string, std::string> initial_graphics = {},
+                   std::optional<unsigned> netplay_seat = std::nullopt,
+                   const std::string& netplay_bios = {})
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
-        system_(std::move(system)), saves_(std::move(saves)),
-        content_(std::filesystem::u8path(disc_).parent_path().u8string()),
+        netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(*netplay_seat) : nullptr),
+        match_storage_(netplay_ ? std::make_unique<Ps1MatchStorage>(netplay_bios) : nullptr),
+        system_(match_storage_ ? match_storage_->system() : std::move(system)),
+        saves_(match_storage_ ? match_storage_->saves() : std::move(saves)),
+        content_(match_storage_ ? match_storage_->content()
+                                : std::filesystem::u8path(disc_).parent_path().u8string()),
         initial_resolution_(std::move(initial_resolution)),
         initial_graphics_(std::move(initial_graphics)),
         ps3_(std::filesystem::u8path(core_).filename() == L"rpcs3_libretro.dll"),
@@ -411,6 +497,10 @@ class RetroCoreSession {
   void Join() { if (worker_.joinable()) worker_.join(); }
 
   void Pause(bool pause) {
+    if (netplay_) {
+      if (pause) SetInput(0, {});
+      return;
+    }
     if (paused_.exchange(pause) == pause) return;
     if (pause) {
       SetInput(0, {});
@@ -424,6 +514,39 @@ class RetroCoreSession {
     std::lock_guard<std::mutex> lock(input_mutex_);
     buttons_ = buttons;
     axes_ = axes;
+  }
+
+  bool StartNetplay() {
+    if (!netplay_ || !netplay_ready_ || stop_ || ended_) return false;
+    std::lock_guard<std::mutex> lock(netplay_mutex_);
+    netplay_->Start();
+    netplay_started_ = true;
+    return true;
+  }
+
+
+  std::optional<Map> SyncNetplay(const std::vector<ps1_netplay::FrameInput>& remote,
+                                const std::optional<uint32_t>& acknowledged) {
+    if (!netplay_ || stop_ || ended_) return std::nullopt;
+    std::lock_guard<std::mutex> lock(netplay_mutex_);
+    if (!netplay_->Receive(remote, acknowledged)) return std::nullopt;
+    List local;
+    for (const auto& sample : netplay_->LocalPacket()) {
+      List input{Value(static_cast<int64_t>(sample.frame)), Value(static_cast<int32_t>(sample.input.buttons))};
+      for (const auto axis : sample.input.axes) input.emplace_back(static_cast<int32_t>(axis));
+      local.emplace_back(std::move(input));
+    }
+    List fingerprints;
+    for (const auto& [frame, hash] : netplay_fingerprints_)
+      fingerprints.emplace_back(List{Value(static_cast<int64_t>(frame)), Value(hash)});
+    return Map{
+        {Value("local"), Value(std::move(local))},
+        {Value("frame"), Value(static_cast<int64_t>(netplay_->frame()))},
+        {Value("confirmedFrame"), FrameValue(netplay_->confirmed())},
+        {Value("receivedFrame"), FrameValue(netplay_->received())},
+        {Value("waiting"), Value(netplay_->waiting())},
+        {Value("fingerprints"), Value(std::move(fingerprints))},
+    };
   }
 
   Map Status() {
@@ -447,7 +570,7 @@ class RetroCoreSession {
           {Value("activeValue"), Value(entry.second.values[entry.second.selected])},
       }));
     }
-    return {
+    Map status{
         {Value("ready"), Value(frame_ready_.load())},
         {Value("presented"), Value(presented_.load())},
         {Value("ended"), Value(ended_.load())},
@@ -463,9 +586,12 @@ class RetroCoreSession {
         {Value("options"), Value(std::move(options))},
         {Value("tuningTelemetry"), Value(TuningTelemetry())},
     };
+    if (netplay_) status.emplace(Value("netplayReady"), Value(netplay_ready_.load()));
+    return status;
   }
 
   bool SetOption(const std::string& key, const std::string& value) {
+    if (netplay_) return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
     const auto option = options_.find(key);
     if (option == options_.end() ||
@@ -489,7 +615,7 @@ class RetroCoreSession {
   }
 
   bool SetTuningOptions(const Map& expected, const Map& values) {
-    if (!presented_ || !hardware_frame_ || values.empty() || expected.size() != values.size())
+    if (netplay_ || !presented_ || !hardware_frame_ || values.empty() || expected.size() != values.size())
       return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
     if (graphics_applying_ || graphics_queued_) return false;
@@ -773,10 +899,12 @@ class RetroCoreSession {
         if (!SupportedBootValue(key, value, hardware_available_)) continue;
         if (ResolutionOption(key) && !value.empty() && value[0] >= '0' && value[0] <= '9' &&
             std::stoi(value) > 4) continue;
-        if (key.find("renderer") != std::string::npos || key.find("Renderer") != std::string::npos) {
-          if (value == "Software" || value == "Software (HW)") option.selected = option.values.size();
-        } else if (key.find("FastBoot") != std::string::npos || key == "pcsx2_fastboot") {
-          if (value == "enabled" || value == "true") option.selected = option.values.size();
+        if (!netplay_) {
+          if (key.find("renderer") != std::string::npos || key.find("Renderer") != std::string::npos) {
+            if (value == "Software" || value == "Software (HW)") option.selected = option.values.size();
+          } else if (key.find("FastBoot") != std::string::npos || key == "pcsx2_fastboot") {
+            if (value == "enabled" || value == "true") option.selected = option.values.size();
+          }
         }
         option.values.push_back(std::move(value));
       }
@@ -791,12 +919,21 @@ class RetroCoreSession {
         if (saved != option.values.end())
           option.selected = static_cast<size_t>(saved - option.values.begin());
       }
-      if (!ResolutionOption(key) && (option.boot || (hardware_available_ && TrialOption(key)))) {
+      if (!netplay_ && !ResolutionOption(key) && (option.boot || (hardware_available_ && TrialOption(key)))) {
         const auto saved = initial_graphics_.find(key);
         if (saved != initial_graphics_.end()) {
           const auto choice = std::find(option.values.begin(), option.values.end(), saved->second);
           if (choice != option.values.end())
             option.selected = static_cast<size_t>(choice - option.values.begin());
+        }
+      }
+      if (netplay_) {
+        for (const auto& [name, value] : kPs1NetplayOptions) {
+          if (name != key) continue;
+          const auto selected = std::find(option.values.begin(), option.values.end(), value);
+          if (selected != option.values.end())
+            option.selected = static_cast<size_t>(selected - option.values.begin());
+          break;
         }
       }
       if (!option.values.empty()) options_.emplace(key, std::move(option));
@@ -808,6 +945,7 @@ class RetroCoreSession {
       stop_ = true;
       return true;
     }
+    if (command == kGetInputBitmasks) return netplay_ != nullptr;
     if (!data) return false;
     switch (command) {
       case kMessageVersion:
@@ -921,11 +1059,85 @@ class RetroCoreSession {
 
   int16_t Input(unsigned port, unsigned device, unsigned index, unsigned id) {
     if (suppress_frame_) return 0;
+    if (netplay_) {
+      if (port >= netplay_ports_.size()) return 0;
+      const auto& input = netplay_ports_[port];
+      if (device == 1 && id == 256) return static_cast<int16_t>(input.buttons);
+      if (device == 1 && id < 16) return (input.buttons & (1u << id)) != 0;
+      if (device == 5 && index < 2 && id < 2) return input.axes[index * 2 + id];
+      return 0;
+    }
     if (port != 0 || paused_) return 0;
     std::lock_guard<std::mutex> lock(input_mutex_);
     if (device == 1 && id < 16) return (buttons_ & (1u << id)) != 0;
     if (device == 5 && index < 2 && id < 2) return axes_[index * 2 + id];
     return 0;
+  }
+
+  void ValidateNetplay(const uint8_t* memory, size_t memory_size) {
+    if (!memory || memory_size != 2 * 1024 * 1024)
+      throw std::runtime_error("PS1 netplay could not access the core's main RAM.");
+    {
+      std::lock_guard<std::mutex> lock(settings_mutex_);
+      for (const auto& [name, value] : kPs1NetplayOptions) {
+        const auto option = options_.find(std::string(name));
+        if (option == options_.end() || option->second.values[option->second.selected] != value)
+          throw std::runtime_error("The PS1 core could not configure the required netplay profile.");
+      }
+    }
+    netplay_ready_ = true;
+  }
+
+  void RunNetplay(void (*step)(), std::chrono::steady_clock::duration frame_time,
+                  const uint8_t* memory, size_t memory_size) {
+    using Clock = std::chrono::steady_clock;
+    auto next = Clock::now();
+    auto last_advance = next;
+    bool started_before = false;
+    while (!stop_) {
+      ps1_netplay::PadInput local;
+      {
+        std::lock_guard<std::mutex> lock(input_mutex_);
+        local = {buttons_, axes_};
+      }
+      bool started;
+      bool advance;
+      uint32_t frame;
+      {
+        std::lock_guard<std::mutex> lock(netplay_mutex_);
+        started = netplay_started_;
+        frame = netplay_->frame();
+        advance = netplay_->Prepare(local, netplay_ports_);
+      }
+      if (started && !started_before) {
+        last_advance = Clock::now();
+        started_before = true;
+      }
+      if (!advance) {
+        if (Clock::now() - last_advance > (started ? std::chrono::seconds(15) : std::chrono::seconds(60)))
+          throw std::runtime_error(started ? "PS1 netplay stopped waiting for the other player."
+                                           : "PS1 netplay did not start in time.");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        next = Clock::now();
+        continue;
+      }
+      step();
+      ++steps_;
+      std::string fingerprint;
+      if ((frame + 1) % 120 == 0) fingerprint = NetplayFingerprint(memory, memory_size);
+      {
+        std::lock_guard<std::mutex> lock(netplay_mutex_);
+        netplay_->Commit();
+        if (!fingerprint.empty()) {
+          if (netplay_fingerprints_.size() == 16) netplay_fingerprints_.erase(netplay_fingerprints_.begin());
+          netplay_fingerprints_.emplace_back(frame, std::move(fingerprint));
+        }
+      }
+      last_advance = Clock::now();
+      next += frame_time;
+      if (next < last_advance - frame_time) next = last_advance;
+      std::this_thread::sleep_until(next);
+    }
   }
 
   void Run() {
@@ -938,7 +1150,7 @@ class RetroCoreSession {
     bool loaded = false;
     active_ = this;
     try {
-      hardware_available_ = ps3_ ? vulkan_.Load() : hardware_.Open();
+      hardware_available_ = !netplay_ && (ps3_ ? vulkan_.Load() : hardware_.Open());
       if (ps3_ && !hardware_available_)
         throw std::runtime_error("PS3 requires a working Vulkan driver.");
       const auto path = std::filesystem::u8path(core_);
@@ -998,6 +1210,10 @@ class RetroCoreSession {
           for (unsigned port = 1; port < 7; ++port) controller(port, 0);
         }
         loaded = load(&game);
+        if (loaded && netplay_) {
+          const auto controller = Symbol<void (*)(unsigned, unsigned)>(dll, "retro_set_controller_port_device");
+          for (unsigned port = 0; port < 2; ++port) controller(port, 1);
+        }
         if (loaded && ps3_) {
           if (!vulkan_.Open()) throw std::runtime_error("The PS3 Vulkan device could not be initialized.");
         }
@@ -1017,7 +1233,7 @@ class RetroCoreSession {
       size_t card_size = 0;
       std::filesystem::path card_path;
       const auto restore_card = [&] {
-        if (path.filename() != L"swanstation_libretro.dll") return;
+        if (!ps1 || netplay_) return;
         card = Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data")(0);
         card_size = Symbol<size_t (*)(unsigned)>(dll, "retro_get_memory_size")(0);
         card_path = std::filesystem::u8path(saves_) / std::filesystem::u8path(disc_).stem();
@@ -1036,9 +1252,16 @@ class RetroCoreSession {
         audio_rate_ = audio_open ? av.sample_rate : 0;
       }
       const auto frame_time = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / fps));
+      if (netplay_) {
+        const auto memory = static_cast<const uint8_t*>(
+            Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data")(2));
+        const auto size = Symbol<size_t (*)(unsigned)>(dll, "retro_get_memory_size")(2);
+        ValidateNetplay(memory, size);
+        RunNetplay(step, frame_time, memory, size);
+      }
       auto next = Clock::now();
       auto hardware_deadline = next + std::chrono::seconds(8);
-      while (!stop_) {
+      while (!netplay_ && !stop_) {
         if (ps1 || ps2)
           ApplyCheckpointGraphics(dll, reopen, step, ps1, card, card_size, card_path);
         if (!ps3_ && hardware_callbacks_.reset && !frame_ready_ && Clock::now() > hardware_deadline) {
@@ -1088,7 +1311,10 @@ class RetroCoreSession {
 
   static std::atomic<RetroCoreSession*> active_;
   flutter::TextureRegistrar* registrar_;
-  const std::string core_, disc_, system_, saves_, content_;
+  const std::string core_, disc_;
+  const std::unique_ptr<ps1_netplay::Timeline> netplay_;
+  const std::unique_ptr<Ps1MatchStorage> match_storage_;
+  const std::string system_, saves_, content_;
   const std::string initial_resolution_;
   const std::map<std::string, std::string> initial_graphics_;
   const bool ps3_;
@@ -1115,6 +1341,11 @@ class RetroCoreSession {
   std::atomic<int> pixel_format_{0};
   std::atomic<float> aspect_{4.f / 3.f};
   std::mutex frame_mutex_, input_mutex_, settings_mutex_;
+  std::mutex netplay_mutex_;
+  std::atomic<bool> netplay_ready_{false};
+  bool netplay_started_ = false;
+  std::array<ps1_netplay::PadInput, 2> netplay_ports_{};
+  std::vector<std::pair<uint32_t, std::string>> netplay_fingerprints_;
   std::shared_ptr<Frame> frame_;
   uint16_t buttons_ = 0;
   std::array<int16_t, 4> axes_{};
@@ -1172,6 +1403,19 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
       return;
     }
     try {
+      std::optional<unsigned> netplay_seat;
+      const auto seat = fields->find(Value("ps1NetplaySeat"));
+      const auto* netplay_bios = StringField(*fields, "ps1NetplayBios");
+      if (seat != fields->end()) {
+        const auto number = IntegerValue(seat->second);
+        if (!number || *number < 0 || *number > 1 || !netplay_bios ||
+            std::filesystem::u8path(*core).filename() != L"swanstation_libretro.dll" ||
+            _wcsicmp(std::filesystem::u8path(*disc).extension().c_str(), L".cue") != 0) {
+          result->Error("argument", "PS1 netplay requires a valid seat, SwanStation, a CUE disc and a verified BIOS");
+          return;
+        }
+        netplay_seat = static_cast<unsigned>(*number);
+      }
       std::map<std::string, std::string> graphics;
       const auto values = fields->find(Value("graphics"));
       if (values != fields->end()) {
@@ -1184,7 +1428,8 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
         }
       }
       session_ = std::make_shared<RetroCoreSession>(textures_, *core, *disc, *system, *saves,
-                                                   resolution ? *resolution : "", std::move(graphics));
+                                                   resolution ? *resolution : "", std::move(graphics),
+                                                   netplay_seat, netplay_bios ? *netplay_bios : "");
       if (!session_->Start()) throw std::runtime_error("Could not register the game surface");
       result->Success(Value(session_->texture_id()));
     } catch (const std::exception& failure) {
@@ -1199,6 +1444,42 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
   }
   if (method == "status") {
     result->Success(Value(session_->Status()));
+  } else if (method == "netplayStart") {
+    result->Success(Value(session_->StartNetplay()));
+  } else if (method == "netplaySync") {
+    const auto fail = [&] { result->Error("netplayInput", "The PS1 netplay input exchange was rejected"); };
+    const auto* fields = std::get_if<Map>(arguments);
+    if (!fields) return fail();
+    const auto remote = fields->find(Value("remote"));
+    const auto* samples = remote == fields->end() ? nullptr : std::get_if<List>(&remote->second);
+    if (!samples || samples->size() > 32) return fail();
+    std::optional<uint32_t> acknowledged;
+    const auto ack = fields->find(Value("acknowledgedFrame"));
+    if (ack != fields->end() && !std::holds_alternative<std::monostate>(ack->second)) {
+      const auto number = IntegerValue(ack->second);
+      if (!number || *number < 0 || *number > ps1_netplay::Timeline::kMaxFrame) return fail();
+      acknowledged = static_cast<uint32_t>(*number);
+    }
+    std::vector<ps1_netplay::FrameInput> inputs;
+    inputs.reserve(samples->size());
+    for (const auto& sample : *samples) {
+      const auto* values = std::get_if<List>(&sample);
+      if (!values || values->size() != 6) return fail();
+      const auto frame = IntegerValue((*values)[0]);
+      const auto buttons = IntegerValue((*values)[1]);
+      if (!frame || *frame < 0 || *frame > ps1_netplay::Timeline::kMaxFrame ||
+          !buttons || *buttons < 0 || *buttons > UINT16_MAX) return fail();
+      ps1_netplay::PadInput input{static_cast<uint16_t>(*buttons), {}};
+      for (size_t index = 0; index < input.axes.size(); ++index) {
+        const auto axis = IntegerValue((*values)[index + 2]);
+        if (!axis || *axis < INT16_MIN || *axis > INT16_MAX) return fail();
+        input.axes[index] = static_cast<int16_t>(*axis);
+      }
+      inputs.push_back({static_cast<uint32_t>(*frame), input});
+    }
+    auto update = session_->SyncNetplay(inputs, acknowledged);
+    if (!update) return fail();
+    result->Success(Value(std::move(*update)));
   } else if (method == "stop") {
     session_->Stop();
     result->Success();
