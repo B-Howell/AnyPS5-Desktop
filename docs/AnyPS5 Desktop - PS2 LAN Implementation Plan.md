@@ -292,6 +292,24 @@ over real Windows data channels. The probe checks the assigned MACs,
 matches broadcast and unicast frames byte for byte, and checks room and
 adapter teardown. It uses synthetic NICs and a simulated room gateway.
 
+The [private DHCP service](../lib/core/online/retro_lan_dhcp.dart) supplies
+`10.231.0.101/24` to the host console and `10.231.0.102/24` to the guest.
+Each bridge answers its own console's discovery, request and renewal
+traffic, including ARP for the virtual DHCP server at `10.231.0.1`.
+Lease messages and server ARP stay on that console's adapter. Peer game
+broadcasts, unicast traffic and ARP for the other console still use the
+room transport. The service supplies an address and subnet mask for this
+closed LAN. Its offers contain no router or DNS options.
+
+The [DHCP tests](../test/core/online/retro_lan_dhcp_test.dart) check packet
+bounds, lease ownership, renewal, ARP and remote reply filtering. The
+Windows WebRTC fixture requests leases before sending game frames. Its
+initial requests use broadcast Ethernet and IP destinations with the
+DHCP broadcast flag clear, matching the earlier GT4 PCSX2 log. Both
+simulated consoles check their assigned address and the unicast reply
+destination. Address acquisition by the embedded PS2 core remains a
+separate runtime test.
+
 ### Launcher preview
 
 On Windows x64, `ANYPS5_PS2_LAN=1` enables the [PS2 LAN actions](../lib/ui/together_ps2_lan.dart).
@@ -323,9 +341,8 @@ checks that PS2 invites cannot join a PS5 session on a build with LAN off.
 
 The patched DEV9 object compiled with GCC in WSL at the pinned core
 revision. The object exports `retro_anyps5_dev9_bind_v1`. This is a
-source and object check. The complete Windows core package, private guest
-IP assignment and a real invite-to-game run over the patched adapter still
-need verification.
+source and object check. The complete Windows core package and a real
+invite-to-game run over the patched adapter still need verification.
 
 TimeSplitters: Future Perfect is a second PS2 fixture. Its US NTSC disc
 reports `SLUS21148` and version `1.00` in `SYSTEM.CNF`. The [original manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)

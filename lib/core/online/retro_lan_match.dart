@@ -8,6 +8,7 @@ import 'online_peer.dart';
 import 'online_peer_mesh.dart';
 import 'online_wire.dart';
 import 'retro_lan_bridge.dart';
+import 'retro_lan_dhcp.dart';
 import 'retro_lan_transport.dart';
 import 'retro_online_rooms.dart';
 
@@ -150,6 +151,7 @@ final class RetroLanMatch {
     final game = await _untilClose(launching);
     if (game == null || _closed) return;
     final bridge = _bridge = RetroLanBridge(
+      dhcp: RetroLanDhcp(mac: mac, address: amHost ? 0x0ae70065 : 0x0ae70066),
       segment: RetroLanTransport(
         epoch: epoch == 0 ? 1 : epoch,
         me: rooms.me,
