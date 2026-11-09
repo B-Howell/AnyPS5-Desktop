@@ -475,8 +475,38 @@ different virtual MAC and reached the LAN browser without repeating the
 game's setup. The private DHCP fixture issued one lease in each launch.
 Both game and lease processes exited zero. The test used a local DHCP
 fixture with one worker at a time. It verifies reuse of a saved card
-across processes, while blank-card setup and hosted play remain open.
+across processes. It did not exercise blank-card setup or hosted play.
 Evidence is stored beside the core under `timesplitters-lan/profile-reopen`.
+
+### Creating a network configuration from a blank card
+
+At Desktop `399a132`, an empty scratch PS2 LAN profile started
+TimeSplitters US `SLUS21148` with the pinned Windows D3D11 core. The game
+formatted slot 1 and saved a player profile. **Network → Online Game**
+stopped at the same missing network configuration message observed earlier
+in **Network → LAN Game**. Neither attempt sent a DHCP request, and neither
+screen offered a setup option. The
+[original game manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)
+describes creating the configuration with a compatible title or the PS2
+Network Adaptor Start-Up Disc.
+
+Gran Turismo 4 US v2.00 reopened the same scratch profile. **Arcade Mode →
+Multi-LAN Race** offered to create a network configuration on slot 1. Keep
+Ethernet auto-detect, Authentication set to No, **Use DHCP** and **Use auto
+DNS** set to Yes, enter a name and choose **OK** to save. The named entry
+then appeared in the slot 1 list. After native shutdown, TimeSplitters
+reopened the same card, selected the new profile and accepted a private
+DHCP lease. It reached **Matches Available** without repeating setup. The
+existing TimeSplitters player profile was still present.
+
+This verifies creation through a real PS2 title and reuse by another
+title with the persistent profile. All three boots were headless with one
+core at a time. The scratch profile contained no pre-seeded memory card.
+The next launcher gate is to let players run this setup before inviting
+a peer, using the same card as online LAN play. That setup session should
+serve local DHCP without opening a room, and offer compatible user-owned
+setup media. Evidence is stored beside the core under
+`timesplitters-lan/blank-card-setup`.
 
 TimeSplitters: Future Perfect is a second PS2 fixture. Its US NTSC disc
 reports `SLUS21148` and version `1.00` in `SYSTEM.CNF`. The [original manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)
