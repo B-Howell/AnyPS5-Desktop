@@ -48,12 +48,16 @@ int main(int argc, char** argv) {
   ProbeTexture texture;
   const auto seat = std::stoul(argv[4]);
   const bool local_staging = argc == 6 && std::string_view(argv[5]) == "local";
+  const bool recompiler = argc == 6 && std::string_view(argv[5]) == "recompiler";
+  if (argc == 6 && !local_staging && !recompiler) return 2;
   const bool ordinary = argc == 7 && std::string_view(argv[5]) == "ordinary";
   if (argc == 7 && !ordinary) return 2;
   const auto bios_directory = std::filesystem::u8path(argv[3]).parent_path().u8string();
   RetroCoreSession session(&texture, argv[1], argv[2], ordinary ? bios_directory : "",
                            ordinary ? argv[6] : "", "", {},
-                           ordinary ? std::nullopt : std::optional<unsigned>(seat), argv[3], local_staging);
+                           ordinary ? std::nullopt : std::optional<unsigned>(seat), argv[3], local_staging,
+                           std::nullopt, std::nullopt, {},
+                           recompiler ? Ps1MatchCpu::kRecompiler : Ps1MatchCpu::kCachedInterpreter);
   if (!session.Start()) return 3;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
   while (std::chrono::steady_clock::now() < deadline) {
@@ -78,9 +82,16 @@ int main(int argc, char** argv) {
       std::cout << command << std::endl;
       continue;
     }
-    if (ordinary && command == "renderer") {
+    if (command == "renderer") {
       const auto status = session.Status();
       std::cout << (std::get<bool>(status.at(Value("hardware"))) ? "hardware" : "software") << std::endl;
+      continue;
+    }
+    if (command == "cpu") {
+      const auto status = session.Status();
+      const auto& options = std::get<Map>(status.at(Value("options")));
+      const auto& cpu = std::get<Map>(options.at(Value("swanstation_CPU_ExecutionMode")));
+      std::cout << std::get<std::string>(cpu.at(Value("activeValue"))) << std::endl;
       continue;
     }
     if (command == "history") {

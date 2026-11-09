@@ -14,11 +14,13 @@ from time import monotonic, sleep
 
 
 class Peer:
-    def __init__(self, executable, core, disc, bios, seat, *, local=False, saves=None):
+    def __init__(self, executable, core, disc, bios, seat, *, local=False, saves=None, recompiler=False):
         self.lines = Queue()
         arguments = [executable, core, disc, bios, str(seat)]
         if local:
             arguments.append("local")
+        if recompiler:
+            arguments.append("recompiler")
         if saves is not None:
             arguments.extend(("ordinary", saves))
         self.process = Popen(
@@ -83,6 +85,8 @@ def main():
                         help="Verify that normal play exports only a blank match card")
     parser.add_argument("--ordinary-control-core", type=Path,
                         help="Also check an older core lacks the ordinary-play export capability")
+    parser.add_argument("--ordinary-restore", action="store_true",
+                        help="Restore an ordinary hardware checkpoint into two isolated match workers")
     args = parser.parse_args()
     if args.frames < 120:
         parser.error("at least 120 frames are required to compare a fingerprint")
@@ -98,6 +102,8 @@ def main():
         parser.error("--ordinary-checkpoint runs independently of netplay checks")
     if args.ordinary_control_core and not args.ordinary_checkpoint:
         parser.error("--ordinary-control-core requires --ordinary-checkpoint")
+    if args.ordinary_restore and not args.ordinary_checkpoint:
+        parser.error("--ordinary-restore requires --ordinary-checkpoint")
 
     with ExitStack() as cleanup:
         if args.ordinary_checkpoint:
@@ -203,15 +209,31 @@ def verify_ordinary_checkpoint(args, cleanup):
             if monotonic() >= deadline:
                 raise TimeoutError("Ordinary play stopped publishing after the checkpoint")
             sleep(0.017)
-        assert peer.send("pause") == "pause"
-        sleep(0.05)
-        paused = peer.send("published")
-        # Some frame boundaries are busy. A rejected request must still
-        # complete without stepping or unpausing the source.
-        paused_reply = peer.send(f"blank-checkpoint 1 {path}")
-        assert paused_reply.startswith("checkpoint ") or paused_reply == "rejected"
-        assert peer.send("published") == paused
+        deadline = monotonic() + 3
+        while True:
+            assert peer.send("pause") == "pause"
+            sleep(0.05)
+            paused = peer.send("published")
+            # A busy boundary still completes the request without moving
+            # the paused source. A match can retry on a later boundary.
+            paused_reply = peer.send(f"blank-checkpoint 1 {path}")
+            assert paused_reply.startswith("checkpoint ") or paused_reply == "rejected"
+            assert peer.send("published") == paused
+            if paused_reply != "rejected" or not args.ordinary_restore or monotonic() >= deadline:
+                break
+            assert peer.send("resume") == "resume"
+            wait_for_picture(peer, int(paused) + 1)
+        if args.ordinary_restore:
+            assert renderer == "hardware", "The source did not use hardware rendering"
+            assert peer.send("cpu") == "Recompiler"
+            assert paused_reply.startswith("checkpoint "), "The held frame could not be exported"
+            held_snapshot = snapshot.read_bytes()
+            assert len(held_snapshot) == int(paused_reply.split()[2])
+            assert marker not in held_snapshot and blank in held_snapshot
+            verify_ordinary_restore(args, peer, bios, path)
+            assert peer.send("published") == paused, "The original session moved during the match probe"
         assert peer.send("resume") == "resume"
+        wait_for_picture(peer, int(paused) + 1)
     assert card.read_bytes() == private
 
     if args.ordinary_control_core:
@@ -222,6 +244,28 @@ def verify_ordinary_checkpoint(args, cleanup):
     assert card.read_bytes() == private
     print(f"Ordinary {renderer} worker exported {size} bytes at frame {frame}, kept the source card, "
           "and continued publishing after cancellation and export.")
+
+
+def verify_ordinary_restore(args, source, bios, path):
+    expected = source.send("fingerprint")
+    with ExitStack() as match:
+        peers = []
+        for seat in range(2):
+            peer = Peer(args.probe.resolve(), args.core.resolve(), args.disc.resolve(), bios, seat,
+                        recompiler=True)
+            match.callback(peer.close)
+            assert peer.receive() == "ready"
+            assert peer.send("cpu") == "Recompiler"
+            assert peer.send("fingerprint") != expected
+            assert peer.send(f"restore 1 {path} 0") == "restored"
+            assert peer.send("fingerprint") == expected
+            assert peer.send("start") == "started"
+            peers.append(peer)
+        verify_new_input_epoch(*peers, input_masks=(64, 256))
+        assert all(peer.send("renderer") == "software" and int(peer.send("published")) > 0
+                   for peer in peers)
+    assert source.send("fingerprint") == expected
+    print("Both match workers restored the original hardware session's RAM and ran a new input epoch.")
 
 
 def verify_checkpoint(args, host, cleanup, during_transfer):
@@ -336,12 +380,16 @@ def verify_local_handoff(args, cleanup):
     wait_for_picture(host, picture + 30)
 
 
-def verify_new_input_epoch(host, guest):
+def verify_new_input_epoch(host, guest, *, input_masks=None):
     peers = [host, guest]
     states = [peer.sync() for peer in peers]
     assert all(frame == 0 and received == -1 and not hashes
                and all(buttons == 0 for _, buttons in local[:2])
                for frame, received, local, hashes in states), "Stale input or fingerprints survived cutover"
+    if input_masks:
+        for peer, mask in zip(peers, input_masks):
+            assert peer.send(f"pad {mask}") == "pad"
+    seen = [False, False]
     fingerprints = [{}, {}]
     deadline = monotonic() + 15
     while min(state[0] for state in states) < 120:
@@ -351,8 +399,11 @@ def verify_new_input_epoch(host, guest):
                   for seat, peer in enumerate(peers)]
         for seat, state in enumerate(states):
             fingerprints[seat].update(state[3])
+            if input_masks:
+                seen[seat] |= any(buttons == input_masks[seat] for _, buttons in state[2])
         sleep(0.002)
     assert fingerprints[0][119] == fingerprints[1][119], "PS1 RAM diverged after cutover"
+    assert not input_masks or all(seen), "Each seat must supply its own controller input"
     print("The held host and replacement guest matched the first RAM fingerprint in the new input epoch.")
 
 

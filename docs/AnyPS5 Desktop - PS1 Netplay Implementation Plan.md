@@ -355,8 +355,30 @@ source token, and kept the same worker rendering after cancellation and
 capture. A request while paused completed without advancing the
 texture. The preceding core reported no ordinary capture support.
 Local receipts are in `ps1-local-bridge-89f15e1`. This fixture calls
-the worker directly. It leaves the Flutter method-channel route and
-hardware-to-match restore to the launcher integration test.
+the worker directly. The Flutter method-channel route still needs a
+launcher integration test.
+
+The native worker fixture can exercise that renderer boundary with
+`--ordinary-checkpoint --ordinary-restore`. The source uses the normal
+hardware renderer and reports its active Recompiler CPU mode. Two
+isolated software-rendered match workers select that same CPU mode,
+restore a held source checkpoint, and start their input history at frame
+zero. The fixture checks the held payload for the blank card, checks
+initial RAM against the held source, and compares the first match
+fingerprint after each seat supplies distinct inputs.
+It then resumes the original session and verifies its scratch save.
+The Recompiler choice is exercised by the native fixture. Existing
+in-app invitations still use the pinned Cached Interpreter profile.
+
+The Windows headless CTR run passed with the blank-card core
+`d1619715fe11db0faa280890c741aff876fd5fd682f3cd00fbcafaa04732b7ac`.
+Both software workers published frames and agreed after 120 match
+frames. The hardware source resumed and its scratch save stayed
+byte-for-byte identical. The preceding Cached Interpreter worker
+pair also passed its 120-frame smoke test. Logs are in the local
+`ps1-local-restore-3f9600b` directory. This verifies state import and
+initial synchronization across renderers. A full hardware-origin race
+and the launcher invitation lifecycle still need testing.
 
 ### Windows development checkpoint
 

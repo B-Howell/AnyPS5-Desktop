@@ -192,6 +192,8 @@ constexpr std::pair<std::string_view, std::string_view> kPs1NetplayOptions[] = {
     {"swanstation_BIOS_PatchFastBoot", "false"},
 };
 
+enum class Ps1MatchCpu { kCachedInterpreter, kRecompiler };
+
 class Ps1MatchStorage {
  public:
   explicit Ps1MatchStorage(const std::string& bios) {
@@ -552,7 +554,8 @@ class RetroCoreSession {
                    const std::string& netplay_bios = {}, bool local_staging = false,
                    std::optional<Ps2VirtualLan::Mac> lan_mac = std::nullopt,
                    std::optional<Ps3NetworkPolicy> online = std::nullopt,
-                   std::vector<std::string> packages = {})
+                   std::vector<std::string> packages = {},
+                   Ps1MatchCpu match_cpu = Ps1MatchCpu::kCachedInterpreter)
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
         netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(*netplay_seat) : nullptr),
         match_storage_(netplay_ ? std::make_unique<Ps1MatchStorage>(netplay_bios) : nullptr),
@@ -567,6 +570,7 @@ class RetroCoreSession {
         packages_(std::move(packages)),
         ps3_(std::filesystem::u8path(core_).filename() == L"rpcs3_libretro.dll"),
         local_staging_(local_staging),
+        match_cpu_(match_cpu),
         texture_(flutter::PixelBufferTexture([this](size_t, size_t) { return CopyFrame(); })) {
     if (local_staging_ && netplay_seat != 0u)
       throw std::invalid_argument("Only the PS1 host can start in local play.");
@@ -1171,7 +1175,7 @@ class RetroCoreSession {
       if (netplay_) {
         for (const auto& [name, value] : kPs1NetplayOptions) {
           if (name != key) continue;
-          const auto selected = std::find(option.values.begin(), option.values.end(), value);
+          const auto selected = std::find(option.values.begin(), option.values.end(), NetplayOption(name, value));
           if (selected != option.values.end())
             option.selected = static_cast<size_t>(selected - option.values.begin());
           break;
@@ -1325,6 +1329,12 @@ class RetroCoreSession {
     return 0;
   }
 
+  std::string_view NetplayOption(std::string_view key, std::string_view default_value) const {
+    if (key == "swanstation_CPU_ExecutionMode" && match_cpu_ == Ps1MatchCpu::kRecompiler)
+      return "Recompiler";
+    return default_value;
+  }
+
   void ValidateNetplay(const uint8_t* memory, size_t memory_size) {
     if (!memory || memory_size != 2 * 1024 * 1024)
       throw std::runtime_error("PS1 netplay could not access the core's main RAM.");
@@ -1332,7 +1342,7 @@ class RetroCoreSession {
       std::lock_guard<std::mutex> lock(settings_mutex_);
       for (const auto& [name, value] : kPs1NetplayOptions) {
         const auto option = options_.find(std::string(name));
-        if (option == options_.end() || option->second.values[option->second.selected] != value)
+        if (option == options_.end() || option->second.values[option->second.selected] != NetplayOption(name, value))
           throw std::runtime_error("The PS1 core could not configure the required netplay profile.");
       }
     }
@@ -1770,6 +1780,7 @@ class RetroCoreSession {
   std::atomic<bool> package_rejected_{false};
   const bool ps3_;
   const bool local_staging_;
+  const Ps1MatchCpu match_cpu_;
   flutter::TextureVariant texture_;
   int64_t texture_id_ = -1;
   std::thread worker_;
