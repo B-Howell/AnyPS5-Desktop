@@ -192,6 +192,24 @@ a level. Keep the frontend's RPCN Ready state separate from actual
 game login and lobby state. The release catalog remains gated on
 provider qualification.
 
+The single-client follow-up kept the game running after sign-in.
+Refresh validated the game's token on its protected EULA endpoint,
+and the offscreen game rendered the returned private-server welcome
+text. After accepting it with the fixture controller, the game sent
+two authenticated `enterLevel/developer/42883` requests and rendered
+the introductory level. Those requests register one player's level
+presence in Refresh. They establish no shared native lobby. The
+test used a fresh save profile, and the core and all three services
+stopped with zero remaining listeners. A separate socket preflight
+confirmed that two isolated loopback addresses can each bind UDP
+3658 and exchange datagrams, which prepares the next paired run.
+
+The Quick Menu labels the current status **RPCN connection** and
+describes game sign-in and lobby handling separately. The
+[English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
+messages report startup connectivity at the exact boundary measured
+by the core.
+
 Once the exact title update and protected client patch qualify, point the
 isolated client profile at the private server using
 [Refresher AutoDiscover and Patchwork](https://docs.lbpbonsai.com/rpcs3.html).
