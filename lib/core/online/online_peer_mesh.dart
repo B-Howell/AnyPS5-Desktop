@@ -52,6 +52,12 @@ abstract interface class RestartableGameLink {
   Future<bool> routeConnected();
 }
 
+typedef GamePathStats = ({bool? relayed, int? roundTripMs});
+
+abstract interface class GameLinkPath {
+  Future<GamePathStats?> readPath();
+}
+
 enum PeerState { connecting, connected, failed, closed }
 
 class _Peer {

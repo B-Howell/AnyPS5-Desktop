@@ -533,6 +533,12 @@ the other player** until the room binds the expected player and their
 device. **Connecting to the other player** covers transport negotiation
 and compatibility checks. **Preparing both games** covers the game
 handoff until play begins. Cancel remains available throughout startup.
+During active play the same row can show Direct or Through the relay and
+the rounded round-trip time from the selected WebRTC candidate pair.
+The [adapter](../lib/ui/online_webrtc.dart) only reports measured data.
+The [match](../lib/core/online/ps1_netplay_match.dart) samples it every
+two seconds off the input path. Missing statistics leave the ordinary
+match status visible, and a sync stall takes precedence over telemetry.
 During teardown, **Ending online play**
 replaces the action with a status row until cleanup finishes. The
 Quick Menu also recognizes the loading card during a worker handoff,

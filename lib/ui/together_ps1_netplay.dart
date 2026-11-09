@@ -153,6 +153,7 @@ extension TogetherPs1Netplay on TogetherModel {
       final session = match.session;
       final playing = session?.phase == Ps1NetplayPhase.running;
       final ending = match.closed || session?.phase == Ps1NetplayPhase.closed;
+      final path = playing && !ps1ProgressStalled ? match.connectionPath : null;
       return [
         if (ending)
           PanelRow(id: 'ps1-netplay-ending', title: T.text('ps1OnlineEnding'), kind: const InfoRow(''))
@@ -160,15 +161,19 @@ extension TogetherPs1Netplay on TogetherModel {
           PanelRow(
             id: 'ps1-netplay-leave',
             title: T.text(playing ? 'ps1OnlineLeave' : 'ps1OnlineCancel'),
-            detail: T.text(
-              playing
-                  ? (ps1ProgressStalled ? 'ps1OnlineSyncing' : 'ps1OnlinePlaying')
-                  : session?.preparingGame == true
-                  ? 'ps1OnlinePreparing'
-                  : match.hasMatchedPlayer
-                  ? 'ps1OnlineConnecting'
-                  : 'ps1OnlineWaiting',
-            ),
+            detail: [
+              T.text(
+                playing
+                    ? (ps1ProgressStalled ? 'ps1OnlineSyncing' : 'ps1OnlinePlaying')
+                    : session?.preparingGame == true
+                    ? 'ps1OnlinePreparing'
+                    : match.hasMatchedPlayer
+                    ? 'ps1OnlineConnecting'
+                    : 'ps1OnlineWaiting',
+              ),
+              if (path?.relayed case final relayed?) T.text(relayed ? 'sharePlayRelayed' : 'sharePlayDirect'),
+              if (path?.roundTripMs case final roundTrip?) T.format('sharePlayRoundTrip', [roundTrip]),
+            ].join(' · '),
             kind: ActionRow(() => unawaited(match.leave()), destructive: true),
           ),
       ];

@@ -5,6 +5,7 @@ import '../core/together/share_audio.dart';
 import '../core/together/share_host.dart';
 import '../core/together/share_viewer.dart';
 import 'livekit_room.dart';
+import 'online_webrtc.dart' show selectedWebRtcPair;
 
 /// Share play's picture and sound with flutter_webrtc on Windows and Linux: the game's window
 /// from its desktop capturer (picked by the window's title), and one RTCPeerConnection per
@@ -261,12 +262,7 @@ class _Link implements ShareLink {
 abstract final class ShareWebRtcStats {
   static ({double? roundTripMs, bool? relayed}) _path(List<StatsReport> reports) {
     final byId = {for (final report in reports) report.id: report};
-    StatsReport? pair;
-    for (final report in reports) {
-      if (report.type == 'transport' && report.values['selectedCandidatePairId'] is String) {
-        pair = byId[report.values['selectedCandidatePairId']];
-      }
-    }
+    var pair = selectedWebRtcPair(reports, byId);
     pair ??= reports
         .where(
           (report) =>

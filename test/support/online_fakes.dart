@@ -232,6 +232,7 @@ class FakeGameNetwork {
   /// Messages dropped on the way (as an unreliable channel may), per sender; tests set it.
   bool Function(Uint8List data)? lose;
   bool gameChannelReady = true;
+  Future<GamePathStats?> Function()? readPath;
 
   GameLinks get links => _FakeLinks(this);
 
@@ -253,7 +254,7 @@ class _FakeLinks implements GameLinks {
   Future<GameLink> link(List<Map<String, dynamic>> iceServers) async => network._make(iceServers);
 }
 
-class FakeGameLink implements GameLink, RestartableGameLink {
+class FakeGameLink implements GameLink, RestartableGameLink, GameLinkPath {
   FakeGameLink._(this.network, this.id);
 
   final FakeGameNetwork network;
@@ -288,6 +289,9 @@ class FakeGameLink implements GameLink, RestartableGameLink {
 
   @override
   Future<bool> routeConnected() async => state == 'connected';
+
+  @override
+  Future<GamePathStats?> readPath() async => await network.readPath?.call();
 
   @override
   Future<Map<String, dynamic>> createOffer() async => {

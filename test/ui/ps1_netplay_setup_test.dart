@@ -17,9 +17,11 @@ import 'package:anyps5_desktop/core/together/game_sessions.dart';
 import 'package:anyps5_desktop/ui/together_model.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/embedded_retro_game.dart';
+import 'package:anyps5_desktop/ui/online_webrtc.dart';
 import 'package:anyps5_desktop/ui/ps1_netplay_runner.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' show StatsReport;
 import 'package:path/path.dart' as p;
 
 import '../support/fake_together.dart';
@@ -28,6 +30,23 @@ import '../support/ui_support.dart';
 
 void main() {
   LoopbackTestBinding();
+  test('game connection stats use the selected ICE pair and only report known values', () {
+    final transport = StatsReport('transport', 'transport', 0, {'selectedCandidatePairId': 'chosen'});
+    final pair = StatsReport('chosen', 'candidate-pair', 0, {
+      'state': 'succeeded',
+      'localCandidateId': 'local',
+      'remoteCandidateId': 'remote',
+      'currentRoundTripTime': '0.084',
+    });
+    final local = StatsReport('local', 'local-candidate', 0, {'candidateType': 'host'});
+    final remote = StatsReport('remote', 'remote-candidate', 0, {'candidateType': 'relay'});
+    expect(gameWebRtcPath([pair, local, remote]), isNull);
+    expect(gameWebRtcPath([transport, pair, local, remote]), (relayed: true, roundTripMs: 84));
+    expect(gameWebRtcPath([transport, pair, local]), (relayed: null, roundTripMs: 84));
+    remote.values['candidateType'] = 'prflx';
+    pair.values['currentRoundTripTime'] = 'NaN';
+    expect(gameWebRtcPath([transport, pair, local, remote]), (relayed: false, roundTripMs: null));
+  });
   test('ordinary host imports a new epoch and restores the original after stopping the match', () async {
     final events = <String>[];
     final state = Uint8List.fromList([1, 2, 3]);
@@ -470,7 +489,7 @@ void main() {
     var ended = false;
     var recoveredPlaying = false;
     var matchPumped = false;
-    var confirmMatchFrame = false;
+    final matchProgress = Stopwatch();
     final finishPark = Completer<void>();
     final finishRecovery = Completer<void>();
     late String core;
@@ -529,10 +548,11 @@ void main() {
           return true;
         case 'netplaySync':
           matchPumped = true;
+          final frame = matchProgress.isRunning ? 1 + matchProgress.elapsedMilliseconds ~/ 100 : 0;
           return {
-            'frame': confirmMatchFrame ? 1 : 0,
-            if (confirmMatchFrame) 'confirmedFrame': 0,
-            'waiting': !confirmMatchFrame,
+            'frame': frame,
+            if (frame > 0) 'confirmedFrame': frame - 1,
+            'waiting': frame == 0,
             'local': [],
             'fingerprints': [],
           };
@@ -708,9 +728,14 @@ void main() {
     await model.openQuickMenu();
     expect(await eventually(() => row('ps1-netplay-leave').detail == 'Waiting for the games to sync'), isTrue);
     expect(model.together.ps1ProgressStalled, isTrue);
-    confirmMatchFrame = true;
+    matchProgress.start();
     expect(await eventually(() => row('ps1-netplay-leave').detail == 'Match in progress'), isTrue);
     expect(model.together.ps1ProgressStalled, isFalse);
+    network.readPath = () async => (relayed: true, roundTripMs: 84);
+    expect(
+      await eventually(() => row('ps1-netplay-leave').detail == 'Match in progress · Through the relay · 84 ms'),
+      isTrue,
+    );
     choose('ps1-netplay-leave');
     expect(await eventually(() => native.contains('reopen')), isTrue);
     expect(model.starting, same(game));

@@ -34,7 +34,7 @@ class _Unreliable extends RTCDataChannelInit {
   Map<String, dynamic> toMap() => {...super.toMap(), 'maxRetransmits': 0};
 }
 
-class _GameLink implements GameLink, RestartableGameLink {
+class _GameLink implements GameLink, RestartableGameLink, GameLinkPath {
   _GameLink(this.pc) {
     pc.onConnectionState = (state) => _onState?.call(_name(state));
     pc.onIceCandidate = (candidate) {
@@ -126,6 +126,13 @@ class _GameLink implements GameLink, RestartableGameLink {
       await pc.getConnectionState() == RTCPeerConnectionState.RTCPeerConnectionStateConnected;
 
   @override
+  Future<GamePathStats?> readPath() async {
+    if (!_open || !await routeConnected()) return null;
+    final stats = gameWebRtcPath(await pc.getStats());
+    return _open && await routeConnected() ? stats : null;
+  }
+
+  @override
   Future<Map<String, dynamic>> createOffer() async {
     final offer = await pc.createOffer({});
     return {'type': offer.type, 'sdp': offer.sdp};
@@ -175,4 +182,33 @@ class _GameLink implements GameLink, RestartableGameLink {
     await _streamChannel?.close().catchError((Object _) {});
     await pc.close();
   }
+}
+
+StatsReport? selectedWebRtcPair(List<StatsReport> reports, Map<String, StatsReport> byId) {
+  StatsReport? pair;
+  for (final report in reports) {
+    if (report.type == 'transport' && report.values['selectedCandidatePairId'] is String) {
+      pair = byId[report.values['selectedCandidatePairId']];
+    }
+  }
+  return pair;
+}
+
+GamePathStats? gameWebRtcPath(List<StatsReport> reports) {
+  final byId = {for (final report in reports) report.id: report};
+  final pair = selectedWebRtcPair(reports, byId);
+  if (pair?.type != 'candidate-pair' || pair?.values['state'] != 'succeeded') return null;
+  final values = pair!.values;
+  final local = byId[values['localCandidateId']]?.values['candidateType'];
+  final remote = byId[values['remoteCandidateId']]?.values['candidateType'];
+  const directTypes = {'host', 'srflx', 'prflx'};
+  final relayed = local == 'relay' || remote == 'relay'
+      ? true
+      : directTypes.contains(local) && directTypes.contains(remote)
+      ? false
+      : null;
+  final seconds = double.tryParse('${values['currentRoundTripTime'] ?? ''}');
+  final milliseconds = seconds == null ? null : seconds * 1000;
+  final roundTripMs = milliseconds != null && milliseconds.isFinite && milliseconds >= 0 ? milliseconds.round() : null;
+  return relayed == null && roundTripMs == null ? null : (relayed: relayed, roundTripMs: roundTripMs);
 }
