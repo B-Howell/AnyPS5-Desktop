@@ -83,12 +83,16 @@ extension TogetherPs3Online on TogetherModel {
 
   List<PanelRow> ps3PartyRows() {
     final attempt = _ps3Party;
-    if (attempt == null || attempt.cancelled.isCompleted) return const [];
+    if (attempt == null) return const [];
+    if (attempt.cancelled.isCompleted) {
+      return [PanelRow(id: 'ps3-party-leave', title: T.text('ps3PartyClosing'), kind: const InfoRow(''))];
+    }
+    final playing = app.embeddedGame?.isPs3Online == true;
     return [
       PanelRow(
         id: 'ps3-party-leave',
-        title: T.text('ps3PartyLeave'),
-        detail: T.text(app.embeddedGame?.isPs3Online == true ? 'ps3PartyGameMenu' : 'ps3PartyStarting'),
+        title: T.text(playing ? 'ps3PartyLeave' : 'ps3PartyCancel'),
+        detail: T.text(playing ? 'ps3PartyGameMenu' : 'ps3PartyStarting'),
         kind: ActionRow(() {
           attempt.cancel();
           app.refresh();
@@ -127,10 +131,11 @@ extension TogetherPs3Online on TogetherModel {
     final attempt = _ps3Party = _Ps3PartyAttempt()..roomId = invite?.sessionId;
     bool active() => !attempt.cancelled.isCompleted && account.user?.id == me;
     RetroRoom? room;
-    app.show(T.text('ps3PartyStarting'));
-    app.refresh();
+    app.returnTo((layer: Layer.friends, category: 'friends', row: 'ps3-party-leave'));
     try {
-      room = invite == null ? await rooms.host() : await rooms.join(invite.sessionId, expectedHost: invite.from?.id);
+      room = invite == null
+          ? await rooms.host(cancelBeforeAdmission: attempt.cancelled)
+          : await rooms.join(invite.sessionId, expectedHost: invite.from?.id, cancelBeforeAdmission: attempt.cancelled);
       attempt.roomId = room.id;
       if (!active()) return;
       if (!_ps3LaunchAvailable) return app.show(T.text('ps3PartyBusy'));

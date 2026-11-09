@@ -546,6 +546,12 @@ room or receiving its end event cancels a pending launch and leaves an
 already-running game open. Stopping the host's game closes the room.
 Signing out or closing the launcher gives the handoff time to release
 the room while the account is still available.
+While the launcher opens the room, Friends focuses **Cancel PS3
+invite**. Cancel releases pending read-only room checks so the player
+can retry without waiting for a stale reply. Once a create or join
+request has been sent, the launcher waits for its result and releases
+any room it acquired before allowing another attempt. Friends shows
+the closing status during that cleanup.
 The [existing PS5 flow](../lib/ui/together_play.dart) remains separate.
 
 The [PS3 settings integration tests](../test/ui/ps3_settings_test.dart)

@@ -329,6 +329,8 @@
   "ps3PartyHost": "Send Invite and Play",
   "ps3PartyJoin": "Accept Invite and Play",
   "ps3PartyLeave": "Leave AnyTogether Room",
+  "ps3PartyCancel": "Cancel PS3 invite",
+  "ps3PartyClosing": "Closing the AnyTogether room…",
   "ps3PartyStarting": "Opening the private AnyTogether party…",
   "ps3PartyGameMenu": "Use the game's online menu to meet your friend.",
   "ps3PartyUnavailable": "Sign in to AnyTogether and reconnect to use PS3 invites.",

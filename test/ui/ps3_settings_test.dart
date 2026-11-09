@@ -249,10 +249,42 @@ void main() {
         model.open(Layer.friends);
         activate('game-accept-$roomId');
         expect(server.callsTo('game-sessions/$roomId/join'), isEmpty);
+        if (mode == 'guest') {
+          const path = 'game-sessions/$roomId';
+          final answer = server.answers.remove('GET $path')!;
+          final requested = Completer<void>();
+          final reply = Completer<void>();
+          server.handlers.add((call) async {
+            if (call.method != 'GET' || call.path != path) return null;
+            if (!requested.isCompleted) requested.complete();
+            await reply.future;
+            return answer;
+          });
+          addTearDown(() {
+            if (!reply.isCompleted) reply.complete();
+          });
+          activate('ps3-online-play');
+          await requested.future.timeout(const Duration(seconds: 5));
+          expect(model.overlay, Layer.friends);
+          expect(model.spot?.row, 'ps3-party-leave');
+          activate('ps3-party-leave');
+          await waitFor(() => model.together.ps3PartyRows().isEmpty);
+          expect(server.callsTo('$path/join'), isEmpty);
+          expect(start.isCompleted, isFalse);
+          server.answers['GET $path'] = answer;
+          model.open(Layer.friends);
+          activate('game-accept-$roomId');
+          unawaited(
+            start.future.then((_) {
+              if (!reply.isCompleted) reply.complete();
+            }),
+          );
+        }
         final properties = room['properties'] as Map<String, String>;
         properties['profileSha256'] = '0' * 64;
+        final lookups = server.callsTo('game-sessions/$roomId', method: 'GET').length;
         activate('ps3-online-play');
-        await waitFor(() => server.callsTo('game-sessions/$roomId', method: 'GET').isNotEmpty);
+        await waitFor(() => server.callsTo('game-sessions/$roomId', method: 'GET').length > lookups);
         await waitFor(() => model.together.ps3PartyRows().isEmpty);
         expect(server.callsTo('game-sessions/$roomId/join'), isEmpty);
         expect(start.isCompleted, isFalse);
@@ -307,6 +339,7 @@ void main() {
               .singleWhere((row) => row.id == 'ps3-party-leave');
           (leave.kind as ActionRow).run();
           await waitFor(() => server!.callsTo('game-sessions/$roomId/leave').isNotEmpty);
+          await waitFor(() => model.together.ps3PartyRows().isEmpty);
         }
         expect(model.together.ps3PartyRows(), isEmpty);
         expect(model.embeddedGame?.isPs3Online, isTrue);

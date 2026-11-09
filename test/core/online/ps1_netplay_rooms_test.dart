@@ -146,6 +146,51 @@ void main() {
     });
   });
 
+  test('host cancellation releases read-only checks but returns a room already being created', () async {
+    final firstRead = Completer<Map<String, dynamic>>();
+    final creating = Completer<void>();
+    final created = Completer<Map<String, dynamic>>();
+    final calls = <(String, String)>[];
+    final rooms = RetroOnlineRooms(
+      spec: _spec,
+      me: _host,
+      call: (method, path, [body]) async {
+        calls.add((method, path));
+        if (path == 'me/game-session') {
+          return calls.length == 1 ? await firstRead.future : {'session': null};
+        }
+        if (path == 'game-sessions') {
+          creating.complete();
+          return created.future;
+        }
+        return _view();
+      },
+      signal: (_, _, _, _, _) {},
+    );
+    final cancelRead = Completer<void>();
+    final opening = rooms.host(cancelBeforeAdmission: cancelRead);
+    final rejected = expectLater(opening, throwsStateError);
+    cancelRead.complete();
+    await rejected.timeout(const Duration(seconds: 2));
+    expect(calls, [('GET', 'me/game-session')]);
+
+    final cancelWrite = Completer<void>();
+    final retry = rooms.host(cancelBeforeAdmission: cancelWrite);
+    await creating.future.timeout(const Duration(seconds: 2));
+    cancelWrite.complete();
+    firstRead.complete({'session': null});
+    created.complete(_view());
+    final room = await retry.timeout(const Duration(seconds: 2));
+    await rooms.leave(room);
+    expect(calls, [
+      ('GET', 'me/game-session'),
+      ('GET', 'me/game-session'),
+      ('POST', 'game-sessions'),
+      ('PUT', '$_path/members/me'),
+      ('DELETE', _path),
+    ]);
+  });
+
   test('keeps another online session and rejects an incompatible invite before joining', () async {
     var busy = true;
     final requests = <String>[];

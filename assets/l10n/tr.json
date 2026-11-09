@@ -327,6 +327,8 @@
   "ps3PartyHost": "Davet Gönder ve Oyna",
   "ps3PartyJoin": "Daveti Kabul Et ve Oyna",
   "ps3PartyLeave": "AnyTogether Odasından Ayrıl",
+  "ps3PartyCancel": "PS3 davetini iptal et",
+  "ps3PartyClosing": "AnyTogether odası kapatılıyor…",
   "ps3PartyStarting": "Özel AnyTogether grubu açılıyor…",
   "ps3PartyGameMenu": "Arkadaşınızla oyunun çevrimiçi menüsünde buluşun.",
   "ps3PartyUnavailable": "PS3 davetleri için AnyTogether'da oturum açın ve yeniden bağlanın.",

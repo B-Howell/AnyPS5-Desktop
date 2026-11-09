@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'online_peer.dart';
 
 typedef RetroRoomMember = ({String userId, String device});
@@ -43,8 +45,9 @@ final class RetroOnlineRooms {
   final String? discDigest;
   final String? profileDigest;
 
-  Future<RetroRoom> host() async {
-    await _requireIdle();
+  Future<RetroRoom> host({Completer<void>? cancelBeforeAdmission}) async {
+    await _admissionRead(_requireIdle, cancelBeforeAdmission);
+    _checkAdmission(cancelBeforeAdmission);
     final json = await call('POST', 'game-sessions', {
       'kind': 'online',
       'titleId': spec.titleId,
@@ -78,13 +81,14 @@ final class RetroOnlineRooms {
     return _publish(room);
   }
 
-  Future<RetroRoom> join(String id, {String? expectedHost}) async {
+  Future<RetroRoom> join(String id, {String? expectedHost, Completer<void>? cancelBeforeAdmission}) async {
     final path = _path(id);
-    await _requireIdle();
-    final room = _room(await call('GET', path), id: id);
+    await _admissionRead(_requireIdle, cancelBeforeAdmission);
+    final room = _room(await _admissionRead(() => call('GET', path), cancelBeforeAdmission), id: id);
     if (room.hostId == me || (expectedHost != null && room.hostId != expectedHost)) {
       throw StateError('This invite does not match the retro room host.');
     }
+    _checkAdmission(cancelBeforeAdmission);
     await call('POST', '$path/join', {'gameVersion': spec.gameVersion, 'engineBuild': protocol});
     return _publish(room);
   }
@@ -169,6 +173,21 @@ final class RetroOnlineRooms {
   Future<void> _requireIdle() async {
     final current = await call('GET', 'me/game-session');
     if (current['session'] != null) throw StateError('Leave your current online game before starting another.');
+  }
+
+  // Stop waiting only for reads. Once a write is sent, the caller must
+  // receive its result so it can release any room it acquired.
+  static Future<T> _admissionRead<T>(Future<T> Function() read, Completer<void>? cancellation) {
+    _checkAdmission(cancellation);
+    if (cancellation == null) return read();
+    return Future.any<T>([
+      read(),
+      cancellation.future.then<T>((_) => throw StateError('Retro room admission canceled.')),
+    ]);
+  }
+
+  static void _checkAdmission(Completer<void>? cancellation) {
+    if (cancellation?.isCompleted == true) throw StateError('Retro room admission canceled.');
   }
 
   Future<RetroRoom> _publish(RetroRoom room) async {
