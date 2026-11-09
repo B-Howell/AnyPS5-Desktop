@@ -58,6 +58,7 @@ void main() {
     write(p.join(update, 'PARAM.SFO'), ps3FixtureSfo({'TITLE_ID': title, 'APP_VER': '01.30', 'CATEGORY': 'GD'}));
     write(p.join(update, 'USRDIR', 'EBOOT.BIN'), [2]);
     write(p.join(rpcs3, 'dev_flash', 'vsh', 'module', 'vsh.self'), [3]);
+    write(p.join(rpcs3, 'dev_flash', 'sys', 'external', 'liblv2.sprx'), [3]);
     final installedPatch = write(p.join(rpcs3, 'patches', '${title}_patch.yml'), [1]);
     final invalidPatch = write(p.join(fixture.temp.path, 'invalid.yml'), [2]);
     final reviewedPatch = write(p.join(fixture.temp.path, 'reviewed.yml'), utf8.encode(patch));
@@ -130,6 +131,13 @@ void main() {
         model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-online-import-patch').detail;
     String? playStatus() =>
         model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-online-play').detail;
+    activate('ps3-online-firmware');
+    await waitFor(
+      () =>
+          model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-online-firmware').detail ==
+          'Firmware ready.',
+    );
+    expect(start.isCompleted, isFalse);
     activate('ps3-online-play');
     await waitFor(() => playStatus()?.contains('Import Protection Patch') == true);
     selectedPatch = invalidPatch.path;

@@ -260,22 +260,39 @@ class ManagedRetro {
 
   bool get hasPs3Firmware => File(p.join(systemPath, 'rpcs3', 'dev_flash', 'vsh', 'module', 'vsh.self')).existsSync();
 
-  String get _ps3FirmwarePackage => p.join(systemPath, 'PS3UPDAT.PUP');
+  static const ps3FirmwareName = 'PS3UPDAT.PUP';
+  static const _ps3FirmwareSize = 206197916;
+  static const _ps3FirmwareDigest = '158471fd834f8ea8036136b6aab43cd86c7ba73d79ca30e0af3c0fe0001cf365';
+
+  String get _ps3FirmwarePackage => p.join(systemPath, ps3FirmwareName);
 
   bool get hasPs3FirmwarePackage => File(_ps3FirmwarePackage).existsSync();
 
   Future<void> installPs3Firmware({void Function(int, int)? progress}) async {
     if (hasPs3Firmware) return;
-    const size = 206197916;
+    await downloadPs3FirmwarePackage(_ps3FirmwarePackage, progress: progress);
+  }
+
+  static Future<bool> isVerifiedPs3FirmwarePackage(File file) async =>
+      await file.exists() &&
+      await file.length() == _ps3FirmwareSize &&
+      await AssetDownload.sha256Of(file.path) == _ps3FirmwareDigest;
+
+  static Future<void> downloadPs3FirmwarePackage(
+    String target, {
+    void Function(int, int)? progress,
+    DownloadCancel? cancel,
+  }) async {
     await AssetDownload.fetch(
       Uri.http(
         'dus01.ps3.update.playstation.net',
         '/update/ps3/image/us/2026_0318_a2b60b6ac1d2e49e230144345616927c/PS3UPDAT.PUP',
       ),
-      _ps3FirmwarePackage,
-      size: size,
-      sha256: '158471fd834f8ea8036136b6aab43cd86c7ba73d79ca30e0af3c0fe0001cf365',
-      onProgress: (bytes) => progress?.call(bytes, size),
+      target,
+      size: _ps3FirmwareSize,
+      sha256: _ps3FirmwareDigest,
+      onProgress: (bytes) => progress?.call(bytes, _ps3FirmwareSize),
+      cancel: cancel,
     );
   }
 

@@ -38,6 +38,8 @@ extension _Ps3OnlineReadinessPage on AppModel {
         Ps3OnlineReadiness.inspect(disc: disc.path, managedSystem: managed.systemPath, releases: releases);
     var report = inspect();
     var checking = false;
+    var preparingFirmware = false;
+    String? firmwareDetail;
     _Ps3ProfileFile? importing;
     String? failure;
     final importDetails = <_Ps3ProfileFile, String>{};
@@ -45,9 +47,44 @@ extension _Ps3OnlineReadinessPage on AppModel {
     bool visible() => !_disposed && overlay == Layer.emulatorMenu && identical(_emulatorMenu._page, page);
     bool available() =>
         !_disposed && !_quitting && managedSetupConsole == null && starting == null && running == null && !stopping;
+    bool busy() => checking || importing != null || preparingFirmware;
+
+    Future<void> prepareFirmware(Ps3OnlineRelease release) async {
+      if (busy() || !visible() || !available()) return;
+      preparingFirmware = true;
+      firmwareDetail = T.text('ps3OnlineFirmwareChecking');
+      refresh();
+      try {
+        if (await Ps3OnlineProfile.prepareFirmware(
+          managed,
+          release,
+          canPublish: () => visible() && available(),
+          progress: (received, total) {
+            final detail = T.format('ps3OnlineFirmwareProgress', [received * 100 ~/ total]);
+            if (detail == firmwareDetail) return;
+            firmwareDetail = detail;
+            refresh();
+          },
+        )) {
+          failure = null;
+          firmwareDetail = T.text('ps3OnlineFirmwareReady');
+        }
+      } on Ps3OnlineIssue catch (issue) {
+        firmwareDetail = issue == Ps3OnlineIssue.firmware
+            ? T.text('ps3OnlineFirmwareFailed')
+            : _ps3OnlineIssueText(issue);
+      } on ToolkitFailure {
+        firmwareDetail = T.text('ps3OnlineFirmwareFailed');
+      } on FileSystemException {
+        firmwareDetail = _ps3OnlineIssueText(Ps3OnlineIssue.storage);
+      } finally {
+        preparingFirmware = false;
+        if (visible()) refresh();
+      }
+    }
 
     Future<void> importFile(Ps3OnlineRelease release, _Ps3ProfileFile kind) async {
-      if (checking || importing != null || !visible() || !available()) return;
+      if (busy() || !visible() || !available()) return;
       importing = kind;
       importDetails.remove(kind);
       refresh();
@@ -77,7 +114,7 @@ extension _Ps3OnlineReadinessPage on AppModel {
     }
 
     Future<void> playOnline(Ps3OnlineRelease release) async {
-      if (checking || importing != null || !visible() || !available()) return;
+      if (busy() || !visible() || !available()) return;
       checking = true;
       failure = null;
       refresh();
@@ -115,13 +152,20 @@ extension _Ps3OnlineReadinessPage on AppModel {
         report,
         _ps3UpdateRow(report),
         () {
-          if (checking || importing != null) return;
+          if (busy()) return;
           report = inspect();
           failure = null;
           panelRow = _emulatorMenu.categories.single.rows.indexWhere((row) => row.id == _ps3OnlineRecheck);
           refresh();
         },
         imports: [
+          if (release != null)
+            PanelRow(
+              id: 'ps3-online-firmware',
+              title: T.text('ps3OnlinePrepareFirmware'),
+              detail: firmwareDetail ?? T.text('ps3OnlinePrepareFirmwareDetail'),
+              kind: ActionRow(() => unawaited(prepareFirmware(release))),
+            ),
           if (release != null && services.pickFile != null)
             for (final kind in _Ps3ProfileFile.values)
               PanelRow(

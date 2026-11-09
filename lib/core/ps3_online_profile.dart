@@ -5,8 +5,10 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
+import 'managed_retro.dart';
 import 'ps3_disc.dart';
 import 'ps3_update_import.dart';
+import 'toolkit_download.dart';
 
 enum Ps3OnlineIssue implements Exception { unqualified, storage, core, update, patch, firmware, account }
 
@@ -181,7 +183,14 @@ final class Ps3OnlineProfile {
     final protection = release.protection;
     if (!release.hasManagedProfile || protection is! Ps3YamlProtection) throw Ps3OnlineIssue.unqualified;
     final bytes = await _readProtection(File(source), protection.sha256);
-    return _publishManagedFile(managedRoot, release, ['patches'], '${release.titleId}_patch.yml', bytes, canPublish);
+    return _publishManagedFile(
+      managedRoot,
+      release,
+      ['system', 'rpcs3', 'patches'],
+      '${release.titleId}_patch.yml',
+      canPublish,
+      (file) async => file.writeAsBytes(bytes, flush: true),
+    );
   }
 
   static Future<bool> importAccount(
@@ -195,11 +204,52 @@ final class Ps3OnlineProfile {
     return _publishManagedFile(
       managedRoot,
       release,
-      [if (Platform.isWindows) 'config'],
+      ['system', 'rpcs3', if (Platform.isWindows) 'config'],
       'rpcn.yml',
-      utf8.encode(jsonEncode(account)),
       canPublish,
+      (file) async => file.writeAsString(jsonEncode(account), flush: true),
     );
+  }
+
+  static Future<bool> prepareFirmware(
+    ManagedRetro managed,
+    Ps3OnlineRelease release, {
+    required bool Function() canPublish,
+    required void Function(int, int) progress,
+  }) async {
+    if (!canPublish()) return false;
+    final profile = await managedProfileRoot(managed.root, release, create: true);
+    final system = await _managedDirectory(profile, 'system', create: true);
+    try {
+      await _verifyFirmware(profile, system);
+      return canPublish();
+    } on Ps3OnlineIssue catch (issue) {
+      if (issue != Ps3OnlineIssue.firmware) rethrow;
+    }
+    if (await _firmwareLibrary(system).exists()) throw Ps3OnlineIssue.firmware;
+    await _checkFirmwareSearchPath(system);
+    final source = File(p.join(managed.systemPath, ManagedRetro.ps3FirmwareName));
+    return _publishManagedFile(managed.root, release, ['system'], ManagedRetro.ps3FirmwareName, canPublish, (
+      file,
+    ) async {
+      if (await ManagedRetro.isVerifiedPs3FirmwarePackage(source)) {
+        await source.copy(file.path);
+        if (!await ManagedRetro.isVerifiedPs3FirmwarePackage(file)) throw Ps3OnlineIssue.firmware;
+      } else if (canPublish()) {
+        final cancel = DownloadCancel();
+        await ManagedRetro.downloadPs3FirmwarePackage(
+          file.path,
+          progress: (received, total) {
+            if (!canPublish()) {
+              cancel.cancel();
+            } else {
+              progress(received, total);
+            }
+          },
+          cancel: cancel,
+        );
+      }
+    });
   }
 
   static Future<bool> _publishManagedFile(
@@ -207,13 +257,13 @@ final class Ps3OnlineProfile {
     Ps3OnlineRelease release,
     List<String> directories,
     String name,
-    List<int> bytes,
     bool Function() canPublish,
+    Future<void> Function(File) prepare,
   ) async {
     if (!canPublish()) return false;
     final profile = await managedProfileRoot(managedRoot, release, create: true);
     var directory = profile;
-    for (final component in ['system', 'rpcs3', ...directories]) {
+    for (final component in directories) {
       directory = await _managedDirectory(directory, component, create: true);
     }
     final destination = p.join(directory, name);
@@ -226,7 +276,8 @@ final class Ps3OnlineProfile {
         throw Ps3OnlineIssue.storage;
       }
       if (!canPublish()) return false;
-      final file = await File(p.join(stage.path, name)).writeAsBytes(bytes, flush: true);
+      final file = File(p.join(stage.path, name));
+      await prepare(file);
       if (!canPublish()) return false;
       await file.rename(destination);
       return true;
@@ -381,11 +432,7 @@ final class Ps3OnlineProfile {
       final file = await _profileFile(profileRoot, p.joinAll([hdd, ...parts]), Ps3OnlineIssue.patch);
       await _verifyHash(file, entry.value, Ps3OnlineIssue.patch);
     }
-    await _profileFile(
-      profileRoot,
-      p.join(rpcs3Root, 'dev_flash', 'vsh', 'module', 'vsh.self'),
-      Ps3OnlineIssue.firmware,
-    );
+    await _verifyFirmware(profileRoot, systemRoot);
     final account = await _profileFile(profileRoot, p.join(configRoot, 'rpcn.yml'), Ps3OnlineIssue.account);
     await _readAccount(account, release.rpcnHost);
     if (prepare) {
@@ -510,6 +557,43 @@ final class Ps3OnlineProfile {
 
   static bool _overlap(String first, String second) =>
       p.equals(first, second) || p.isWithin(first, second) || p.isWithin(second, first);
+
+  static File _firmwareLibrary(String system) =>
+      File(p.join(system, 'rpcs3', 'dev_flash', 'sys', 'external', 'liblv2.sprx'));
+
+  static Future<void> _checkFirmwareSearchPath(String system) async {
+    // The core checks system/rpcs3 before the managed package in system.
+    final emulator = Directory(p.join(system, 'rpcs3'));
+    if (await emulator.exists()) {
+      await for (final entry in emulator.list(followLinks: false)) {
+        if (p.basename(entry.path).toUpperCase() == ManagedRetro.ps3FirmwareName) {
+          throw Ps3OnlineIssue.firmware;
+        }
+      }
+    }
+    await for (final entry in Directory(system).list(followLinks: false)) {
+      final name = p.basename(entry.path);
+      if (name.toUpperCase() == ManagedRetro.ps3FirmwareName && name != ManagedRetro.ps3FirmwareName) {
+        throw Ps3OnlineIssue.firmware;
+      }
+    }
+  }
+
+  static Future<void> _verifyFirmware(String profile, String system) async {
+    final library = _firmwareLibrary(system);
+    if (await library.exists()) {
+      await _profileFile(profile, library.path, Ps3OnlineIssue.firmware);
+      await _profileFile(
+        profile,
+        p.join(system, 'rpcs3', 'dev_flash', 'vsh', 'module', 'vsh.self'),
+        Ps3OnlineIssue.firmware,
+      );
+      return;
+    }
+    await _checkFirmwareSearchPath(system);
+    final package = await _profileFile(profile, p.join(system, ManagedRetro.ps3FirmwareName), Ps3OnlineIssue.firmware);
+    if (!await ManagedRetro.isVerifiedPs3FirmwarePackage(package)) throw Ps3OnlineIssue.firmware;
+  }
 
   /// Accept the layout written by the pinned core after its first boot.
   static Future<void> _verifyVfs(File file, String emulatorDirectory) async {

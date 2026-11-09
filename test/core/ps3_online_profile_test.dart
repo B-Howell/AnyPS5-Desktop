@@ -63,6 +63,7 @@ void main() {
     write(accountConfig, account.codeUnits);
     write('online/system/rpcs3/dev_hdd0/plugins/provider.conf', [4]);
     write('online/system/rpcs3/dev_flash/vsh/module/vsh.self', [5]);
+    write('online/system/rpcs3/dev_flash/sys/external/liblv2.sprx', [5]);
     updateTreeDigest = null;
     makeRelease();
   });
@@ -315,8 +316,12 @@ $ppu:
 
   test('rejects absent firmware, credentials and changed core bytes before boot', () async {
     File(p.join(online, 'system/rpcs3/dev_flash/vsh/module/vsh.self')).deleteSync();
+    File(p.join(online, 'system/rpcs3/dev_flash/sys/external/liblv2.sprx')).deleteSync();
+    await expectLater(verify(), throwsA(Ps3OnlineIssue.firmware));
+    write('online/system/PS3UPDAT.PUP', [1, 2, 3]);
     await expectLater(verify(), throwsA(Ps3OnlineIssue.firmware));
     write('online/system/rpcs3/dev_flash/vsh/module/vsh.self', [5]);
+    write('online/system/rpcs3/dev_flash/sys/external/liblv2.sprx', [5]);
     File(p.join(root.path, accountConfig)).deleteSync();
     await expectLater(verify(), throwsA(Ps3OnlineIssue.account));
     write(accountConfig, account.codeUnits);

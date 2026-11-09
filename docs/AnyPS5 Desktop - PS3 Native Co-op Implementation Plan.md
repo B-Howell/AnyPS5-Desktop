@@ -418,6 +418,21 @@ file. The YAML library from the pinned Windows RPCS3 build parsed the
 normalized output in a scratch probe with synthetic credentials. Account
 registration and provider sign-in remain separate.
 
+**Prepare PS3 Firmware** uses the same pinned PlayStation firmware
+package as ordinary setup. It reuses a verified cached package or
+downloads into a disposable directory in the online profile. It checks
+the copied package before publishing and leaves the offline firmware
+alone. The verifier accepts the exact staged package for first launch.
+The pinned core extracts it during initialization. On repeat launch,
+the verifier checks the native installed-firmware marker and VSH file.
+It refuses an earlier package in RPCS3's search order that could
+shadow the verified package.
+The Windows offscreen probe reused the real checksum-pinned PUP in a
+fresh online profile with no extracted firmware. RPCS3 created both
+firmware markers, booted the protected LittleBigPlanet GOTY update to
+Vulkan frames and audio, and exited cleanly. The probe used disconnected
+verification mode and observed only a loopback endpoint.
+
 The [embedded session](../lib/ui/embedded_retro_game.dart) keeps RPCS3
 running under the Quick Menu and sends neutral input while the menu has
 focus. The protected session does not offer in-game graphics changes
