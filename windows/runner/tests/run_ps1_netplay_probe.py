@@ -21,16 +21,17 @@ class Peer:
         arguments = [executable, core, disc, bios, str(seat)]
         if local:
             arguments.append("local")
-        if recompiler:
+        if recompiler and not (rollback or audio_control):
             arguments.append("recompiler")
         if rollback:
-            arguments.append("rollback-dual" if presentation_core else "rollback")
+            mode = "rollback-dual" if presentation_core else "rollback"
+            arguments.append(mode + ("-recompiler" if recompiler else ""))
             if presentation_core:
                 arguments.append(presentation_core)
             if input_trace is not None:
                 arguments.append(input_trace)
         if audio_control:
-            arguments.append("audio-control")
+            arguments.append("audio-control-recompiler" if recompiler else "audio-control")
         if saves is not None:
             arguments.extend(("ordinary", saves))
         self.process = Popen(
@@ -88,6 +89,8 @@ def main():
     parser.add_argument("--frames", type=int, default=650)
     parser.add_argument("--rollback", action="store_true",
                         help="Compare a native prediction worker to a confirmed-input control")
+    parser.add_argument("--rollback-recompiler", action="store_true",
+                        help="Use the ordinary Play CPU profile in rollback, including ordinary restore probes")
     parser.add_argument("--presentation-core", type=Path,
                         help="Use a separate byte-identical DLL for video during native rollback")
     parser.add_argument("--trace", type=Path, help="Drive the exact two-player CTR fixture and require the race finish")
@@ -109,8 +112,11 @@ def main():
     parser.add_argument("--ordinary-replace", action="store_true",
                         help="Exercise replacing and recovering workers through the native method channel")
     args = parser.parse_args()
+    rollback_restore = args.ordinary_restore and args.rollback_recompiler
+    if args.rollback_recompiler and not (args.rollback or rollback_restore):
+        parser.error("--rollback-recompiler requires --rollback or --ordinary-restore")
     if args.presentation_core:
-        if not args.rollback or args.presentation_core.samefile(args.core):
+        if not (args.rollback or rollback_restore) or args.presentation_core.samefile(args.core):
             parser.error("--presentation-core requires rollback and a separate DLL copy")
         with args.core.open("rb") as primary, args.presentation_core.open("rb") as presentation:
             if hashlib.file_digest(primary, "sha256").digest() != hashlib.file_digest(presentation, "sha256").digest():
@@ -303,8 +309,11 @@ def verify_ordinary_checkpoint(args, cleanup):
     if args.ordinary_replace:
         private_core = root / args.core.name
         copyfile(args.core, private_core)
-        result = run([args.probe.resolve(), private_core, disc, bios, args.ordinary_control_core.resolve(),
-                      "replace", saves], timeout=60, capture_output=True, text=True,
+        command = [args.probe.resolve(), private_core, disc, bios, args.ordinary_control_core.resolve(),
+                   "replace", saves]
+        if args.presentation_core:
+            command.append(args.presentation_core.resolve())
+        result = run(command, timeout=60, capture_output=True, text=True,
                      creationflags=CREATE_NO_WINDOW | IDLE_PRIORITY_CLASS)
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or f"Native replacement exited {result.returncode}")
@@ -316,6 +325,11 @@ def verify_ordinary_checkpoint(args, cleanup):
 
 def verify_ordinary_restore(args, source, bios, path):
     expected = source.send("fingerprint")
+    if args.rollback_recompiler:
+        with ExitStack() as match:
+            verify_native_rollback(args, match, checkpoint=(path, expected))
+        assert source.send("fingerprint") == expected
+        return
     with ExitStack() as match:
         peers = []
         for seat in range(2):
@@ -475,7 +489,7 @@ def verify_new_input_epoch(host, guest, *, input_masks=None):
     print("The held host and replacement guest matched the first RAM fingerprint in the new input epoch.")
 
 
-def verify_native_rollback(args, cleanup):
+def verify_native_rollback(args, cleanup, *, checkpoint=None):
     target = max(args.frames, 240)
     local_trace = None
     if args.presentation_core:
@@ -486,11 +500,25 @@ def verify_native_rollback(args, cleanup):
     for prediction in (False, True):
         peer = Peer(args.probe.resolve(), args.core.resolve(), args.disc.resolve(), args.bios.resolve(),
                     0, rollback=prediction, audio_control=not prediction,
+                    recompiler=args.rollback_recompiler,
                     input_trace=local_trace if prediction else None,
                     presentation_core=args.presentation_core.resolve() if prediction and args.presentation_core else None)
         cleanup.callback(peer.close)
         peers.append(peer)
     assert all(peer.receive() == "ready" for peer in peers)
+    if args.rollback_recompiler:
+        assert all(peer.send("cpu") == "Recompiler" for peer in peers)
+    if checkpoint:
+        path, expected = checkpoint
+        for peer in peers:
+            assert peer.send("fingerprint") != expected
+            assert peer.send(f"restore 2 {path} 0") == "rejected"
+        assert peers[1].send(f"restore 1 {path} 1") == "unavailable"
+        for peer in peers:
+            assert peer.send(f"restore 1 {path} 0") == "restored", "Match did not import the ordinary checkpoint"
+            assert peer.send("fingerprint") == expected
+        assert peers[1].send(f"restore 1 {path} 0") == "unavailable"
+        print("Both match workers imported the ordinary hardware checkpoint at epoch zero.")
     assert all(peer.send("start") == "started" for peer in peers)
     states = [peer.sync() for peer in peers]
     sent = [set(), set()]
@@ -585,11 +613,13 @@ def traced_rollback_race(args, cleanup):
         trace = directory / f"seat-{seat}.txt"
         trace.write_text("\n".join(str(pads[seat]) for pads in frames), encoding="ascii")
         peer = Peer(args.probe.resolve(), args.core.resolve(), args.disc.resolve(), args.bios.resolve(),
-                    seat, rollback=True, input_trace=trace,
+                    seat, rollback=True, input_trace=trace, recompiler=args.rollback_recompiler,
                     presentation_core=args.presentation_core.resolve() if args.presentation_core else None)
         cleanup.callback(peer.close)
         peers.append(peer)
     assert all(peer.receive() == "ready" for peer in peers)
+    if args.rollback_recompiler:
+        assert all(peer.send("cpu") == "Recompiler" for peer in peers)
     assert all(peer.send("start") == "started" for peer in peers)
     states = [peer.sync() for peer in peers]
     histories = [{}, {}]

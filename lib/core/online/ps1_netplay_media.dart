@@ -13,13 +13,16 @@ enum Ps1NetplayMediaProblem { disc, bios, core }
 enum Ps1NetplayExecution {
   standard('CachedInterpreter'),
   ordinaryHandoff('Recompiler'),
-  rollbackPreview('CachedInterpreter');
+  rollbackPreview('CachedInterpreter'),
+  rollbackHandoff('Recompiler');
 
   const Ps1NetplayExecution(this.cpu);
   final String cpu;
+  bool get usesPresentationCore => this == rollbackPreview || this == rollbackHandoff;
+  bool get usesRecompiler => this == ordinaryHandoff || this == rollbackHandoff;
 
   String get digest {
-    final rollback = this == rollbackPreview ? ';rollback=16;presentation-core=1' : '';
+    final rollback = usesPresentationCore ? ';rollback=16;presentation-core=1' : '';
     return sha256
         .convert(
           utf8.encode('Software;1x;$cpu;block-linking=0;gpu-thread=0;fast-boot=0;two-digital-pads;delay=2$rollback'),
@@ -29,7 +32,7 @@ enum Ps1NetplayExecution {
 
   Set<String> get coreDigests => switch (this) {
     standard => const {Ps1NetplayMedia.corePin, Ps1NetplayMedia.portableCorePin},
-    ordinaryHandoff => const {Ps1NetplayMedia.ordinaryHandoffCorePin},
+    ordinaryHandoff || rollbackHandoff => const {Ps1NetplayMedia.ordinaryHandoffCorePin},
     rollbackPreview => const {Ps1NetplayMedia.rollbackCorePin},
   };
 }
@@ -38,18 +41,21 @@ enum Ps1NetplayRoomMode {
   fresh('1'),
   staged('2'),
   ordinary('3'),
-  rollbackPreview('4');
+  rollbackPreview('4'),
+  rollbackHandoff('5');
 
   const Ps1NetplayRoomMode(this.version);
   final String version;
 
   static Ps1NetplayRoomMode? tryRead(String version) => values.where((mode) => mode.version == version).singleOrNull;
 
-  bool get needsCheckpoint => this == staged || this == ordinary;
+  bool get needsCheckpoint => this == staged || handoffFromOrdinary;
+  bool get handoffFromOrdinary => this == ordinary || this == rollbackHandoff;
   Ps1NetplayExecution get execution => switch (this) {
     fresh || staged => Ps1NetplayExecution.standard,
     ordinary => Ps1NetplayExecution.ordinaryHandoff,
     rollbackPreview => Ps1NetplayExecution.rollbackPreview,
+    rollbackHandoff => Ps1NetplayExecution.rollbackHandoff,
   };
 }
 
@@ -91,8 +97,7 @@ final class Ps1NetplayMedia {
   final Ps1NetplayIdentity identity;
   final Ps1NetplayExecution execution;
   String get discDigest => identity.toJson()['disc'] as String;
-  bool get supportsHandoff =>
-      execution == Ps1NetplayExecution.ordinaryHandoff || identity.toJson()['core'] == portableCorePin;
+  bool get supportsHandoff => execution.usesRecompiler || identity.toJson()['core'] == portableCorePin;
 
   static final _file = RegExp(r'^FILE\s+(?:"([^"]+)"|(\S+))\s+(\S+)\s*$', caseSensitive: false);
 

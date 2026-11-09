@@ -4065,7 +4065,7 @@ class AppModel extends ChangeNotifier {
   Future<String> resolvePs1NetplayCore(Ps1NetplayExecution execution, {required bool requireHandoff}) async {
     final managed = _managedRetro;
     final override = retroCoreOverride;
-    if (execution != Ps1NetplayExecution.rollbackPreview &&
+    if (!execution.usesPresentationCore &&
         (override != null || (!requireHandoff && execution == Ps1NetplayExecution.standard))) {
       return p.join(override ?? managed.root, ManagedRetro.libraryName(RetroPlatform.ps1));
     }

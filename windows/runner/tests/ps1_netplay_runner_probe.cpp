@@ -96,7 +96,7 @@ void VerifyRollbackChannel(ProbeTexture& texture, char** argv) {
   std::cout << "Rollback launcher channel rejected aliasing and ran on one surface." << std::endl;
 }
 
-int VerifyReplacement(ProbeTexture& texture, char** argv) {
+int VerifyReplacement(ProbeTexture& texture, char** argv, const char* spare) {
   ProbeMessenger messenger;
   RetroCoreHost host(&messenger, &texture);
   const auto system = std::filesystem::u8path(argv[3]).parent_path().u8string();
@@ -106,6 +106,7 @@ int VerifyReplacement(ProbeTexture& texture, char** argv) {
   match.emplace(Value("ps1NetplaySeat"), Value(0));
   match.emplace(Value("ps1NetplayBios"), Value(std::string(argv[3])));
   match.emplace(Value("ps1NetplayCpu"), Value("Recompiler"));
+  if (spare) match.emplace(Value("ps1PresentationCore"), Value(std::string(spare)));
   const auto texture_id = messenger.Call("start", Value(ordinary));
   const auto source = messenger.Wait("localBlankCardCheckpoint").at(Value("localBlankCardCheckpoint"));
   constexpr auto crop = "swanstation_Display_CropMode";
@@ -117,8 +118,9 @@ int VerifyReplacement(ProbeTexture& texture, char** argv) {
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
   messenger.Call("pause", Value(true));
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  const auto fingerprint = [] {
-    const auto dll = GetModuleHandleW(L"swanstation_libretro.dll");
+  const auto fingerprint = [core = std::filesystem::u8path(argv[1])] {
+    const auto dll = GetModuleHandleW(core.c_str());
+    if (!dll) throw std::runtime_error("The primary core is not loaded");
     const auto* ram = static_cast<const uint8_t*>(Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data")(2));
     return NetplayFingerprint(ram, 2 * 1024 * 1024);
   };
@@ -426,9 +428,9 @@ int main(int argc, char** argv) {
       return 9;
     }
   }
-  if (argc == 7 && std::string_view(argv[5]) == "replace") {
+  if ((argc == 7 || argc == 8) && std::string_view(argv[5]) == "replace") {
     try {
-      return VerifyReplacement(texture, argv);
+      return VerifyReplacement(texture, argv, argc == 8 ? argv[7] : nullptr);
     } catch (const std::exception& failure) {
       std::cerr << failure.what() << '\n';
       return 8;
@@ -436,11 +438,13 @@ int main(int argc, char** argv) {
   }
   const auto seat = std::stoul(argv[4]);
   const auto primary_core_path = std::filesystem::u8path(argv[1]);
-  const bool local_staging = argc == 6 && std::string_view(argv[5]) == "local";
-  const bool recompiler = argc == 6 && std::string_view(argv[5]) == "recompiler";
-  const bool dual = argc >= 7 && std::string_view(argv[5]) == "rollback-dual";
-  const bool rollback = dual || (argc >= 6 && std::string_view(argv[5]) == "rollback");
-  const bool audio_control = argc == 6 && std::string_view(argv[5]) == "audio-control";
+  const std::string_view mode = argc >= 6 ? argv[5] : "";
+  const bool local_staging = argc == 6 && mode == "local";
+  const bool recompiler = mode == "recompiler" || mode == "rollback-recompiler" ||
+                          mode == "rollback-dual-recompiler" || mode == "audio-control-recompiler";
+  const bool dual = argc >= 7 && (mode == "rollback-dual" || mode == "rollback-dual-recompiler");
+  const bool rollback = dual || mode == "rollback" || mode == "rollback-recompiler";
+  const bool audio_control = argc == 6 && (mode == "audio-control" || mode == "audio-control-recompiler");
   if (argc == 6 && !local_staging && !recompiler && !rollback && !audio_control) return 2;
   const bool ordinary = argc == 7 && std::string_view(argv[5]) == "ordinary";
   if (argc == 7 && !ordinary && !rollback) return 2;
@@ -478,15 +482,16 @@ int main(int argc, char** argv) {
     };
   }
   ProbeTexture spare_texture;
+  const auto match_cpu = recompiler ? Ps1MatchCpu::kRecompiler : Ps1MatchCpu::kCachedInterpreter;
   RetroCoreSession session(&texture, argv[1], argv[2], ordinary ? bios_directory : "",
                            ordinary ? argv[6] : "", "", {},
                            ordinary ? std::nullopt : std::optional<unsigned>(seat), argv[3], local_staging,
                            std::nullopt, std::nullopt, {},
-                           recompiler ? Ps1MatchCpu::kRecompiler : Ps1MatchCpu::kCachedInterpreter, {}, rollback,
+                           match_cpu, {}, rollback,
                            std::move(audio_sink), std::move(trace));
   if (dual && !session.AttachPresentationCore(std::make_unique<RetroCoreSession>(
       &spare_texture, argv[6], argv[2], "", "", "", std::map<std::string, std::string>{}, seat, argv[3],
-      false, std::nullopt, std::nullopt, std::vector<std::string>{}, Ps1MatchCpu::kCachedInterpreter,
+      false, std::nullopt, std::nullopt, std::vector<std::string>{}, match_cpu,
       nullptr, true, [](const int16_t*, size_t) {}, std::vector<uint16_t>{},
       RetroCoreSession::CallbackSlot::kPresentation))) return 3;
   if (!session.Start()) return 3;

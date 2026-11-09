@@ -432,7 +432,8 @@ void main() {
     final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
     var packageDirectory = packages;
     String? stockCore;
-    if (mode != Ps1NetplayRoomMode.ordinary) {
+    final rollbackHandoff = mode == Ps1NetplayRoomMode.rollbackHandoff;
+    if (!mode.handoffFromOrdinary) {
       final [String standardPackage, String stock] = jsonDecode(await File(standardFixture!).readAsString()) as List;
       stockCore = stock;
       final both = await Directory.systemTemp.createTemp('anyps5-ps1-invite-cores-');
@@ -458,7 +459,11 @@ void main() {
     final fixture = makeFixture(
       together: server.base,
       system: HostSystem.windows,
-      environment: {'ANYPS5_PS1_NETPLAY': '1', 'ANYPS5_MANAGED_CORE_PACKAGES': packageDirectory},
+      environment: {
+        'ANYPS5_PS1_NETPLAY': '1',
+        if (rollbackHandoff) 'ANYPS5_PS1_ROLLBACK': '1',
+        'ANYPS5_MANAGED_CORE_PACKAGES': packageDirectory,
+      },
       gameLinks: () => network.links,
     );
     final model = fixture.model;
@@ -489,7 +494,8 @@ void main() {
     final localBios = await File(bios).copy(p.join(system.path, 'scph1001.bin'));
     final managed = ManagedRetro(home, packageDirectory: packageDirectory);
     final matchCore = switch (mode) {
-      Ps1NetplayRoomMode.ordinary => await managed.ensurePs1NetplayCore(execution: mode.execution),
+      Ps1NetplayRoomMode.ordinary ||
+      Ps1NetplayRoomMode.rollbackHandoff => await managed.ensurePs1NetplayCore(execution: mode.execution),
       Ps1NetplayRoomMode.rollbackPreview => throw StateError('Rollback preview requires a fresh game.'),
       Ps1NetplayRoomMode.staged => p.join(home, 'PS1-Netplay', ManagedRetro.libraryName(RetroPlatform.ps1)),
       Ps1NetplayRoomMode.fresh => (await File(
@@ -537,7 +543,11 @@ void main() {
           } else {
             expect(worker, 2);
             expect(arguments['ps1NetplaySeat'], guestMode ? 1 : 0);
-            expect(arguments['ps1NetplayCpu'], mode == Ps1NetplayRoomMode.ordinary ? mode.execution.cpu : isNull);
+            expect(arguments['ps1NetplayCpu'], mode.handoffFromOrdinary ? mode.execution.cpu : isNull);
+            expect(
+              arguments['ps1PresentationCore'],
+              rollbackHandoff ? Ps1NetplayMedia.presentationCorePath(arguments['core'] as String) : isNull,
+            );
             expect(arguments['saves'], Directory.systemTemp.path);
             expect(
               await File(arguments['core'] as String).resolveSymbolicLinks(),
@@ -808,7 +818,7 @@ void main() {
       await eventually(() => server.callsTo('$path/invites').isNotEmpty, timeout: const Duration(seconds: 25)),
       isTrue,
     );
-    expect(server.callsTo('game-sessions', method: 'POST').single.body['gameVersion'], '3');
+    expect(server.callsTo('game-sessions', method: 'POST').single.body['gameVersion'], mode.version);
     expect(server.callsTo('$path/invites').single.body['userIds'], [friendId]);
     await model.openQuickMenu();
     expect(row('ps1-netplay-leave').detail, 'Waiting for the other player');
@@ -927,6 +937,14 @@ void main() {
   }
 
   const handoffFixtureTimeout = Timeout(Duration(seconds: 90));
+  for (final guestMode in [false, true]) {
+    test(
+      'Quick Menu ${guestMode ? 'joins' : 'starts'} rollback from a running game and recovers it',
+      () => verifyOrdinaryHandoff(guestMode: guestMode, mode: Ps1NetplayRoomMode.rollbackHandoff),
+      skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null,
+      timeout: handoffFixtureTimeout,
+    );
+  }
   test(
     'Quick Menu starts an ordinary host match and returns to the original session',
     () => verifyOrdinaryHandoff(guestMode: false),

@@ -105,8 +105,8 @@ class ManagedRetro {
         _ps1NetplayArchive,
         Ps1NetplayMedia.portableCorePin,
       ),
-      Ps1NetplayExecution.ordinaryHandoff => (
-        'PS1-Netplay-Ordinary',
+      Ps1NetplayExecution.ordinaryHandoff || Ps1NetplayExecution.rollbackHandoff => (
+        execution.usesPresentationCore ? 'PS1-Netplay-Rollback-Handoff' : 'PS1-Netplay-Ordinary',
         'swanstation-netplay-ordinary.zip',
         _ps1OrdinaryHandoffArchive,
         Ps1NetplayMedia.ordinaryHandoffCorePin,
@@ -125,7 +125,7 @@ class ManagedRetro {
     final installed = File(p.join(target.path, name));
     final destinations = [
       installed,
-      if (execution == Ps1NetplayExecution.rollbackPreview) File(Ps1NetplayMedia.presentationCorePath(installed.path)),
+      if (execution.usesPresentationCore) File(Ps1NetplayMedia.presentationCorePath(installed.path)),
     ];
     Future<void> checkDirectory(Directory directory) async {
       if (await directory.exists() && !p.equals(await directory.resolveSymbolicLinks(), directory.path)) {

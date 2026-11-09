@@ -711,8 +711,8 @@ class RetroCoreSession {
         texture_(flutter::PixelBufferTexture([this](size_t, size_t) { return CopyFrame(); })) {
     if (local_staging_ && netplay_seat != 0u)
       throw std::invalid_argument("Only the PS1 host can start in local play.");
-    if (rollback_ && (!netplay_ || local_staging_ || match_cpu_ != Ps1MatchCpu::kCachedInterpreter))
-      throw std::invalid_argument("PS1 rollback requires an isolated Cached Interpreter match.");
+    if (rollback_ && (!netplay_ || local_staging_))
+      throw std::invalid_argument("PS1 rollback requires an isolated match.");
     if (!input_trace_.empty() && !rollback_)
       throw std::invalid_argument("PS1 input traces require the headless rollback worker.");
     if (callback_slot_ == CallbackSlot::kPresentation && (!rollback_ || installing_packages()))
@@ -725,7 +725,7 @@ class RetroCoreSession {
   bool AttachPresentationCore(std::unique_ptr<RetroCoreSession> core) {
     if (!core || !rollback_ || callback_slot_ != CallbackSlot::kPrimary || worker_.joinable() ||
         presentation_core_ || core->callback_slot_ != CallbackSlot::kPresentation ||
-        core->worker_.joinable() || core->disc_ != disc_) return false;
+        core->worker_.joinable() || core->disc_ != disc_ || core->match_cpu_ != match_cpu_) return false;
     if (!netplay_->SetPredictionWindow(ps1_netplay::Timeline::kMaxPrediction)) return false;
     core->presentation_target_ = this;
     presentation_core_ = std::move(core);
@@ -864,7 +864,7 @@ class RetroCoreSession {
   }
 
   std::optional<uint32_t> HoldNetplay() {
-    if (!CheckpointReady()) return std::nullopt;
+    if (rollback_ || !CheckpointReady()) return std::nullopt;
     std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
     if (checkpoint_) return std::nullopt;
     if (StagingLocal()) {
@@ -893,10 +893,12 @@ class RetroCoreSession {
   std::optional<int64_t> RequestCheckpoint(const Ps1DiscHash& digest, CheckpointBytes restore = {},
                                            std::optional<uint32_t> frame = std::nullopt) {
     if (!CheckpointReady() || restore.size() > kMaxPs1Checkpoint ||
-        frame.has_value() != !restore.empty() || (frame && *frame > ps1_netplay::Timeline::kMaxFrame))
+        frame.has_value() != !restore.empty() || (frame && *frame > ps1_netplay::Timeline::kMaxFrame) ||
+        (rollback_ && frame != 0u))
       return std::nullopt;
     std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
-    if (checkpoint_ || (frame && (netplay_started_ || StagingLocal())) || (!frame && replay_cursor_))
+    if (checkpoint_ || (frame && (netplay_started_ || StagingLocal())) ||
+        (replay_cursor_ && (!frame || rollback_)))
       return std::nullopt;
     return QueueCheckpoint(digest, std::move(restore), frame, {});
   }
@@ -940,7 +942,7 @@ class RetroCoreSession {
   }
 
   std::optional<int64_t> RequestCatchup(uint32_t first, std::vector<Ps1Ports> frames) {
-    if (!CheckpointReady() || frames.empty() || frames.size() > kPs1CatchupBatch ||
+    if (rollback_ || !CheckpointReady() || frames.empty() || frames.size() > kPs1CatchupBatch ||
         first > ps1_netplay::Timeline::kMaxFrame - frames.size())
       return std::nullopt;
     std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
@@ -949,7 +951,7 @@ class RetroCoreSession {
   }
 
   std::optional<Map> CheckpointHistory(uint32_t first) {
-    if (!CheckpointReady()) return std::nullopt;
+    if (rollback_ || !CheckpointReady()) return std::nullopt;
     std::lock_guard<std::mutex> lock(netplay_mutex_);
     const auto next = StagingLocal() ? local_frame_ : netplay_->frame();
     const auto oldest = next - static_cast<uint32_t>(checkpoint_history_.size());
@@ -1848,7 +1850,10 @@ class RetroCoreSession {
     const auto save = reinterpret_cast<SavePortable>(GetProcAddress(dll, "retro_anyps5_export_checkpoint_v1"));
     const auto load = reinterpret_cast<LoadPortable>(GetProcAddress(dll, "retro_anyps5_import_checkpoint_v1"));
     const size_t maximum = save && load ? Symbol<size_t (*)()>(dll, "retro_serialize_size")() : 0;
-    checkpoint_supported_ = !rollback_ && maximum && maximum <= kMaxPs1Checkpoint - kPs1CheckpointPrefix;
+    const bool can_import_handoff =
+        match_cpu_ == Ps1MatchCpu::kRecompiler && callback_slot_ == CallbackSlot::kPrimary;
+    checkpoint_supported_ =
+        (!rollback_ || can_import_handoff) && maximum && maximum <= kMaxPs1Checkpoint - kPs1CheckpointPrefix;
     if (local_staging_ && !checkpoint_supported_)
       throw std::runtime_error("Local PS1 hosting requires the portable checkpoint core.");
     struct RollbackState {
@@ -2091,7 +2096,7 @@ class RetroCoreSession {
           if (rollback_)
             peak_prediction_depth_ = std::max(peak_prediction_depth_.load(), netplay_->prediction_depth());
         }
-        if (checkpoint_supported_) {
+        if (checkpoint_supported_ && !rollback_) {
           if (checkpoint_history_.size() == kPs1CatchupHistory) checkpoint_history_.pop_front();
           checkpoint_history_.push_back(netplay_ports_);
         }
@@ -2732,8 +2737,7 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
       const std::string* presentation = nullptr;
       if (const auto found = fields->find(Value("ps1PresentationCore")); found != fields->end()) {
         presentation = std::get_if<std::string>(&found->second);
-        if (!netplay_seat || (local_staging && *local_staging) ||
-            match_cpu != Ps1MatchCpu::kCachedInterpreter || !presentation ||
+        if (!netplay_seat || (local_staging && *local_staging) || !presentation ||
             presentation->find('\0') != std::string::npos) {
           return result->Error("argument", "Rollback requires a separate PS1 presentation core and an isolated seat.");
         }

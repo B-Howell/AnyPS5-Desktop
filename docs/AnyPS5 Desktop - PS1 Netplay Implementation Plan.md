@@ -935,9 +935,20 @@ separate Rollback Preview invitation when both PS1 netplay and the rollback
 preview are enabled. Preview rooms use version `4` and a distinct
 [execution fingerprint](../lib/core/online/ps1_netplay_media.dart). Both
 players boot the matching disc from Home with isolated blank memory cards.
-Existing fresh, staged and in-game handoff invitations retain their current
-room versions and behavior. In-game handoff into rollback still requires
-checkpoint and recovery qualification.
+Existing room versions remain compatible. Version `5` is the rollback
+handoff used when both testers opt in and the host starts Couch Co-op from
+the PS Quick Menu during ordinary Play. It preserves the source's
+Recompiler CPU profile and verifies the separate pair of match libraries
+before creating the room. With the preview disabled, the same Quick Menu
+action uses the existing version `3` handoff.
+
+The host shares only the blank-card checkpoint. Both seats import it before
+frame zero of the new input timeline. The rollback worker accepts one
+successful import at frame zero, while its presentation spare starts from an
+internal same-binary snapshot on the first correction. The private recovery
+checkpoint stays on the host. Leaving the match reopens the ordinary
+session at its pre-match position with the original card. Keeping the
+post-match position on disconnect remains open.
 
 For a Windows test build, put the pinned `swanstation-netplay-rollback.zip`
 in the absolute directory configured by `ANYPS5_MANAGED_CORE_PACKAGES`.
@@ -949,6 +960,10 @@ qualified DLL with `--profile rollback`. The ZIP pin is
 The [installer](../lib/core/managed_retro.dart) verifies the archive and
 both installed DLLs. It stores the preview pair separately from the
 offline core and repairs an invalid copy from the verified ZIP.
+For the Quick Menu handoff, use the existing pinned
+`swanstation-netplay-ordinary.zip` in that directory. Its verified DLL is
+installed twice under `PS1-Netplay-Rollback-Handoff` for the isolated match.
+Ordinary Play uses the existing single copy in `PS1-Netplay-Ordinary`.
 
 The [embedded start call](../lib/ui/embedded_retro_game.dart) passes the
 presentation library path to the [Windows host](../windows/runner/retro_core_host.cpp).
@@ -965,6 +980,30 @@ controller packets and verified a single texture registration. The separate
 presentation frames, and matched six RAM fingerprints and 530,793 stereo
 sample pairs. The three focused Dart suites passed 31 tests with the local
 fixtures, including the existing room modes and the new package repair case.
+For the Recompiler handoff, run the native probe with
+`--ordinary-checkpoint --ordinary-restore --ordinary-park --rollback-recompiler --presentation-core`
+and a separate byte-identical ordinary DLL. The source runs with hardware
+graphics and a scratch card. The confirmed-input control and rollback
+worker both check the source RAM immediately after importing, then compare
+confirmed RAM and PCM across a delayed input. The probe rejects the wrong
+disc digest and a nonzero or repeated rollback import, then verifies that
+the held source and its scratch save recover. The 720-frame handoff
+matched six confirmed RAM fingerprints and 530,816 stereo sample pairs.
+The launcher suite passed 34 tests with the local fixtures, including
+Quick Menu host and guest transitions through the fake service.
+Adding `--ordinary-replace` and the stock control DLL exercised the real
+Windows method channel. It rejected a failed match boot, replaced the
+ordinary worker with the rollback pair, and recovered the original frame,
+hardware renderer, crop setting and scratch card.
+
+A separate fresh-boot native run with the same Recompiler core pair
+completed the full 13,706-frame CTR race with the two-tick input buffer,
+120 ms simulated RTT, 25 ms jitter, and 5% random loss. Both workers
+matched 114 RAM fingerprints and 10,104,619 stereo sample pairs. Peak
+primary iteration times were 15.383 and 12.903 ms, with zero iterations
+over 16.667 ms. The longest texture and confirmed PCM gaps were 64.084
+and 198.498 ms respectively. The full race measures Recompiler rollback
+from boot. The 720-frame test covers the separate checkpoint import path.
 Production signaling, audible playout and the two-PC player experience
 remain release gates.
 

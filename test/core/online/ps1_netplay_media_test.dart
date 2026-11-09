@@ -110,7 +110,13 @@ void main() {
       expect(game.retroSerial, serial);
       final profile = Ps1NetplayProfile.tryRead(serial)!;
       expect(Ps1NetplayRoomMode.values.map((mode) => profile.roomFor(mode).titleId).toSet(), {serial});
-      expect(Ps1NetplayRoomMode.values.map((mode) => profile.roomFor(mode).gameVersion).toSet(), {'1', '2', '3', '4'});
+      expect(Ps1NetplayRoomMode.values.map((mode) => profile.roomFor(mode).gameVersion).toSet(), {
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+      });
     }
     expect(Ps1NetplayProfile.tryRead('Not a disc serial'), isNull);
   });
@@ -121,6 +127,15 @@ void main() {
     expect(mode.execution.cpu, Ps1NetplayExecution.standard.cpu);
     expect(mode.execution.digest, isNot(Ps1NetplayExecution.standard.digest));
     expect(mode.execution.coreDigests.intersection(Ps1NetplayExecution.standard.coreDigests), isEmpty);
+  });
+
+  test('rollback handoff preserves the ordinary CPU with a distinct execution identity', () {
+    const mode = Ps1NetplayRoomMode.rollbackHandoff;
+    expect(Ps1NetplayRoomMode.tryRead('5'), mode);
+    expect(mode.needsCheckpoint, isTrue);
+    expect(mode.execution.cpu, Ps1NetplayExecution.ordinaryHandoff.cpu);
+    expect(mode.execution.coreDigests, Ps1NetplayExecution.ordinaryHandoff.coreDigests);
+    expect(mode.execution.digest, isNot(Ps1NetplayExecution.ordinaryHandoff.digest));
   });
 
   test('fingerprints track bytes and layout independently of the local track name', () async {
