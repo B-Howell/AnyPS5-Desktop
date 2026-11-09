@@ -20,8 +20,11 @@ class ManagedRetro {
   static const _patchedPs2Archive = '2df47bc025ff7dfdfce5594b709fa25884667acdff698334ed2d4942a8dc67f7';
   static const _patchedPs2Library = '801af1211407964a4851839c3f4e90607f18353671dd1e427f56e12201d712a4';
   static final _ps2LanChecks = <String, ({FileStat stat, String digest, bool valid})>{};
-  static const _patchedPs3Archive = '7bc267dc0a9cffdd21087340ab643c52ed91136606e6d33ae05c477adc7db3a4';
-  static const _patchedPs3Library = '7ac7504de83acfa2d977345f8c9b48e92f5e71c576abbf026406e667fe7a1370';
+  // This package persists native SPU objects across launches. Keep the old
+  // core out of the default pins so a launcher build with the matching ZIP
+  // upgrades an already installed legacy core before booting a PS3 title.
+  static const _patchedPs3Archive = 'd472de683cb57aba711453e214a6da91420486a5d739e5cba2d492de300f8083';
+  static const _patchedPs3Library = '874b90826fccd5eb162fbdbe2e48a970e21a09867d4167c8eee63f4b16ad6d51';
 
   static String libraryName(RetroPlatform platform) => switch (platform) {
     RetroPlatform.ps1 => 'swanstation_libretro.dll',

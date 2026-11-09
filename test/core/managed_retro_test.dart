@@ -164,6 +164,59 @@ void main() {
     await managed.install(RetroPlatform.ps3);
   });
 
+  test('a verified PS3 core update replaces only the core and is repeat safe', () async {
+    final root = Directory.systemTemp.createTempSync('anyps5-managed-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final name = ManagedRetro.libraryName(RetroPlatform.ps3);
+    Uint8List dllBytes(int marker) {
+      final dll = ByteData(88)
+        ..setUint16(0, 0x5a4d, Endian.little)
+        ..setUint32(60, 64, Endian.little)
+        ..setUint32(64, 0x4550, Endian.little)
+        ..setUint16(68, 0x8664, Endian.little)
+        ..setUint16(86, 0x2000, Endian.little);
+      final bytes = Uint8List(89)..setRange(0, 88, dll.buffer.asUint8List());
+      bytes[88] = marker;
+      return bytes;
+    }
+
+    final legacy = dllBytes(1);
+    final updated = dllBytes(2);
+    final core = File(p.join(root.path, name))..writeAsBytesSync(legacy);
+    final system = Directory(p.join(root.path, 'system', 'rpcs3'))..createSync(recursive: true);
+    final firmware = File(p.join(system.path, 'firmware.sentinel'))..writeAsStringSync('firmware');
+    final cache = File(p.join(system.path, 'cache.sentinel'))..writeAsStringSync('cache');
+    final saves = Directory(p.join(root.path, 'Saves'))..createSync();
+    final save = File(p.join(saves.path, 'save.sentinel'))..writeAsStringSync('save');
+
+    final packages = Directory(p.join(root.path, 'packages'))..createSync();
+    final archive = Archive()..addFile(ArchiveFile(name, updated.length, updated));
+    final package = File(p.join(packages.path, '$name.zip'))..writeAsBytesSync(ZipEncoder().encode(archive));
+    final updatedCandidate = File(p.join(root.path, 'updated.dll'))..writeAsBytesSync(updated);
+    final archiveDigest = await AssetDownload.sha256Of(package.path);
+    // A mismatched DLL pin must fail before replacing the installed core.
+    final rejected = ManagedRetro(
+      root.path,
+      packageDirectory: packages.path,
+      ps3CoreDigests: '$archiveDigest:${'0' * 64}',
+    );
+    await expectLater(rejected.install(RetroPlatform.ps3), throwsFormatException);
+    expect(await core.readAsBytes(), legacy);
+
+    final updatedDigests =
+        '${await AssetDownload.sha256Of(package.path)}:${await AssetDownload.sha256Of(updatedCandidate.path)}';
+    final managed = ManagedRetro(root.path, packageDirectory: packages.path, ps3CoreDigests: updatedDigests);
+    await managed.install(RetroPlatform.ps3);
+    expect(await core.readAsBytes(), updated);
+    expect(await firmware.readAsString(), 'firmware');
+    expect(await cache.readAsString(), 'cache');
+    expect(await save.readAsString(), 'save');
+
+    await package.delete();
+    await managed.install(RetroPlatform.ps3);
+    expect(await core.readAsBytes(), updated);
+  });
+
   test('a rejected BIOS replacement preserves the private copy', () async {
     final temp = Directory.systemTemp.createTempSync('anyps5-managed-');
     addTearDown(() => temp.deleteSync(recursive: true));

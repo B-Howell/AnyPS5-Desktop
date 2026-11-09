@@ -147,8 +147,8 @@ phase as scanning and retains the separate compile label for missing objects.
 In the RPCS3 log, `PPU: LLVM: Loaded module` records reuse and
 `PPU: LLVM: Compiled module` records actual host compilation.
 
-The original package retains discovered guest SPU programs, then builds
-native SPU code again on launch. In a Skate 3 warm-start log (BLUS30464,
+The legacy package retained discovered guest SPU programs, then rebuilt
+native SPU code on launch. In a Skate 3 warm-start log (BLUS30464,
 2026-11-09), RPCS3 loaded 219 PPU modules, compiled zero PPU modules, and
 finished building 6,281 SPU programs at 20.98 seconds.
 
@@ -199,23 +199,39 @@ gameplay frame times and incompatible CPU or build fallback remain open.
 The frontend and optional network-policy patches apply together to the pinned
 RPCS3 source. On Windows x64, that source explicitly targets ELF for the SPU
 JIT, so the object-format check applies to both Linux and Windows packages.
-The existing installed package is unaffected by this source patch until a
-new verified package is built and selected.
+The app pins the qualified Windows v3 archive and DLL by default. It also
+accepts a build-specific digest override for reviewers. A launcher build can
+upgrade an existing legacy core before a PS3 boot when its configured package
+directory contains the matching `rpcs3_libretro.dll.zip`. The installer first
+checks the archive, extracts to a temporary directory, validates the DLL, then
+replaces only `rpcs3_libretro.dll`. If the package is missing or either digest
+does not match, installation stops before replacing the existing core. Keep
+the firmware, emulator cache, and saves in their existing locations. The first
+boot after upgrade can still create native objects. Later launches reuse them.
 
-The older Windows UnifiedRetro launcher pins the legacy DLL, whose SHA-256
-starts with `7ac7504d`. The presence of the cache patch in a source checkout
-does not update that launcher or its core. A launcher built from this
-branch can install the cache-enabled reviewer package through
-[`ManagedRetro.install`](../lib/core/managed_retro.dart) using the explicit
-package and DLL digests below. The installer replaces only the core DLL.
-The existing firmware, caches, and saves remain under the same emulator
-profile. A first launch after the upgrade can populate the native SPU
-cache. Check a second launch of the same game with the same settings for
-`LLVM: Loaded module: spu-objects-v1-` in the detailed RPCS3 log.
-An isolated upgrade check replaced the exact legacy DLL with the
-[qualified Windows v3 package](<AnyPS5 Desktop - PS3 Native Co-op Implementation Plan.md>).
-Cache, firmware and save sentinels survived the replacement. A second
-install call kept the verified DLL and its modification timestamp.
+The older Windows UnifiedRetro launcher still has the legacy DLL, whose SHA-256
+starts with `7ac7504d`, and a legacy ZIP. Updating source alone does not change
+an already running build. For the next build, point
+`ANYPS5_MANAGED_CORE_PACKAGES` at the qualified v3 `packages` directory from
+the [PS3 plan](<AnyPS5 Desktop - PS3 Native Co-op Implementation Plan.md>).
+No digest override is needed for that exact package because its archive and
+DLL hashes are pinned in the app. The pre-launch installer upgrades the core
+when the user starts a PS3 game. The PS3 Setup action can also perform the
+upgrade. Do not ship the old ZIP under the v3 pins. A mismatched or missing
+package leaves the existing DLL untouched and shows a setup error.
+
+The isolated Windows upgrade test replaced a legacy DLL with the qualified v3
+package while firmware, cache and save sentinels remained unchanged. A second
+install call kept the verified DLL and its modification timestamp. The cold
+and warm Skate 3 results above were separate qualification runs, not a matched
+performance comparison. To distinguish startup scanning from actual work,
+use the detailed RPCS3 log: `PPU: LLVM: Loaded module` means reuse,
+`PPU: LLVM: Compiled module` means a PPU cache miss, and
+`LLVM: Loaded module: spu-objects-v1-` means native SPU object reuse. The SPU
+progress label can remain active while cached objects are loaded and linked.
+The [managed-core tests](../test/core/managed_retro_test.dart) cover successful
+upgrade, preservation of firmware/cache/save files, rejected digest safety,
+and repeat installation.
 
 ### Build a PS3 test package
 
