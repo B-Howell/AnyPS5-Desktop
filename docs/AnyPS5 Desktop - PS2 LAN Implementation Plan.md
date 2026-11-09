@@ -548,8 +548,8 @@ offer on the original two links. The guest reported recovery after
 In the next 1,800-frame checkpoint, entirely after recovery, the host
 adapter sent 567 frames and received 281. The guest sent 281 and received
 568. Both consoles reached Results and Scores. The host table showed A
-and B tied 0–0. The guest showed the same scores with some labels missing,
-as in the control run. The room and both native workers exited zero.
+and B tied 0–0. The guest showed the same scores with some labels missing.
+The room and both native workers exited zero.
 Both fault logs were empty, the room released both seats, and neither
 adapter reported queue overflow. The source card seed retained its hash.
 
