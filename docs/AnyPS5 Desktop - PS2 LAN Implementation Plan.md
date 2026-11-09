@@ -339,10 +339,39 @@ The [managed core test](../test/core/managed_retro_test.dart) verifies the
 export check, and the [invite routing test](../test/ui/together_test.dart)
 checks that PS2 invites cannot join a PS5 session on a build with LAN off.
 
-The patched DEV9 object compiled with GCC in WSL at the pinned core
-revision. The object exports `retro_anyps5_dev9_bind_v1`. This is a
-source and object check. The complete Windows core package and a real
-invite-to-game run over the patched adapter still need verification.
+### Windows core build and native smoke
+
+Build LRPS2 at `da5b07ebebc18016e1ca5b401188a283971a0e8d` with the
+[DEV9 patch](../tool/patches/parallel-ps2-virtual-lan.patch) and the
+[Windows GNU CMake patch](../tool/patches/parallel-ps2-windows-gnu.patch).
+Apply the second patch with `git apply --unidiff-zero` at that exact pin.
+It limits MSVC-style AVX flags to MSVC-compatible compilers and
+reads the Git version from the LRPS2 source directory. With WinLibs
+GCC 15.2.0 r7 and Ninja on `PATH`, configure an out-of-tree build:
+
+```powershell
+cmake -S $lrps2Source -B $buildDir -G Ninja -DCMAKE_BUILD_TYPE=Release `
+  -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DLIBRETRO=ON -DPCAP=OFF `
+  -DDISABLE_ADVANCE_SIMD=ON -DUSE_VULKAN=ON -DUSE_OPENGL=ON -DLRPS2_SMOKE_GATE=ON `
+  '-DCMAKE_SHARED_LINKER_FLAGS=-static -static-libgcc -static-libstdc++'
+cmake --build $buildDir --target pcsx2_libretro --parallel 3
+```
+
+Package `libretro/pcsx2_libretro.dll` as the only archive entry. The
+verified DLL SHA-256 is
+`801af1211407964a4851839c3f4e90607f18353671dd1e427f56e12201d712a4`.
+The local ZIP SHA-256 is
+`2df47bc025ff7dfdfce5594b709fa25884667acdff698334ed2d4942a8dc67f7`.
+Archive hashes can vary between packagers. The static link removes the
+dependency on an external WinLibs pthread DLL. The launcher export check
+accepted the packaged DLL, and the upstream Libretro smoke completed
+init, a BIOS-less load attempt, deinit and unload.
+
+A separate no-window test opened the TimeSplitters ISO with a copied
+BIOS and fresh saves. It rendered 1,467 frames across 1,800 calls to
+`retro_run`, polled the bound adapter 3,549 times, sent a DEV9 self-test
+frame, and detached the adapter cleanly. Game-generated DHCP, an online
+lobby and a full game over two embedded peers still need verification.
 
 TimeSplitters: Future Perfect is a second PS2 fixture. Its US NTSC disc
 reports `SLUS21148` and version `1.00` in `SYSTEM.CNF`. The [original manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)
