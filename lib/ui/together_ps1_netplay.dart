@@ -354,9 +354,21 @@ extension TogetherPs1Netplay on TogetherModel {
         app.show(T.text('ps1OnlineReturnFailed'));
         return;
       }
-      switch (match.session?.ended) {
+      final session = match.session;
+      switch (session?.ended) {
         case Ps1NetplayEnd.mismatch:
-          app.show(T.text('ps1OnlineMismatch'));
+          app.show(
+            T.text(switch (session?.mismatch) {
+              Ps1NetplayMismatch.version => 'ps1OnlineMismatchVersion',
+              Ps1NetplayMismatch.title => 'ps1OnlineMismatchTitle',
+              Ps1NetplayMismatch.disc => 'ps1OnlineMismatchDisc',
+              Ps1NetplayMismatch.bios => 'ps1OnlineBios',
+              Ps1NetplayMismatch.core => 'ps1OnlineMismatchCore',
+              Ps1NetplayMismatch.profile => 'ps1OnlineMismatchProfile',
+              Ps1NetplayMismatch.card => 'ps1OnlineMismatchCard',
+              null => 'ps1OnlineMismatch',
+            }),
+          );
         case Ps1NetplayEnd.desync:
           app.show(T.text('ps1OnlineDesync'));
         case Ps1NetplayEnd.runner || Ps1NetplayEnd.protocol || Ps1NetplayEnd.disconnected || Ps1NetplayEnd.timedOut:

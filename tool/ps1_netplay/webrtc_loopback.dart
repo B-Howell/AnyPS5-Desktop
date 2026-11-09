@@ -32,7 +32,7 @@ Future<void> main() async {
       lan
           ? await verifyWebRtcLanBridge()
           : config.isEmpty
-          ? await _exercise()
+          ? '${await _exercise()} ${await _exercise(mismatchedDisc: true)}'
           : ordinary
           ? await verifyOrdinaryWebRtc(config)
           : await _nativeExercise(config),
@@ -162,7 +162,7 @@ Future<String> _nativeExercise(String config) async {
 const _neutral = (buttons: 0, leftX: 0, leftY: 0, rightX: 0, rightY: 0);
 const _pressed = (buttons: 8, leftX: -234, leftY: 0, rightX: 0, rightY: 0);
 
-Future<String> _exercise() async {
+Future<String> _exercise({bool mismatchedDisc = false}) async {
   final links = WebRtcGameLinks();
   final hostLink = await links.link([]);
   final GameLink guestLink;
@@ -202,7 +202,7 @@ Future<String> _exercise() async {
   );
   guest = Ps1NetplayPeer(
     link: guestLink,
-    identity: identity,
+    identity: mismatchedDisc ? Ps1NetplayIdentity.tryRead({...identity.toJson(), 'disc': 'b' * 64})! : identity,
     runner: guests,
     seat: 1,
     sendSignal: (signal) async => host.receiveSignal(signal),
@@ -226,6 +226,22 @@ Future<String> _exercise() async {
     final elapsed = Stopwatch()..start();
     await guest.open();
     await host.open();
+    if (mismatchedDisc) {
+      await Future.wait([host.done, guest.done]).timeout(const Duration(seconds: 8));
+      if (host.session.ended != Ps1NetplayEnd.mismatch ||
+          guest.session.ended != Ps1NetplayEnd.mismatch ||
+          host.session.mismatch != Ps1NetplayMismatch.disc ||
+          guest.session.mismatch != Ps1NetplayMismatch.disc ||
+          hosts.prepared ||
+          guests.prepared) {
+        throw StateError(
+          'The disc mismatch did not reach both players before preparation. '
+          'Host: ${host.session.ended}, ${host.session.mismatch}. '
+          'Guest: ${guest.session.ended}, ${guest.session.mismatch}.',
+        );
+      }
+      return 'Both WebRTC peers received the disc mismatch before preparing the game.';
+    }
     while (elapsed.elapsed < const Duration(seconds: 18)) {
       if (host.session.ended != null || guest.session.ended != null) break;
       if (host.session.confirmedFrame == 119 &&
@@ -266,11 +282,12 @@ final class _ProbeRunner implements Ps1NetplayRunner {
   final inputs = <Ps1FrameInputs>[];
   final _remote = <int, Ps1PadInput>{};
   int? _received;
+  bool prepared = false;
 
   Ps1PadInput _local(int frame) => (frame + seat).isEven ? _pressed : _neutral;
 
   @override
-  Future<void> prepare(int seat) async {}
+  Future<void> prepare(int seat) async => prepared = true;
 
   @override
   Future<void> start() async {}

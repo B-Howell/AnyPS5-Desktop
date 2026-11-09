@@ -552,6 +552,17 @@ picker reply, and a retry while the canceled guest lookup is still
 pending. The [media test](../test/core/online/ps1_netplay_media_test.dart)
 rejects a partial fingerprint when a track read is interrupted.
 
+The launcher uses the handshake's compatibility reason to explain what
+the players can change. It distinguishes the game, disc revision, BIOS,
+SwanStation package, online settings, starting memory card, and AnyPS5
+version. The CTR Quick Menu regression presents an incompatible disc
+identity, checks the specific message and room cleanup before any native
+handoff, then successfully retries from the original running game.
+The [headless Windows WebRTC loopback](../tool/ps1_netplay/webrtc_loopback.dart)
+also verifies that both real data-channel peers receive the disc refusal
+before either runner prepares. This uses synthetic identities and local
+signaling. It does not qualify delivery through the production service.
+
 ### Windows development checkpoint
 
 Set `ANYPS5_PS1_NETPLAY=1` on an experimental Windows x64 build to invite

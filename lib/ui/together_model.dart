@@ -12,6 +12,7 @@ import '../core/host.dart';
 import '../core/online/online_peer.dart';
 import '../core/online/online_peer_mesh.dart';
 import '../core/online/online_play.dart';
+import '../core/online/ps1_netplay_identity.dart';
 import '../core/online/ps1_netplay_match.dart';
 import '../core/online/ps1_local_handoff.dart';
 import '../core/online/ps1_netplay_media.dart';

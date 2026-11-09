@@ -8,6 +8,7 @@ import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/managed_retro.dart';
+import 'package:anyps5_desktop/core/online/ps1_netplay_identity.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_peer.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_session.dart';
@@ -598,37 +599,66 @@ void main() {
     );
     expect(server.callsTo('game-sessions', method: 'POST').single.body['gameVersion'], '3');
     expect(server.callsTo('$path/invites').single.body['userIds'], [friendId]);
-    final offer = await server.nextFrame('signal', test: (frame) => (frame['data'] as Map)['kind'] == 'offer');
+    Future<Map<String, dynamic>> nextOffer() =>
+        server.nextFrame('signal', test: (frame) => (frame['data'] as Map)['kind'] == 'offer');
+    final offer = await nextOffer();
     expect(native, ['local']);
     await model.openQuickMenu();
     expect(row('ps1-netplay-leave').detail, 'Waiting for the other player');
     choose('resume');
-    final guestStarted = Completer<void>();
-    final guest = Ps1NetplayPeer(
-      link: await network.links.link([]),
-      identity: media.identity,
-      runner: _FixtureMatch([]),
-      seat: 1,
-      sendSignal: (signal) async => server.push('game_session.signal', {
-        'sessionId': roomId,
-        'from': friendId,
-        'device': device,
-        'kind': 'message',
-        'data': signal.toJson(),
-      }),
-      restoreCheckpoint: (snapshot) async {
-        expect(snapshot.frame, 0);
-        expect(snapshot.state, bytes);
-      },
-      onRunning: guestStarted.complete,
+    Future<Ps1NetplayPeer> connectGuest(
+      Map<String, dynamic> offer,
+      Ps1NetplayIdentity identity, {
+      void Function()? onRunning,
+    }) async {
+      final guest = Ps1NetplayPeer(
+        link: await network.links.link([]),
+        identity: identity,
+        runner: _FixtureMatch([]),
+        seat: 1,
+        sendSignal: (signal) async => server.push('game_session.signal', {
+          'sessionId': roomId,
+          'from': friendId,
+          'device': device,
+          'kind': 'message',
+          'data': signal.toJson(),
+        }),
+        restoreCheckpoint: (snapshot) async {
+          expect(snapshot.frame, 0);
+          expect(snapshot.state, bytes);
+        },
+        onRunning: onRunning,
+      );
+      addTearDown(guest.leave);
+      await guest.open();
+      guest.receiveSignal(Ps1NetplaySignal.tryRead(offer['data'])!);
+      return guest;
+    }
+
+    final incompatible = Ps1NetplayIdentity.tryRead({...media.identity.toJson(), 'disc': 'f' * 64})!;
+    final rejected = await connectGuest(offer, incompatible);
+    await rejected.done.timeout(const Duration(seconds: 5));
+    expect(rejected.session.mismatch, Ps1NetplayMismatch.disc);
+    expect(
+      await eventually(() => model.together.ps1QuickRows().any((row) => row.id == 'ps1-invite-from-game')),
+      isTrue,
     );
-    addTearDown(guest.leave);
+    expect(model.toast, 'Your PS1 disc files differ. Both players need the same disc and revision.');
+    expect(server.callsTo(path, method: 'DELETE'), hasLength(1));
+    expect(native, ['local']);
+    await model.openQuickMenu();
+    choose('ps1-invite-from-game');
+    choose('ps1-invite-$friendId');
+    expect(
+      await eventually(() => server.callsTo('$path/invites').length == 2, timeout: const Duration(seconds: 25)),
+      isTrue,
+    );
+    final guestStarted = Completer<void>();
+    final guest = await connectGuest(await nextOffer(), media.identity, onRunning: guestStarted.complete);
     addTearDown(() {
       if (!finishPark.isCompleted) finishPark.complete();
       if (!finishRecovery.isCompleted) finishRecovery.complete();
     });
-    await guest.open();
-    guest.receiveSignal(Ps1NetplaySignal.tryRead(offer['data'])!);
     expect(await eventually(() => native.contains('park')), isTrue);
     await model.openQuickMenu();
     expect(row('ps1-netplay-leave').detail, 'Preparing both games');
@@ -651,7 +681,7 @@ void main() {
     expect(returning.focusable, isFalse);
     choose('resume');
     finishRecovery.complete();
-    expect(await eventually(() => server.callsTo(path, method: 'DELETE').isNotEmpty), isTrue);
+    expect(await eventually(() => server.callsTo(path, method: 'DELETE').length == 2), isTrue);
     expect(native, [
       'local',
       'park',
