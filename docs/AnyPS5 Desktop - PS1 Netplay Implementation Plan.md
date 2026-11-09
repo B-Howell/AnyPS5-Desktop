@@ -294,7 +294,10 @@ and camera layout, including split-screen where applicable.
 two-seat `online` room with a versioned marker in its properties and build
 field. This follows the [AnyTogether game-session schema](https://github.com/AnyTogether/AnyTogether/blob/main/packages/shared/src/gameSessions.ts).
 The [match owner](../lib/core/online/ps1_netplay_match.dart) binds signals
-to the other player's room, account and device. The
+to the invited friend's account and published device, or to the room host
+when joining. An unexpected room member is rejected before signaling.
+After publication, cancelling releases the room while a pending member
+lookup, invitation, or ICE lookup finishes independently. The
 [peer adapter](../lib/core/online/ps1_netplay_peer.dart) carries reliable
 handshake and lifecycle messages separately from the unordered input
 snapshots. The [session protocol](../lib/core/online/ps1_netplay_session.dart)
@@ -328,11 +331,15 @@ the host's actual checkpoint through WebRTC. It verifies guest replay,
 360 confirmed frames, three matching RAM fingerprints, and local frames
 after the guest leaves. The runner owns the worker processes through a
 Windows job object so a probe timeout cannot leave them behind.
-The Windows probe passed with Crash Team Racing and Tekken 3 using the
-same code. Each run transferred 4,359,153 checkpoint bytes and replayed
-56 or 57 frames before the new input timeline started.
-Signaling stays in-process. This check does not cover authenticated
-invites, WAN or relay play, or a finished match.
+The [local room fixture](../tool/ps1_netplay/webrtc_room_fixture.dart)
+drives the launcher room coordinator with an in-memory provider. It
+requires a private invite, matching disc fingerprint, a published device
+per participant, directed signals, and room release after the guest leaves.
+Crash Team Racing and Tekken 3 passed this check with two Windows cores
+and real WebRTC channels. Both reached the 360-frame fingerprint gate
+and returned the host to local play after room release.
+Hosted AnyTogether authentication, WAN or relay play, and a finished match
+remain separate checks.
 
 The [Windows worker](../windows/runner/retro_core_host.cpp) starts with
 isolated storage, the full BIOS boot and two digital pads. It holds until both inputs for a

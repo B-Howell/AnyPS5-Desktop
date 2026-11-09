@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:anyps5_desktop/core/online/online_peer_mesh.dart';
 import 'package:anyps5_desktop/core/online/ps1_local_handoff.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_identity.dart';
+import 'package:anyps5_desktop/core/online/ps1_netplay_match.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_peer.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_session.dart';
@@ -14,6 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import 'webrtc_native_worker.dart';
+import 'webrtc_room_fixture.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,10 +41,8 @@ Future<String> _nativeExercise(String config) async {
   final launch = [args.first, media.core, media.disc, media.bios];
   WebRtcNativeWorker? local;
   WebRtcNativeWorker? remote;
-  GameLink? hostLink;
-  GameLink? guestLink;
-  Ps1NetplayPeer? hostPeer;
-  Ps1NetplayPeer? guestPeer;
+  Ps1NetplayMatch? hostMatch;
+  Ps1NetplayMatch? guestMatch;
   try {
     final host = local = await WebRtcNativeWorker.spawn(launch, hostState, 0, local: true);
     await host.waitForPicture(180);
@@ -50,8 +50,7 @@ Future<String> _nativeExercise(String config) async {
     final guest = remote = await WebRtcNativeWorker.spawn(launch, guestState, 1);
     await guest.setPad(256);
     final links = WebRtcGameLinks();
-    hostLink = await links.link([]);
-    guestLink = await links.link([]);
+    final gateway = WebRtcRoomFixture(profile.handoffRoom, media.discDigest);
     var held = 0;
     var replayed = 0;
     var stateBytes = 0;
@@ -68,22 +67,26 @@ Future<String> _nativeExercise(String config) async {
       begin: host.start,
       exchange: host.sync,
     );
-    final sender = hostPeer = Ps1NetplayPeer(
-      link: hostLink,
+    final sender = hostMatch = Ps1NetplayMatch(
+      rooms: gateway.client(WebRtcRoomFixture.host, expectedDigest: media.discDigest),
+      links: links,
       identity: media.identity,
       runner: handoff,
-      seat: 0,
-      hostEpoch: 23,
-      sendSignal: (signal) async => guestPeer!.receiveSignal(signal),
       captureCheckpoint: handoff.capture,
       catchupSource: handoff.source,
     );
-    final receiver = guestPeer = Ps1NetplayPeer(
-      link: guestLink,
+    gateway.events[WebRtcRoomFixture.host] = sender.receive;
+    final hosting = sender.host(WebRtcRoomFixture.guest);
+    final advertised = await Future.any([
+      gateway.invited.then((_) => gateway.client(WebRtcRoomFixture.guest).invitedDiscDigest(WebRtcRoomFixture.roomId)),
+      hosting.then((_) => throw StateError('The host closed before inviting its guest.')),
+    ]).timeout(const Duration(seconds: 5));
+    if (advertised != media.discDigest) throw StateError('The invite did not preserve the disc fingerprint.');
+    final receiver = guestMatch = Ps1NetplayMatch(
+      rooms: gateway.client(WebRtcRoomFixture.guest, expectedDigest: advertised),
+      links: links,
       identity: media.identity,
       runner: guest,
-      seat: 1,
-      sendSignal: (signal) async => sender.receiveSignal(signal),
       restoreCheckpoint: (snapshot) async {
         // Keep the local host advancing while the guest is still loading.
         await Future<void>.delayed(const Duration(milliseconds: 350));
@@ -94,15 +97,13 @@ Future<String> _nativeExercise(String config) async {
         replayed += batch.length;
       },
     );
-    await receiver.open();
-    await sender.open();
+    gateway.events[WebRtcRoomFixture.guest] = receiver.receive;
+    await Future.wait([hosting, receiver.join(WebRtcRoomFixture.roomId)]).timeout(const Duration(seconds: 8));
     final elapsed = Stopwatch()..start();
-    while ((sender.session.confirmedFrame ?? -1) < 359 || (receiver.session.confirmedFrame ?? -1) < 359) {
-      if (elapsed.elapsed > const Duration(seconds: 17) ||
-          sender.session.ended != null ||
-          receiver.session.ended != null) {
+    while ((sender.session?.confirmedFrame ?? -1) < 359 || (receiver.session?.confirmedFrame ?? -1) < 359) {
+      if (elapsed.elapsed > const Duration(seconds: 17) || sender.closed || receiver.closed) {
         throw StateError(
-          'Native handoff stalled. Host: ${sender.session.ended}, guest: ${receiver.session.ended}, '
+          'Native handoff stalled. Host: ${sender.session?.ended}, guest: ${receiver.session?.ended}, '
           'replayed: $replayed.',
         );
       }
@@ -113,7 +114,7 @@ Future<String> _nativeExercise(String config) async {
         throw StateError('Native RAM fingerprints differ at frame $frame.');
       }
     }
-    if (sender.session.ended != null || receiver.session.ended != null) {
+    if (sender.closed || receiver.closed || sender.session?.ended != null || receiver.session?.ended != null) {
       throw StateError('A peer left before the test completed.');
     }
     if (replayed < 10 || !host.sentButtons.contains(8) || !guest.sentButtons.contains(256)) {
@@ -121,16 +122,16 @@ Future<String> _nativeExercise(String config) async {
     }
     await receiver.leave();
     await sender.done.timeout(const Duration(seconds: 6));
+    if (!gateway.released || gateway.signals < 2) throw StateError('The private room lifecycle was incomplete.');
     final picture = await host.picture();
     await host.waitForPicture(picture + 15);
-    return 'Native WebRTC loopback passed for ${profile.titleId}: $stateBytes checkpoint bytes, '
-        '$replayed replay frames, 360 live frames with three matching RAM fingerprints, and host resumed local play.';
+    return 'Native WebRTC loopback passed for ${profile.titleId}: private invite, ${gateway.signals} directed signals, '
+        '$stateBytes checkpoint bytes, $replayed replay frames, 360 live frames with three matching RAM fingerprints, '
+        'and host resumed local play after room release.';
   } finally {
     try {
-      await Future.wait([
-        if (hostPeer != null) hostPeer.leave() else if (hostLink != null) hostLink.close(),
-        if (guestPeer != null) guestPeer.leave() else if (guestLink != null) guestLink.close(),
-      ]).timeout(const Duration(seconds: 4));
+      await Future.wait([if (hostMatch != null) hostMatch.leave(), if (guestMatch != null) guestMatch.leave()])
+          .timeout(const Duration(seconds: 4));
     } finally {
       try {
         await Future.wait([if (local != null) local.stop(), if (remote != null) remote.stop()]);

@@ -98,7 +98,7 @@ final class RetroOnlineRooms {
     });
   }
 
-  Future<List<RetroRoomMember>> peers(RetroRoom room) async {
+  Future<List<RetroRoomMember>> peers(RetroRoom room, {String? expectedUser}) async {
     final json = await call('GET', _path(room.id));
     if (_room(json, id: room.id) != room) throw StateError('The retro room changed hosts.');
     final members = json['members'];
@@ -112,6 +112,9 @@ final class RetroOnlineRooms {
       final id = member['userId'];
       final device = member['device'];
       final properties = member['properties'];
+      if (expectedUser != null && id != me && id != expectedUser) {
+        throw StateError('An unexpected player entered the private retro room.');
+      }
       if (id == me) {
         own = true;
       } else if (id is String &&

@@ -269,6 +269,67 @@ void main() {
     expect(removed, isTrue);
   });
 
+  test('host rejects an uninvited room member before that member publishes a marker', () async {
+    var removed = false;
+    var askedIce = false;
+    final rooms = RetroOnlineRooms(
+      spec: _spec,
+      me: _host,
+      call: (method, path, [body]) async {
+        if (method == 'DELETE') removed = true;
+        if (path.endsWith('/ice-servers')) askedIce = true;
+        return {
+          ..._view(),
+          'members': [
+            {'userId': _host},
+            {'userId': _device, 'device': _device},
+          ],
+        };
+      },
+      signal: (_, _, _, _, _) {},
+    );
+    final match = Ps1NetplayMatch(rooms: rooms, links: _UnusedLinks(), identity: _identity(), runner: _UnusedRunner());
+    await expectLater(match.host(_guest), throwsA(isA<StateError>()));
+    await match.done;
+    expect(match.session, isNull);
+    expect(askedIce, isFalse);
+    expect(removed, isTrue);
+  });
+
+  test('cancelling a published room does not wait for a stalled member lookup', () async {
+    final lookup = Completer<void>();
+    final response = Completer<Map<String, dynamic>>();
+    var removed = false;
+    final rooms = RetroOnlineRooms(
+      spec: _spec,
+      me: _host,
+      call: (method, path, [body]) async {
+        if (method == 'GET' && path == _path) {
+          lookup.complete();
+          return response.future;
+        }
+        if (method == 'DELETE') removed = true;
+        return _view();
+      },
+      signal: (_, _, _, _, _) {},
+    );
+    final match = Ps1NetplayMatch(rooms: rooms, links: _UnusedLinks(), identity: _identity(), runner: _UnusedRunner());
+    final opening = match.host(_guest);
+    await lookup.future;
+    try {
+      await Future.wait([match.leave(), opening]).timeout(const Duration(milliseconds: 300));
+      expect(removed, isTrue);
+    } finally {
+      response.complete({
+        ..._view(),
+        'members': [
+          {'userId': _host},
+        ],
+      });
+      await match.done;
+    }
+  });
+
   test('leaves a newly joined room if publishing the member marker fails', () async {
     final paths = <String>[];
     final rooms = RetroOnlineRooms(

@@ -35,9 +35,10 @@ final class Ps1NetplayMatch {
   final _closing = Completer<void>();
   final _done = Completer<void>();
   final _signals = <Map<String, dynamic>>[];
-  Future<void>? _opening;
+  Future<RetroRoom>? _entering;
   RetroRoom? _room;
   String? _joining;
+  String? _invitedFriend;
   RetroRoomMember? _member;
   Ps1NetplayPeer? _peer;
   bool _closed = false;
@@ -46,41 +47,44 @@ final class Ps1NetplayMatch {
   Ps1NetplaySession? get session => _peer?.session;
   bool get closed => _closed;
 
-  Future<void> host(String friendId) => _open(0, () async {
-    final room = _room = await rooms.host();
-    if (!_closed) await rooms.invite(room, friendId);
-    return room;
-  });
+  Future<void> host(String friendId) => _open(0, rooms.host, friendId: friendId);
 
-  Future<void> join(String roomId) => _open(1, () async {
+  Future<void> join(String roomId) => _open(1, () => rooms.join(roomId), roomId: roomId);
+
+  Future<void> _open(int seat, Future<RetroRoom> Function() enter, {String? friendId, String? roomId}) async {
+    if (_closed || _entering != null) throw StateError('This PS1 match has already been opened or closed.');
     _joining = roomId;
-    return _room = await rooms.join(roomId);
-  });
-
-  Future<void> _open(int seat, Future<RetroRoom> Function() enter) async {
-    if (_closed || _opening != null) throw StateError('This PS1 match has already been opened or closed.');
+    _invitedFriend = friendId;
+    final entering = _entering = Future.sync(enter).then((room) => _room = room);
     try {
-      await (_opening = _connect(seat, enter));
+      await _connect(seat, await entering, friendId);
     } on Object {
       await leave();
       rethrow;
     }
   }
 
-  Future<void> _connect(int seat, Future<RetroRoom> Function() enter) async {
-    final room = await enter();
+  Future<T?> _untilClose<T>(Future<T> action) => Future.any<T?>([action, _closing.future.then((_) => null)]);
+
+  Future<void> _connect(int seat, RetroRoom room, String? friendId) async {
+    if (_closed) return;
+    if (friendId != null) await _untilClose(rooms.invite(room, friendId));
+    final expected = friendId ?? room.hostId;
     final elapsed = Stopwatch()..start();
+    const wait = Duration(minutes: 2);
     RetroRoomMember? member;
-    while (!_closed && elapsed.elapsed < const Duration(minutes: 2)) {
-      member = (await rooms.peers(room)).where((peer) => seat == 0 || peer.userId == room.hostId).singleOrNull;
+    while (!_closed && elapsed.elapsed < wait) {
+      final peers = await _untilClose(rooms.peers(room, expectedUser: expected)).timeout(wait - elapsed.elapsed);
+      if (peers == null || _closed) return;
+      member = peers.singleOrNull;
       if (member != null) break;
-      await Future<void>.delayed(const Duration(seconds: 1));
+      await _untilClose(Future<void>.delayed(const Duration(seconds: 1)));
     }
     if (_closed) return;
     if (member == null) throw StateError('The other player did not join the PS1 room in time.');
     final bound = _member = member;
-    final servers = await rooms.iceServers(room);
-    if (_closed) return;
+    final servers = await _untilClose(rooms.iceServers(room));
+    if (servers == null || _closed) return;
     final link = await Future.any<GameLink?>([
       links.link(servers).then((link) async {
         if (!_closed) return link;
@@ -124,7 +128,11 @@ final class Ps1NetplayMatch {
     } else if (type == 'game_session.signal') {
       final peer = _peer;
       if (peer == null) {
-        if (_signals.length < 65 && event['kind'] == 'message' && Ps1NetplaySignal.tryRead(event['data']) != null) {
+        final expected = _invitedFriend ?? _room?.hostId;
+        if (_signals.length < 65 &&
+            (expected == null || event['from'] == expected) &&
+            event['kind'] == 'message' &&
+            Ps1NetplaySignal.tryRead(event['data']) != null) {
           _signals.add(event);
         }
         return;
@@ -144,7 +152,7 @@ final class Ps1NetplayMatch {
       final peer = _peer;
       if (peer == null) {
         try {
-          await _opening;
+          await _entering;
         } on Object {
           // The caller that opened the room receives the connection failure.
         }
