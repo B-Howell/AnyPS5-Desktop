@@ -334,28 +334,42 @@ void VerifyIsolatedCores(char** argv) {
 bool VerifyAudioQueueTiming() {
   using Clock = std::chrono::steady_clock;
   const auto start = Clock::now();
+  Clock::time_point refilled{};
+  std::promise<void> initial;
   std::promise<bool> completed;
+  auto initial_result = initial.get_future();
   auto result = completed.get_future();
   uint32_t expected = 0;
   bool matched = true;
   ConfirmedPcmPlayout playout(48000, [&](uint32_t frame, const int16_t* pcm, size_t frames) {
     const auto elapsed = Clock::now() - start;
     matched &= frame == expected && frames == 480 && pcm[0] == static_cast<int16_t>(frame + 10);
-    matched &= elapsed >= std::chrono::milliseconds(120 + frame * 10);
-    if (++expected == 2) completed.set_value(matched);
+    if (frame < 2) {
+      matched &= elapsed >= std::chrono::milliseconds(120 + frame * 10);
+    } else {
+      matched &= Clock::now() - refilled >= std::chrono::milliseconds(120);
+    }
+    if (++expected == 2) initial.set_value();
+    if (expected == 3) completed.set_value(matched);
   });
   std::array<int16_t, 960> pcm{};
   pcm[0] = 10;
   playout.Submit(0, pcm.data(), pcm.size());
   pcm[0] = 11;
   playout.Submit(1, pcm.data(), pcm.size());
-  return result.wait_for(std::chrono::seconds(2)) == std::future_status::ready && result.get();
+  if (initial_result.wait_for(std::chrono::seconds(2)) != std::future_status::ready) return false;
+  std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  pcm[0] = 12;
+  refilled = Clock::now();
+  playout.Submit(2, pcm.data(), pcm.size());
+  return result.wait_for(std::chrono::seconds(2)) == std::future_status::ready && result.get() &&
+         playout.underruns() == 1;
 }
 
 int main(int argc, char** argv) {
   if (argc == 2 && std::string_view(argv[1]) == "audio-queue-test") {
     if (!VerifyAudioQueueTiming()) return 10;
-    std::cout << "Confirmed PCM preserved order, the 120 ms reserve, and 10 ms sample deadlines." << std::endl;
+    std::cout << "Confirmed PCM preserved order, 10 ms sample deadlines, and both 120 ms reserves." << std::endl;
     return 0;
   }
   if (argc < 5 || argc > 8) return 2;

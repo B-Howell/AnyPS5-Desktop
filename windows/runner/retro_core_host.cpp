@@ -499,6 +499,7 @@ class ConfirmedPcmPlayout {
 
   void Run() {
     using Clock = std::chrono::steady_clock;
+    constexpr auto reserve = std::chrono::milliseconds(120);
     Clock::time_point next{};
     bool waited_for_pcm = false;
     std::unique_lock<std::mutex> lock(mutex_);
@@ -514,10 +515,12 @@ class ConfirmedPcmPlayout {
         const auto duration = std::chrono::duration_cast<Clock::duration>(
             std::chrono::duration<double>(static_cast<double>(samples) / rate_));
         if (next == Clock::time_point{}) {
-          next = now + std::chrono::milliseconds(120);
+          next = now + reserve;
         } else if (waited_for_pcm && now > next + std::chrono::milliseconds(2)) {
           ++underruns_;
-          next = now;
+          // Rebuild the reserve after a gap so the next jitter event does not
+          // immediately empty the queue again.
+          next = now + reserve;
         }
         waited_for_pcm = false;
         if (ready_.wait_until(lock, next, [this] { return stopping_; })) break;

@@ -899,9 +899,10 @@ cadence, while the worker budget and audio delivery still need work.
 The headless dual-core path now queues confirmed PCM on a separate
 playout worker. The queue holds at most 64 frame blocks, waits 120 ms
 before the first audio samples, and emits samples in order at the
-core's sample rate. After an underrun it resumes when confirmed PCM
-arrives. The probe compares every drained sample through the final
-frame and reports recovered underruns and queue depth. The startup
+core's sample rate. After an underrun, confirmed PCM starts a fresh
+120 ms reserve before playout resumes. The probe compares every
+drained sample through the final frame and reports recovered underruns
+and queue depth. The startup
 reserve adds audio latency, and the silent sink measures delivery
 cadence without exercising a playback device. The standalone and
 launcher audio paths retain their existing behavior.
@@ -915,7 +916,17 @@ their queues peaked at 13 and 10 blocks. The largest texture gap was
 iterations above 16.667 ms in this run. These measurements show an
 improvement in silent delivery and leave continuous playout open.
 The native probe's `audio-queue-test` also checks the startup reserve,
-sample-count spacing and FIFO ordering independently of the race.
+sample-count spacing and FIFO ordering independently of the race. It
+forces a gap and checks that the reserve is rebuilt before emission.
+
+With reserve rebuilding enabled, the same full race finished in
+233.32 seconds with identical results, RAM and PCM. Recovered
+starvation events fell from 264/265 to 30/30. Peak PCM delivery gaps
+were 175.887 and 243.533 ms, compared with the earlier worst of
+164.280 ms. Queue depth peaked at 21 and 16 blocks. This trades
+fewer interruptions for longer recovery pauses. The slowest primary
+iteration was 14.536 ms in this run. Continuous device playout
+remains unverified.
 
 The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
 [driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real
