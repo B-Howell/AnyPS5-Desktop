@@ -13,10 +13,13 @@ from time import monotonic, sleep
 
 
 class Peer:
-    def __init__(self, executable, core, disc, bios, seat):
+    def __init__(self, executable, core, disc, bios, seat, *, local=False):
         self.lines = Queue()
+        arguments = [executable, core, disc, bios, str(seat)]
+        if local:
+            arguments.append("local")
         self.process = Popen(
-            [executable, core, disc, bios, str(seat)],
+            arguments,
             stdin=PIPE, stdout=PIPE, text=True,
             creationflags=CREATE_NO_WINDOW | IDLE_PRIORITY_CLASS,
         )
@@ -72,6 +75,7 @@ def main():
     parser.add_argument("--checkpoint-guest", type=Path, help="Verify a held peer can import with a renamed CUE")
     parser.add_argument("--cutover", action="store_true", help="Replace the second player and verify the new input epoch")
     parser.add_argument("--cutover-frame", type=int, help="Trace frame where the replacement guest takes over")
+    parser.add_argument("--local-handoff", action="store_true", help="Join a host already playing locally")
     args = parser.parse_args()
     if args.frames < 120:
         parser.error("at least 120 frames are required to compare a fingerprint")
@@ -81,8 +85,13 @@ def main():
         parser.error("--cutover-frame requires --cutover and --trace")
     if args.cutover and args.trace and args.cutover_frame is None:
         parser.error("a traced cutover requires --cutover-frame")
+    if args.local_handoff and (not args.checkpoint_guest or args.trace or args.cutover):
+        parser.error("--local-handoff requires --checkpoint-guest and runs independently of --trace and --cutover")
 
     with ExitStack() as cleanup:
+        if args.local_handoff:
+            verify_local_handoff(args, cleanup)
+            return
         frames = read_trace(args.trace) if args.trace else None
         peers = []
         for seat in range(2):
@@ -142,15 +151,20 @@ def capture_checkpoint(host, cleanup):
     # Allow the final batch of queued inputs to drain before capturing RAM.
     sleep(0.1)
     held_frame = host.sync()[0]
+    checkpoint = capture_held_checkpoint(host, cleanup, held_frame)
+    assert host.sync()[0] == held_frame
+    return checkpoint
+
+
+def capture_held_checkpoint(host, cleanup, held_frame):
     expected = host.send("fingerprint")
     directory = cleanup.enter_context(TemporaryDirectory(prefix="anyps5-worker-state-"))
     path = json.dumps((Path(directory) / "state").as_posix())
     assert host.send(f"checkpoint 1 {path}").startswith(f"checkpoint {held_frame} ")
-    assert host.sync()[0] == held_frame
     return held_frame, expected, path
 
 
-def replay_checkpoint(args, host, cleanup, checkpoint):
+def replay_checkpoint(args, host, cleanup, checkpoint, *, local=False):
     held_frame, expected, path = checkpoint
     guest = Peer(args.probe.resolve(), args.core.resolve(), args.checkpoint_guest.resolve(), args.bios.resolve(), 1)
     cleanup.callback(guest.close)
@@ -164,21 +178,27 @@ def replay_checkpoint(args, host, cleanup, checkpoint):
     assert guest.send(f"replay {held_frame + 1} 1 0 0") == "unavailable"
     published = guest.send("published")
     cursor = held_frame
-    if args.cutover:
-        status, frame = host.send("hold").split()
-        assert status == "held"
-        end = int(frame)
+    if local:
+        end = hold_host(host)
+    elif args.cutover:
+        end = hold_host(host)
         host.sync(inputs=[(end, 65535)])
         sleep(0.08)
         assert host.sync()[0] == end, "A queued remote input advanced the held host"
     else:
         end = host.sync()[0]
     assert end - held_frame >= 180
+    host_input_seen = False
     while cursor < end:
         count, *pads = host.send(f"history {cursor}").split()
         assert 0 < int(count) <= 120 and len(pads) == int(count) * 2
+        if local:
+            assert all(mask == "0" for mask in pads[1::2]), "Local play fed input to the guest port"
+            host_input_seen |= "8" in pads[::2]
         assert guest.send(f"replay {cursor} {count} {' '.join(pads)}") == "replayed"
         cursor += int(count)
+    if local:
+        assert host_input_seen, "The local controller did not enter the recorded history"
     assert cursor == end
     assert guest.send("fingerprint") == host.send("fingerprint")
     assert guest.send("published") == published, "Catch-up published a guest video frame"
@@ -189,9 +209,42 @@ def replay_checkpoint(args, host, cleanup, checkpoint):
     assert guest.send(f"replay {cursor} 1 0 0") == "unavailable"
     assert guest.send(f"checkpoint 1 {path}") == "unavailable"
     print(f"The held guest replayed {end - held_frame} host frames and matched the host RAM.")
-    if args.cutover:
+    if args.cutover or local:
         assert host.send("start") == "started"
     return guest
+
+
+def hold_host(host):
+    status, frame = host.send("hold").split()
+    assert status == "held"
+    return int(frame)
+
+
+def wait_for_picture(host, target):
+    deadline = monotonic() + 15
+    while int(host.send("published")) < target:
+        if monotonic() > deadline:
+            raise TimeoutError("The local host stopped publishing frames")
+        sleep(0.01)
+
+
+def verify_local_handoff(args, cleanup):
+    host = Peer(args.probe.resolve(), args.core.resolve(), args.disc.resolve(), args.bios.resolve(), 0, local=True)
+    cleanup.callback(host.close)
+    assert host.receive() == "ready"
+    assert host.send("start") == "error", "A playing host joined before reaching the cutover barrier"
+    wait_for_picture(host, 240)
+    first = hold_host(host)
+    picture = int(host.send("published"))
+    sleep(0.1)
+    assert int(host.send("published")) == picture
+    checkpoint = capture_held_checkpoint(host, cleanup, first)
+    assert host.send("resume-local") == "resumed"
+    assert host.send("pad 8") == "pad"
+    wait_for_picture(host, picture + 240)
+    guest = replay_checkpoint(args, host, cleanup, checkpoint, local=True)
+    assert host.send("resume-local") == "unavailable"
+    verify_new_input_epoch(host, guest)
 
 
 def verify_new_input_epoch(host, guest):

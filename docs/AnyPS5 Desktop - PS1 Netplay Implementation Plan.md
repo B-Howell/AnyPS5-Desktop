@@ -242,6 +242,24 @@ The portable state includes memory card data, so the adapter also needs
 to keep checkpoint exchange scoped to game-specific or session-owned
 storage.
 
+An opt-in local staging mode now runs the deterministic worker before a
+peer connects. The [embedded bridge](../lib/ui/embedded_retro_game.dart)
+can start it with verified host media and hold or resume it on invitation
+cancellation. While staging, the host plays on port one and the worker
+records a neutral port two. It records the same confirmed input history
+used by the online handoff. Online start requires a hold and resets the
+input counters without restarting the core. The mode uses the match's
+isolated memory card and is available to the app bridge for integration.
+Run the headless probe with `--local-handoff --checkpoint-guest` to exercise
+local play, cancellation, catch-up and the first online fingerprint.
+The Windows CTR probe replayed 247 local frames, verified host input on
+port one and neutral input on port two, and matched RAM at the first
+online fingerprint. The control probe confirmed 360 frames with both
+seats active, then verified an already-online host's replacement guest.
+The invitation owner must let an outstanding hold finish before cancelling
+and resuming the local host. It also needs a way to release the match
+without closing the game it adopted.
+
 ### Windows development checkpoint
 
 Set `ANYPS5_PS1_NETPLAY=1` on an experimental Windows x64 build to expose

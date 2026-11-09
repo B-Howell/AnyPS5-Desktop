@@ -476,7 +476,7 @@ class RetroCoreSession {
                    std::string initial_resolution = {},
                    std::map<std::string, std::string> initial_graphics = {},
                    std::optional<unsigned> netplay_seat = std::nullopt,
-                   const std::string& netplay_bios = {})
+                   const std::string& netplay_bios = {}, bool local_staging = false)
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
         netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(*netplay_seat) : nullptr),
         match_storage_(netplay_ ? std::make_unique<Ps1MatchStorage>(netplay_bios) : nullptr),
@@ -487,7 +487,11 @@ class RetroCoreSession {
         initial_resolution_(std::move(initial_resolution)),
         initial_graphics_(std::move(initial_graphics)),
         ps3_(std::filesystem::u8path(core_).filename() == L"rpcs3_libretro.dll"),
-        texture_(flutter::PixelBufferTexture([this](size_t, size_t) { return CopyFrame(); })) {}
+        local_staging_(local_staging),
+        texture_(flutter::PixelBufferTexture([this](size_t, size_t) { return CopyFrame(); })) {
+    if (local_staging_ && netplay_seat != 0u)
+      throw std::invalid_argument("Only the PS1 host can start in local play.");
+  }
 
   ~RetroCoreSession() { Stop(); Join(); }
 
@@ -526,7 +530,7 @@ class RetroCoreSession {
   bool StartNetplay() {
     if (!netplay_ || !netplay_ready_ || stop_ || ended_) return false;
     std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
-    if (checkpoint_) return false;
+    if (checkpoint_ || (StagingLocal() && !netplay_held_)) return false;
     if (netplay_held_) {
       netplay_->Reset();
       checkpoint_history_.clear();
@@ -542,9 +546,23 @@ class RetroCoreSession {
   std::optional<uint32_t> HoldNetplay() {
     if (!CheckpointReady()) return std::nullopt;
     std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
-    if (!netplay_started_ || checkpoint_ || !netplay_->Hold()) return std::nullopt;
+    if (checkpoint_) return std::nullopt;
+    if (StagingLocal()) {
+      if (local_prepared_) return std::nullopt;
+      netplay_held_ = true;
+      return local_frame_;
+    }
+    if (!netplay_started_ || !netplay_->Hold()) return std::nullopt;
     netplay_held_ = true;
     return netplay_->frame();
+  }
+
+  bool ResumeLocalNetplay() {
+    if (!CheckpointReady()) return false;
+    std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
+    if (!StagingLocal() || !netplay_held_ || checkpoint_) return false;
+    netplay_held_ = false;
+    return true;
   }
 
   std::optional<int64_t> RequestCheckpoint(const Ps1DiscHash& digest, CheckpointBytes restore = {},
@@ -553,7 +571,7 @@ class RetroCoreSession {
         frame.has_value() != !restore.empty() || (frame && *frame > ps1_netplay::Timeline::kMaxFrame))
       return std::nullopt;
     std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
-    if (checkpoint_ || (frame && netplay_started_) || (!frame && replay_cursor_))
+    if (checkpoint_ || (frame && (netplay_started_ || StagingLocal())) || (!frame && replay_cursor_))
       return std::nullopt;
     return QueueCheckpoint(digest, std::move(restore), frame, {});
   }
@@ -570,9 +588,9 @@ class RetroCoreSession {
   std::optional<Map> CheckpointHistory(uint32_t first) {
     if (!CheckpointReady()) return std::nullopt;
     std::lock_guard<std::mutex> lock(netplay_mutex_);
-    const auto next = netplay_->frame();
+    const auto next = StagingLocal() ? local_frame_ : netplay_->frame();
     const auto oldest = next - static_cast<uint32_t>(checkpoint_history_.size());
-    if (!netplay_started_ || first < oldest || first > next) return std::nullopt;
+    if ((!netplay_started_ && !StagingLocal()) || first < oldest || first > next) return std::nullopt;
     List frames;
     const auto count = std::min(next - first, kPs1CatchupBatch);
     for (uint32_t frame = first; frame < first + count; ++frame) {
@@ -613,7 +631,7 @@ class RetroCoreSession {
                                 const std::optional<uint32_t>& acknowledged) {
     if (!netplay_ || stop_ || ended_) return std::nullopt;
     std::lock_guard<std::mutex> lock(netplay_mutex_);
-    if (!netplay_->Receive(remote, acknowledged)) return std::nullopt;
+    if (StagingLocal() || !netplay_->Receive(remote, acknowledged)) return std::nullopt;
     List local;
     for (const auto& sample : netplay_->LocalPacket()) {
       List input{Value(static_cast<int64_t>(sample.frame)), Value(static_cast<int32_t>(sample.input.buttons))};
@@ -1187,6 +1205,9 @@ class RetroCoreSession {
 
   bool CheckpointReady() const { return checkpoint_supported_ && netplay_ready_ && !stop_ && !ended_; }
 
+  // Caller holds netplay_mutex_.
+  bool StagingLocal() const { return local_staging_ && !netplay_started_; }
+
   // Both callers hold checkpoint_mutex_ and netplay_mutex_.
   int64_t QueueCheckpoint(const Ps1DiscHash& digest, CheckpointBytes restore,
                           std::optional<uint32_t> frame, std::vector<Ps1Ports> replay) {
@@ -1212,7 +1233,7 @@ class RetroCoreSession {
       uint32_t frame;
       {
         std::lock_guard<std::mutex> lock(netplay_mutex_);
-        frame = netplay_->frame();
+        frame = StagingLocal() ? local_frame_ : netplay_->frame();
       }
       CheckpointBytes bytes(capacity);
       const auto used = save(bytes.data(), bytes.size(), work->digest.data());
@@ -1254,6 +1275,8 @@ class RetroCoreSession {
     const size_t maximum = save && load ? Symbol<size_t (*)()>(dll, "retro_serialize_size")() : 0;
     constexpr size_t prefix = 40;
     checkpoint_supported_ = maximum && maximum <= kMaxPs1Checkpoint - prefix;
+    if (local_staging_ && !checkpoint_supported_)
+      throw std::runtime_error("Local PS1 hosting requires the portable checkpoint core.");
     netplay_ready_ = true;
     auto next = Clock::now();
     auto last_advance = next;
@@ -1266,22 +1289,31 @@ class RetroCoreSession {
         local = {buttons_, axes_};
       }
       bool started;
+      bool staging;
       bool epoch_reset;
       bool advance;
       uint32_t frame;
       {
         std::lock_guard<std::mutex> lock(netplay_mutex_);
         started = netplay_started_ && !netplay_held_;
+        staging = StagingLocal();
         epoch_reset = std::exchange(netplay_epoch_reset_, false);
-        frame = netplay_->frame();
-        advance = netplay_->Prepare(local, netplay_ports_);
+        frame = staging ? local_frame_ : netplay_->frame();
+        if (staging) {
+          advance = !netplay_held_ && frame < ps1_netplay::Timeline::kMaxFrame;
+          local_prepared_ = advance;
+          if (advance) netplay_ports_ = {local, {}};
+        } else {
+          advance = netplay_->Prepare(local, netplay_ports_);
+        }
       }
       if (started && (!started_before || epoch_reset)) {
         last_advance = Clock::now();
       }
       started_before = started;
       if (!advance) {
-        if (Clock::now() - last_advance > (started ? std::chrono::seconds(15) : std::chrono::seconds(60)))
+        if (!staging &&
+            Clock::now() - last_advance > (started ? std::chrono::seconds(15) : std::chrono::seconds(60)))
           throw std::runtime_error(started ? "PS1 netplay stopped waiting for the other player."
                                            : "PS1 netplay did not start in time.");
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -1291,10 +1323,15 @@ class RetroCoreSession {
       step();
       ++steps_;
       std::string fingerprint;
-      if ((frame + 1) % 120 == 0) fingerprint = NetplayFingerprint(memory, memory_size);
+      if (!staging && (frame + 1) % 120 == 0) fingerprint = NetplayFingerprint(memory, memory_size);
       {
         std::lock_guard<std::mutex> lock(netplay_mutex_);
-        netplay_->Commit();
+        if (staging) {
+          ++local_frame_;
+          local_prepared_ = false;
+        } else {
+          netplay_->Commit();
+        }
         if (checkpoint_supported_) {
           if (checkpoint_history_.size() == kPs1CatchupHistory) checkpoint_history_.pop_front();
           checkpoint_history_.push_back(netplay_ports_);
@@ -1489,6 +1526,7 @@ class RetroCoreSession {
   const std::string initial_resolution_;
   const std::map<std::string, std::string> initial_graphics_;
   const bool ps3_;
+  const bool local_staging_;
   flutter::TextureVariant texture_;
   int64_t texture_id_ = -1;
   std::thread worker_;
@@ -1522,6 +1560,8 @@ class RetroCoreSession {
   bool netplay_started_ = false;
   bool netplay_held_ = false;
   bool netplay_epoch_reset_ = false;
+  bool local_prepared_ = false;
+  uint32_t local_frame_ = 0;
   std::array<ps1_netplay::PadInput, 2> netplay_ports_{};
   std::vector<std::pair<uint32_t, std::string>> netplay_fingerprints_;
   std::shared_ptr<Frame> frame_;
@@ -1584,6 +1624,12 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
       std::optional<unsigned> netplay_seat;
       const auto seat = fields->find(Value("ps1NetplaySeat"));
       const auto* netplay_bios = StringField(*fields, "ps1NetplayBios");
+      const auto local = fields->find(Value("ps1LocalStaging"));
+      const auto* local_staging = local == fields->end() ? nullptr : std::get_if<bool>(&local->second);
+      if (local != fields->end() && !local_staging) {
+        result->Error("argument", "PS1 local staging must be a boolean");
+        return;
+      }
       if (seat != fields->end()) {
         const auto number = IntegerValue(seat->second);
         if (!number || *number < 0 || *number > 1 || !netplay_bios ||
@@ -1607,7 +1653,8 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
       }
       session_ = std::make_shared<RetroCoreSession>(textures_, *core, *disc, *system, *saves,
                                                    resolution ? *resolution : "", std::move(graphics),
-                                                   netplay_seat, netplay_bios ? *netplay_bios : "");
+                                                   netplay_seat, netplay_bios ? *netplay_bios : "",
+                                                   local_staging && *local_staging);
       if (!session_->Start()) throw std::runtime_error("Could not register the game surface");
       result->Success(Value(session_->texture_id()));
     } catch (const std::exception& failure) {
@@ -1626,6 +1673,8 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
     result->Success(Value(session_->StartNetplay()));
   } else if (method == "ps1CheckpointHold") {
     result->Success(FrameValue(session_->HoldNetplay()));
+  } else if (method == "ps1ResumeLocal") {
+    result->Success(Value(session_->ResumeLocalNetplay()));
   } else if (method == "ps1CheckpointExport" || method == "ps1CheckpointImport") {
     const auto* fields = std::get_if<Map>(arguments);
     if (!fields) return result->Error("checkpoint", "Expected checkpoint arguments");

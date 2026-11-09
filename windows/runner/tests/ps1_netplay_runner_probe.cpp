@@ -43,11 +43,12 @@ class ProbeTexture final : public flutter::TextureRegistrar {
 };
 
 int main(int argc, char** argv) {
-  if (argc != 5) return 2;
+  if (argc != 5 && argc != 6) return 2;
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
   ProbeTexture texture;
   const auto seat = std::stoul(argv[4]);
-  RetroCoreSession session(&texture, argv[1], argv[2], "", "", "", {}, seat, argv[3]);
+  const bool local_staging = argc == 6 && std::string_view(argv[5]) == "local";
+  RetroCoreSession session(&texture, argv[1], argv[2], "", "", "", {}, seat, argv[3], local_staging);
   if (!session.Start()) return 3;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
   while (std::chrono::steady_clock::now() < deadline) {
@@ -173,6 +174,10 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
       if (std::chrono::steady_clock::now() >= until) return 7;
+      continue;
+    }
+    if (command == "resume-local") {
+      std::cout << (session.ResumeLocalNetplay() ? "resumed" : "unavailable") << std::endl;
       continue;
     }
     if (command == "start") {

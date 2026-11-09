@@ -80,7 +80,11 @@ class EmbeddedRetroGame extends RunningGame {
     required PadState Function() readPad,
     required void Function() changed,
     ({Ps1NetplayMedia media, int seat})? netplay,
+    bool localNetplayStaging = false,
   }) async {
+    if (localNetplayStaging && netplay?.seat != 0) {
+      throw ArgumentError('Local PS1 hosting requires verified host media.');
+    }
     if (netplay != null && (disc.platform != RetroPlatform.ps1 || p.absolute(disc.path) != netplay.media.disc)) {
       throw ArgumentError('Netplay must use the verified PS1 disc.');
     }
@@ -100,6 +104,7 @@ class EmbeddedRetroGame extends RunningGame {
       } else ...{
         'ps1NetplaySeat': netplay.seat,
         'ps1NetplayBios': netplay.media.bios,
+        if (localNetplayStaging) 'ps1LocalStaging': true,
       },
     });
     if (id == null || id < 0) throw StateError('The game surface could not start.');
@@ -312,6 +317,14 @@ class EmbeddedRetroGame extends RunningGame {
       await Future<void>.delayed(const Duration(milliseconds: 8));
     }
     throw StateError('The emulator could not hold the online timeline.');
+  }
+
+  /// Releases the local host if the invitation is cancelled before cutover.
+  Future<void> resumeLocalNetplay() async {
+    _requirePortableCheckpoint();
+    if (await _channel.invokeMethod<bool>('ps1ResumeLocal') != true) {
+      throw StateError('The emulator could not resume local play.');
+    }
   }
 
   Future<({int nextFrame, List<Ps1FrameInputs> frames})> readNetplayHistory(int firstFrame) async {
