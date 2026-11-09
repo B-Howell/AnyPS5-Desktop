@@ -188,7 +188,8 @@ final class RetroLanMatch {
     unawaited(_untilClose(game.done).then((_) => leave(), onError: (Object error) => _failed(error)));
     ({Stopwatch timer, int route})? outage;
     var recoveryShown = false;
-    var restartRequested = false;
+    const routeRetryInterval = Duration(milliseconds: 1500);
+    var nextRouteAttempt = routeRetryInterval;
     _pump = Timer.periodic(const Duration(milliseconds: 8), (_) {
       if (!mesh.canSendGame(peerAddress)) {
         final interruption = outage ??= (timer: Stopwatch()..start(), route: mesh.gameRoute(peerAddress));
@@ -201,13 +202,13 @@ final class RetroLanMatch {
           recoveryShown = true;
           onRecoveryChanged?.call(true);
         }
-        if (!restartRequested && elapsed >= const Duration(milliseconds: 1500)) {
-          restartRequested = true;
+        if (elapsed >= nextRouteAttempt) {
+          nextRouteAttempt = elapsed + routeRetryInterval;
           unawaited(mesh.restartGameRoute(peerAddress, interruption.route));
         }
       } else {
         outage = null;
-        restartRequested = false;
+        nextRouteAttempt = routeRetryInterval;
         if (recoveryShown) {
           recoveryShown = false;
           onRecoveryChanged?.call(false);

@@ -69,6 +69,8 @@ Future<String> verifyWebRtcLanBridge() async {
     reconnecting = Completer<void>();
     reconnected = Completer<void>();
     recoveryUser = WebRtcRoomFixture.guest;
+    final unavailable = {'renegotiate', 'offer', 'answer'};
+    gateway.rejectSignal = (_, kind, data) => data is Map && data['iceRoute'] == 1 && unavailable.remove(kind);
     links.opened.last.reportState('failed');
     await reconnecting.future.timeout(const Duration(seconds: 4));
     final beforeRestart = guest.framesReceived;
@@ -82,6 +84,7 @@ Future<String> verifyWebRtcLanBridge() async {
         right.closed ||
         guest.framesReceived == beforeRestart ||
         links.opened.length != 2 ||
+        unavailable.isNotEmpty ||
         offers.length != 2 ||
         offers.first == offers.last) {
       throw StateError(
@@ -102,7 +105,7 @@ Future<String> verifyWebRtcLanBridge() async {
     if (!gateway.released || !left.gameContinues || host.done.isCompleted || !guest.done.isCompleted) {
       throw StateError('The PS2 LAN room did not close while keeping the host game open.');
     }
-    return 'Windows WebRTC PS2 LAN room passed with DHCP, fresh ICE credentials, resumed frames and the host game kept open.';
+    return 'Windows WebRTC PS2 LAN passed with DHCP, signaling retries, fresh ICE credentials and resumed frames.';
   } finally {
     if (!releaseHost.isCompleted) releaseHost.complete();
     await Future.wait([left.leave(), right.leave()]).timeout(const Duration(seconds: 4));

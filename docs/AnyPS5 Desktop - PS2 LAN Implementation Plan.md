@@ -275,9 +275,12 @@ if a channel-open event has yet to reach one of the players. After launch,
 a temporary WebRTC disconnect gets eight seconds to recover on the same
 connection. The launcher reports interruptions that last at least 750 ms
 and confirms recovery. After 1.5 seconds without a usable route, the
-designated offerer attempts one ICE restart for the outage. The answerer
-can ask the offerer to start it. The same room, emulated network adapter
-and data channels stay in place. Offers, answers and trickle candidates
+designated offerer attempts an ICE restart for the outage. The answerer
+can ask the offerer to start it. During recovery, signaling is retried at
+1.5-second intervals until the existing eight-second deadline. The peers
+reuse the same offer, answer and candidates if the gateway was temporarily
+unavailable. The same ICE generation, room, emulated network adapter and
+data channels stay in place. Offers, answers and trickle candidates
 for a restarted route carry a generation number. The match ignores
 already-numbered signaling from older routes and unnumbered startup
 signals after an ICE restart. Native WebRTC checks connectivity with the
@@ -305,8 +308,9 @@ keep the launcher in its closing state. The
 covers frame routing and queue bounds. The
 [match tests](../test/core/online/retro_lan_match_test.dart) exercise
 authentication, repeated signaling, temporary disconnect and traffic
-resumption, simultaneous restart requests, stale candidate rejection,
-recovery timeout, and exit during an exchange or startup.
+resumption, simultaneous restart requests, dropped restart signaling,
+replay of a rejected candidate, stale candidate rejection, recovery
+timeout, and exit during an exchange or startup.
 Set `ANYPS5_PS2_WEBRTC_LAN=1` on the existing
 [headless WebRTC probe](../tool/ps1_netplay/webrtc_loopback.dart) to run
 the [two-player room fixture](../tool/ps1_netplay/webrtc_lan_probe.dart)
@@ -315,12 +319,12 @@ matches broadcast and unicast frames byte for byte, and checks that the
 guest can leave without closing the host game, even while the host's room
 release request is pending. It injects connection-state changes and
 checks that frames resume on the same Windows WebRTC channels. An injected
-guest connection failure exercises native ICE restart and checks that the
-second SDP offer carries a different ICE username fragment before traffic
-resumes.
+guest connection failure exercises native ICE restart. The gateway fixture
+rejects the first restart request, offer and answer. The probe checks that
+the retry uses one fresh SDP offer and that traffic resumes on the same links.
 It uses synthetic NICs and a simulated room gateway. A packaged-game
-disconnect and rematch across two networks remains
-part of the release qualification below.
+disconnect and rematch across two networks remains part of the release
+qualification below.
 
 The [private DHCP service](../lib/core/online/retro_lan_dhcp.dart) supplies
 `10.231.0.101/24` to the host console and `10.231.0.102/24` to the guest.

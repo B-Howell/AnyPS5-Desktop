@@ -20,6 +20,7 @@ final class WebRtcRoomFixture {
   final _published = <String>{};
   final events = <String, void Function(String, Map<String, dynamic>)>{};
   Future<void>? hostReleaseGate;
+  bool Function(String from, String kind, Object? data)? rejectSignal;
   Map<String, dynamic>? _room;
   int signals = 0;
 
@@ -42,6 +43,7 @@ final class WebRtcRoomFixture {
           session != roomId) {
         throw StateError('Invalid directed room signal.');
       }
+      if (rejectSignal?.call(user, kind, data) ?? false) throw StateError('Fixture signaling socket unavailable.');
       signals++;
       scheduleMicrotask(
         () => events[to]?.call('game_session.signal', {

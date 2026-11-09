@@ -142,7 +142,33 @@ void main() {
     expect(network.all, hasLength(2));
 
     final beforeRestart = gateway.signals;
+    var rejectedOffer = false;
+    var rejectedAnswer = false;
+    String? rejectedCandidate;
+    gateway.rejectSignal = (from, kind, data) {
+      if (data is! Map || data['iceRoute'] != 1) return false;
+      if (kind == 'offer' && !rejectedOffer) return rejectedOffer = true;
+      if (kind == 'answer' && !rejectedAnswer) return rejectedAnswer = true;
+      if (from == WebRtcRoomFixture.host && kind == 'candidate' && rejectedCandidate == null) {
+        rejectedCandidate = data['candidate'] as String;
+        return true;
+      }
+      return false;
+    };
     final restartAnswer = Completer<void>();
+    final replayedCandidate = Completer<void>();
+    gateway.events[WebRtcRoomFixture.guest] = (type, event) {
+      final data = event['data'];
+      if (event['kind'] == 'candidate' &&
+          data is Map &&
+          data['iceRoute'] == 1 &&
+          rejectedCandidate != null &&
+          data['candidate'] == rejectedCandidate &&
+          !replayedCandidate.isCompleted) {
+        replayedCandidate.complete();
+      }
+      guest.receive(type, event);
+    };
     gateway.events[WebRtcRoomFixture.host] = (type, event) {
       final data = event['data'];
       if (event['kind'] == 'answer' && data is Map && data['iceRoute'] == 1 && !restartAnswer.isCompleted) {
@@ -156,10 +182,12 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 30));
     expect(host.closed || guest.closed, isFalse);
     expectRouteRestart = true;
-    await trafficAfterRouteRestart.future.timeout(const Duration(seconds: 4));
+    await trafficAfterRouteRestart.future.timeout(const Duration(seconds: 7));
     await restartAnswer.future.timeout(const Duration(seconds: 2));
+    await replayedCandidate.future.timeout(const Duration(seconds: 2));
     expect(gateway.signals, greaterThan(beforeRestart));
     expect(network.all, hasLength(2));
+    expect(rejectedOffer && rejectedAnswer, isTrue);
     expect(network.all.map((link) => link.routeRestarts), [1, 0]);
     final guestClient = gateway.client(WebRtcRoomFixture.guest);
     guestClient.signal(WebRtcRoomFixture.host, WebRtcRoomFixture.hostDevice, WebRtcRoomFixture.roomId, 'candidate', {

@@ -258,19 +258,22 @@ class OnlinePeerMesh implements OnlinePeerTransport {
 
   int gameRoute(int address) => _byAddress[address]?.route ?? 0;
 
-  /// Negotiate fresh ICE credentials for the route that was interrupted.
+  /// Start or replay negotiation for the route that was interrupted.
   Future<void> restartGameRoute(int address, int interruptedRoute) => _serial(() async {
     final peer = _byAddress[address];
-    if (!fixedPeers ||
-        peer == null ||
-        canSendGame(address) ||
-        peer.route != interruptedRoute ||
-        peer.routeRestartPending ||
-        peer.closed ||
-        !peer.link.gameOpen ||
-        !peer.haveRemote) {
+    if (!fixedPeers || peer == null || canSendGame(address) || peer.closed || !peer.link.gameOpen) {
       return;
     }
+    if (peer.routeRestartPending && (peer.route == interruptedRoute || peer.route == interruptedRoute + 1)) {
+      if (peer.offerer) {
+        _replayRouteDescription(peer, 'offer');
+      } else if (peer.local != null) {
+        // Ask for the offer and candidates again. A duplicate offer replays our answer.
+        _send(peer, 'renegotiate', {'iceRoute': peer.route});
+      }
+      return;
+    }
+    if (peer.route != interruptedRoute || peer.routeRestartPending || !peer.haveRemote) return;
     if (peer.offerer) {
       await _restartOffer(peer);
     } else {
@@ -371,16 +374,13 @@ class OnlinePeerMesh implements OnlinePeerTransport {
         if (!peer.offerer) return;
         if (route == peer.route + 1 && peer.haveRemote && !peer.routeRestartPending) {
           await _restartOffer(peer);
-        } else if (route == peer.route && peer.local != null) {
-          _send(peer, 'offer', peer.local);
-          for (final candidate in peer.sentCandidates) {
-            _send(peer, 'candidate', candidate);
-          }
+        } else if (route == peer.route) {
+          _replayRouteDescription(peer, 'offer');
         }
       case 'offer':
         if (peer.offerer || sdp is! String) return;
         if (route == peer.route && sdp == peer.remoteOffer && peer.local != null) {
-          _send(peer, 'answer', peer.local);
+          _replayRouteDescription(peer, 'answer');
         } else if (route == peer.route + 1 && peer.haveRemote && !peer.routeRestartPending) {
           await peer.link.setRemote({'type': 'offer', 'sdp': sdp});
           _beginRoute(peer);
@@ -407,6 +407,15 @@ class OnlinePeerMesh implements OnlinePeerTransport {
         } else if (!peer.offerer && route == peer.route + 1 && peer.nextRouteCandidates.length < 64) {
           peer.nextRouteCandidates.add(candidate);
         }
+    }
+  }
+
+  void _replayRouteDescription(_Peer peer, String kind) {
+    final local = peer.local;
+    if (local == null) return;
+    _send(peer, kind, local);
+    for (final candidate in peer.sentCandidates) {
+      _send(peer, 'candidate', candidate);
     }
   }
 
@@ -609,7 +618,15 @@ class OnlinePeerMesh implements OnlinePeerTransport {
         (kind == 'offer' || kind == 'answer' || kind == 'candidate')) {
       data = {...data, 'iceRoute': peer.route};
     }
-    context.signal(peer.userId, peer.device, sessionId, kind, data);
+    if (fixedPeers && data is Map<String, dynamic> && data.containsKey('iceRoute')) {
+      try {
+        context.signal(peer.userId, peer.device, sessionId, kind, data);
+      } on StateError {
+        // The gateway socket can be reconnecting. Replay the same route within the match deadline.
+      }
+    } else {
+      context.signal(peer.userId, peer.device, sessionId, kind, data);
+    }
   }
 
   void _deliver(Uint8List data, _Peer peer) {
