@@ -204,6 +204,29 @@ stopped with zero remaining listeners. A separate socket preflight
 confirmed that two isolated loopback addresses can each bind UDP
 3658 and exchange datagrams, which prepares the next paired run.
 
+The paired headless run started two GOTY clients on the same private
+backend with separate saves and disposable RPCN accounts. The clients
+used the same attested join-key patch and bound UDP 3658 independently
+on `127.0.0.2` and `127.0.0.3`. Both reached RPCN Ready, each account
+signed in to Refresh, and each client rendered the protected welcome
+screen. The host also displayed the guest's RPCN sign-in notification.
+Each accepted the private welcome screen, after which Refresh recorded
+two introductory level-entry requests. The actual game screens stayed
+on Loading at 50% internal resolution with software Vulkan. RPCN did
+not receive a native room creation or join request in this run.
+
+The isolated trace showed repeated DNS questions for the full game
+server URL, including the scheme, port, and path. A temporary resolver
+inside the same namespace returned NXDOMAIN, then a separate control
+returned a loopback A record for that exact question. Neither response
+cleared the loading screen during its 50-second observation window.
+The temporary resolver and address were removed, and the two games
+and backend services shut down with zero listeners. This qualifies
+paired connectivity and authenticated requests. For the next
+comparison, drive the intro to the Pod in a scratch profile using
+the single-client native-resolution control, then stage two verified
+Pod-ready profiles for a native invite and join.
+
 The Quick Menu labels the current status **RPCN connection** and
 describes game sign-in and lobby handling separately. The
 [English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
