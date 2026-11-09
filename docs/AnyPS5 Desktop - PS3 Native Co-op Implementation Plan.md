@@ -55,11 +55,35 @@ from hosting the Refresh HTTP service.
 
 The local LittleBigPlanet GOTY disc reports `BCUS98208` at `01.18`.
 The same-title data directory has no updated executable or `APP_VER`.
-The [Patchwork LittleBigPlanet profile](https://github.com/HugeSpaceship/Patchwork/blob/main/lbpdefs/lbp1.yaml)
-lists version `01.30` and does not list `BCUS98208`. Leave this disc's
-online option disabled until the exact updated executable has a
-provider-approved profile. Keep title and revision checks generic so
-other supported PS3 titles can use the same native-online launch path.
+The PlayStation title-update manifests advertise `01.30` for both the GOTY
+disc and the standard US disc `BCUS98148`. An isolated, static comparison
+confirmed that both update packages have the expected title ID and `01.30`
+in their own `PARAM.SFO`. The packaged SELF files differ, but RPCS3's
+decrypter produced byte-identical PPU ELFs. Both matched the executable hash
+in the [pinned Patchwork profile](https://github.com/HugeSpaceship/Patchwork/blob/452690c29cac8dd4250d488c13008ae06f80d358/lbpdefs/lbp1.yaml).
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `BCUS98208` update 01.30 PKG | `a3dbaa8e9efb2dc986181202429dd1d3d6d2dbf5c637ff2a232535720e63b925` |
+| `BCUS98148` update 01.30 PKG | `e3cb37312a3ab234db277bf8a293cc39fcc1e81f587d20f6474e7be85246bbd7` |
+| Decrypted PPU ELF from either package | `686ad6a29d92cf71e7eca9a18765018580a0a3baa89e2f6b24c76c1a98c70ab9` |
+
+The comparison checked package size and the manifest SHA-1 against the
+package body and footer, then read only `PARAM.SFO` and `USRDIR/EBOOT.BIN`.
+It ran the pinned core's `decrypt_self` in a network-isolated process without
+starting the guest. The PPU hash was computed from ELF program headers and
+loadable segment data using the [pinned RPCS3 algorithm](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/rpcs3/Emu/Cell/PPUModule.cpp#L2346-L2420).
+The manifest endpoint did not validate against the system TLS trust store
+and the package URLs used HTTP. The recorded hashes identify the inspected
+samples and do not establish download authenticity for a product installer.
+
+Patchwork's generated RPCS3 patch also filters by title ID, and its list
+includes `BCUS98148` but omits `BCUS98208`.
+[Patch generator](https://github.com/HugeSpaceship/Patchwork/blob/452690c29cac8dd4250d488c13008ae06f80d358/tools/patch_generator/rpcs3_patch/helpers.go#L69-L89)
+The matching ELF establishes a candidate for provider qualification. Keep
+the GOTY title ID and its own update data. Enable online only after verifying
+that the provider-approved protection loads for that title ID and the
+isolated native lobby test passes.
 
 ## 2. Make the embedded profile honor the selected settings
 
