@@ -4021,6 +4021,7 @@ class AppModel extends ChangeNotifier {
     Ps1NetplayProfile profile, {
     required String bios,
     bool requireHandoff = false,
+    Ps1NetplayExecution execution = Ps1NetplayExecution.standard,
   }) async {
     final disc = game.retro;
     if (disc == null || disc.platform != RetroPlatform.ps1) {
@@ -4029,16 +4030,22 @@ class AppModel extends ChangeNotifier {
     final managed = _managedRetro;
     final override = retroCoreOverride;
     var core = p.join(override ?? managed.root, ManagedRetro.libraryName(RetroPlatform.ps1));
-    if (requireHandoff && override == null) {
+    if ((requireHandoff || execution == Ps1NetplayExecution.ordinaryHandoff) && override == null) {
       try {
-        core = await managed.ensurePs1NetplayCore();
+        core = await managed.ensurePs1NetplayCore(execution: execution);
       } on FormatException {
         throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
       } on FileSystemException {
         throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
       }
     }
-    final media = await Ps1NetplayMedia.verify(profile: profile, disc: disc.path, bios: bios, core: core);
+    final media = await Ps1NetplayMedia.verify(
+      profile: profile,
+      disc: disc.path,
+      bios: bios,
+      core: core,
+      execution: execution,
+    );
     if (requireHandoff && !media.supportsHandoff) {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
     }
@@ -4063,7 +4070,9 @@ class AppModel extends ChangeNotifier {
 
   Future<void> playStagedPs1(Game game, Ps1NetplayMedia media) {
     final disc = game.retro;
-    if (disc == null || !media.supportsHandoff) return Future.value();
+    if (disc == null || !media.supportsHandoff || media.execution != Ps1NetplayExecution.standard) {
+      return Future.value();
+    }
     closeOverlay();
     return _playRetro(game, disc, netplay: (media: media, seat: 0), localNetplayStaging: true);
   }

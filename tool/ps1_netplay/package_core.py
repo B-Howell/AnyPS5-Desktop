@@ -5,18 +5,26 @@ import hashlib
 from pathlib import Path
 from zipfile import ZipFile, ZipInfo
 
+PACKAGES = {
+    "staged": ("swanstation-netplay.zip", "5ef8eba64119146e405a90c5e9243a249c9d57c405fd75415fb4234d5b6080eb"),
+    "ordinary": ("swanstation-netplay-ordinary.zip",
+                 "d1619715fe11db0faa280890c741aff876fd5fd682f3cd00fbcafaa04732b7ac"),
+}
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("core", type=Path)
     parser.add_argument("packages", type=Path)
+    parser.add_argument("--profile", choices=PACKAGES, default="staged")
     args = parser.parse_args()
 
     data = args.core.read_bytes()
-    if hashlib.sha256(data).hexdigest() != "5ef8eba64119146e405a90c5e9243a249c9d57c405fd75415fb4234d5b6080eb":
+    name, digest = PACKAGES[args.profile]
+    if hashlib.sha256(data).hexdigest() != digest:
         parser.error("The DLL is not the qualified PS1 checkpoint core.")
     args.packages.mkdir(parents=True, exist_ok=True)
-    output = args.packages / "swanstation-netplay.zip"
+    output = args.packages / name
     entry = ZipInfo("swanstation_libretro.dll")
     entry.create_system = 3
     entry.external_attr = 0o100644 << 16

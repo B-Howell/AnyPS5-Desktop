@@ -22,6 +22,7 @@ class ManagedRetro {
   static const _patchedPs2Library = '801af1211407964a4851839c3f4e90607f18353671dd1e427f56e12201d712a4';
   static final _ps2LanChecks = <String, ({FileStat stat, String digest, bool valid})>{};
   static const _ps1NetplayArchive = '86ab673a1a1b4260dc73256955d600dd64a5ee57e78e17696ae3504791a6633e';
+  static const _ps1OrdinaryHandoffArchive = 'df69b0ad16984b34240b875fa14bcb6a742daaaf9bbb5815e448510b810de036';
   // This package persists native SPU objects across launches. Keep the old
   // core out of the default pins so a launcher build with the matching ZIP
   // upgrades an already installed legacy core before booting a PS3 title.
@@ -95,10 +96,19 @@ class ManagedRetro {
   }
 
   /// Checkpoint handoff has its own core. Never upgrade the offline PS1 DLL.
-  Future<String> ensurePs1NetplayCore() async {
+  Future<String> ensurePs1NetplayCore({Ps1NetplayExecution execution = Ps1NetplayExecution.standard}) async {
+    final ordinary = execution == Ps1NetplayExecution.ordinaryHandoff;
+    final (directory, archiveName, archivePin, corePin) = ordinary
+        ? (
+            'PS1-Netplay-Ordinary',
+            'swanstation-netplay-ordinary.zip',
+            _ps1OrdinaryHandoffArchive,
+            Ps1NetplayMedia.ordinaryHandoffCorePin,
+          )
+        : ('PS1-Netplay', 'swanstation-netplay.zip', _ps1NetplayArchive, Ps1NetplayMedia.portableCorePin);
     final home = await Directory(root).create(recursive: true);
     final resolvedHome = await home.resolveSymbolicLinks();
-    final target = Directory(p.join(resolvedHome, 'PS1-Netplay'));
+    final target = Directory(p.join(resolvedHome, directory));
     final name = libraryName(RetroPlatform.ps1);
     final installed = File(p.join(target.path, name));
     if (await target.exists() && !p.equals(await target.resolveSymbolicLinks(), target.path)) {
@@ -107,16 +117,16 @@ class ManagedRetro {
     Future<bool> pinned(File file) async =>
         await file.exists() &&
         p.equals(await file.resolveSymbolicLinks(), file.path) &&
-        await AssetDownload.sha256Of(file.path) == Ps1NetplayMedia.portableCorePin;
+        await AssetDownload.sha256Of(file.path) == corePin;
     if (await pinned(installed)) return installed.path;
     final legacy = File(p.join(resolvedHome, name));
-    if (await pinned(legacy)) return legacy.path;
+    if (!ordinary && await pinned(legacy)) return legacy.path;
 
     final packages = packageDirectory;
     if (packages == null || !p.isAbsolute(packages)) {
       throw const FormatException('The PS1 netplay core package is missing.');
     }
-    final source = File(p.join(packages, 'swanstation-netplay.zip'));
+    final source = File(p.join(packages, archiveName));
     final info = await source.stat();
     if (info.type != FileSystemEntityType.file || info.size <= 0 || info.size > 32 * 1024 * 1024) {
       throw const FormatException('The PS1 netplay core package is missing or has an unexpected size.');
@@ -125,7 +135,7 @@ class ManagedRetro {
     try {
       final archive = File(p.join(staging.path, 'core.zip'));
       await source.openRead(0, info.size).pipe(archive.openWrite());
-      if (await AssetDownload.sha256Of(archive.path) != _ps1NetplayArchive) {
+      if (await AssetDownload.sha256Of(archive.path) != archivePin) {
         throw const FormatException('The PS1 netplay core package did not pass verification.');
       }
       await target.create();

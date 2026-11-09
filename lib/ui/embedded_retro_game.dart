@@ -163,6 +163,8 @@ class EmbeddedRetroGame extends RunningGame {
       } else ...{
         'ps1NetplaySeat': netplay.seat,
         'ps1NetplayBios': netplay.media.bios,
+        if (netplay.media.execution == Ps1NetplayExecution.ordinaryHandoff)
+          'ps1NetplayCpu': netplay.media.execution.cpu,
         if (localNetplayStaging) 'ps1LocalStaging': true,
       },
     });

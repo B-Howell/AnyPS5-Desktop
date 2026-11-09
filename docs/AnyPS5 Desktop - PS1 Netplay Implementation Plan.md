@@ -380,6 +380,28 @@ pair also passed its 120-frame smoke test. Logs are in the local
 initial synchronization across renderers. A full hardware-origin race
 and the launcher invitation lifecycle still need testing.
 
+The [package tool](../tool/ps1_netplay/package_core.py) builds the separate
+`swanstation-netplay-ordinary.zip` with `--profile ordinary`.
+The [managed installer](../lib/core/managed_retro.dart) verifies the ZIP
+and DLL, then installs the match core under `Emulators/PS1-Netplay-Ordinary`.
+The [media verifier](../lib/core/online/ps1_netplay_media.dart) binds that
+DLL and the Recompiler profile to the match identity. The
+[embedded launch](../lib/ui/embedded_retro_game.dart) passes the CPU choice
+to the [native worker](../windows/runner/retro_core_host.cpp), which accepts
+it only for an isolated match seat using a core with the blank-card export.
+The profile is distinct from the existing Cached Interpreter profile.
+The installation targets the match core only. The invite flow still needs
+to detect a compatible source core and request the new profile on both ends.
+
+The optional test in [managed retro](../test/core/managed_retro_test.dart)
+accepts a local fixture file via `ANYPS5_TEST_PS1_ORDINARY_FIXTURE`. Its
+JSON array contains the package directory, a verified CTR CUE and the BIOS.
+The Windows run installed and reverified the exact package in a fresh
+profile, rejected using its DLL under the standard profile and preserved
+both offline and staged core fixtures. The native probe restored with
+the new core and refused the Recompiler profile with the preceding core.
+Local receipts are in `ps1-ordinary-package-fd8d600`.
+
 ### Windows development checkpoint
 
 Set `ANYPS5_PS1_NETPLAY=1` on an experimental Windows x64 build to invite

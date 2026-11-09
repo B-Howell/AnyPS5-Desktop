@@ -10,6 +10,23 @@ import 'retro_online_rooms.dart';
 
 enum Ps1NetplayMediaProblem { disc, bios, core }
 
+enum Ps1NetplayExecution {
+  standard('CachedInterpreter'),
+  ordinaryHandoff('Recompiler');
+
+  const Ps1NetplayExecution(this.cpu);
+  final String cpu;
+
+  String get digest => sha256
+      .convert(utf8.encode('Software;1x;$cpu;block-linking=0;gpu-thread=0;fast-boot=0;two-digital-pads;delay=2'))
+      .toString();
+
+  Set<String> get coreDigests => switch (this) {
+    standard => const {Ps1NetplayMedia.corePin, Ps1NetplayMedia.portableCorePin},
+    ordinaryHandoff => const {Ps1NetplayMedia.ordinaryHandoffCorePin},
+  };
+}
+
 /// Room routing uses the original disc's boot serial. Peers separately verify
 /// their full disc digests, firmware, core and deterministic settings.
 final class Ps1NetplayProfile {
@@ -33,18 +50,21 @@ final class Ps1NetplayMediaFailure implements Exception {
 /// The exact local media and deterministic PS1 settings.
 /// Paths stay on this computer. Only [identity] is sent to the other player.
 final class Ps1NetplayMedia {
-  const Ps1NetplayMedia._(this.disc, this.bios, this.core, this.identity);
+  const Ps1NetplayMedia._(this.disc, this.bios, this.core, this.identity, this.execution);
 
   static const biosPin = '71af94d1e47a68c11e8fdb9f8368040601514a42a5a399cda48c7d3bff1e99d3';
   static const corePin = '1aaa621dab9f53b130ac29d17e9a12ea4c0df975d4b02b53faec3b52c717fd12';
   static const portableCorePin = '5ef8eba64119146e405a90c5e9243a249c9d57c405fd75415fb4234d5b6080eb';
+  static const ordinaryHandoffCorePin = 'd1619715fe11db0faa280890c741aff876fd5fd682f3cd00fbcafaa04732b7ac';
 
   final String disc;
   final String bios;
   final String core;
   final Ps1NetplayIdentity identity;
+  final Ps1NetplayExecution execution;
   String get discDigest => identity.toJson()['disc'] as String;
-  bool get supportsHandoff => identity.toJson()['core'] == portableCorePin;
+  bool get supportsHandoff =>
+      execution == Ps1NetplayExecution.ordinaryHandoff || identity.toJson()['core'] == portableCorePin;
 
   static final _file = RegExp(r'^FILE\s+(?:"([^"]+)"|(\S+))\s+(\S+)\s*$', caseSensitive: false);
 
@@ -53,6 +73,7 @@ final class Ps1NetplayMedia {
     required String disc,
     required String bios,
     required String core,
+    Ps1NetplayExecution execution = Ps1NetplayExecution.standard,
   }) async {
     final String cue;
     try {
@@ -64,7 +85,7 @@ final class Ps1NetplayMedia {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
     }
     final firmware = await _verify(Ps1NetplayMediaProblem.bios, {biosPin}, () => _hashFile(bios));
-    final library = await _verify(Ps1NetplayMediaProblem.core, {corePin, portableCorePin}, () => _hashFile(core));
+    final library = await _verify(Ps1NetplayMediaProblem.core, execution.coreDigests, () => _hashFile(core));
     return Ps1NetplayMedia._(
       p.absolute(disc),
       p.absolute(bios),
@@ -75,11 +96,10 @@ final class Ps1NetplayMedia {
         'disc': cue,
         'bios': firmware,
         'core': library,
-        'profile': _hashText(
-          'Software;1x;CachedInterpreter;block-linking=0;gpu-thread=0;fast-boot=0;two-digital-pads;delay=2',
-        ),
+        'profile': execution.digest,
         'card': _hashText('isolated-blank-swanstation-card-v1'),
       })!,
+      execution,
     );
   }
 

@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/managed_retro.dart';
+import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
 import 'package:anyps5_desktop/core/toolkit_download.dart';
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -35,12 +37,54 @@ void main() {
     final offline = File(p.join(root.path, 'swanstation_libretro.dll'))..writeAsBytesSync([4, 3, 2, 1]);
     final packages = Directory(p.join(root.path, 'packages'))..createSync();
     File(p.join(packages.path, 'swanstation-netplay.zip')).writeAsBytesSync([1, 2, 3, 4]);
+    File(p.join(packages.path, 'swanstation-netplay-ordinary.zip')).writeAsBytesSync([4, 3, 2, 1]);
     final managed = ManagedRetro(root.path, packageDirectory: packages.path);
 
     await expectLater(managed.ensurePs1NetplayCore(), throwsFormatException);
+    await expectLater(
+      managed.ensurePs1NetplayCore(execution: Ps1NetplayExecution.ordinaryHandoff),
+      throwsFormatException,
+    );
     expect(offline.readAsBytesSync(), [4, 3, 2, 1]);
     expect(File(p.join(root.path, 'PS1-Netplay', 'swanstation_libretro.dll')).existsSync(), isFalse);
+    expect(Directory(p.join(root.path, 'PS1-Netplay-Ordinary')).existsSync(), isFalse);
   });
+
+  final ordinaryFixture = Platform.environment['ANYPS5_TEST_PS1_ORDINARY_FIXTURE'];
+  test('installs the ordinary handoff package separately and verifies its match identity', () async {
+    final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
+    final root = await Directory.systemTemp.createTemp('anyps5-ordinary-core-');
+    addTearDown(() => root.delete(recursive: true));
+    final name = ManagedRetro.libraryName(RetroPlatform.ps1);
+    final offline = File(p.join(root.path, name))..writeAsBytesSync([1]);
+    final staged = File(p.join(root.path, 'PS1-Netplay', name))
+      ..createSync(recursive: true)
+      ..writeAsBytesSync([2]);
+    const execution = Ps1NetplayExecution.ordinaryHandoff;
+    final managed = ManagedRetro(root.path, packageDirectory: packages);
+    final installed = await managed.ensurePs1NetplayCore(execution: execution);
+    expect(p.basename(p.dirname(installed)), 'PS1-Netplay-Ordinary');
+    expect(await ManagedRetro(root.path).ensurePs1NetplayCore(execution: execution), installed);
+    final profile = Ps1NetplayProfile.tryRead('SCUS94426')!;
+    final media = await Ps1NetplayMedia.verify(
+      profile: profile,
+      disc: disc,
+      bios: bios,
+      core: installed,
+      execution: execution,
+    );
+    expect(media.execution, execution);
+    expect(media.identity.toJson()['profile'], execution.digest);
+    expect(media.identity.toJson()['core'], Ps1NetplayMedia.ordinaryHandoffCorePin);
+    await expectLater(
+      Ps1NetplayMedia.verify(profile: profile, disc: disc, bios: bios, core: installed),
+      throwsA(
+        isA<Ps1NetplayMediaFailure>().having((failure) => failure.problem, 'problem', Ps1NetplayMediaProblem.core),
+      ),
+    );
+    expect(offline.readAsBytesSync(), [1]);
+    expect(staged.readAsBytesSync(), [2]);
+  }, skip: ordinaryFixture == null ? 'Requires the local qualified package, disc and BIOS.' : false);
 
   test('PS2 LAN verifies the DEV9 export and installs separately from the offline core', () async {
     final root = Directory.systemTemp.createTempSync('anyps5-managed-');

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -16,6 +17,18 @@ void main() {
   });
 
   tearDown(() => folder.delete(recursive: true));
+
+  test('ordinary handoff pins the Recompiler profile and its own core', () {
+    const standard = Ps1NetplayExecution.standard;
+    const ordinary = Ps1NetplayExecution.ordinaryHandoff;
+    const priorProfile =
+        'Software;1x;CachedInterpreter;block-linking=0;gpu-thread=0;fast-boot=0;two-digital-pads;delay=2';
+    expect(standard.digest, sha256.convert(priorProfile.codeUnits).toString());
+    expect(ordinary.digest, isNot(standard.digest));
+    expect(ordinary.cpu, 'Recompiler');
+    expect(ordinary.coreDigests, {Ps1NetplayMedia.ordinaryHandoffCorePin});
+    expect(standard.coreDigests, {Ps1NetplayMedia.corePin, Ps1NetplayMedia.portableCorePin});
+  });
 
   test('identifies any data disc from its boot serial without a manifest or a known title', () async {
     for (final (mode, stride, dataOffset, serial) in [

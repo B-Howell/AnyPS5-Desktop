@@ -1581,6 +1581,9 @@ class RetroCoreSession {
       if (!dll) throw std::runtime_error("Could not load the configured emulator core");
       if (Symbol<unsigned (*)()>(dll, "retro_api_version")() != 1)
         throw std::runtime_error("Unsupported emulator core API");
+      if (match_cpu_ == Ps1MatchCpu::kRecompiler &&
+          !GetProcAddress(dll, "retro_anyps5_export_blank_card_checkpoint_v1"))
+        throw std::runtime_error("The Recompiler match requires the blank-card checkpoint core.");
       if (ps3_) SelectPs3NetworkPolicy(dll, online_, online_.has_value());
       using ReadPs3ProviderStatus = int32_t (*)();
       ReadPs3ProviderStatus read_provider_status = nullptr;
@@ -1964,6 +1967,13 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
         }
         netplay_seat = static_cast<unsigned>(*number);
       }
+      auto match_cpu = Ps1MatchCpu::kCachedInterpreter;
+      if (const auto cpu = fields->find(Value("ps1NetplayCpu")); cpu != fields->end()) {
+        const auto* name = std::get_if<std::string>(&cpu->second);
+        if (!netplay_seat || (local_staging && *local_staging) || !name || *name != "Recompiler")
+          return result->Error("argument", "The Recompiler profile requires an isolated PS1 match seat.");
+        match_cpu = Ps1MatchCpu::kRecompiler;
+      }
       if (const auto lan = fields->find(Value("ps2LanMac")); lan != fields->end()) {
         const auto* bytes = std::get_if<CheckpointBytes>(&lan->second);
         Ps2VirtualLan::Mac mac{};
@@ -2038,7 +2048,8 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
       session_ = std::make_shared<RetroCoreSession>(textures_, *core, *disc, *system, *saves,
                                                    resolution ? *resolution : "", std::move(graphics),
                                                    netplay_seat, netplay_bios ? *netplay_bios : "",
-                                                   local_staging && *local_staging, lan_mac, std::move(online));
+                                                   local_staging && *local_staging, lan_mac, std::move(online),
+                                                   std::vector<std::string>{}, match_cpu);
       if (!session_->Start()) throw std::runtime_error("Could not register the game surface");
       result->Success(Value(session_->texture_id()));
     } catch (const std::exception& failure) {
