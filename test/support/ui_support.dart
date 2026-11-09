@@ -48,6 +48,12 @@ import 'fake_voice.dart';
 import 'fixtures.dart';
 import 'trophy_fixture.dart';
 
+/// Allows launcher tests to use a fake gateway on a local HTTP socket.
+class LoopbackTestBinding extends AutomatedTestWidgetsFlutterBinding {
+  @override
+  bool get overrideHttpClient => false;
+}
+
 bool _fontsLoaded = false;
 
 /// The app's font and the Material icons, so golden images show real text instead of boxes.

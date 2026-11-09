@@ -1,12 +1,15 @@
 part of 'together_model.dart';
 
 final class _Ps2LanAttempt {
+  final cancellation = Completer<void>();
   RetroLanMatch? match;
-  bool cancelled = false;
   bool playing = false;
 
+  bool get cancelled => cancellation.isCompleted;
+
   void cancel() {
-    cancelled = true;
+    if (cancelled) return;
+    cancellation.complete();
     unawaited(match?.leave());
   }
 }
@@ -73,21 +76,22 @@ extension TogetherPs2Lan on TogetherModel {
   List<PanelRow> ps2LanRows() {
     final attempt = _ps2Lan;
     if (attempt == null || (attempt.match?.closed == true && !attempt.cancelled)) return const [];
+    if (attempt.cancelled) {
+      return [PanelRow(id: 'ps2-lan-status', title: T.text('ps2LanClosing'), kind: const InfoRow(''))];
+    }
     return [
       PanelRow(
         id: 'ps2-lan-status',
         title: T.text(attempt.playing ? 'ps2LanLeave' : 'ps2LanCancel'),
         detail: T.text(
-          attempt.cancelled
-              ? 'ps2LanClosing'
-              : attempt.playing
+          attempt.playing
               ? 'ps2LanUseGameMenu'
               : attempt.match == null
               ? 'ps2LanVerifying'
               : 'ps2LanConnecting',
         ),
         kind: ActionRow(() {
-          if (attempt.match?.closed == true) return;
+          if (!identical(_ps2Lan, attempt) || attempt.match?.closed == true || attempt.cancelled) return;
           attempt.cancel();
           app.refresh();
         }, destructive: true),
@@ -158,7 +162,10 @@ extension TogetherPs2Lan on TogetherModel {
     try {
       final expected = roomId == null
           ? null
-          : await rooms().invitedDiscDigest(roomId).timeout(const Duration(seconds: 12));
+          : await Future.any<String?>([
+              rooms().invitedDiscDigest(roomId).timeout(const Duration(seconds: 12)),
+              attempt.cancellation.future.then((_) => null),
+            ]);
       if (!active()) return;
       if (roomId != null && expected == null) return app.show(T.text('ps2LanDisc'));
       for (final game in candidates) {

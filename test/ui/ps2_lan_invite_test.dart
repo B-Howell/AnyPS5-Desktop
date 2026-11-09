@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 
@@ -17,11 +18,13 @@ import '../support/fixtures.dart' show ps2LanFixtureDll, writePs2IdentityIso;
 import '../support/ui_support.dart';
 
 void main() {
-  Future<void> until(bool Function() condition) async {
+  LoopbackTestBinding();
+
+  Future<void> until(bool Function() condition, {String? reason}) async {
     for (var tries = 0; tries < 300 && !condition(); tries++) {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
-    expect(condition(), isTrue);
+    expect(condition(), isTrue, reason: reason);
   }
 
   test('a PS2 LAN invite opens missing setup and Back restores the same invite', () async {
@@ -107,7 +110,11 @@ void main() {
     expect(lan.overlay, Layer.friends);
   }, skip: Abi.current() != Abi.windowsX64);
 
-  Future<void> verifyBundledSetup({required bool expired, bool configureCard = false}) async {
+  Future<void> verifyBundledSetup({
+    required bool expired,
+    bool configureCard = false,
+    bool cancelLookup = false,
+  }) async {
     final server = await FakeTogether.start();
     addTearDown(server.close);
     final environment = {'ANYPS5_PS2_LAN': '1'};
@@ -218,7 +225,6 @@ void main() {
     expect(offline.readAsBytesSync(), [1, 2, 3]);
     expect(server.callsTo('game-sessions/$roomId'), isEmpty);
     if (configureCard) {
-      TestWidgetsFlutterBinding.ensureInitialized();
       const channel = MethodChannel('anyps5/retro_core');
       final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       var stopped = false;
@@ -252,6 +258,45 @@ void main() {
       expect(model.running, isNull);
       return;
     }
+    if (cancelLookup) {
+      const roomPath = 'game-sessions/$roomId';
+      final answer = server.answers.remove('GET $roomPath')!;
+      final requested = Completer<void>();
+      final reply = Completer<void>();
+      server.handlers.add((call) async {
+        if (call.method != 'GET' || call.path != roomPath) return null;
+        if (!requested.isCompleted) requested.complete();
+        await reply.future;
+        return answer;
+      });
+      addTearDown(() {
+        if (!reply.isCompleted) reply.complete();
+      });
+      press(continueId);
+      await requested.future.timeout(const Duration(seconds: 5));
+      press('ps2-lan-status');
+      await until(
+        () => !model.panelCategories().single.rows.any((row) => row.id == 'ps2-lan-status'),
+        reason: 'Canceled lookup must release the attempt before the first room reply.',
+      );
+      expect(server.callsTo('$roomPath/join'), isEmpty);
+      expect(model.together.hub.games.invites.single.sessionId, roomId);
+
+      server.answers['GET $roomPath'] = answer;
+      press('game-accept-$roomId');
+      await until(
+        () => server.callsTo('$roomPath/join', method: 'POST').length == 1,
+        reason: 'Retry must reach room admission while the old reply is withheld.',
+      );
+      reply.complete();
+      await until(
+        () => !model.panelCategories().single.rows.any((row) => row.id == 'ps2-lan-status'),
+        reason: 'The fixture rejects retry admission, so the attempt must finish.',
+      );
+      expect(server.callsTo('$roomPath/join', method: 'POST'), hasLength(1));
+      expect(model.running, isNull);
+      return;
+    }
     press(continueId);
     await until(() => server.callsTo('game-sessions/$roomId/join', method: 'POST').isNotEmpty);
     expect(model.overlay, Layer.friends);
@@ -271,6 +316,11 @@ void main() {
   test(
     'closing the local PS2 card setup restores the pending LAN invite',
     () => verifyBundledSetup(expired: false, configureCard: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'canceling a stalled PS2 LAN lookup releases the invite for retry before the old reply',
+    () => verifyBundledSetup(expired: false, cancelLookup: true),
     skip: Abi.current() != Abi.windowsX64,
   );
 }

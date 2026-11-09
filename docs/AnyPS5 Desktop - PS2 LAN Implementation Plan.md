@@ -370,6 +370,11 @@ Closing the game releases the lock and retains the card.
 
 The invite and accept actions show which prerequisite is missing. An
 incoming invite first looks up the serial and revision in the library.
+Cancel releases the launcher while a read-only room lookup is still
+pending. Players can retry the same invite before the old reply arrives.
+That reply cannot join the room or start a game. Once room admission
+has begun, Cancel still waits for owned room and emulator cleanup. The
+Friends panel shows Closing during that cleanup.
 The launcher verifies the ISO itself when joining. If the LAN core or
 BIOS is missing, the action opens the existing setup page. **Back**
 returns to the same friend or invite without creating, joining or

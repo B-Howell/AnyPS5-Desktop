@@ -27,7 +27,7 @@ import '../support/online_fakes.dart' show FakeGameNetwork, eventually;
 import '../support/ui_support.dart';
 
 void main() {
-  _LoopbackBinding();
+  LoopbackTestBinding();
   test('ordinary host imports a new epoch and restores the original after stopping the match', () async {
     final events = <String>[];
     final state = Uint8List.fromList([1, 2, 3]);
@@ -799,11 +799,6 @@ class _FixtureMatch implements Ps1NetplayRunner {
     local: <Ps1NetplayFrame>[],
     fingerprints: <int, String>{},
   );
-}
-
-class _LoopbackBinding extends AutomatedTestWidgetsFlutterBinding {
-  @override
-  bool get overrideHttpClient => false;
 }
 
 Future<void> signIn(TogetherModel together) async {
