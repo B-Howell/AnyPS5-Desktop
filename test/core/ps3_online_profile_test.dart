@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:anyps5_desktop/core/controllers/pad_info.dart';
 import 'package:anyps5_desktop/core/game_library.dart';
@@ -11,32 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-Uint8List _sfo(Map<String, String> fields) {
-  final keys = fields.keys.map((key) => [...key.codeUnits, 0]).toList();
-  final values = fields.values.map((value) => [...value.codeUnits, 0]).toList();
-  final keyStart = 20 + fields.length * 16;
-  final valueStart = keyStart + keys.fold<int>(0, (size, key) => size + key.length);
-  final data = Uint8List(valueStart + values.fold<int>(0, (size, value) => size + value.length));
-  final header = ByteData.sublistView(data);
-  header.setUint32(0, 0x00505346);
-  header.setUint32(8, keyStart, Endian.little);
-  header.setUint32(12, valueStart, Endian.little);
-  header.setUint32(16, fields.length, Endian.little);
-  var key = 0;
-  var value = 0;
-  for (var i = 0; i < fields.length; i++) {
-    final entry = 20 + i * 16;
-    header.setUint16(entry, key, Endian.little);
-    header.setUint16(entry + 2, 0x0204, Endian.little);
-    header.setUint32(entry + 4, values[i].length, Endian.little);
-    header.setUint32(entry + 12, value, Endian.little);
-    data.setAll(keyStart + key, keys[i]);
-    data.setAll(valueStart + value, values[i]);
-    key += keys[i].length;
-    value += values[i].length;
-  }
-  return data;
-}
+import '../support/fixtures.dart' show ps3FixtureSfo;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -57,8 +31,11 @@ void main() {
     online = (Directory(p.join(root.path, 'online'))..createSync()).path;
     offline = (Directory(p.join(root.path, 'offline'))..createSync()).path;
     write('disc/PS3_GAME/USRDIR/EBOOT.BIN', [0]);
-    write('disc/PS3_GAME/PARAM.SFO', _sfo({'TITLE_ID': 'ABCD12345', 'APP_VER': '01.00'}));
-    write('online/system/rpcs3/dev_hdd0/game/ABCD12345/PARAM.SFO', _sfo({'TITLE_ID': 'ABCD12345', 'APP_VER': '01.30'}));
+    write('disc/PS3_GAME/PARAM.SFO', ps3FixtureSfo({'TITLE_ID': 'ABCD12345', 'APP_VER': '01.00'}));
+    write(
+      'online/system/rpcs3/dev_hdd0/game/ABCD12345/PARAM.SFO',
+      ps3FixtureSfo({'TITLE_ID': 'ABCD12345', 'APP_VER': '01.30'}),
+    );
     write('online/system/rpcs3/dev_hdd0/game/ABCD12345/USRDIR/EBOOT.BIN', [2]);
     write('online/system/rpcs3/dev_hdd0/plugins/provider.sprx', [3]);
     write(accountConfig, account.codeUnits);
@@ -101,6 +78,18 @@ void main() {
     expect(profile.saveRoot, p.join(canonical, 'saves'));
     expect(profile.disc, disc);
     expect(profile.core, core);
+  });
+
+  test('a listed release and detected update still require a verified profile', () {
+    final report = Ps3OnlineReadiness.inspect(disc: disc, managedSystem: p.join(online, 'system'), releases: [release]);
+    expect(report.state, Ps3OnlineReadinessState.profileRequired);
+    expect(report.discVersion, '01.00');
+    expect(report.managedUpdate, '01.30');
+    write(
+      'online/system/rpcs3/dev_hdd0/game/ABCD12345/PARAM.SFO',
+      ps3FixtureSfo({'TITLE_ID': 'WXYZ12345', 'APP_VER': '01.30'}),
+    );
+    expect(Ps3OnlineReadiness.inspect(disc: disc, managedSystem: p.join(online, 'system')).managedUpdate, isNull);
   });
 
   test('a verified online launch sends only policy values and isolated storage', () async {

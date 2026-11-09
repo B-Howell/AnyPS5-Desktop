@@ -125,6 +125,19 @@ Then qualify a real private level using the provider's approved client setup.
 
 ## 3. Reuse party invites and hand off to the game
 
+On Windows x64, **Game Settings → Online Readiness** opens a read-only
+[PS3 readiness page](../lib/ui/ps3_online_readiness_page.dart). It reads the
+disc ID and application version from the extracted disc and separately
+detects a same-title update with an executable in managed RPCS3 storage.
+**Check Again** refreshes those facts without restarting the launcher.
+The page distinguishes an unreadable disc, a title missing from the
+reviewed release catalog, and a listed title that still needs a verified
+online profile. Version detection does not authenticate the update. The
+page creates no profile and opens no network connection. The release
+catalog remains empty while the provider and live-game gates are open.
+The [game settings test](../test/ui/ps3_settings_test.dart) covers the
+entry, refreshed update, missing disc, and return to the same game.
+
 1. Use the shared lifecycle in the [multiplayer design](<AnyPS5 Desktop - Emulator Multiplayer Design.md>). Advertise a verified `ps3-native` mode with title/update, provider profile version and compatibility policy. The party service handles admission to the AnyTogether session. The game and provider decide admission to the native lobby.
 2. **Host** opens an AnyTogether offer and launches the configured local title. **Join** checks the guest's setup and launches it into the same supported provider flow. In v1 guide both players through the game's join steps. Use a supported provider join token or launch interface only if confirmed. Keep credentials and private room keys outside the general party metadata.
 3. Keep launcher progress distinct from game state. Report local preflight and launch readiness from observed facts. A player joining the AnyTogether party is not proof they joined the game. Verify native room membership through supported evidence or a player confirmation. Test unavailable provider, sign-in refusal, mismatched patch, stale invite, cancellation and host exit with fakes. Verify PS5 still follows the [existing Play Together path](../lib/ui/together_play.dart).

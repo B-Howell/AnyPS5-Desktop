@@ -79,6 +79,7 @@ import '../core/online/ps2_lan_profile.dart';
 import '../core/online/retro_lan_bridge.dart';
 import '../core/online/retro_lan_dhcp.dart';
 import '../core/online/retro_lan_match.dart';
+import '../core/ps3_online_profile.dart';
 import '../core/together/voice_mesh.dart';
 import '../core/themes/theme_design.dart';
 import '../core/themes/theme_library.dart';
@@ -117,6 +118,7 @@ import 'update_model.dart';
 import 'trophy_card.dart';
 
 part 'emulator_menu.dart';
+part 'ps3_online_readiness_page.dart';
 part 'retro_home_folders.dart';
 part 'retro_restart_workflow.dart';
 part 'profiles_model.dart';
@@ -5884,6 +5886,7 @@ class AppModel extends ChangeNotifier {
             title: game.name,
             rows: [
               ..._gameRows(game),
+              if (managedRetroAvailable && game.retro?.platform == RetroPlatform.ps3) _ps3OnlineReadinessRow(game),
               if (game.retro case final RetroDisc disc)
                 PanelRow(
                   id: 'game-emulators',

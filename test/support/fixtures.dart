@@ -4,6 +4,34 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+/// Builds a small PARAM.SFO with string metadata for PS3 tests.
+Uint8List ps3FixtureSfo(Map<String, String> fields) {
+  final keys = fields.keys.map((key) => [...key.codeUnits, 0]).toList();
+  final values = fields.values.map((value) => [...value.codeUnits, 0]).toList();
+  final keyStart = 20 + fields.length * 16;
+  final valueStart = keyStart + keys.fold<int>(0, (size, key) => size + key.length);
+  final data = Uint8List(valueStart + values.fold<int>(0, (size, value) => size + value.length));
+  final header = ByteData.sublistView(data);
+  header.setUint32(0, 0x00505346);
+  header.setUint32(8, keyStart, Endian.little);
+  header.setUint32(12, valueStart, Endian.little);
+  header.setUint32(16, fields.length, Endian.little);
+  var key = 0;
+  var value = 0;
+  for (var i = 0; i < fields.length; i++) {
+    final entry = 20 + i * 16;
+    header.setUint16(entry, key, Endian.little);
+    header.setUint16(entry + 2, 0x0204, Endian.little);
+    header.setUint32(entry + 4, values[i].length, Endian.little);
+    header.setUint32(entry + 12, value, Endian.little);
+    data.setAll(keyStart + key, keys[i]);
+    data.setAll(valueStart + value, values[i]);
+    key += keys[i].length;
+    value += values[i].length;
+  }
+  return data;
+}
+
 /// A temporary folder removed after the test.
 Directory temporaryFolder(String prefix) {
   final folder = Directory.systemTemp.createTempSync('anyps5_$prefix');

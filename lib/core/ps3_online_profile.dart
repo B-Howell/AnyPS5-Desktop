@@ -8,6 +8,14 @@ import 'ps3_disc.dart';
 
 enum Ps3OnlineIssue implements Exception { unqualified, storage, core, update, patch, firmware, account }
 
+final _ps3TitleId = RegExp(r'^[A-Z]{4}[0-9]{5}$');
+
+Map<String, String>? _onlineDiscMetadata(String disc) {
+  if (p.basename(disc).toUpperCase() != 'PS3_DISC.SFB') return null;
+  final fields = Ps3Disc.metadata(p.dirname(disc));
+  return _ps3TitleId.hasMatch(fields?['TITLE_ID'] ?? '') ? fields : null;
+}
+
 enum Ps3Xfloat { accurate, approximate, relaxed, inaccurate }
 
 enum Ps3Dns {
@@ -37,6 +45,9 @@ final class Ps3OnlineRelease {
     required this.upnp,
   });
 
+  /// Only releases qualified for an actual provider belong here.
+  static const catalog = <Ps3OnlineRelease>[];
+
   final String provider;
   final String titleId;
   final String updateVersion;
@@ -51,6 +62,47 @@ final class Ps3OnlineRelease {
   final Ps3Xfloat xfloat;
   final Ps3Dns dns;
   final bool upnp;
+}
+
+enum Ps3OnlineReadinessState { discUnavailable, noProvider, profileRequired }
+
+/// Local library facts. A detected version is not a verified online profile.
+final class Ps3OnlineReadiness {
+  const Ps3OnlineReadiness._(this.state, {this.titleId, this.discVersion, this.managedUpdate});
+
+  final Ps3OnlineReadinessState state;
+  final String? titleId;
+  final String? discVersion;
+  final String? managedUpdate;
+
+  static final _version = RegExp(r'^\d{2}\.\d{2}$');
+
+  static Ps3OnlineReadiness inspect({
+    required String disc,
+    required String managedSystem,
+    Iterable<Ps3OnlineRelease> releases = Ps3OnlineRelease.catalog,
+  }) {
+    final fields = _onlineDiscMetadata(disc);
+    if (fields == null) return const Ps3OnlineReadiness._(Ps3OnlineReadinessState.discUnavailable);
+    final title = fields['TITLE_ID']!;
+    final update = p.join(managedSystem, 'rpcs3', 'dev_hdd0', 'game', title);
+    final installed = File(p.join(update, 'USRDIR', 'EBOOT.BIN')).existsSync()
+        ? Ps3Disc.readSfo(File(p.join(update, 'PARAM.SFO')))
+        : null;
+    return Ps3OnlineReadiness._(
+      releases.any((release) => release.titleId == title)
+          ? Ps3OnlineReadinessState.profileRequired
+          : Ps3OnlineReadinessState.noProvider,
+      titleId: title,
+      discVersion: _applicationVersion(fields),
+      managedUpdate: installed?['TITLE_ID'] == title ? _applicationVersion(installed!) : null,
+    );
+  }
+
+  static String? _applicationVersion(Map<String, String> fields) {
+    final version = fields['APP_VER'];
+    return version != null && _version.hasMatch(version) ? version : null;
+  }
 }
 
 /// Local launch capability. The account and provider configuration stay in the
@@ -89,13 +141,10 @@ final class Ps3OnlineProfile {
     required String core,
     required String onlineRoot,
     required String offlineSystemRoot,
-    Iterable<Ps3OnlineRelease> releases = const [],
+    Iterable<Ps3OnlineRelease> releases = Ps3OnlineRelease.catalog,
   }) async {
-    if (p.basename(disc).toUpperCase() != 'PS3_DISC.SFB') throw Ps3OnlineIssue.unqualified;
-    final title = Ps3Disc.metadata(p.dirname(disc))?['TITLE_ID'];
-    if (title == null || !RegExp(r'^[A-Z]{4}[0-9]{5}$').hasMatch(title)) {
-      throw Ps3OnlineIssue.unqualified;
-    }
+    final title = _onlineDiscMetadata(disc)?['TITLE_ID'];
+    if (title == null) throw Ps3OnlineIssue.unqualified;
     final release = releases.where((entry) => entry.provider == provider && entry.titleId == title).firstOrNull;
     if (release == null || !RegExp(r'^[A-Za-z0-9._-]+\.sprx$').hasMatch(release.patchName)) {
       throw Ps3OnlineIssue.unqualified;
