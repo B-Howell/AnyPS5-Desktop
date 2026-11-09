@@ -4,6 +4,8 @@
 #include <flutter/standard_method_codec.h>
 #include <flutter_webrtc/flutter_web_r_t_c_plugin.h>
 
+#include "ps1_probe_host.h"
+
 #include <chrono>
 #include <iostream>
 #include <optional>
@@ -29,11 +31,17 @@ int wmain(int argc, wchar_t** argv) {
   flutter::FlutterEngine engine(project);
   if (!engine.Run()) return 3;
   FlutterWebRTCPluginRegisterWithRegistrar(engine.GetRegistrarForPlugin("FlutterWebRTCPlugin"));
+  ProbeTexture texture;
+  RetroCoreHost retro(engine.messenger(), &texture);
 
   flutter::MethodChannel<flutter::EncodableValue> report(
       engine.messenger(), "anyps5/ps1_webrtc_probe", &flutter::StandardMethodCodec::GetInstance());
   std::optional<int> status;
   report.SetMethodCallHandler([&](const auto& call, auto result) {
+    if (call.method_name() == "published") {
+      result->Success(flutter::EncodableValue(static_cast<int64_t>(texture.published())));
+      return;
+    }
     const auto* message = call.arguments() ? std::get_if<std::string>(call.arguments()) : nullptr;
     if ((call.method_name() != "pass" && call.method_name() != "fail") || !message) {
       result->NotImplemented();

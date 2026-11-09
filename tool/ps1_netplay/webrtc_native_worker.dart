@@ -21,8 +21,18 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
   final fingerprints = <int, String>{};
   final sentButtons = <int>{};
 
-  static Future<WebRtcNativeWorker> spawn(List<String> launch, File state, int seat, {bool local = false}) async {
-    final process = await Process.start(launch.first, [...launch.skip(1), '$seat', if (local) 'local']);
+  static Future<WebRtcNativeWorker> spawn(
+    List<String> launch,
+    File state,
+    int seat, {
+    bool local = false,
+    bool recompiler = false,
+  }) async {
+    final process = await Process.start(launch.first, [
+      ...launch.skip(1),
+      '$seat',
+      if (local) 'local' else if (recompiler) 'recompiler',
+    ]);
     final worker = WebRtcNativeWorker._(process, state);
     try {
       final ready = await worker._read();
@@ -72,9 +82,9 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
     return (frame: int.parse(fields[1]), state: state);
   }
 
-  Future<void> restore(Ps1CheckpointSnapshot snapshot) async {
+  Future<void> restore(Ps1CheckpointSnapshot snapshot, {String discDigest = '1'}) async {
     await _state.writeAsBytes(snapshot.state, flush: true);
-    await _expect('restore 1 $_quotedState ${snapshot.frame}', 'restored');
+    await _expect('restore $discDigest $_quotedState ${snapshot.frame}', 'restored');
   }
 
   Future<int> hold() async {

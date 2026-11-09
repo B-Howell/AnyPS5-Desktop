@@ -569,12 +569,17 @@ peers over real data channels with in-process signaling. It verified a
 frames. For a Windows developer build, use `flutter build bundle --debug
 --target-platform windows-x64 --target tool/ps1_netplay/webrtc_loopback.dart
 --asset-dir <stage>/data/flutter_assets`. Compile the C++ runner in an
-x64 MSVC developer shell with the Flutter engine and wrapper headers and
-the plugin headers. Link `flutter_windows.dll.lib`, `flutter_wrapper_app.lib`,
-`flutter_wrapper_plugin.lib`, `flutter_webrtc_plugin.lib` and `user32.lib`.
+x64 MSVC developer shell. Compile `ps1_webrtc_loopback.cpp` with
+`windows/runner/retro_vulkan_video.cpp` using C++17, `NOMINMAX` and
+`WIN32_LEAN_AND_MEAN`. Include the Flutter engine and wrapper headers,
+the plugin headers, and the launcher's pinned Vulkan headers. Link
+`flutter_windows.dll.lib`, `flutter_wrapper_app.lib`,
+`flutter_wrapper_plugin.lib`, `flutter_webrtc_plugin.lib`, `user32.lib`,
+`d3d11.lib`, `d3dcompiler.lib`, `winmm.lib`, and `dxgi.lib`.
 Stage the matching debug Flutter DLL, plugin DLL and libwebrtc DLL next
-to the executable and `icudtl.dat` under `data`. Run the executable with
-the `data` directory as its only argument.
+to the executable and `icudtl.dat` under `data`. The
+[probe host](../windows/runner/tests/ps1_probe_host.h) consumes native
+textures in memory and discards audio writes.
 
 To include the real emulator, build the [native worker probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp)
 and set `ANYPS5_PS1_WEBRTC_NATIVE` to a JSON file containing an array of
@@ -594,6 +599,35 @@ and real WebRTC channels. Both reached the 360-frame fingerprint gate
 and returned the host to local play after room release.
 Hosted AnyTogether authentication, WAN or relay play, and a finished match
 remain separate checks.
+
+The [ordinary handoff probe](../tool/ps1_netplay/webrtc_ordinary_probe.dart)
+adds room version 3. It starts the real embedded hardware host in the
+windowless Flutter engine, waits for it to draw while the invite is
+pending, and starts the isolated Recompiler match after the guest joins.
+The separate native guest imports the checkpoint over real WebRTC using
+the verified disc digest. Both seats provide input and compare three RAM
+fingerprints over 360 confirmed frames. The probe checks that the scratch
+card is unchanged during the observed match interval. It requires the
+host to accept the recovery ticket and draw hardware frames on the
+returned texture after the room closes. This exercises the real workers
+and transport with fixture signaling. The Quick Menu has a separate
+launcher integration test. The production service remains unverified.
+Crash Team Racing (`SCUS94426`) and Tekken 3 (`SLUS00402`) both passed
+the ordinary probe on Windows with the pinned blank-card SwanStation
+core. Each run verified the recovery acceptance and subsequent frame
+publication. This is a short synchronization and recovery check.
+
+Run it with PowerShell 7.4 or later and the same five-field fixture, using
+the pinned ordinary core for the DLL:
+
+```powershell
+pwsh -File tool/ps1_netplay/run_webrtc_probe.ps1 -Runner "path/to/loopback.exe" -Data "path/to/data" -NativeFixture "path/to/fixture.json" -Ordinary
+```
+
+The [probe launcher](../tool/ps1_netplay/run_webrtc_probe.ps1) gives the
+headless runner and its job-contained children a private temporary root
+and removes it after exit. Omit `-Ordinary` for the staged native control.
+Omit both fixture options for the synthetic WebRTC control.
 
 The [Windows worker](../windows/runner/retro_core_host.cpp) starts with
 isolated storage, the full BIOS boot and two digital pads. It holds until both inputs for a

@@ -1,48 +1,11 @@
 // Build beside the runner with the Flutter Windows wrapper libraries. This
 // uses the real native worker and an in-memory texture without opening a UI.
-#include <windows.h>
-#include <mmsystem.h>
+#include "ps1_probe_host.h"
 
-static MMRESULT WINAPI SilentWaveOutWrite(HWAVEOUT, LPWAVEHDR header, UINT) {
-  header->dwFlags = (header->dwFlags & ~WHDR_INQUEUE) | WHDR_DONE;
-  return MMSYSERR_NOERROR;
-}
-
-#define waveOutWrite SilentWaveOutWrite
-#include "../retro_core_host.cpp"
-#undef waveOutWrite
-
+#include <charconv>
 #include <iomanip>
 #include <iostream>
 #include <flutter/method_result_functions.h>
-
-class ProbeTexture final : public flutter::TextureRegistrar {
- public:
-  int64_t RegisterTexture(flutter::TextureVariant* texture) override {
-    texture_ = texture;
-    return ++registered_;
-  }
-
-  bool MarkTextureFrameAvailable(int64_t) override {
-    const auto* frame = std::get<flutter::PixelBufferTexture>(*texture_).CopyPixelBuffer(0, 0);
-    if (!frame) return false;
-    frame->release_callback(frame->release_context);
-    ++published_;
-    return true;
-  }
-
-  void UnregisterTexture(int64_t, std::function<void()> complete) override {
-    if (complete) complete();
-  }
-
-  bool UnregisterTexture(int64_t) override { return true; }
-  uint64_t published() const { return published_; }
-
- private:
-  flutter::TextureVariant* texture_ = nullptr;
-  int64_t registered_ = 0;
-  std::atomic<uint64_t> published_{0};
-};
 
 class ProbeMessenger final : public flutter::BinaryMessenger {
  public:
@@ -361,11 +324,25 @@ int main(int argc, char** argv) {
     if (command == "checkpoint" || command == "blank-checkpoint" || command == "cancel-blank" ||
         command == "stale-blank" || command == "park-checkpoint" || command == "cancel-park" ||
         command == "restore") {
-      unsigned digest_byte;
+      std::string digest_text;
       std::string path;
-      if (!(std::cin >> digest_byte >> std::quoted(path)) || digest_byte > UINT8_MAX) return 7;
+      if (!(std::cin >> digest_text >> std::quoted(path))) return 7;
       std::array<uint8_t, 32> digest{};
-      digest[0] = static_cast<uint8_t>(digest_byte);
+      const auto parse_byte = [](const char* first, const char* last, int base, uint8_t& byte) {
+        unsigned value = 0;
+        const auto parsed = std::from_chars(first, last, value, base);
+        if (parsed.ec != std::errc{} || parsed.ptr != last || value > UINT8_MAX) return false;
+        byte = static_cast<uint8_t>(value);
+        return true;
+      };
+      if (digest_text.size() == digest.size() * 2) {
+        for (size_t i = 0; i < digest.size(); ++i) {
+          const auto* first = digest_text.data() + i * 2;
+          if (!parse_byte(first, first + 2, 16, digest[i])) return 7;
+        }
+      } else if (!parse_byte(digest_text.data(), digest_text.data() + digest_text.size(), 10, digest[0])) {
+        return 7;
+      }
       CheckpointBytes restore;
       std::optional<uint32_t> first;
       if (command == "restore") {

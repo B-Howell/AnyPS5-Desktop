@@ -16,20 +16,25 @@ import 'package:flutter/widgets.dart';
 
 import 'webrtc_native_worker.dart';
 import 'webrtc_lan_probe.dart';
+import 'webrtc_ordinary_probe.dart';
 import 'webrtc_room_fixture.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   const report = MethodChannel('anyps5/ps1_webrtc_probe');
   try {
-    final config = Platform.environment['ANYPS5_PS1_WEBRTC_NATIVE'];
+    final config = Platform.environment['ANYPS5_PS1_WEBRTC_NATIVE'] ?? '';
     final lan = Platform.environment['ANYPS5_PS2_WEBRTC_LAN'] == '1';
+    final ordinary = Platform.environment['ANYPS5_PS1_WEBRTC_ORDINARY'] == '1';
+    if (ordinary && config.isEmpty) throw StateError('The ordinary probe requires a native fixture.');
     await report.invokeMethod<void>(
       'pass',
       lan
           ? await verifyWebRtcLanBridge()
-          : config == null
+          : config.isEmpty
           ? await _exercise()
+          : ordinary
+          ? await verifyOrdinaryWebRtc(config)
           : await _nativeExercise(config),
     );
   } on Object catch (error, stack) {
@@ -59,7 +64,7 @@ Future<String> _nativeExercise(String config) async {
     final guest = remote = await WebRtcNativeWorker.spawn(launch, guestState, 1);
     await guest.setPad(256);
     final links = WebRtcGameLinks();
-    final gateway = WebRtcRoomFixture(profile.handoffRoom, media.discDigest);
+    final gateway = WebRtcRoomFixture(profile.roomFor(Ps1NetplayRoomMode.staged), media.discDigest);
     var held = 0;
     var replayed = 0;
     var stateBytes = 0;
