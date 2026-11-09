@@ -8,10 +8,12 @@ import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/managed_retro.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
+import 'package:anyps5_desktop/core/online/ps1_netplay_peer.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_session.dart';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:anyps5_desktop/core/together/game_sessions.dart';
 import 'package:anyps5_desktop/ui/together_model.dart';
+import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/embedded_retro_game.dart';
 import 'package:anyps5_desktop/ui/ps1_netplay_runner.dart';
 import 'package:flutter/services.dart';
@@ -19,6 +21,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import '../support/fake_together.dart';
+import '../support/online_fakes.dart' show FakeGameNetwork, eventually;
 import '../support/ui_support.dart';
 
 void main() {
@@ -350,6 +353,256 @@ void main() {
     expect(captures, 2);
   }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null);
 
+  test('Quick Menu starts an ordinary host match and returns to the original session', () async {
+    final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
+    const hostId = '12345678-1234-4234-8234-123456789ab1';
+    const friendId = '12345678-1234-4234-8234-123456789ab2';
+    const device = '12345678-1234-4234-8234-123456789ab3';
+    const roomId = '12345678-1234-4234-8234-123456789abc';
+    const path = 'game-sessions/$roomId';
+    const titleId = 'SCUS94426';
+    const protocol = RetroOnlineMode.synchronized;
+    final network = FakeGameNetwork();
+    final server = await FakeTogether.start();
+    addTearDown(server.close);
+    server
+      ..me = {'id': hostId, 'handle': 'host', 'displayName': 'Host'}
+      ..friend(friendId, 'guest', 'Guest', presence: {'state': 'online'});
+    final fixture = makeFixture(
+      together: server.base,
+      system: HostSystem.windows,
+      environment: {'ANYPS5_PS1_NETPLAY': '1', 'ANYPS5_MANAGED_CORE_PACKAGES': packages},
+      gameLinks: () => network.links,
+    );
+    final model = fixture.model;
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const channel = MethodChannel('anyps5/retro_core');
+    Future<void>? localPlay;
+    addTearDown(() async {
+      try {
+        if (model.together.ps1NetplayRows().singleOrNull?.kind case final ActionRow leave) {
+          leave.run();
+          expect(
+            await eventually(() => model.together.ps1NetplayRows().isEmpty),
+            isTrue,
+            reason: 'Host room did not close',
+          );
+        }
+        await model.embeddedGame?.close();
+        await model.waitForRetroWorkerExit().timeout(const Duration(seconds: 5));
+        await localPlay?.timeout(const Duration(seconds: 5));
+      } finally {
+        messenger.setMockMethodCallHandler(channel, null);
+        model.dispose();
+        fixture.dispose();
+      }
+    });
+    final home = p.join(p.dirname(model.paths.toolkits), 'Emulators');
+    final system = await Directory(p.join(home, 'system')).create(recursive: true);
+    final localBios = await File(bios).copy(p.join(system.path, 'scph1001.bin'));
+    final game = Game(
+      folder: p.dirname(disc),
+      titleId: 'PS1-fixture',
+      name: 'CTR fixture',
+      names: const {},
+      defaultLanguage: 'en',
+      version: '',
+      executable: ExecutableKind.disc,
+      retro: (platform: RetroPlatform.ps1, path: disc),
+      retroSerial: titleId,
+    );
+    model.games.add(game);
+    final native = <String>[];
+    final bytes = Uint8List.fromList([1, 2, 3]);
+    var worker = 0;
+    var ended = false;
+    var recoveredPlaying = false;
+    var matchPumped = false;
+    late String core;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'start':
+          worker++;
+          ended = false;
+          final arguments = call.arguments as Map;
+          if (worker == 1) {
+            expect(arguments['ps1NetplaySeat'], isNull);
+            expect(arguments['saves'], p.join(home, 'saves', 'ps1'));
+            core = arguments['core'] as String;
+            native.add('local');
+          } else {
+            expect(worker, 2);
+            expect(arguments['ps1NetplaySeat'], 0);
+            expect(arguments['ps1NetplayCpu'], Ps1NetplayExecution.ordinaryHandoff.cpu);
+            expect(arguments['saves'], Directory.systemTemp.path);
+            expect(arguments['core'], core);
+            native.add('match');
+          }
+          return 40 + worker;
+        case 'status':
+          return {
+            'ended': ended,
+            'startupVisible': worker != 3 || recoveredPlaying,
+            if (worker == 1) 'localBlankCardCheckpoint': 17,
+            if (worker == 2) ...{'netplayReady': true, 'portableCheckpoint': true},
+            if (worker == 3) 'ps1RecoveredSource': 17,
+            'options': {
+              'swanstation_CPU_ExecutionMode': {
+                'values': ['Recompiler'],
+                'selected': 0,
+                'activeValue': 'Recompiler',
+              },
+            },
+          };
+        case 'ps1LocalCheckpointPark':
+          expect(call.arguments['texture'], 41);
+          native.add('park');
+          return 51;
+        case 'ps1CheckpointImport':
+          expect(call.arguments['state'], bytes);
+          expect(call.arguments['frame'], 0);
+          native.add('import');
+          return 52;
+        case 'ps1CheckpointResult':
+          return call.arguments == 51 ? {'frame': 616, 'state': bytes} : true;
+        case 'ps1LocalCheckpointDetach':
+          native.add('detach');
+          return 17;
+        case 'netplayStart':
+          native.add('start match');
+          return true;
+        case 'netplaySync':
+          matchPumped = true;
+          return {'frame': 0, 'waiting': true, 'local': [], 'fingerprints': []};
+        case 'ps1LocalCheckpointReopen':
+          expect(call.arguments, 17);
+          worker = 3;
+          ended = false;
+          native.add('reopen');
+          return 43;
+        case 'pause':
+          if (worker == 3 && call.arguments == false) recoveredPlaying = true;
+        case 'ps1LocalCheckpointAccept':
+          expect(call.arguments, {'source': 17, 'texture': 43});
+          native.add('accept');
+          return true;
+        case 'stop':
+          native.add('stop $worker');
+          ended = true;
+        case 'release':
+          native.add('release $worker');
+      }
+      return null;
+    });
+    await signIn(model.together);
+    expect(await eventually(() => model.together.hub.friends.friends.isNotEmpty), isTrue);
+    localPlay = model.play(game);
+    expect(await eventually(() => model.embeddedGame?.canParkOrdinaryPs1 == true && model.starting == null), isTrue);
+    final media = await Ps1NetplayMedia.verify(
+      profile: Ps1NetplayProfile.tryRead(titleId)!,
+      disc: disc,
+      bios: localBios.path,
+      core: core,
+      execution: Ps1NetplayExecution.ordinaryHandoff,
+    );
+    final room = {
+      'id': roomId,
+      'host': {'userId': hostId},
+      'kind': 'online',
+      'titleId': titleId,
+      'gameVersion': '3',
+      'engineBuild': protocol.protocol,
+      'capacity': 2,
+      'joinable': false,
+      'properties': {'protocol': protocol.protocol, 'discSha256': media.discDigest},
+      'members': [
+        {'userId': hostId},
+        {
+          'userId': friendId,
+          'device': device,
+          'properties': {'protocol': protocol.protocol},
+        },
+      ],
+    };
+    server.answers.addAll({
+      'GET me/game-session': (200, {'session': null}),
+      'POST game-sessions': (201, room),
+      'PUT $path/members/me': (200, room),
+      'POST $path/invites': (200, <String, Object>{}),
+      'GET $path': (200, room),
+      'GET $path/ice-servers': (200, {'iceServers': []}),
+      'DELETE $path': (200, <String, Object>{}),
+    });
+    void choose(String id) {
+      final row = model.panelCategories().expand((category) => category.rows).singleWhere((row) => row.id == id);
+      (row.kind as ActionRow).run();
+    }
+
+    await model.openQuickMenu();
+    choose('ps1-invite-from-game');
+    expect(model.overlay, Layer.ps1OnlineFriends);
+    choose('ps1-invite-$friendId');
+    expect(model.overlay, isNull);
+    expect(
+      await eventually(() => server.callsTo('$path/invites').isNotEmpty, timeout: const Duration(seconds: 25)),
+      isTrue,
+    );
+    expect(server.callsTo('game-sessions', method: 'POST').single.body['gameVersion'], '3');
+    expect(server.callsTo('$path/invites').single.body['userIds'], [friendId]);
+    final offer = await server.nextFrame('signal', test: (frame) => (frame['data'] as Map)['kind'] == 'offer');
+    expect(native, ['local']);
+    final guestStarted = Completer<void>();
+    final guest = Ps1NetplayPeer(
+      link: await network.links.link([]),
+      identity: media.identity,
+      runner: _FixtureMatch([]),
+      seat: 1,
+      sendSignal: (signal) async => server.push('game_session.signal', {
+        'sessionId': roomId,
+        'from': friendId,
+        'device': device,
+        'kind': 'message',
+        'data': signal.toJson(),
+      }),
+      restoreCheckpoint: (snapshot) async {
+        expect(snapshot.frame, 0);
+        expect(snapshot.state, bytes);
+      },
+      onRunning: guestStarted.complete,
+    );
+    addTearDown(guest.leave);
+    await guest.open();
+    guest.receiveSignal(Ps1NetplaySignal.tryRead(offer['data'])!);
+    await guestStarted.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => fail('Guest did not start: ${guest.session.phase}, ${guest.session.ended}. Host calls: $native'),
+    );
+    expect(await eventually(() => matchPumped), isTrue);
+    expect(native, ['local', 'park', 'detach', 'match', 'import', 'start match']);
+    await model.openQuickMenu();
+    choose('ps1-netplay-leave');
+    expect(await eventually(() => server.callsTo(path, method: 'DELETE').isNotEmpty), isTrue);
+    expect(native, [
+      'local',
+      'park',
+      'detach',
+      'match',
+      'import',
+      'start match',
+      'stop 2',
+      'release 2',
+      'reopen',
+      'accept',
+    ]);
+    expect(model.embeddedGame?.textureId, 43);
+    expect(model.running?.$1, same(game));
+    expect(model.ordinaryPs1RecoveryPending, isFalse);
+    expect(model.overlay, isNull);
+    await guest.done.timeout(const Duration(seconds: 5));
+    expect(guest.session.phase, Ps1NetplayPhase.closed);
+    expect(guest.session.ended, Ps1NetplayEnd.peerLeft);
+  }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null);
+
   test('ordinary PS1 invite installs the right core and continues the original invite', () async {
     final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
     final server = await FakeTogether.start();
@@ -426,7 +679,14 @@ class _FixtureMatch implements Ps1NetplayRunner {
   Future<void> stop() async => events.add('stop');
 
   @override
-  Future<Ps1NetplayTick> sync(List<Ps1NetplayFrame> remote, int? acknowledgedFrame) async => throw UnimplementedError();
+  Future<Ps1NetplayTick> sync(List<Ps1NetplayFrame> remote, int? acknowledgedFrame) async => (
+    frame: 0,
+    confirmedFrame: null,
+    receivedFrame: null,
+    waiting: true,
+    local: <Ps1NetplayFrame>[],
+    fingerprints: <int, String>{},
+  );
 }
 
 class _LoopbackBinding extends AutomatedTestWidgetsFlutterBinding {

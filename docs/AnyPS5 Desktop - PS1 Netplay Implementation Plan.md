@@ -514,9 +514,16 @@ acceptance saves the restored card. The
 [launcher tests](../test/ui/ps1_netplay_setup_test.dart) also send a
 visible status with the wrong token, check that input is gated through
 acceptance, and exercise cancellation during park and detach.
-These tests cover the worker transition and invite
-components. A full Quick Menu host-and-guest run over the production
-service remains to be verified.
+The host integration test starts ordinary Play with the pinned CTR
+media, selects an online friend from the Quick Menu, and checks that the
+local worker stays active while waiting for the guest to connect. A
+local gateway and paired test links run the real invitation and
+checkpoint protocol.
+The mocked native channel verifies the park, detach, isolated boot,
+frame-zero import, and running match. Leaving through the Quick Menu
+closes the peer and room and restores the original game on a new
+texture. This covers launcher orchestration. A two-client run with real
+workers, WebRTC, and the production service remains to be verified.
 
 ### Windows development checkpoint
 

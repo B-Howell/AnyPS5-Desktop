@@ -16,6 +16,7 @@ import 'package:anyps5_desktop/core/font_download.dart';
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/host.dart';
+import 'package:anyps5_desktop/core/online/online_peer_mesh.dart' show GameLinks;
 import 'package:anyps5_desktop/core/power.dart';
 import 'package:anyps5_desktop/core/ps3_online_profile.dart';
 import 'package:anyps5_desktop/core/release_signing.dart';
@@ -147,6 +148,7 @@ Fixture makeFixture({
   TokenStore Function(String profile)? togetherStoreFor,
   VoiceEngine Function()? voice,
   SfuRoom Function()? sfuRoom,
+  GameLinks Function()? gameLinks,
   KeyStateReader? keys,
   Uri? engine,
   Uri? armEngine,
@@ -239,6 +241,7 @@ Fixture makeFixture({
       togetherPollEvery: const Duration(milliseconds: 10),
       voiceEngine: voice ?? FakeVoiceEngine.new,
       sfuRoom: sfuRoom ?? FakeSfuRoom.new,
+      gameLinks: gameLinks,
       talkKeys: () => keys,
       engineReleases: engine == null ? null : GitHubReleases(api: engine),
       armEngineReleases: armEngine == null
