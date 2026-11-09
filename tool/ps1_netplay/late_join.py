@@ -43,8 +43,10 @@ def scratch_card(core):
     return (ctypes.c_ubyte * size).from_address(address)
 
 
-def export_portable(core, disc_hash, card, blank_card):
-    save = core.bind("retro_anyps5_export_checkpoint_v1", ctypes.c_size_t,
+def export_portable(core, disc_hash, card, blank_card, *, native_blank_card=False):
+    symbol = ("retro_anyps5_export_blank_card_checkpoint_v1" if native_blank_card
+              else "retro_anyps5_export_checkpoint_v1")
+    save = core.bind(symbol, ctypes.c_size_t,
                      ctypes.c_void_p, ctypes.c_size_t, ctypes.c_char_p)
     state = ctypes.create_string_buffer(core.state_size + PORTABLE_PREFIX_SIZE)
     if card is not None:
@@ -54,11 +56,19 @@ def export_portable(core, disc_hash, card, blank_card):
         private_card = bytes(card)
         if CARD_MARKER in core.read_ram():
             raise RuntimeError("The synthetic marker must only be on the fixture card")
-        card[:] = blank_card
+        if native_blank_card:
+            full_card_export = core.bind("retro_anyps5_export_checkpoint_v1", ctypes.c_size_t,
+                                         ctypes.c_void_p, ctypes.c_size_t, ctypes.c_char_p)
+            control = ctypes.create_string_buffer(len(state))
+            control_size = full_card_export(control, len(control), disc_hash)
+            if not 0 < control_size <= len(control) or CARD_MARKER not in control[:control_size]:
+                raise RuntimeError("The ordinary exporter did not preserve the synthetic card")
+        else:
+            card[:] = blank_card
     try:
         size = save(state, len(state), disc_hash)
     finally:
-        if card is not None:
+        if card is not None and not native_blank_card:
             card[:] = private_card
     if not 0 < size <= len(state):
         raise RuntimeError("Core could not export a portable checkpoint")
@@ -128,7 +138,8 @@ def worker(args, frames, scratch):
             card = scratch_card(core) if args.fixture_blank_card else None
             started = time.perf_counter()
             if portable:
-                payload = export_portable(core, disc_hash, card, blank_card)
+                payload = export_portable(core, disc_hash, card, blank_card,
+                                          native_blank_card=args.native_blank_card)
             else:
                 payload = core.checkpoint().raw
             payload_hash = hashlib.sha256(payload).hexdigest()
@@ -139,6 +150,7 @@ def worker(args, frames, scratch):
                 "compressed_bytes": len(zlib.compress(payload, level=1)),
                 "found_exact_host_disc_path": str(disc).encode("utf-8") in payload,
                 "blank_fixture_card": args.fixture_blank_card,
+                "native_blank_card": args.native_blank_card,
             }
             state_path.write_bytes(payload)
             manifest_path.write_text(json.dumps({
@@ -174,11 +186,15 @@ def main():
     parser.add_argument("--checkpoint", choices=("portable", "legacy"), default="portable")
     parser.add_argument("--fixture-blank-card", action="store_true",
                         help="Test blank-card export with a synthetic marker on an isolated source card")
+    parser.add_argument("--native-blank-card", action="store_true",
+                        help="Use the native blank-card exporter instead of the fixture byte substitution")
     parser.add_argument("--worker", choices=("host", "restored-host", "guest"), help=argparse.SUPPRESS)
     parser.add_argument("--scratch", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.fixture_blank_card and (not args.normalize_host or args.checkpoint != "portable"):
         parser.error("--fixture-blank-card requires portable checkpoints and --normalize-host")
+    if args.native_blank_card and not args.fixture_blank_card:
+        parser.error("--native-blank-card requires --fixture-blank-card")
     spans = normalize_trace(json.loads(args.trace.read_text(encoding="utf-8")))
     frames = list(itertools.chain.from_iterable(itertools.repeat((p1, p2), count) for count, p1, p2 in spans))
     if not 0 < args.join_frame < len(frames) - 1:

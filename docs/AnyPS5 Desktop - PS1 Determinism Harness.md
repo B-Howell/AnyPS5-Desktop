@@ -303,6 +303,45 @@ supports retaining the source CPU mode for a matched pair. It leaves
 hardware graphics, the native card policy, preservation on cancel and
 disconnect, and real network pacing to the launcher qualification.
 
+#### Native blank-card export
+
+Apply the [blank-card checkpoint patch](../tool/patches/swanstation-blank-card-checkpoint.patch)
+after the SPU and portable checkpoint patches, then rebuild the core.
+The new `retro_anyps5_export_blank_card_checkpoint_v1` entry point uses
+the existing portable format and importer. It serializes a formatted
+blank copy for each attached card slot, preserving the slot layout and
+leaving the source cards in place. It rejects export while a card
+transaction, unread controller-bus reply, or scheduled card flush is
+pending. An empty receive buffer is serialized with zero in place of
+the stale reply byte. Ordinary saves and the existing portable exporter
+use their original serialization path. Import can replace destination
+card contents, so both match peers must use isolated cards.
+
+Use `--normalize-host --fixture-blank-card --native-blank-card` with
+the [late-join probe](../tool/ps1_netplay/late_join.py) to test the new
+entry point. This mode leaves the synthetic private marker in source
+card memory throughout native serialization. It checks that the
+marker is present in the ordinary export and absent from the blank-card
+payload, then checks that both destinations replace their own synthetic
+marker with a blank card. The fixture exercises the first Libretro card.
+Game RAM still reflects what the game has loaded. The launcher must
+treat the rest of the checkpoint as game state shared with the invited
+player.
+
+The Windows x64 DLL with SHA-256
+`d1619715fe11db0faa280890c741aff876fd5fd682f3cd00fbcafaa04732b7ac`
+passed the Recompiler-to-Recompiler CTR trial. The source and both
+restored peers matched all 62 sampled checks through frame 13,706
+and finished in the same order. A separate synthetic Pad-state probe
+confirmed that a pending reply rejects the export without writing to
+the output buffer. With the same reply marked consumed, the blank-card
+export wrote zero for the stale byte while the ordinary exporter still
+returned the original value. The receipts are `native-card-hardened.json`
+and `pad-reply.json` in the local `ps1-blank-native-7120a11` directory.
+The trial uses software rendering, one Libretro card, and local inputs.
+The pending disk-flush path and other card layouts still need runtime
+coverage. This DLL has a separate identity from the installed package.
+
 The portable format strips disc paths but still serializes the memory
 card. An offscreen probe placed a synthetic marker at the end of a
 131,072-byte scratch card through `RETRO_MEMORY_SAVE_RAM`. The marker
