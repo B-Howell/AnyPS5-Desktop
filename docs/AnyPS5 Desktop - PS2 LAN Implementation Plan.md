@@ -307,8 +307,8 @@ Windows WebRTC fixture requests leases before sending game frames. Its
 initial requests use broadcast Ethernet and IP destinations with the
 DHCP broadcast flag clear, matching the earlier GT4 PCSX2 log. Both
 simulated consoles check their assigned address and the unicast reply
-destination. Address acquisition by the embedded PS2 core remains a
-separate runtime test.
+destination. The embedded TimeSplitters run below separately verifies
+that the real console accepts the assigned address.
 
 ### Launcher preview
 
@@ -370,8 +370,34 @@ init, a BIOS-less load attempt, deinit and unload.
 A separate no-window test opened the TimeSplitters ISO with a copied
 BIOS and fresh saves. It rendered 1,467 frames across 1,800 calls to
 `retro_run`, polled the bound adapter 3,549 times, sent a DEV9 self-test
-frame, and detached the adapter cleanly. Game-generated DHCP, an online
-lobby and a full game over two embedded peers still need verification.
+frame, and detached the adapter cleanly.
+
+### TimeSplitters LAN in two embedded core instances
+
+On the Windows DLL above, a fresh scratch memory card reached Network →
+LAN Game and stopped at the game's message that slot 1 had no valid
+network configuration. The game sent no DHCP requests before this check.
+TimeSplitters accepted the `BWNETCNF` profile on a copy of the earlier
+GT4 scratch card. Its real DEV9 client completed Discover → Offer and
+Request → ACK at `10.231.0.101`, then opened **Matches Available**.
+
+A second run used two hidden Libretro workers with independently copied
+BIOS and cards, distinct virtual MACs, and the Dart DHCP and Ethernet
+routing code. The harness passed room frames over Windows loopback UDP.
+Both clients accepted a lease. Player B discovered player A's lobby,
+and both captures showed the same **2/8 Players** roster. Both entered
+Vietnam Deathmatch loading. The host captured a live first-person frame.
+The guest worker terminated during that step with Windows exception
+`0xc0000005`. The faulting module was unresolved in Event Viewer. The host
+stopped cleanly, and both scratch relay endpoints closed.
+
+This verifies actual DEV9 address acquisition, discovery and joining
+through the launcher packet rules. The match did not finish. The next
+native test needs crash diagnostics on the guest across the load boundary,
+followed by a full run over the launcher WebRTC route. The launcher also
+needs a PS2 network configuration path that survives across sessions.
+The local evidence beside the Windows DLL package includes the captured
+frames, logs and controller steps under `timesplitters-lan`.
 
 TimeSplitters: Future Perfect is a second PS2 fixture. Its US NTSC disc
 reports `SLUS21148` and version `1.00` in `SYSTEM.CNF`. The [original manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)
