@@ -51,27 +51,30 @@ struct Ps3NetworkPolicy {
   std::string xfloat;
   std::string dns;
   bool upnp;
-  std::optional<Protection> protection;
+  std::string host;
+  std::string certificate_sha256;
+  Protection protection;
 };
 
 void SelectPs3NetworkPolicy(HMODULE dll, const std::optional<Ps3NetworkPolicy>& online,
                             bool require_export) {
-  if (online && online->protection) {
-    using SelectVerifiedPolicy = bool (*)(bool, const char*, const char*, bool, const char*,
-                                         const char*, const char*, const char*, unsigned,
+  if (online) {
+    using SelectVerifiedPolicy = bool (*)(const char*, const char*, bool, const char*, const char*,
+                                         const char*, const char*, const char*, const char*, unsigned,
                                          const char* const*, const unsigned*);
-    const auto address = GetProcAddress(dll, "retro_anyps5_ps3_network_policy_v2");
+    const auto address = GetProcAddress(dll, "retro_anyps5_ps3_network_policy_v3");
     SelectVerifiedPolicy select = nullptr;
     static_assert(sizeof(select) == sizeof(address));
     std::memcpy(&select, &address, sizeof(select));
     if (!select)
-      throw std::runtime_error("This RPCS3 core cannot verify PS3 online protection.");
+      throw std::runtime_error("This RPCS3 core cannot verify the PS3 online provider.");
 
-    const auto& patch = *online->protection;
+    const auto& patch = online->protection;
     std::vector<const char*> names;
     names.reserve(patch.names.size());
     for (const auto& name : patch.names) names.push_back(name.c_str());
-    if (!select(true, online->xfloat.c_str(), online->dns.c_str(), online->upnp,
+    if (!select(online->xfloat.c_str(), online->dns.c_str(), online->upnp,
+                online->host.c_str(), online->certificate_sha256.c_str(),
                 patch.title.c_str(), patch.version.c_str(), patch.sha256.c_str(), patch.ppu_hash.c_str(),
                 static_cast<unsigned>(names.size()), names.data(), patch.writes.data()))
       throw std::runtime_error("RPCS3 rejected the required online protection.");
@@ -85,8 +88,7 @@ void SelectPs3NetworkPolicy(HMODULE dll, const std::optional<Ps3NetworkPolicy>& 
   std::memcpy(&select, &address, sizeof(select));
   if (require_export && !select)
     throw std::runtime_error("This RPCS3 core does not support isolated PS3 profiles.");
-  if (select && !select(online ? 1u : 0u, online ? online->xfloat.c_str() : nullptr,
-                        online ? online->dns.c_str() : nullptr, online && online->upnp))
+  if (select && !select(0, nullptr, nullptr, false))
     throw std::runtime_error("RPCS3 rejected the network policy.");
 }
 
@@ -1165,7 +1167,7 @@ class RetroCoreSession {
         return ps3_;
       case kExtendedMessage: {
         const auto& message = *static_cast<const ExtendedMessage*>(data);
-        if (online_ && online_->protection && message.type == 0 && message.level == 3 &&
+        if (online_ && message.type == 0 && message.level == 3 &&
             message.target != 2 && message.text) {
           std::lock_guard<std::mutex> lock(settings_mutex_);
           error_ = message.text;
@@ -1920,10 +1922,17 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
             std::filesystem::u8path(*core).filename() != L"rpcs3_libretro.dll")
           throw std::runtime_error("Invalid PS3 online profile.");
         const auto protection = policy->find(Value("patchProtection"));
-        if (policy->size() != (protection == policy->end() ? 3u : 4u))
+        const auto identity = policy->find(Value("rpcnIdentity"));
+        if (policy->size() != 5 || protection == policy->end() || identity == policy->end())
           throw std::runtime_error("Invalid PS3 online profile.");
-        online = Ps3NetworkPolicy{*xfloat, *dns, std::get<bool>(upnp->second), std::nullopt};
-        if (protection != policy->end()) {
+        const auto* endpoint = std::get_if<Map>(&identity->second);
+        const auto* host = endpoint ? StringField(*endpoint, "host") : nullptr;
+        const auto* certificate = endpoint ? StringField(*endpoint, "certificateSha256") : nullptr;
+        if (!endpoint || endpoint->size() != 2 || !host || !certificate ||
+            host->find('\0') != std::string::npos || certificate->find('\0') != std::string::npos)
+          throw std::runtime_error("Invalid PS3 provider identity.");
+        online = Ps3NetworkPolicy{*xfloat, *dns, std::get<bool>(upnp->second), *host, *certificate, {}};
+        {
           const auto* patch = std::get_if<Map>(&protection->second);
           const auto* title = patch ? StringField(*patch, "titleId") : nullptr;
           const auto* version = patch ? StringField(*patch, "updateVersion") : nullptr;
@@ -1935,8 +1944,8 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
               !entries || entries->empty() || entries->size() > 8)
             throw std::runtime_error("Invalid PS3 online protection.");
 
-          auto& parsed = online->protection.emplace(Ps3NetworkPolicy::Protection{
-              *title, *version, *digest, *ppu_hash, {}, {}});
+          auto& parsed = online->protection;
+          parsed = {*title, *version, *digest, *ppu_hash, {}, {}};
           for (const auto& entry : *entries) {
             const auto* item = std::get_if<Map>(&entry);
             const auto* name = item ? StringField(*item, "name") : nullptr;

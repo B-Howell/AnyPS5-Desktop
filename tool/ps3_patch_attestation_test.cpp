@@ -22,4 +22,8 @@ int main()
     assert(!make_patch_requirement("BCUS98208", "01.30", digest, ppu, 2, duplicate, duplicate_writes));
     assert(!make_patch_requirement("../escape", "01.30", digest, ppu, 1, names, writes));
     assert(!make_patch_requirement("BCUS98208", "01.30", "truncated", ppu, 1, names, writes));
+    const auto identity = make_rpcn_identity("127.0.0.1:3657", digest);
+    assert(identity && identity->host == "127.0.0.1:3657" && identity->certificate_sha256 == digest);
+    assert(!make_rpcn_identity("https://fixture.invalid", digest));
+    assert(!make_rpcn_identity("fixture.invalid", "truncated"));
 }

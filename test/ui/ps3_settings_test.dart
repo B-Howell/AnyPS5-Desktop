@@ -77,6 +77,7 @@ void main() {
           patches: const {'Protection': 1},
         ),
         rpcnHost: 'rpcn.example.invalid',
+        rpcnCertificateSha256: 'bfc408d6304fe3a43bd19a259cd9dc28f40496f30ce9729a8964919198a5b80c',
         providerFiles: const {},
         xfloat: Ps3Xfloat.accurate,
         dns: Ps3Dns.cloudflare,
@@ -188,6 +189,10 @@ void main() {
     expect(launch['system'], await Directory(p.join(profile, 'system')).resolveSymbolicLinks());
     expect(launch['saves'], await Directory(p.join(profile, 'saves')).resolveSymbolicLinks());
     expect(launch['ps3Online'], contains('patchProtection'));
+    expect((launch['ps3Online'] as Map<Object?, Object?>)['rpcnIdentity'], {
+      'host': 'rpcn.example.invalid',
+      'certificateSha256': 'bfc408d6304fe3a43bd19a259cd9dc28f40496f30ce9729a8964919198a5b80c',
+    });
     expect(launch.toString(), isNot(contains('fake-token')));
     expect(launch.toString(), isNot(contains('test-only')));
     expect(Directory(p.join(managed, 'system')).listSync(), isEmpty);

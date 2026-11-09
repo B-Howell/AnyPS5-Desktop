@@ -278,8 +278,9 @@ bridge revalidates the profile before sending its arguments to the host.
 profile separately from graphics preferences. The
 [Windows core host](../windows/runner/retro_core_host.cpp) rejects an online
 launch before core initialization if the DLL lacks the versioned policy
-export. For YAML protection it requires the version 2 export and never
-falls back to version 1. The release catalog remains empty while package
+export. Online play requires the version 3 export and a reviewed
+provider certificate pin. The host never falls back to an older online
+policy. The release catalog remains empty while package
 and provider qualification are open. The
 [network policy patch](../tool/patches/rpcs3-libretro-network-policy.patch)
 applies the mode before boot and again after RPCS3 overlays global, title or
@@ -360,14 +361,27 @@ sent no greeting, and the core did not attempt login. This matches
 the pinned client's `SSL_VERIFY_NONE` setting.
 [Pinned RPCN transport](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/rpcs3/Emu/NP/rpcn_client.cpp)
 
-Before opening the release catalog, the managed online policy needs
-an authenticated provider endpoint. Bind the reviewed host and peer
-identity to the native policy, then reject a missing or mismatched
-identity before setting `connected` or waking the RPCN packet threads.
-The linked Windows wolfSSL library exposes peer certificate retrieval
-and DER access for a pin-based implementation. A loopback test with
-matching and mismatching certificates must cover that boundary before
-trying a reviewed live provider.
+The [version 3 RPCN policy](../tool/patches/rpcs3-libretro-rpcn-identity.patch)
+binds the reviewed host and SHA-256 digest of the provider's DER leaf
+certificate. It rejects a changed configured host before resolving it,
+and a missing or mismatched certificate after TLS and before setting
+`connected` or waking the RPCN packet threads. The Windows host supplies
+the public host and certificate pin alongside the patch requirements.
+The account credentials remain in the isolated profile. Version 1 is
+offline only in this build, and version 2 is retained for disconnected
+verification. Catalog pins require independent provider review before
+trying a live account.
+
+The Windows v3 loopback fixture used the RPCN protocol version 32
+greeting and a synthetic account. A changed configured host reached
+no listener. A mismatching certificate closed the TLS connection
+without sending a login. The matching certificate allowed one
+synthetic login packet, after the game patch and provider certificate
+were both verified. The server supplied no login reply or lobby.
+The tested archive SHA-256 was
+`d472de683cb57aba711453e214a6da91420486a5d739e5cba2d492de300f8083`
+and the DLL SHA-256 was
+`874b90826fccd5eb162fbdbe2e48a970e21a09867d4167c8eee63f4b16ad6d51`.
 
 The [profile tests](../test/core/ps3_online_profile_test.dart) use synthetic
 files to verify safe reopening, artifact hashes and the isolated online

@@ -68,6 +68,7 @@ final class Ps3OnlineRelease {
     required this.executableSha256,
     required this.protection,
     required this.rpcnHost,
+    this.rpcnCertificateSha256,
     required this.providerFiles,
     required this.xfloat,
     required this.dns,
@@ -88,6 +89,7 @@ final class Ps3OnlineRelease {
   final String executableSha256;
   final Ps3OnlineProtection protection;
   final String rpcnHost;
+  final String? rpcnCertificateSha256;
 
   /// Relative RPCS3 HDD paths and SHA-256 digests for public provider files.
   final Map<String, String> providerFiles;
@@ -97,6 +99,7 @@ final class Ps3OnlineRelease {
 
   bool get hasManagedProfile =>
       updateTreeDigest != null &&
+      RegExp(r'^[a-f0-9]{64}$').hasMatch(rpcnCertificateSha256 ?? '') &&
       protection is Ps3YamlProtection &&
       _ps3ProviderId.hasMatch(provider) &&
       _ps3TitleId.hasMatch(titleId);
@@ -329,6 +332,8 @@ final class Ps3OnlineProfile {
     'dns': release.dns.address,
     'upnp': release.upnp,
     'patchProtection': ?_patchProtection,
+    if (release.rpcnCertificateSha256 case final certificate?)
+      'rpcnIdentity': {'host': release.rpcnHost, 'certificateSha256': certificate},
   };
 
   Future<void> revalidate() async {
