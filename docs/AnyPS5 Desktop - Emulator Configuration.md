@@ -139,6 +139,58 @@ pinned tree. MSYS2 dependencies and upstream's optional embedded game-patch
 database can change between builds. The builder records the MSYS2 versions.
 Its output is a reviewer build with its own digests.
 
+RPCS3 stores its PPU object cache beneath the persistent `system/rpcs3` core
+directory. A warm startup can still scan and validate PPU modules; the pinned
+core used to label that phase “Compiling PPU Modules” before it knew whether a
+cache hit or a real compile was needed. The frontend patch now reports that
+phase as scanning and retains the separate compile label for missing objects.
+In the RPCS3 log, `PPU: LLVM: Loaded module` records reuse and
+`PPU: LLVM: Compiled module` records actual host compilation.
+
+The original package retains discovered guest SPU programs, then builds
+native SPU code again on launch. In a Skate 3 warm-start log (BLUS30464,
+2026-11-09), RPCS3 loaded 219 PPU modules, compiled zero PPU modules, and
+finished building 6,281 SPU programs at 20.98 seconds.
+
+The [frontend patch](../tool/patches/rpcs3-libretro-frontend.patch) adds a
+separate per-title native object cache for x64 Libretro when the LLVM SPU
+decoder and SPU Cache are enabled. It leaves the original debug cache alone.
+The cache key covers the final LLVM IR, the core cache ABI, the LLVM version
+and the CPU target. Instructions that embed process-specific values produce
+a different key when those values change. The loader accepts only complete
+gzip streams containing relocatable x64 ELF objects with the expected SPU
+entry symbol. Rejected entries are recompiled and replaced atomically. Warm
+launches still analyze guest SPU programs, link native objects and build the
+SPU interpreter.
+
+On Linux x64, two independent headless LittleBigPlanet GOTY launches shared
+the same profile, firmware and preexisting PPU and guest SPU caches. The first
+process created 2,746 native objects. The second loaded 2,704 objects and
+wrote 42 additional ones. RPCS3's SPU worker completion timestamp moved from
+15.83 to 4.64 seconds. The unmodified core took 9.32 seconds for the same
+2,746 programs from the same guest-cache seed. Both patched runs rendered
+Vulkan frames, produced audio, changed resolution in game and stopped
+cleanly.
+
+A third launch used a clone of the warm profile with three deliberately
+damaged entries. It rejected a truncated gzip, a complete gzip containing
+non-ELF data, and a valid ELF from another SPU entry. All three replacements
+matched the original decompressed objects byte for byte, 2,702 other
+objects were reused, and the game rendered and stopped cleanly. These runs
+used Clang and LLVM 22.1.8. The tested Linux core SHA-256 was
+`135671eb895f080c8cf09ca78b8d309e88717a4ea12cde47bd8c63ba79016be3`.
+
+Windows package qualification is still open. Run the same cold and warm
+separate-process checks on LittleBigPlanet GOTY and Skate 3 with a new
+profile. Capture object reuse, startup timing and frame times through the
+same gameplay section. Preserve the profile between launches and verify that
+changing an incompatible build or CPU setting falls back to compilation.
+The frontend and optional network-policy patches apply together to the pinned
+RPCS3 source. On Windows x64, that source explicitly targets ELF for the SPU
+JIT, so the object-format check applies to both Linux and Windows packages.
+The existing installed package is unaffected by this source patch until a
+new verified package is built and selected.
+
 ### Build a PS3 test package
 
 Use a disposable [MSYS2](https://www.msys2.org/) installation. The upstream
