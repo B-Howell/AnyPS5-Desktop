@@ -248,9 +248,17 @@ routes guest Ethernet frames between authenticated room members. It
 associates each member with a distinct MAC, forwards discovery broadcasts,
 and drops stale epochs, spoofed sources and traffic to other segments. The
 [transport tests](../test/core/online/retro_lan_transport_test.dart) exercise
-those rules with synthetic frames. The DEV9-facing adapter is still needed.
-It will supply Ethernet frames without a frame check sequence and use the
-existing [peer connection layer](../lib/core/online/online_peer_mesh.dart).
+those rules with synthetic frames. The [DEV9 adapter source patch](../tool/patches/parallel-ps2-virtual-lan.patch)
+adds a versioned binding for frontend-owned Ethernet queues. It uses frames
+without a frame check sequence and leaves the original adapter selection in
+place when no frontend transport is bound. The frontend still needs to
+connect this binding to the [peer connection layer](../lib/core/online/online_peer_mesh.dart).
+
+The patched DEV9 object compiled with GCC in WSL at the pinned core
+revision. The object exports `retro_anyps5_dev9_bind_v1`. This is a
+source and object check. The complete core package, private guest IP
+assignment, frontend queue integration and a game run over the patched
+adapter still need verification.
 
 At [the pinned DEV9 source revision](https://github.com/libretro/parallel-ps2/blob/da5b07ebebc18016e1ca5b401188a283971a0e8d/pcsx2/DEV9/net.cpp),
 `tx_put` can pass a stack-backed packet, so an asynchronous adapter must

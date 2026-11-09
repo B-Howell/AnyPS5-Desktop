@@ -232,6 +232,13 @@ input delivery, acknowledgement under reordering, timeout and cleanup.
 resolution and disc identity. Service sign-in, direct or relayed WebRTC,
 and WAN gameplay still need the qualification below.
 
+The Windows Release bundle built without launching it. The local CMake
+build used the media plugin's hash-checked libmpv and ANGLE archives and
+normalized the generated MSVC warning option to `/wd4100`. The online
+core suite passed 76 tests and skipped seven external-probe tests. The
+three focused launcher invite tests passed. The broader AnyTogether
+widget run reproduced the same eight failures on the pre-change control.
+
 **Existing code:** [GameSessions](../lib/core/together/game_sessions.dart)
 creates LAN Play Together rooms and validates title/version/build.
 [Play Together](../lib/ui/together_play.dart) launches that PS5 flow.
