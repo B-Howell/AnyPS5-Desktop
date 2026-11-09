@@ -1165,6 +1165,12 @@ class RetroCoreSession {
         return ps3_;
       case kExtendedMessage: {
         const auto& message = *static_cast<const ExtendedMessage*>(data);
+        if (online_ && online_->protection && message.type == 0 && message.level == 3 &&
+            message.target != 2 && message.text) {
+          std::lock_guard<std::mutex> lock(settings_mutex_);
+          error_ = message.text;
+          return true;
+        }
         if (message.type != 3 || message.target == 2 || !message.text ||
             message.progress < -1 || message.progress > 100)
           return false;

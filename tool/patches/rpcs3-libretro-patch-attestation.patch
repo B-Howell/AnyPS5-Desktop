@@ -344,7 +344,7 @@ index 0000000..685f54f
 +void finish_patch_verification();
 +}
 diff --git a/rpcs3/libretro/libretro_core.cpp b/rpcs3/libretro/libretro_core.cpp
-index 594508f..d04c8c4 100644
+index 594508f..e6d28e7 100644
 --- a/rpcs3/libretro/libretro_core.cpp
 +++ b/rpcs3/libretro/libretro_core.cpp
 @@ -8,6 +8,7 @@
@@ -408,7 +408,7 @@ index 594508f..d04c8c4 100644
          return false;
      if (mode == 0)
      {
-@@ -245,6 +267,20 @@ extern "C" RETRO_API bool retro_anyps5_ps3_network_policy_v1(unsigned mode, cons
+@@ -245,6 +267,31 @@ extern "C" RETRO_API bool retro_anyps5_ps3_network_policy_v1(unsigned mode, cons
      anyps5_policy = anyps5_network_policy{true, xfloat, std::string(address), upnp};
      return true;
  }
@@ -426,10 +426,21 @@ index 594508f..d04c8c4 100644
 +    return true;
 +}
 +
++static void report_anyps5_protected_boot_failure()
++{
++    const char* text = anyps5_patch_verified.load()
++        ? "RPCS3 could not start the protected PS3 session."
++        : "PS3 online protection could not be verified. Check the game update and patch, then try again.";
++    retro_message_ext error{text, 5000, 3, RETRO_LOG_ERROR, RETRO_MESSAGE_TARGET_ALL,
++                            RETRO_MESSAGE_TYPE_NOTIFICATION, -1};
++    environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &error);
++    environ_cb(RETRO_ENVIRONMENT_SHUTDOWN, nullptr);
++}
++
  static bool pending_game_boot = false;
  static std::string game_path;
  // The disc image a game was loaded from, empty for anything else: a reset
-@@ -2163,6 +2199,8 @@ void retro_deinit(void)
+@@ -2163,6 +2210,8 @@ void retro_deinit(void)
      core_initialized = false;
      game_loaded = false;
      anyps5_policy.reset();
@@ -438,7 +449,25 @@ index 594508f..d04c8c4 100644
  
      // Last, once nothing is logging any more: unlink both listeners, and let
      // the file logger flush and join its writer thread here rather than in a
-@@ -3061,6 +3099,9 @@ static bool do_boot_game()
+@@ -2219,6 +2268,8 @@ static void context_reset()
+             start_pause_watchdog();
+         }
+         pending_game_boot = false;
++        if (!game_loaded && anyps5_required_patch)
++            report_anyps5_protected_boot_failure();
+     }
+ 
+ 
+@@ -2558,6 +2609,8 @@ static void vk_context_reset()
+             start_pause_watchdog();
+         }
+         pending_game_boot = false;
++        if (!game_loaded && anyps5_required_patch)
++            report_anyps5_protected_boot_failure();
+     }
+ }
+ 
+@@ -3061,6 +3114,9 @@ static bool do_boot_game()
      }
  #endif
  
@@ -448,7 +477,7 @@ index 594508f..d04c8c4 100644
      game_boot_result result = game_boot_result::generic_error;
      try
      {
-@@ -3114,6 +3155,14 @@ static bool do_boot_game()
+@@ -3114,6 +3170,14 @@ static bool do_boot_game()
      }
  
  
@@ -463,3 +492,11 @@ index 594508f..d04c8c4 100644
      // Wait for emulator to transition out of loading/starting states
      // Poll for up to 30 seconds
      constexpr int max_wait_ms = 30000;
+@@ -3280,6 +3344,7 @@ void retro_run(void)
+         // it runs, as they were at its start.
+         if (!s_database_config.empty())
+             g_cfg.from_string(s_database_config);
++        apply_anyps5_network_policy();
+     }
+ 
+     // Poll input

@@ -288,6 +288,15 @@ The Windows host passed the MSVC `/W4 /WX` build, and all four affected
 RPCS3 translation units passed CLANG64 syntax checks using the pinned
 build's include paths and defines. These checks do not qualify the
 linked version 2 package.
+
+The first linked Windows test rejected altered YAML, then remained on
+the loading screen. Vulkan deferred the actual boot until its context
+callback, after Libretro had already accepted the content. The version 2
+core now reports the protected-boot error and requests frontend shutdown
+when that deferred boot fails. The Windows runner retains the error for
+the launcher after cleanup. A fresh headless run rejected both altered
+YAML bytes and a wrong operation count, exited cleanly in both cases,
+and showed no non-loopback endpoints in the sampled process sockets.
 [Pinned patch loader](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/Utilities/bin_patch.cpp)
 [Pinned PPU loader](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/rpcs3/Emu/Cell/PPUModule.cpp)
 
