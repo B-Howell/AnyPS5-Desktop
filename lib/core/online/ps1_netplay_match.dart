@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'online_peer_mesh.dart';
+import 'ps1_checkpoint_transfer.dart';
 import 'ps1_netplay_identity.dart';
 import 'ps1_netplay_peer.dart';
 import 'ps1_netplay_session.dart';
@@ -9,12 +10,21 @@ import 'retro_online_rooms.dart';
 
 /// One room and one peer link. Subscribe to gateway events before opening.
 final class Ps1NetplayMatch {
-  Ps1NetplayMatch({required this.rooms, required this.links, required this.identity, required this.runner});
+  Ps1NetplayMatch({
+    required this.rooms,
+    required this.links,
+    required this.identity,
+    required this.runner,
+    this.captureCheckpoint,
+    this.restoreCheckpoint,
+  });
 
   final RetroOnlineRooms rooms;
   final GameLinks links;
   final Ps1NetplayIdentity identity;
   final Ps1NetplayRunner runner;
+  final Future<Ps1CheckpointSnapshot> Function()? captureCheckpoint;
+  final Future<void> Function(Ps1CheckpointSnapshot)? restoreCheckpoint;
   final _closing = Completer<void>();
   final _done = Completer<void>();
   final _signals = <Map<String, dynamic>>[];
@@ -81,6 +91,8 @@ final class Ps1NetplayMatch {
       link: link,
       identity: identity,
       runner: runner,
+      captureCheckpoint: seat == 0 ? captureCheckpoint : null,
+      restoreCheckpoint: seat == 1 ? restoreCheckpoint : null,
       seat: seat,
       hostEpoch: seat == 0 ? Random.secure().nextInt(0x7fffffff) + 1 : null,
       sendSignal: (message) async => rooms.send(room, bound, message.toJson()),

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:anyps5_desktop/core/online/ps1_checkpoint_transfer.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_identity.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_session.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_wire.dart';
@@ -96,7 +97,12 @@ class _Runner implements Ps1NetplayRunner {
 }
 
 class _Peers {
-  _Peers({Ps1NetplayIdentity? guestIdentity, Duration timeout = const Duration(seconds: 5)}) {
+  _Peers({
+    Ps1NetplayIdentity? guestIdentity,
+    Duration timeout = const Duration(seconds: 5),
+    Future<({int frame, Uint8List state})> Function()? capture,
+    Future<void> Function(({int frame, Uint8List state}) snapshot)? restore,
+  }) {
     host = Ps1NetplaySession(
       seat: 0,
       hostEpoch: _epoch,
@@ -105,6 +111,7 @@ class _Peers {
       sendControl: (message) => toGuestControl.add(message),
       sendInput: (message) => toGuestInput.add(message),
       timeout: timeout,
+      captureCheckpoint: capture,
     );
     guest = Ps1NetplaySession(
       seat: 1,
@@ -113,6 +120,7 @@ class _Peers {
       sendControl: (message) => toHostControl.add(message),
       sendInput: (message) => toHostInput.add(message),
       timeout: timeout,
+      restoreCheckpoint: restore,
     );
   }
 
@@ -125,11 +133,11 @@ class _Peers {
   late final Ps1NetplaySession host;
   late final Ps1NetplaySession guest;
 
-  Future<void> controls({bool duplicate = false}) async {
+  Future<void> controls({bool duplicate = false, Uint8List Function(Uint8List)? toGuest}) async {
     for (var iteration = 0; iteration < 12; iteration++) {
       for (final message in toGuestControl.toList()) {
         toGuestControl.remove(message);
-        guest.receiveControl(message);
+        guest.receiveControl(toGuest?.call(message) ?? message);
         if (duplicate) guest.receiveControl(message);
       }
       for (final message in toHostControl.toList()) {
@@ -179,6 +187,92 @@ Uint8List _fingerprintControl(int frame, String hash) => Uint8List.fromList(
 );
 
 void main() {
+  test('a full-size checkpoint fits even when acknowledgements arrive synchronously', () async {
+    late final Ps1CheckpointTransfer host;
+    final guest = Ps1CheckpointTransfer(host: false, epoch: _epoch, send: (packet) => host.receive(packet));
+    host = Ps1CheckpointTransfer(host: true, epoch: _epoch, send: guest.receive);
+    final state = Uint8List(Ps1CheckpointTransfer.maxStateBytes)..last = 42;
+    expect(await host.deliver((frame: 7000, state: state)), isTrue);
+    final snapshot = (await guest.received)!;
+    expect(snapshot.frame, 7000);
+    expect(snapshot.state.length, state.length);
+    expect(snapshot.state.last, 42);
+  });
+
+  test('transfers a multi-window checkpoint and holds both timelines until restore finishes', () async {
+    final data = Uint8List.fromList(List.generate(172000, (index) => index & 255));
+    final restore = Completer<void>();
+    final arrived = Completer<Ps1CheckpointSnapshot>();
+    final peers = _Peers(
+      capture: () async => (frame: 6600, state: data),
+      restore: (snapshot) {
+        arrived.complete(snapshot);
+        return restore.future;
+      },
+    );
+    addTearDown(peers.close);
+    await peers.open();
+    expect(arrived.isCompleted, isTrue);
+    final snapshot = await arrived.future;
+    expect(snapshot.frame, 6600);
+    expect(snapshot.state, data);
+    expect(peers.h.startCalls, 0);
+    expect(peers.g.startCalls, 0);
+    restore.complete();
+    await peers.controls();
+    expect(peers.host.phase, Ps1NetplayPhase.running);
+    expect(peers.guest.phase, Ps1NetplayPhase.running);
+  });
+
+  test('a corrupted checkpoint never reaches the guest runner', () async {
+    var restores = 0;
+    final peers = _Peers(capture: () async => (frame: 6600, state: Uint8List(17000)), restore: (_) async => restores++);
+    addTearDown(peers.close);
+    peers.guest.open();
+    peers.host.open();
+    await peers.controls(
+      toGuest: (packet) {
+        if (Ps1CheckpointTransfer.isCheckpointPacket(packet) && packet[4] == 2) packet[packet.length - 1] ^= 1;
+        return packet;
+      },
+    );
+    expect(restores, 0);
+    expect(peers.guest.ended, Ps1NetplayEnd.protocol);
+    expect(peers.h.startCalls, 0);
+  });
+
+  test('a peer that expects a fresh boot never receives a checkpoint', () async {
+    var captures = 0;
+    final peers = _Peers(
+      capture: () async {
+        captures++;
+        return (frame: 6600, state: Uint8List(20));
+      },
+    );
+    addTearDown(peers.close);
+    await peers.open();
+    expect(captures, 0);
+    expect(peers.guest.ended, Ps1NetplayEnd.protocol);
+    expect(peers.h.startCalls, 0);
+  });
+
+  test('closing during checkpoint transfer releases the pending prepare', () async {
+    final peers = _Peers(
+      capture: () async => (frame: 6600, state: Uint8List(200000)),
+      restore: (_) async => fail('A cancelled transfer must not restore.'),
+    );
+    addTearDown(peers.close);
+    peers.guest.open();
+    peers.host.open();
+    peers.guest.receiveControl(peers.toGuestControl.removeAt(0));
+    peers.host.receiveControl(peers.toHostControl.removeAt(0));
+    await Future<void>.delayed(Duration.zero);
+    expect(peers.toGuestControl.where(Ps1CheckpointTransfer.isCheckpointPacket), hasLength(9));
+    await peers.close();
+    expect(peers.h.stopCalls, 1);
+    expect(peers.g.stopCalls, 1);
+    expect(peers.h.startCalls, 0);
+  });
   test('matches the identity, waits for both native peers and starts each runner once', () async {
     final p = _Peers();
     addTearDown(p.close);

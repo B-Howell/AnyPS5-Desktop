@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:anyps5_desktop/core/online/ps1_netplay_identity.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_peer.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_session.dart';
@@ -152,5 +154,45 @@ void main() {
     expect(network.all.single.closed, isTrue);
     expect(runner.seat, isNull);
     expect(peer.session.phase, Ps1NetplayPhase.closed);
+  });
+
+  test('a checkpoint crosses the negotiated reliable stream before gameplay starts', () async {
+    final network = FakeGameNetwork();
+    final hostRunner = _Runner();
+    final guestRunner = _Runner();
+    final state = Uint8List(130001)..last = 99;
+    var restored = false;
+    late final Ps1NetplayPeer guest;
+    final host = Ps1NetplayPeer(
+      link: await network.links.link([]),
+      identity: identity,
+      runner: hostRunner,
+      seat: 0,
+      hostEpoch: 42,
+      sendSignal: (signal) async => guest.receiveSignal(signal),
+      captureCheckpoint: () async => (frame: 6600, state: state),
+    );
+    guest = Ps1NetplayPeer(
+      link: await network.links.link([]),
+      identity: identity,
+      runner: guestRunner,
+      seat: 1,
+      sendSignal: (signal) async => host.receiveSignal(signal),
+      restoreCheckpoint: (snapshot) async {
+        expect(hostRunner.started, isFalse);
+        expect(guestRunner.started, isFalse);
+        expect(snapshot.frame, 6600);
+        expect(snapshot.state, state);
+        restored = true;
+      },
+    );
+    addTearDown(() async {
+      await host.leave();
+      await guest.leave();
+    });
+    await host.open();
+    await guest.open();
+    expect(await eventually(() => hostRunner.sawRemote && guestRunner.sawRemote), isTrue);
+    expect(restored, isTrue);
   });
 }

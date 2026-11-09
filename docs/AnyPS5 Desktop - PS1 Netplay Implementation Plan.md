@@ -186,8 +186,20 @@ booted guest with a renamed CUE. It compares their full RAM fingerprints
 and checks rejection for an incorrect digest and for importing after
 start. The Windows portable test ran 360 confirmed frames with three
 matching periodic RAM fingerprints before importing into a separate guest.
-This is the worker boundary for the live handoff. The Quick Menu
-still needs the host transition, authenticated transfer and catch-up.
+This is the worker boundary for the live handoff.
+
+The [checkpoint transfer](../lib/core/online/ps1_checkpoint_transfer.dart)
+now handles the authenticated transfer in the existing reliable peer stream.
+Both peers opt into the checkpoint bootstrap during the
+[identity handshake](../lib/core/online/ps1_netplay_session.dart). Chunks
+are ordered and bound to the match epoch. Each acknowledged window carries
+at most 64 KiB of state bytes, and the guest checks the payload SHA-256
+before calling its restore handler. The session keeps both input timelines
+held until the restore succeeds. Cancellation and link failure release the
+pending transfer. The [session tests](../test/core/online/ps1_netplay_session_test.dart)
+exercise multiple windows, delayed restore, corruption, mismatched startup
+modes and cancellation. The production Quick Menu still needs the host
+transition and input catch-up adapters to use this bootstrap.
 
 ### Windows development checkpoint
 

@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'online_wire.dart';
+import 'ps1_checkpoint_transfer.dart';
 import 'ps1_netplay_identity.dart';
 import 'ps1_netplay_wire.dart';
 
@@ -40,12 +41,16 @@ final class Ps1NetplaySession {
     required this.runner,
     required this.sendControl,
     required this.sendInput,
+    this.captureCheckpoint,
+    this.restoreCheckpoint,
     int? hostEpoch,
     this.timeout = const Duration(seconds: 30),
   }) : _epoch = hostEpoch {
     if ((seat != 0 && seat != 1) ||
         (seat == 0 && (hostEpoch == null || hostEpoch == 0)) ||
         (seat == 1 && hostEpoch != null) ||
+        (seat == 0 && restoreCheckpoint != null) ||
+        (seat == 1 && captureCheckpoint != null) ||
         timeout <= Duration.zero) {
       throw ArgumentError('Invalid PS1 netplay session parameters.');
     }
@@ -65,6 +70,8 @@ final class Ps1NetplaySession {
   final Ps1NetplayRunner runner;
   final void Function(Uint8List) sendControl;
   final void Function(Uint8List) sendInput;
+  final Future<Ps1CheckpointSnapshot> Function()? captureCheckpoint;
+  final Future<void> Function(Ps1CheckpointSnapshot)? restoreCheckpoint;
   final Duration timeout;
 
   int? _epoch;
@@ -97,6 +104,11 @@ final class Ps1NetplaySession {
   int _lastLocalFingerprint = -1;
   int _lastPeerFingerprint = -1;
   String? _lastPeerHash;
+  Ps1CheckpointTransfer? _checkpointTransfer;
+
+  bool get _checkpointMode => captureCheckpoint != null || restoreCheckpoint != null;
+  Object get _helloData =>
+      _checkpointMode ? {'identity': identity.toJson(), 'bootstrap': 'checkpoint-v1'} : identity.toJson();
 
   Ps1NetplayPhase get phase => _phase;
   Ps1NetplayEnd? get ended => _ended;
@@ -110,11 +122,24 @@ final class Ps1NetplaySession {
     if (_phase != Ps1NetplayPhase.idle) throw StateError('This PS1 match was already opened.');
     _phase = Ps1NetplayPhase.preparing;
     _touch();
-    if (seat == 0) _sendControl('hello', identity.toJson());
+    if (seat == 0) _sendControl('hello', _helloData);
   }
 
   void receiveControl(Uint8List bytes) {
     if (_phase == Ps1NetplayPhase.idle || _phase == Ps1NetplayPhase.closed) return;
+    if (Ps1CheckpointTransfer.isCheckpointPacket(bytes)) {
+      try {
+        final transfer = _checkpointTransfer;
+        if (transfer == null || _phase != Ps1NetplayPhase.preparing) throw const FormatException();
+        transfer.receive(bytes);
+        if (_phase != Ps1NetplayPhase.closed) _touch();
+      } on FormatException {
+        _close(Ps1NetplayEnd.protocol, notify: true);
+      } on Object {
+        _close(Ps1NetplayEnd.disconnected);
+      }
+      return;
+    }
     if (bytes.length > _maxControlBytes) {
       _close(Ps1NetplayEnd.protocol, notify: true);
       return;
@@ -246,7 +271,8 @@ final class Ps1NetplaySession {
   }
 
   void _hello(int epoch, Object? value) {
-    final peer = Ps1NetplayIdentity.tryRead(value);
+    final checkpoint = value is Map && value.length == 2 && value['bootstrap'] == 'checkpoint-v1';
+    final peer = Ps1NetplayIdentity.tryRead(checkpoint ? value['identity'] : value);
     if (peer == null) {
       _close(Ps1NetplayEnd.protocol, notify: true);
       return;
@@ -259,9 +285,16 @@ final class Ps1NetplaySession {
       return;
     }
     if (_peerIdentified) return;
+    if (checkpoint != _checkpointMode) {
+      _close(Ps1NetplayEnd.protocol, notify: true);
+      return;
+    }
     _peerIdentified = true;
+    if (checkpoint) {
+      _checkpointTransfer = Ps1CheckpointTransfer(host: seat == 0, epoch: epoch, send: sendControl);
+    }
     _touch();
-    if (seat == 1) _sendControl('hello', identity.toJson());
+    if (seat == 1) _sendControl('hello', _helloData);
     if (_phase != Ps1NetplayPhase.closed) unawaited(_prepare());
   }
 
@@ -269,6 +302,20 @@ final class Ps1NetplaySession {
     _preparing = true;
     try {
       await runner.prepare(seat);
+      if (_phase == Ps1NetplayPhase.closed) return;
+      final transfer = _checkpointTransfer;
+      if (transfer != null) {
+        if (captureCheckpoint case final capture?) {
+          final snapshot = await capture();
+          if (_phase == Ps1NetplayPhase.closed || !await transfer.deliver(snapshot)) return;
+        } else {
+          final snapshot = await transfer.received;
+          if (_phase == Ps1NetplayPhase.closed || snapshot == null) return;
+          await restoreCheckpoint!(snapshot);
+        }
+        transfer.close();
+        _checkpointTransfer = null;
+      }
       if (_phase == Ps1NetplayPhase.closed) return;
       _ready = true;
       _touch();
@@ -425,6 +472,8 @@ final class Ps1NetplaySession {
   void _close(Ps1NetplayEnd reason, {bool notify = false}) {
     if (_phase == Ps1NetplayPhase.closed) return;
     _ended = reason;
+    _checkpointTransfer?.close();
+    _checkpointTransfer = null;
     _phase = Ps1NetplayPhase.closed;
     _waiting = false;
     _watchdog?.cancel();
