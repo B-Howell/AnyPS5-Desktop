@@ -16,6 +16,33 @@
 
 The [RPCS3 Libretro feature table](https://docs.libretro.com/library/rpcs3/#features) lists frontend netplay and save states as unsupported. Its [network options](https://docs.libretro.com/library/rpcs3/#network) include RPCN. The [RPCN project](https://github.com/RipleyTom/rpcn) documents matchmaking services. Keep the PS1 synchronization protocol and PS2 virtual LAN out of this path.
 
+### Private LittleBigPlanet server
+
+[Refresh](https://github.com/LittleBigRefresh/Refresh#-running) is a
+self-hostable LittleBigPlanet server with a standalone release and a
+Docker Compose deployment. Start a qualification instance with a pinned
+release such as [Refresh v3.7.2](https://github.com/LittleBigRefresh/Refresh/releases/tag/v3.7.2),
+fresh persistent storage, and the game service bound only to
+loopback or a private test network. Verify `/_health` and the configured
+`/lbp` endpoint before trying the game. The
+[upstream Compose example](https://github.com/LittleBigRefresh/Refresh/blob/v3.7.2/docker-compose.yml)
+publishes port 10061 by default, so set an explicit private bind for the
+pilot.
+
+Once the exact title update and protected client patch qualify, point the
+isolated client profile at the private server using
+[Refresher AutoDiscover and Patchwork](https://docs.lbpbonsai.com/rpcs3.html).
+Give both players compatible RPCN setup and the same private lobby key.
+Check native sign-in, lobby entry, a completed level, and reconnect before
+offering the server to invited users. The lobby key and RPCN account data
+stay outside AnyTogether invitations.
+
+AnyPS5 should initially manage the selected server URL, readiness and
+invitation flow. Run the service independently so a player closing AnyPS5
+does not end the server for others. Hosted accounts, levels and persistence
+belong to Refresh. RPCN and game-native gameplay connectivity are separate
+from hosting the Refresh HTTP service.
+
 ## 1. Qualify the exact disc, update and security profile
 
 **Read:** [PS3 disc reader](../lib/core/ps3_disc.dart), [managed core installer](../lib/core/managed_retro.dart), and the [RPCS3 package guide](<AnyPS5 Desktop - Emulator Configuration.md#build-a-ps3-test-package>).

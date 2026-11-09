@@ -17,6 +17,46 @@ launching. Keep the existing PS5 engine path separate.
 
 ## Shared implementation and validation
 
+### Start couch co-op from a running game
+
+The [PS Quick Menu](../lib/ui/app_model.dart) is the entry point for an
+eligible running game. **Play Together → Invite a friend** opens the existing
+AnyTogether friend picker in the game overlay. Dismissing the overlay returns
+to play while the invitation is pending. The host sees when the friend is
+ready, and the guest receives the next free controller seat. For titles with
+separate single-player and local multiplayer modes, players use the game's
+own mode selector.
+
+The [current PS1 match controller](../lib/core/online/ps1_netplay_match.dart)
+and [embedded runner](../lib/ui/ps1_netplay_runner.dart) boot both copies
+together. Joining an existing game needs a separate bootstrap path. Verify
+the guest's copy and core before touching the running game. At an agreed
+frame boundary, capture the host state, give the guest a bounded verified
+checkpoint and keep a bounded history of subsequent inputs. Let the guest
+catch up before assigning its seat. If capture, transfer, restore or catch-up
+fails, close the pending invitation and continue the host's game. A guest
+leaving returns their controller to neutral. Keep guest saves isolated and
+keep local paths and unrelated save data out of the payload.
+
+The [late-join harness](../tool/ps1_netplay/late_join.py) tests the underlying
+state transfer on two independent local processes and different disc paths.
+The patched SwanStation probe restored a frame 6,600 CTR checkpoint into
+a guest in a separate directory and matched 62 RAM and video checks through
+frame 13,706. The initial check compares RAM before the guest renders its
+first frame. The snapshot was 11 MiB raw and about 2.1 MiB after compression.
+It contained the host's absolute disc path. An equivalent CUE with a
+different basename was rejected, consistent with the pinned core's
+[media lookup](https://github.com/libretro/swanstation/blob/631f0fb31b809e0f889d7c551fe695788e39c1d3/src/libretro/libretro_host_interface.cpp).
+A portable checkpoint must refer to verified disc identity and an agreed
+disc slot. The guest resolves it to its own file without interpreting or
+opening a host path. Treat the current core's checkpoint as a trusted
+local test artifact.
+
+The acceptance test for the Quick Menu also needs a successful invitation,
+cancel and disconnect during catch-up, proof that host playback and saves
+survive each path, and real video and audio during the handoff. Only show
+the action when the active backend can join a running session.
+
 The [PS1 netplay plan](<AnyPS5 Desktop - PS1 Netplay Implementation Plan.md>),
 [PS2 LAN plan](<AnyPS5 Desktop - PS2 LAN Implementation Plan.md>) and
 [PS3 native co-op plan](<AnyPS5 Desktop - PS3 Native Co-op Implementation Plan.md>)
