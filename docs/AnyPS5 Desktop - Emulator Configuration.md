@@ -187,13 +187,35 @@ SPU object loads. It produced Vulkan frames and non-silent audio and
 stopped cleanly within 11.39 seconds of process start. Warm launches
 still scan guest programs and link the cached objects. The
 [PS3 online plan](<AnyPS5 Desktop - PS3 Native Co-op Implementation Plan.md>)
-records the exact package and profile checks. Windows Skate 3, matched
+records the exact packages and profile checks. On Windows, the v3 package
+also started Skate 3 (BLUS30464) twice through the production native
+session and Vulkan bridge. The isolated profile started with a copy of
+the title's legacy compiler cache and no saves. Both boots reused 219 PPU
+objects and compiled zero PPU modules. The first populated 6,280 native
+SPU cache files and the second logged 6,259 native object loads. Both
+published Vulkan frames and stopped cleanly. RPCS3 can still show
+“Building SPU Cache” while reading and linking cached objects. Matched
 gameplay frame times and incompatible CPU or build fallback remain open.
 The frontend and optional network-policy patches apply together to the pinned
 RPCS3 source. On Windows x64, that source explicitly targets ELF for the SPU
 JIT, so the object-format check applies to both Linux and Windows packages.
 The existing installed package is unaffected by this source patch until a
 new verified package is built and selected.
+
+The older Windows UnifiedRetro launcher pins the legacy DLL, whose SHA-256
+starts with `7ac7504d`. The presence of the cache patch in a source checkout
+does not update that launcher or its core. A launcher built from this
+branch can install the cache-enabled reviewer package through
+[`ManagedRetro.install`](../lib/core/managed_retro.dart) using the explicit
+package and DLL digests below. The installer replaces only the core DLL.
+The existing firmware, caches, and saves remain under the same emulator
+profile. A first launch after the upgrade can populate the native SPU
+cache. Check a second launch of the same game with the same settings for
+`LLVM: Loaded module: spu-objects-v1-` in the detailed RPCS3 log.
+An isolated upgrade check replaced the exact legacy DLL with the
+[qualified Windows v3 package](<AnyPS5 Desktop - PS3 Native Co-op Implementation Plan.md>).
+Cache, firmware and save sentinels survived the replacement. A second
+install call kept the verified DLL and its modification timestamp.
 
 ### Build a PS3 test package
 
