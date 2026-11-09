@@ -31,7 +31,12 @@ void main() {
         'Version: 1.2\n$ppu:\n  Protection:\n    Games:\n      Fixture:\n'
         '        $title: [01.30]\n    Patch:\n      - [be32, 0x10000, 0x60000000]\n';
     final releases = <Ps3OnlineRelease>[];
-    final fixture = makeFixture(system: HostSystem.windows, ps3OnlineReleases: releases);
+    String? selectedPatch;
+    final fixture = makeFixture(
+      system: HostSystem.windows,
+      ps3OnlineReleases: releases,
+      pickFile: (_, _) async => selectedPatch,
+    );
     final model = fixture.model;
     addTearDown(() {
       model.dispose();
@@ -53,7 +58,9 @@ void main() {
     write(p.join(update, 'PARAM.SFO'), ps3FixtureSfo({'TITLE_ID': title, 'APP_VER': '01.30', 'CATEGORY': 'GD'}));
     write(p.join(update, 'USRDIR', 'EBOOT.BIN'), [2]);
     write(p.join(rpcs3, 'dev_flash', 'vsh', 'module', 'vsh.self'), [3]);
-    write(p.join(rpcs3, 'patches', '${title}_patch.yml'), utf8.encode(patch));
+    final installedPatch = write(p.join(rpcs3, 'patches', '${title}_patch.yml'), [1]);
+    final invalidPatch = write(p.join(fixture.temp.path, 'invalid.yml'), [2]);
+    final reviewedPatch = write(p.join(fixture.temp.path, 'reviewed.yml'), utf8.encode(patch));
     Directory(p.join(rpcs3, 'config')).createSync();
     releases.add(
       Ps3OnlineRelease(
@@ -119,18 +126,25 @@ void main() {
       }).timeout(const Duration(seconds: 5));
     }
 
+    String? patchStatus() =>
+        model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-online-import-patch').detail;
+    String? playStatus() =>
+        model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-online-play').detail;
     activate('ps3-online-play');
-    await waitFor(
-      () =>
-          model
-              .panelCategories()
-              .single
-              .rows
-              .singleWhere((row) => row.id == 'ps3-online-play')
-              .detail
-              ?.contains('account') ==
-          true,
-    );
+    await waitFor(() => playStatus()?.contains('Import Protection Patch') == true);
+    selectedPatch = invalidPatch.path;
+    activate('ps3-online-import-patch');
+    await waitFor(() => patchStatus()?.contains('does not match') == true);
+    expect(installedPatch.readAsBytesSync(), [1]);
+    selectedPatch = reviewedPatch.path;
+    activate('ps3-online-import-patch');
+    await waitFor(() => patchStatus() == 'Reviewed patch installed.');
+    expect(installedPatch.readAsStringSync(), patch);
+    expect(playStatus(), contains("game's online menu"));
+    expect(start.isCompleted, isFalse);
+
+    activate('ps3-online-play');
+    await waitFor(() => playStatus()?.contains('account') == true);
     expect(start.isCompleted, isFalse);
     write(
       p.join(rpcs3, 'config', 'rpcn.yml'),

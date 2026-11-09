@@ -11,6 +11,7 @@ import 'ps3_update_import.dart';
 enum Ps3OnlineIssue implements Exception { unqualified, storage, core, update, patch, firmware, account }
 
 final _ps3TitleId = RegExp(r'^[A-Z]{4}[0-9]{5}$');
+final _ps3ProviderId = RegExp(r'^[a-z0-9][a-z0-9-]{0,47}$');
 
 Map<String, String>? _onlineDiscMetadata(String disc) {
   if (p.basename(disc).toUpperCase() != 'PS3_DISC.SFB') return null;
@@ -91,6 +92,12 @@ final class Ps3OnlineRelease {
   final Ps3Xfloat xfloat;
   final Ps3Dns dns;
   final bool upnp;
+
+  bool get hasManagedProfile =>
+      updateTreeDigest != null &&
+      protection is Ps3YamlProtection &&
+      _ps3ProviderId.hasMatch(provider) &&
+      _ps3TitleId.hasMatch(titleId);
 }
 
 enum Ps3OnlineReadinessState { discUnavailable, noProvider, profileRequired }
@@ -155,6 +162,79 @@ final class Ps3OnlineProfile {
   final String saveRoot;
   final String _offlineSystemRoot;
   final Map<String, Object>? _patchProtection;
+
+  static Future<String> managedProfileRoot(String managedRoot, Ps3OnlineRelease release, {bool create = false}) async {
+    if (!release.hasManagedProfile) throw Ps3OnlineIssue.unqualified;
+    var root = await _directory(managedRoot);
+    for (final name in ['OnlineProfiles', release.provider, release.titleId]) {
+      root = await _managedDirectory(root, name, create: create);
+    }
+    return root;
+  }
+
+  static Future<bool> importProtection(
+    String managedRoot,
+    Ps3OnlineRelease release,
+    String source, {
+    required bool Function() canPublish,
+  }) async {
+    final protection = release.protection;
+    if (!release.hasManagedProfile || protection is! Ps3YamlProtection) throw Ps3OnlineIssue.unqualified;
+    final bytes = await _readProtection(File(source), protection.sha256);
+    if (!canPublish()) return false;
+    final profile = await managedProfileRoot(managedRoot, release, create: true);
+    final system = await _managedDirectory(profile, 'system', create: true);
+    final emulator = await _managedDirectory(system, 'rpcs3', create: true);
+    final patches = await _managedDirectory(emulator, 'patches', create: true);
+    final destination = p.join(patches, '${release.titleId}_patch.yml');
+    final stage = await Directory(patches).createTemp('.patch-import-');
+    try {
+      final file = await File(p.join(stage.path, 'patch.yml')).writeAsBytes(bytes, flush: true);
+      final type = await FileSystemEntity.type(destination, followLinks: false);
+      if (type != FileSystemEntityType.notFound &&
+          (type != FileSystemEntityType.file ||
+              !p.equals(await File(destination).resolveSymbolicLinks(), destination))) {
+        throw Ps3OnlineIssue.storage;
+      }
+      if (!canPublish()) return false;
+      await file.rename(destination);
+      return true;
+    } finally {
+      try {
+        await stage.delete(recursive: true);
+      } on FileSystemException {
+        // A lock on the disposable stage must not hide the import result.
+      }
+    }
+  }
+
+  static Future<String> _managedDirectory(String parent, String name, {required bool create}) async {
+    final path = p.join(parent, name);
+    final type = await FileSystemEntity.type(path, followLinks: false);
+    if (create && type == FileSystemEntityType.notFound) {
+      await Directory(path).create();
+    } else if (type != FileSystemEntityType.directory) {
+      throw Ps3OnlineIssue.storage;
+    }
+    if (!p.equals(await _directory(path), path)) throw Ps3OnlineIssue.storage;
+    return path;
+  }
+
+  static Future<List<int>> _readProtection(File file, String digest) async {
+    try {
+      final opened = await file.open();
+      final List<int> bytes;
+      try {
+        bytes = await opened.read(1024 * 1024 + 1);
+      } finally {
+        await opened.close();
+      }
+      if (bytes.isNotEmpty && bytes.length <= 1024 * 1024 && sha256.convert(bytes).toString() == digest) return bytes;
+    } on FileSystemException {
+      throw Ps3OnlineIssue.patch;
+    }
+    throw Ps3OnlineIssue.patch;
+  }
 
   Map<String, Object> get networkArguments => {
     'xfloat': release.xfloat.name,
@@ -334,16 +414,7 @@ final class Ps3OnlineProfile {
         p.join(patches, '${release.titleId}_patch.yml'),
         Ps3OnlineIssue.patch,
       );
-      final opened = await file.open();
-      final List<int> bytes;
-      try {
-        bytes = await opened.read(1024 * 1024 + 1);
-      } finally {
-        await opened.close();
-      }
-      if (bytes.length > 1024 * 1024 || sha256.convert(bytes).toString() != protection.sha256) {
-        throw Ps3OnlineIssue.patch;
-      }
+      final bytes = await _readProtection(file, protection.sha256);
       final yaml = loadYaml(utf8.decode(bytes));
       if (yaml is! YamlMap ||
           yaml.length != 2 ||

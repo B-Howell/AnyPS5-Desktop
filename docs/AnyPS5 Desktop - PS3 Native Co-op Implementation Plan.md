@@ -390,6 +390,20 @@ uses the verified core and isolated storage, and skips the offline
 trophy watcher for this session. Joining the native room is an explicit
 step in the game's online menu.
 
+**Import Protection Patch** on the same page accepts a local YAML file
+for the listed release. The [profile importer](../lib/core/ps3_online_profile.dart)
+checks the exact digest before creating the isolated profile directories,
+rejects redirected managed paths, and publishes the checked bytes with a
+same-volume rename. A different file leaves the installed patch in place.
+Importing a patch does not launch the game. Launch verification still
+checks the reviewed patch structure and all other prerequisites.
+The scratch Windows import verified the real 26-operation GOTY patch
+in a fresh profile. The tested Windows core also generates
+`patches/patch.yml` with SHA-256
+`79cefe64677e4018efcfe1046825bef08427822b2fc99ff8c03d446c23473ebe`.
+A release for that core needs this base pin so the verifier can reopen
+the profile after the first boot.
+
 The [embedded session](../lib/ui/embedded_retro_game.dart) keeps RPCS3
 running under the Quick Menu and sends neutral input while the menu has
 focus. The protected session does not offer in-game graphics changes

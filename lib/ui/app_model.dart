@@ -8,7 +8,7 @@ import 'dart:ui' as ui show Image;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Color;
-import 'package:flutter/services.dart' show LogicalKeyboardKey;
+import 'package:flutter/services.dart' show LogicalKeyboardKey, PlatformException;
 import 'package:path/path.dart' as p;
 
 import '../core/audio/atrac9.dart';
