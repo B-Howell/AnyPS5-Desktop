@@ -22,7 +22,7 @@ class EmbeddedRetroGame extends RunningGame {
     this._finished,
     this._onResolutionSelected,
     this._onGraphicsSelected,
-    this._netplay,
+    this._netplayMedia,
   ) : super.embedded(_finished.future, DateTime.now());
 
   static const _channel = MethodChannel('anyps5/retro_core');
@@ -33,7 +33,8 @@ class EmbeddedRetroGame extends RunningGame {
   final void Function(String, String) _onGraphicsSelected;
   final _ready = Completer<bool>();
   final _netplayReady = Completer<bool>();
-  final bool _netplay;
+  final Ps1NetplayMedia? _netplayMedia;
+  bool get _netplay => _netplayMedia != null;
   late final Timer _watch;
   late final Timer _input;
   bool _reading = false;
@@ -41,6 +42,7 @@ class EmbeddedRetroGame extends RunningGame {
   bool _acceptsInput = true;
   bool _closing = false;
   bool _awaitNeutral = true;
+  bool _portableCheckpoint = false;
   String error = '';
   String resolutionError = '';
   bool hardwareRendering = false;
@@ -99,13 +101,7 @@ class EmbeddedRetroGame extends RunningGame {
       },
     });
     if (id == null || id < 0) throw StateError('The game surface could not start.');
-    final session = EmbeddedRetroGame._(
-      id,
-      Completer<int>(),
-      onResolutionSelected,
-      onGraphicsSelected,
-      netplay != null,
-    );
+    final session = EmbeddedRetroGame._(id, Completer<int>(), onResolutionSelected, onGraphicsSelected, netplay?.media);
     session.tuning = RetroGameTuning(
       platform: disc.platform,
       options: session.options,
@@ -155,6 +151,7 @@ class EmbeddedRetroGame extends RunningGame {
       }
       final updatedAspect = status['aspect'];
       var updated = false;
+      _portableCheckpoint = status['portableCheckpoint'] == true;
       if (status['netplayReady'] == true && !_netplayReady.isCompleted) {
         _netplayReady.complete(true);
       }
@@ -279,6 +276,53 @@ class EmbeddedRetroGame extends RunningGame {
   Future<void> startNetplayFrames() async {
     if (!_netplay || _closing || await _channel.invokeMethod<bool>('netplayStart') != true) {
       throw StateError('The PS1 netplay runner could not start.');
+    }
+  }
+
+  /// Captures the state immediately before the returned emulation frame.
+  Future<({int frame, Uint8List state})> captureNetplayCheckpoint() async {
+    final result = await _exchangeCheckpoint('ps1CheckpointExport');
+    if (result is Map && result['frame'] is int && result['state'] is Uint8List) {
+      return (frame: result['frame'] as int, state: result['state'] as Uint8List);
+    }
+    throw StateError('The emulator could not capture the checkpoint.');
+  }
+
+  /// Restores into the isolated guest before starting its input timeline.
+  Future<void> restoreNetplayCheckpoint(Uint8List state) async {
+    if (await _exchangeCheckpoint('ps1CheckpointImport', state) != true) {
+      throw StateError('The emulator rejected the checkpoint.');
+    }
+  }
+
+  Future<Object> _exchangeCheckpoint(String method, [Uint8List? state]) async {
+    final media = _netplayMedia;
+    if (media == null || !_portableCheckpoint || _closing || _finished.isCompleted) {
+      throw StateError('The emulator cannot exchange portable checkpoints.');
+    }
+    final digest = media.identity.toJson()['disc'] as String;
+    final id = await _channel.invokeMethod<int>(method, {
+      'discHash': Uint8List.fromList([
+        for (var offset = 0; offset < digest.length; offset += 2)
+          int.parse(digest.substring(offset, offset + 2), radix: 16),
+      ]),
+      'state': ?state,
+    });
+    if (id == null) throw StateError('The emulator did not accept the checkpoint request.');
+    final timer = Stopwatch()..start();
+    var consumed = false;
+    try {
+      while (!_closing && !_finished.isCompleted && timer.elapsed < const Duration(seconds: 3)) {
+        final result = await _channel.invokeMethod<Object>('ps1CheckpointResult', id);
+        if (result != null) {
+          consumed = true;
+          return result;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 8));
+      }
+      throw StateError('The checkpoint operation did not finish.');
+    } finally {
+      if (!consumed) await _channel.invokeMethod<void>('ps1CheckpointCancel', id);
     }
   }
 

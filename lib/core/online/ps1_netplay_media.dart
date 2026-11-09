@@ -44,6 +44,7 @@ final class Ps1NetplayMedia {
 
   static const biosPin = '71af94d1e47a68c11e8fdb9f8368040601514a42a5a399cda48c7d3bff1e99d3';
   static const corePin = '1aaa621dab9f53b130ac29d17e9a12ea4c0df975d4b02b53faec3b52c717fd12';
+  static const portableCorePin = '5ef8eba64119146e405a90c5e9243a249c9d57c405fd75415fb4234d5b6080eb';
 
   final String disc;
   final String bios;
@@ -58,9 +59,9 @@ final class Ps1NetplayMedia {
     required String bios,
     required String core,
   }) async {
-    final cue = await _verify(Ps1NetplayMediaProblem.disc, profile.discPin, () => cueDigest(disc));
-    final firmware = await _verify(Ps1NetplayMediaProblem.bios, biosPin, () => _hashFile(bios));
-    final library = await _verify(Ps1NetplayMediaProblem.core, corePin, () => _hashFile(core));
+    final cue = await _verify(Ps1NetplayMediaProblem.disc, {profile.discPin}, () => cueDigest(disc));
+    final firmware = await _verify(Ps1NetplayMediaProblem.bios, {biosPin}, () => _hashFile(bios));
+    final library = await _verify(Ps1NetplayMediaProblem.core, {corePin, portableCorePin}, () => _hashFile(core));
     return Ps1NetplayMedia._(
       p.absolute(disc),
       p.absolute(bios),
@@ -79,10 +80,14 @@ final class Ps1NetplayMedia {
     );
   }
 
-  static Future<String> _verify(Ps1NetplayMediaProblem problem, String pin, Future<String> Function() read) async {
+  static Future<String> _verify(
+    Ps1NetplayMediaProblem problem,
+    Set<String> pins,
+    Future<String> Function() read,
+  ) async {
     try {
       final digest = await read();
-      if (digest == pin) return digest;
+      if (pins.contains(digest)) return digest;
     } on FileSystemException {
       throw Ps1NetplayMediaFailure(problem);
     } on FormatException {

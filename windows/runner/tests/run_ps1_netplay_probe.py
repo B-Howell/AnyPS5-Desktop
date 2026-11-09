@@ -7,6 +7,7 @@ from pathlib import Path
 from queue import Queue
 from subprocess import CREATE_NO_WINDOW, IDLE_PRIORITY_CLASS, PIPE, Popen, TimeoutExpired
 import sys
+from tempfile import TemporaryDirectory
 from threading import Thread
 from time import monotonic, sleep
 
@@ -68,9 +69,12 @@ def main():
         parser.add_argument("--" + path, type=Path, required=True)
     parser.add_argument("--frames", type=int, default=650)
     parser.add_argument("--trace", type=Path, help="Drive the exact two-player CTR fixture and require the race finish")
+    parser.add_argument("--checkpoint-guest", type=Path, help="Verify a held peer can import with a renamed CUE")
     args = parser.parse_args()
     if args.frames < 120:
         parser.error("at least 120 frames are required to compare a fingerprint")
+    if args.trace and args.checkpoint_guest:
+        parser.error("choose a full race trace or a held-guest checkpoint probe")
 
     with ExitStack() as cleanup:
         frames = read_trace(args.trace) if args.trace else None
@@ -108,6 +112,32 @@ def main():
             assert histories[0][frame] == histories[1][frame], f"PS1 RAM diverged at frame {frame}"
         print(f"Both embedded cores confirmed {args.frames} frames, with both seats active "
               f"and {args.frames // 120} matching RAM fingerprints.")
+        if args.checkpoint_guest:
+            verify_checkpoint(args, peers[0], cleanup)
+
+
+def verify_checkpoint(args, host, cleanup):
+    # Allow the final batch of queued inputs to drain before capturing RAM.
+    sleep(0.1)
+    held_frame = host.sync()[0]
+    expected = host.send("fingerprint")
+    directory = cleanup.enter_context(TemporaryDirectory(prefix="anyps5-worker-state-"))
+    path = json.dumps((Path(directory) / "state").as_posix())
+    assert host.send(f"checkpoint 1 {path}").startswith(f"checkpoint {held_frame} ")
+    assert host.sync()[0] == held_frame
+    guest = Peer(args.probe.resolve(), args.core.resolve(), args.checkpoint_guest.resolve(), args.bios.resolve(), 1)
+    cleanup.callback(guest.close)
+    assert guest.receive() == "ready"
+    before = guest.send("fingerprint")
+    assert before != expected, "The guest already had the expected state before import"
+    assert guest.send(f"restore 2 {path}") == "rejected"
+    assert guest.send("fingerprint") == before
+    assert guest.send(f"restore 1 {path}") == "restored"
+    assert guest.send("fingerprint") == expected
+    assert guest.sync()[0] == 0, "The guest advanced before the match started"
+    assert guest.send("start") == "started"
+    assert guest.send(f"restore 1 {path}") == "unavailable"
+    print("The held native guest restored the host RAM with a renamed CUE and rejected a wrong disc hash.")
 
 
 def read_trace(trace):

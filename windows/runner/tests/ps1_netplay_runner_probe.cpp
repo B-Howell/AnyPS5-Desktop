@@ -13,6 +13,7 @@ static MMRESULT WINAPI SilentWaveOutWrite(HWAVEOUT, LPWAVEHDR header, UINT) {
 #undef waveOutWrite
 
 #include <iostream>
+#include <iomanip>
 
 class ProbeTexture final : public flutter::TextureRegistrar {
  public:
@@ -59,6 +60,56 @@ int main(int argc, char** argv) {
   std::cout << "ready" << std::endl;
   std::string command;
   while (std::cin >> command && command != "quit") {
+    if (command == "checkpoint" || command == "restore") {
+      unsigned digest_byte;
+      std::string path;
+      if (!(std::cin >> digest_byte >> std::quoted(path)) || digest_byte > UINT8_MAX) return 7;
+      std::array<uint8_t, 32> digest{};
+      digest[0] = static_cast<uint8_t>(digest_byte);
+      CheckpointBytes restore;
+      if (command == "restore") {
+        const auto size = std::filesystem::file_size(std::filesystem::u8path(path));
+        if (!size || size > kMaxPs1Checkpoint) return 7;
+        restore.resize(static_cast<size_t>(size));
+        std::ifstream file(std::filesystem::u8path(path), std::ios::binary);
+        if (!file.read(reinterpret_cast<char*>(restore.data()), static_cast<std::streamsize>(restore.size()))) return 7;
+      }
+      const auto request = session.RequestCheckpoint(digest, std::move(restore));
+      if (!request) {
+        std::cout << "unavailable" << std::endl;
+        continue;
+      }
+      const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+      while (std::chrono::steady_clock::now() < until) {
+        const auto value = session.TakeCheckpoint(*request);
+        if (const auto* snapshot = std::get_if<Map>(&value)) {
+          const auto& bytes = std::get<CheckpointBytes>(snapshot->at(Value("state")));
+          const auto frame = std::get<int64_t>(snapshot->at(Value("frame")));
+          if (command != "checkpoint" || bytes.size() <= 40 || bytes[8] != digest[0]) return 7;
+          std::ofstream file(std::filesystem::u8path(path), std::ios::binary);
+          if (!file.write(reinterpret_cast<const char*>(bytes.data()),
+                          static_cast<std::streamsize>(bytes.size()))) return 7;
+          std::cout << "checkpoint " << frame << ' ' << bytes.size() << std::endl;
+          break;
+        }
+        if (const auto* restored = std::get_if<bool>(&value)) {
+          if (command != "restore") return 7;
+          std::cout << (*restored ? "restored" : "rejected") << std::endl;
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      if (std::chrono::steady_clock::now() >= until) return 7;
+      continue;
+    }
+    if (command == "fingerprint") {
+      // The driver withholds remote input before reading the held worker.
+      const auto dll = GetModuleHandleW(L"swanstation_libretro.dll");
+      const auto* ram = static_cast<const uint8_t*>(Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data")(2));
+      if (!ram) return 7;
+      std::cout << NetplayFingerprint(ram, 2 * 1024 * 1024) << std::endl;
+      continue;
+    }
     if (command == "start") {
       std::cout << (session.StartNetplay() ? "started" : "error") << std::endl;
       continue;

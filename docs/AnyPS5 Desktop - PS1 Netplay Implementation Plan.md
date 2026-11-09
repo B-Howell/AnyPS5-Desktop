@@ -169,6 +169,26 @@ diagnostics if rollback exceeds the frame budget.
 
 ## 4. Connect to AnyTogether without changing PS5 sessions
 
+The [Windows worker](../windows/runner/retro_core_host.cpp) now detects the
+portable core exports. It captures on the emulation thread and returns
+the snapshot together with the exact next input frame. It can import into
+an isolated guest only while the guest is held before starting its input
+timeline. The [Flutter bridge](../lib/ui/embedded_retro_game.dart) submits
+the verified disc hash and polls the request without blocking the UI
+thread. Closing or cancelling a request cannot carry it into a later
+game session. [Media verification](../lib/core/online/ps1_netplay_media.dart)
+accepts the qualified portable build alongside the stock build. Peers still
+need matching binaries because the core hash is part of match identity.
+
+The [native probe driver](../windows/runner/tests/run_ps1_netplay_probe.py)
+accepts `--checkpoint-guest` to test a running host and a separately
+booted guest with a renamed CUE. It compares their full RAM fingerprints
+and checks rejection for an incorrect digest and for importing after
+start. The Windows portable test ran 360 confirmed frames with three
+matching periodic RAM fingerprints before importing into a separate guest.
+This is the worker boundary for the live handoff. The Quick Menu
+still needs the host transition, authenticated transfer and catch-up.
+
 ### Windows development checkpoint
 
 Set `ANYPS5_PS1_NETPLAY=1` on an experimental Windows x64 build to expose
