@@ -34,7 +34,7 @@ class _Unreliable extends RTCDataChannelInit {
   Map<String, dynamic> toMap() => {...super.toMap(), 'maxRetransmits': 0};
 }
 
-class _GameLink implements GameLink {
+class _GameLink implements GameLink, RestartableGameLink {
   _GameLink(this.pc) {
     pc.onConnectionState = (state) => _onState?.call(_name(state));
     pc.onIceCandidate = (candidate) {
@@ -117,6 +117,13 @@ class _GameLink implements GameLink {
     unawaited(channel.send(RTCDataChannelMessage.fromBinary(data)).catchError((Object _) {}));
     return true;
   }
+
+  @override
+  Future<void> restartIce() => pc.restartIce();
+
+  @override
+  Future<bool> routeConnected() async =>
+      await pc.getConnectionState() == RTCPeerConnectionState.RTCPeerConnectionStateConnected;
 
   @override
   Future<Map<String, dynamic>> createOffer() async {

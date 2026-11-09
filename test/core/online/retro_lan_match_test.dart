@@ -22,6 +22,7 @@ void main() {
     final received = Completer<Uint8List>();
     final resumedTraffic = Completer<void>();
     final trafficAfterReconnect = Completer<void>();
+    final trafficAfterRouteRestart = Completer<void>();
     final reconnecting = Completer<void>();
     final reconnected = Completer<void>();
     final release = Completer<void>();
@@ -30,6 +31,7 @@ void main() {
     var afterRenegotiate = false;
     var holdExchange = false;
     var expectRecovery = false;
+    var expectRouteRestart = false;
     var guestFrames = 0;
     final closed = <String>[];
     final exits = {
@@ -41,7 +43,8 @@ void main() {
         links: network.links,
         onRecoveryChanged: (recovering) {
           if (id != WebRtcRoomFixture.host) return;
-          (recovering ? reconnecting : reconnected).complete();
+          final event = recovering ? reconnecting : reconnected;
+          if (!event.isCompleted) event.complete();
         },
         launch: (mac) async {
           attached[id] = mac;
@@ -50,6 +53,7 @@ void main() {
               if (id == WebRtcRoomFixture.guest && input.isNotEmpty) {
                 guestFrames += input.length;
                 if (expectRecovery && !trafficAfterReconnect.isCompleted) trafficAfterReconnect.complete();
+                if (expectRouteRestart && !trafficAfterRouteRestart.isCompleted) trafficAfterRouteRestart.complete();
               }
               if (id == WebRtcRoomFixture.guest && input.isNotEmpty && !received.isCompleted) {
                 received.complete(input.first);
@@ -136,6 +140,40 @@ void main() {
     await trafficAfterReconnect.future.timeout(const Duration(seconds: 2));
     await reconnected.future.timeout(const Duration(seconds: 2));
     expect(network.all, hasLength(2));
+
+    final beforeRestart = gateway.signals;
+    final restartAnswer = Completer<void>();
+    gateway.events[WebRtcRoomFixture.host] = (type, event) {
+      final data = event['data'];
+      if (event['kind'] == 'answer' && data is Map && data['iceRoute'] == 1 && !restartAnswer.isCompleted) {
+        restartAnswer.complete();
+      }
+      host.receive(type, event);
+    };
+    for (final link in network.all) {
+      link.reportState('failed');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(host.closed || guest.closed, isFalse);
+    expectRouteRestart = true;
+    await trafficAfterRouteRestart.future.timeout(const Duration(seconds: 4));
+    await restartAnswer.future.timeout(const Duration(seconds: 2));
+    expect(gateway.signals, greaterThan(beforeRestart));
+    expect(network.all, hasLength(2));
+    expect(network.all.map((link) => link.routeRestarts), [1, 0]);
+    final guestClient = gateway.client(WebRtcRoomFixture.guest);
+    guestClient.signal(WebRtcRoomFixture.host, WebRtcRoomFixture.hostDevice, WebRtcRoomFixture.roomId, 'candidate', {
+      'candidate': 'stale original candidate',
+    });
+    guestClient.signal(WebRtcRoomFixture.host, WebRtcRoomFixture.hostDevice, WebRtcRoomFixture.roomId, 'renegotiate', {
+      'iceRoute': 1,
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(
+      network.all.first.candidatesIn.map((candidate) => candidate['candidate']),
+      isNot(contains('stale original candidate')),
+    );
+    expect(network.all.map((link) => link.routeRestarts), [1, 0]);
 
     holdExchange = true;
     await exchangeStarted.future.timeout(const Duration(seconds: 2));

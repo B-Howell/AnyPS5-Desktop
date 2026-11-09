@@ -10,8 +10,9 @@ import 'webrtc_room_fixture.dart';
 
 Future<String> verifyWebRtcLanBridge() async {
   final links = _InterruptibleLinks();
-  final reconnecting = Completer<void>();
-  final reconnected = Completer<void>();
+  var reconnecting = Completer<void>();
+  var reconnected = Completer<void>();
+  var recoveryUser = WebRtcRoomFixture.host;
   final digest = 'a' * 64;
   final gateway = WebRtcRoomFixture((
     titleId: 'SLUS21148',
@@ -27,7 +28,7 @@ Future<String> verifyWebRtcLanBridge() async {
       links: links,
       launch: nic.launch,
       onRecoveryChanged: (recovering) {
-        if (user == WebRtcRoomFixture.host) (recovering ? reconnecting : reconnected).complete();
+        if (user == recoveryUser) (recovering ? reconnecting : reconnected).complete();
       },
     );
     gateway.events[user] = owner.receive;
@@ -65,6 +66,29 @@ Future<String> verifyWebRtcLanBridge() async {
     if (guest.framesReceived == before || links.opened.length != 2) {
       throw StateError('LAN traffic did not resume on the original WebRTC links.');
     }
+    reconnecting = Completer<void>();
+    reconnected = Completer<void>();
+    recoveryUser = WebRtcRoomFixture.guest;
+    links.opened.last.reportState('failed');
+    await reconnecting.future.timeout(const Duration(seconds: 4));
+    final beforeRestart = guest.framesReceived;
+    await reconnected.future.timeout(const Duration(seconds: 8));
+    final restart = Stopwatch()..start();
+    while (guest.framesReceived == beforeRestart && !right.closed && restart.elapsed < const Duration(seconds: 8)) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    final offers = links.opened.first.offerCredentials;
+    if (left.closed ||
+        right.closed ||
+        guest.framesReceived == beforeRestart ||
+        links.opened.length != 2 ||
+        offers.length != 2 ||
+        offers.first == offers.last) {
+      throw StateError(
+        'ICE restart: ${offers.length} offers, ${guest.framesReceived - beforeRestart} resumed frames, '
+        'room closed ${left.closed || right.closed}.',
+      );
+    }
     gateway.hostReleaseGate = releaseHost.future;
     final guestLeaving = right.leave();
     await left.ending.timeout(const Duration(seconds: 5));
@@ -78,7 +102,7 @@ Future<String> verifyWebRtcLanBridge() async {
     if (!gateway.released || !left.gameContinues || host.done.isCompleted || !guest.done.isCompleted) {
       throw StateError('The PS2 LAN room did not close while keeping the host game open.');
     }
-    return 'Windows WebRTC PS2 LAN room passed with DHCP, frame recovery on the same links and the host game kept open.';
+    return 'Windows WebRTC PS2 LAN room passed with DHCP, fresh ICE credentials, resumed frames and the host game kept open.';
   } finally {
     if (!releaseHost.isCompleted) releaseHost.complete();
     await Future.wait([left.leave(), right.leave()]).timeout(const Duration(seconds: 4));
@@ -100,10 +124,11 @@ final class _InterruptibleLinks implements GameLinks {
   }
 }
 
-final class _InterruptibleLink implements GameLink {
+final class _InterruptibleLink implements GameLink, RestartableGameLink {
   _InterruptibleLink(this._link);
 
   final GameLink _link;
+  final offerCredentials = <String>[];
   void Function(String)? _onState;
   void reportState(String state) => _onState?.call(state);
 
@@ -116,7 +141,18 @@ final class _InterruptibleLink implements GameLink {
   @override
   set onStreamMessage(void Function(Uint8List) handler) => _link.onStreamMessage = handler;
   @override
-  Future<Map<String, dynamic>> createOffer() => _link.createOffer();
+  Future<Map<String, dynamic>> createOffer() async {
+    final offer = await _link.createOffer();
+    final credential = RegExp(r'^a=ice-ufrag:([^\r\n]+)', multiLine: true).firstMatch(offer['sdp'] as String);
+    if (credential == null) throw StateError('WebRTC offer had no ICE credentials.');
+    offerCredentials.add(credential.group(1)!);
+    return offer;
+  }
+
+  @override
+  Future<void> restartIce() => (_link as RestartableGameLink).restartIce();
+  @override
+  Future<bool> routeConnected() => (_link as RestartableGameLink).routeConnected();
   @override
   Future<Map<String, dynamic>> createAnswer() => _link.createAnswer();
   @override

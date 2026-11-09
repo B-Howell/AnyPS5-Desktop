@@ -186,11 +186,13 @@ final class RetroLanMatch {
       },
     );
     unawaited(_untilClose(game.done).then((_) => leave(), onError: (Object error) => _failed(error)));
-    Stopwatch? outage;
+    ({Stopwatch timer, int route})? outage;
     var recoveryShown = false;
+    var restartRequested = false;
     _pump = Timer.periodic(const Duration(milliseconds: 8), (_) {
       if (!mesh.canSendGame(peerAddress)) {
-        final elapsed = (outage ??= Stopwatch()..start()).elapsed;
+        final interruption = outage ??= (timer: Stopwatch()..start(), route: mesh.gameRoute(peerAddress));
+        final elapsed = interruption.timer.elapsed;
         if (elapsed >= recoveryWindow) {
           unawaited(_failed(StateError('The PS2 LAN game channel did not recover.'), preserveGame: true));
           return;
@@ -199,8 +201,13 @@ final class RetroLanMatch {
           recoveryShown = true;
           onRecoveryChanged?.call(true);
         }
+        if (!restartRequested && elapsed >= const Duration(milliseconds: 1500)) {
+          restartRequested = true;
+          unawaited(mesh.restartGameRoute(peerAddress, interruption.route));
+        }
       } else {
         outage = null;
+        restartRequested = false;
         if (recoveryShown) {
           recoveryShown = false;
           onRecoveryChanged?.call(false);

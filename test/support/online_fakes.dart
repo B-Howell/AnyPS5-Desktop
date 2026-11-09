@@ -253,7 +253,7 @@ class _FakeLinks implements GameLinks {
   Future<GameLink> link(List<Map<String, dynamic>> iceServers) async => network._make(iceServers);
 }
 
-class FakeGameLink implements GameLink {
+class FakeGameLink implements GameLink, RestartableGameLink {
   FakeGameLink._(this.network, this.id);
 
   final FakeGameNetwork network;
@@ -263,6 +263,7 @@ class FakeGameLink implements GameLink {
   bool _channel = false;
   bool _wantsChannel = false;
   bool closed = false;
+  int routeRestarts = 0;
   String state = 'new';
 
   void reportState(String next) {
@@ -280,6 +281,12 @@ class FakeGameLink implements GameLink {
   int streamMessages = 0;
 
   FakeGameLink? get partner => _remote == null ? null : network._links[_remote];
+
+  @override
+  Future<void> restartIce() async => routeRestarts++;
+
+  @override
+  Future<bool> routeConnected() async => state == 'connected';
 
   @override
   Future<Map<String, dynamic>> createOffer() async => {

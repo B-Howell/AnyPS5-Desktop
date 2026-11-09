@@ -47,6 +47,11 @@ abstract class GameLinks {
   Future<GameLink> link(List<Map<String, dynamic>> iceServers);
 }
 
+abstract interface class RestartableGameLink {
+  Future<void> restartIce();
+  Future<bool> routeConnected();
+}
+
 enum PeerState { connecting, connected, failed, closed }
 
 class _Peer {
@@ -63,6 +68,8 @@ class _Peer {
   bool haveRemote = false;
   bool closed = false;
   bool disconnected = false;
+  bool routeRestartPending = false;
+  int connectionRevision = 0;
   PeerState state = PeerState.connecting;
 
   /// The offer or answer this side sent, the offer the other side sent (for an answerer), and
@@ -71,6 +78,8 @@ class _Peer {
   String? remoteOffer;
   String? remoteAnswer;
   final sentCandidates = <Map<String, dynamic>>[];
+  int route = 0;
+  final nextRouteCandidates = <Map<String, dynamic>>[];
 }
 
 /// Game packets between the players of an AnyTogether game session over WebRTC data channels: one
@@ -240,8 +249,34 @@ class OnlinePeerMesh implements OnlinePeerTransport {
 
   bool canSendGame(int peer) {
     final target = _byAddress[peer];
-    return target != null && !target.closed && !target.disconnected && target.link.gameOpen;
+    return target != null &&
+        !target.closed &&
+        !target.disconnected &&
+        !target.routeRestartPending &&
+        target.link.gameOpen;
   }
+
+  int gameRoute(int address) => _byAddress[address]?.route ?? 0;
+
+  /// Negotiate fresh ICE credentials for the route that was interrupted.
+  Future<void> restartGameRoute(int address, int interruptedRoute) => _serial(() async {
+    final peer = _byAddress[address];
+    if (!fixedPeers ||
+        peer == null ||
+        canSendGame(address) ||
+        peer.route != interruptedRoute ||
+        peer.routeRestartPending ||
+        peer.closed ||
+        !peer.link.gameOpen ||
+        !peer.haveRemote) {
+      return;
+    }
+    if (peer.offerer) {
+      await _restartOffer(peer);
+    } else {
+      _send(peer, 'renegotiate', {'iceRoute': peer.route + 1});
+    }
+  });
 
   @override
   void receive(OnlinePeerSignal signal) {
@@ -256,6 +291,16 @@ class OnlinePeerMesh implements OnlinePeerTransport {
     if (_session?.id != session.id) return;
     final peer = _peers[signal.from];
     final data = signal.data is Map ? Map<String, dynamic>.from(signal.data as Map) : const <String, dynamic>{};
+    final route = data['iceRoute'];
+    if (fixedPeers && route != null) {
+      if (route is int && route > 0 && peer != null && peer.device == signal.device && !peer.closed) {
+        await _routeSignal(peer, signal.kind, data, route);
+      }
+      return;
+    }
+    if (fixedPeers && peer != null && peer.route > 0 && signal.kind != 'bye') {
+      return;
+    }
     switch (signal.kind) {
       case 'offer':
         final sdp = data['sdp'];
@@ -319,6 +364,90 @@ class OnlinePeerMesh implements OnlinePeerTransport {
     }
   }
 
+  Future<void> _routeSignal(_Peer peer, String kind, Map<String, dynamic> data, int route) async {
+    final sdp = data['sdp'];
+    switch (kind) {
+      case 'renegotiate':
+        if (!peer.offerer) return;
+        if (route == peer.route + 1 && peer.haveRemote && !peer.routeRestartPending) {
+          await _restartOffer(peer);
+        } else if (route == peer.route && peer.local != null) {
+          _send(peer, 'offer', peer.local);
+          for (final candidate in peer.sentCandidates) {
+            _send(peer, 'candidate', candidate);
+          }
+        }
+      case 'offer':
+        if (peer.offerer || sdp is! String) return;
+        if (route == peer.route && sdp == peer.remoteOffer && peer.local != null) {
+          _send(peer, 'answer', peer.local);
+        } else if (route == peer.route + 1 && peer.haveRemote && !peer.routeRestartPending) {
+          await peer.link.setRemote({'type': 'offer', 'sdp': sdp});
+          _beginRoute(peer);
+          peer.remoteOffer = sdp;
+          final answer = await peer.link.createAnswer();
+          await peer.link.setLocal(answer);
+          peer.local = answer;
+          _send(peer, 'answer', answer);
+          await _flush(peer);
+          await _refreshRouteState(peer);
+        }
+      case 'answer':
+        if (!peer.offerer || route != peer.route || peer.haveRemote || sdp is! String) return;
+        await peer.link.setRemote({'type': 'answer', 'sdp': sdp});
+        await _flush(peer);
+        await _refreshRouteState(peer);
+      case 'candidate':
+        if (data['candidate'] is! String) return;
+        final candidate = Map<String, dynamic>.of(data)..remove('iceRoute');
+        if (route == peer.route && peer.haveRemote) {
+          await peer.link.addCandidate(candidate).catchError((Object _) {});
+        } else if (route == peer.route && peer.queued.length < 64) {
+          peer.queued.add(candidate);
+        } else if (!peer.offerer && route == peer.route + 1 && peer.nextRouteCandidates.length < 64) {
+          peer.nextRouteCandidates.add(candidate);
+        }
+    }
+  }
+
+  void _beginRoute(_Peer peer) {
+    peer.route++;
+    peer
+      ..haveRemote = false
+      ..disconnected = true
+      ..routeRestartPending = true
+      ..local = null;
+    peer.queued
+      ..clear()
+      ..addAll(peer.nextRouteCandidates);
+    peer.nextRouteCandidates.clear();
+    peer.sentCandidates.clear();
+  }
+
+  Future<void> _restartOffer(_Peer peer) async {
+    final link = peer.link;
+    if (link is! RestartableGameLink) return;
+    await (link as RestartableGameLink).restartIce();
+    final offer = await link.createOffer();
+    _beginRoute(peer);
+    await link.setLocal(offer);
+    peer.local = offer;
+    _send(peer, 'offer', offer);
+  }
+
+  Future<void> _refreshRouteState(_Peer peer) async {
+    final link = peer.link;
+    if (link is! RestartableGameLink) return;
+    final revision = peer.connectionRevision;
+    final connected = await (link as RestartableGameLink).routeConnected();
+    if (peer.closed || revision != peer.connectionRevision) return;
+    peer.disconnected = !connected;
+    if (connected) {
+      peer.routeRestartPending = false;
+      peer.state = PeerState.connected;
+    }
+  }
+
   @override
   void stop() {
     if (_stopped) return;
@@ -376,18 +505,24 @@ class OnlinePeerMesh implements OnlinePeerTransport {
       }
       ..onState = (state) {
         if (peer.closed) return;
+        peer.connectionRevision++;
         switch (state) {
           case 'connected':
             peer.disconnected = false;
+            if (peer.haveRemote) peer.routeRestartPending = false;
             peer.state = PeerState.connected;
+          case 'connecting':
+            if (peer.routeRestartPending) peer.disconnected = true;
           case 'disconnected':
             peer.disconnected = true;
           case 'failed':
+            peer.disconnected = true;
             peer.state = PeerState.failed;
           case 'closed':
             peer.state = PeerState.closed;
         }
-        if ((state == 'failed' || state == 'closed' || (fixedPeers && state == 'game-closed')) &&
+        final recoverable = fixedPeers && peer.link.gameOpen && peer.link is RestartableGameLink;
+        if (((state == 'failed' && !recoverable) || state == 'closed' || (fixedPeers && state == 'game-closed')) &&
             identical(_byAddress[peer.address], peer)) {
           context.peerGone?.call(peer.address);
         }
@@ -469,6 +604,11 @@ class OnlinePeerMesh implements OnlinePeerTransport {
   void _send(_Peer peer, String kind, Object? data) {
     final sessionId = _session?.id;
     if (sessionId == null) return;
+    if (peer.route > 0 &&
+        data is Map<String, dynamic> &&
+        (kind == 'offer' || kind == 'answer' || kind == 'candidate')) {
+      data = {...data, 'iceRoute': peer.route};
+    }
     context.signal(peer.userId, peer.device, sessionId, kind, data);
   }
 
