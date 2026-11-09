@@ -123,6 +123,43 @@ settings. A private-only deployment also needs PSN login disabled.
 The request guard applies to tickets classified as RPCN. Client and
 lobby checks remain open.
 
+The headless Linux embedded session ran GOTY 1.30 against real RPCN
+1.9.0. The core was built from `74b3fa37beb294418230b1f039bab4de97f18479`
+with the launcher frontend, network, patch attestation, RPCN identity,
+and provider status patches. Its library SHA-256 was
+`e895c3bc4c59dfe1ecafbbe06b679b4f65a3af5d60657c75cffb614858ac668e`.
+The title's 26-write protection patch was attested before RPCS3 opened
+the connection. The core verified the pinned TLS certificate and
+protocol 32, authenticated the disposable account, and progressed
+through Connecting and Signaling to Ready with frames. RPCN and the
+core stopped cleanly with no remaining listeners.
+
+This run used a fresh profile, copied caches, software Vulkan, and a
+read-only mount of the disc folder. On Linux the core reads `rpcn.yml`
+directly under the system's RPCS3 root. RPCS3 also probes for a non-loopback
+Ethernet device and a route to `8.8.8.8` before setting up NP. The private
+namespace used a dummy interface with no peer for that route. All RPCN
+traffic went through loopback. The headless run stopped at provider Ready
+because the 26-write patch does not redirect LittleBigPlanet's HTTP
+requests.
+
+For the game server redirect, a headless wrapper ran the upstream
+[Refresher RPCS3 pipeline](https://github.com/LittleBigRefresh/Refresher/blob/47ce03e6c72aa6f0e94653760d860978278a43b9/Refresher.Core/Patching/Pipelines/Lbp/LbpRPCS3PatchPipeline.cs)
+at `47ce03e6c72aa6f0e94653760d860978278a43b9`. The wrapper used
+AutoDiscover on the real private Refresh instance. It produced a
+separate scratch GOTY update with the Patchwork module, a loopback game
+server URL, the advertised digest configuration, and a disposable join
+key. The copied source update's executable digest stayed the same.
+The generated executable SHA-256 was
+`a4c387dfb3953caac515a2d23b9d7ef5d8be4d6681dcd21a6abc6a33a023a247`
+and the Patchwork module SHA-256 was
+`c849af910568ccfcb613917ff86371096b990c39ad5dcc51325aee3d4671440d`.
+The wrapper ran without a GUI. These files have yet to boot in the
+embedded core. The next test needs to verify when Patchwork loads and
+applies its protections, then gate network access on the generated
+update, module, and endpoint configuration before attempting the
+actual Refresh login.
+
 Once the exact title update and protected client patch qualify, point the
 isolated client profile at the private server using
 [Refresher AutoDiscover and Patchwork](https://docs.lbpbonsai.com/rpcs3.html).
