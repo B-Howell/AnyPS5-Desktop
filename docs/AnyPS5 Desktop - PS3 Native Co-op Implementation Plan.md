@@ -383,6 +383,26 @@ The tested archive SHA-256 was
 and the DLL SHA-256 was
 `874b90826fccd5eb162fbdbe2e48a970e21a09867d4167c8eee63f4b16ad6d51`.
 
+A follow-up Windows headless run used the same DLL with two isolated
+LittleBigPlanet GOTY 1.30 profiles and a loopback TLS and UDP fixture.
+With an accepted synthetic login, RPCS3 used the returned account ID in
+its first UDP signaling ping, accepted the loopback pong and resumed
+signaling at a 5.5-second interval. LittleBigPlanet proceeded to
+`sceNpMatching2Init2`. The fixture observed but did not answer the later
+trophy-sync request. With an invalid-password reply, RPCS3 logged the
+login failure, closed the TLS connection and sent no signaling ping
+during the rejection check. LittleBigPlanet called
+`sceNpMatching2Init2` after rejection as well, so the call alone is
+insufficient as a connection signal. Both headless processes stopped cleanly.
+The accepted case's TCP and UDP sockets were observed on loopback.
+
+These checks distinguish provider authentication and UDP signaling from
+both a rendered game frame and a native game join. For launcher
+feedback, wait for the native signaling result before indicating the
+provider connection is ready, and report a rejected login separately.
+A game lobby or co-op session still needs a separate observation from
+the game.
+
 The [profile tests](../test/core/ps3_online_profile_test.dart) use synthetic
 files to verify safe reopening, artifact hashes and the isolated online
 launch arguments. The [offline boot test](../test/ui/ps3_online_boot_test.dart)
