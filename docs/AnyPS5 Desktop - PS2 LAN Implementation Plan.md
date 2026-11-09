@@ -277,20 +277,29 @@ ends if the game channel subsequently closes.
 The [LAN bridge](../lib/core/online/retro_lan_bridge.dart) keeps at most
 64 incoming frames, retries the head batch while the core is loading,
 and allows one exchange of up to 16 frames at a time. On exit, the
-match stops forwarding frames, drains the current exchange, and closes
-the game independently of the room release request. The match limits
+match stops forwarding frames and drains the current exchange. A peer
+departure or lost game channel releases the room while keeping an
+already started game open. The launcher explains that the player can
+return to the game and must close it before opening a new LAN room.
+Explicitly leaving closes the local game. An interrupted startup also
+closes a game that returns after cancellation. Local game cleanup runs
+independently of the room release request. The match limits
 how long it waits for server cleanup so an unresponsive server cannot
 keep the launcher in its closing state. The
 [transport suite](../test/core/online/retro_lan_transport_test.dart)
 covers frame routing and queue bounds. The
 [match tests](../test/core/online/retro_lan_match_test.dart) exercise
-authentication, repeated signaling and exit during an exchange or startup.
+authentication, repeated signaling, game-channel loss, and exit during
+an exchange or startup.
 Set `ANYPS5_PS2_WEBRTC_LAN=1` on the existing
 [headless WebRTC probe](../tool/ps1_netplay/webrtc_loopback.dart) to run
 the [two-player room fixture](../tool/ps1_netplay/webrtc_lan_probe.dart)
 over real Windows data channels. The probe checks the assigned MACs,
-matches broadcast and unicast frames byte for byte, and checks room and
-adapter teardown. It uses synthetic NICs and a simulated room gateway.
+matches broadcast and unicast frames byte for byte, and checks that the
+guest can leave without closing the host game, even while the host's room
+release request is pending. It uses synthetic NICs and a simulated room
+gateway. A packaged-game disconnect and rematch across two networks remains
+part of the release qualification below.
 
 The [private DHCP service](../lib/core/online/retro_lan_dhcp.dart) supplies
 `10.231.0.101/24` to the host console and `10.231.0.102/24` to the guest.

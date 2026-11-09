@@ -58,7 +58,7 @@ extension TogetherPs2Lan on TogetherModel {
 
   List<PanelRow> ps2LanRows() {
     final attempt = _ps2Lan;
-    if (attempt == null) return const [];
+    if (attempt == null || (attempt.match?.closed == true && !attempt.cancelled)) return const [];
     return [
       PanelRow(
         id: 'ps2-lan-status',
@@ -73,6 +73,7 @@ extension TogetherPs2Lan on TogetherModel {
               : 'ps2LanConnecting',
         ),
         kind: ActionRow(() {
+          if (attempt.match?.closed == true) return;
           attempt.cancel();
           app.refresh();
         }, destructive: true),
@@ -154,6 +155,13 @@ extension TogetherPs2Lan on TogetherModel {
             return run;
           },
         );
+        unawaited(
+          match.ending.then((_) {
+            if (!active()) return;
+            if (match.gameContinues && app.running?.$1 == game) app.show(T.text('ps2LanGameContinues'));
+            app.refresh();
+          }),
+        );
         app.refresh();
         if (roomId == null) {
           await match.host(friendId!);
@@ -162,10 +170,12 @@ extension TogetherPs2Lan on TogetherModel {
           unawaited(hub.games.refresh().catchError((Object _) {}));
         }
         await match.done;
-        if (active() && match.failure != null) {
-          app.show(T.text('ps2LanDisconnected'));
-        } else if (active() && match.remoteEnded) {
-          app.show(T.text('ps2LanRemoteEnded'));
+        if (active() && !match.gameContinues) {
+          if (match.failure != null) {
+            app.show(T.text('ps2LanDisconnected'));
+          } else if (match.remoteEnded) {
+            app.show(T.text('ps2LanRemoteEnded'));
+          }
         }
         return;
       }

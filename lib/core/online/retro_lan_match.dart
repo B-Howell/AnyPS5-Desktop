@@ -41,11 +41,14 @@ final class RetroLanMatch {
   Timer? _pump;
   String? _pendingRoom;
   bool _closed = false;
+  bool _gameContinues = false;
   bool remoteEnded = false;
   Object? failure;
 
   Future<void> get done => _done.future;
+  Future<void> get ending => _closing.future;
   bool get closed => _closed;
+  bool get gameContinues => _gameContinues;
 
   Future<void> host(String friend) => _open(rooms.host, friend: friend);
   Future<void> join(String id) => _open(() => rooms.join(id), roomId: id);
@@ -170,20 +173,20 @@ final class RetroLanMatch {
         ),
       ),
     );
-    unawaited(game.done.then((_) => leave(), onError: (Object error) => _failed(error)));
+    unawaited(_untilClose(game.done).then((_) => leave(), onError: (Object error) => _failed(error)));
     _pump = Timer.periodic(const Duration(milliseconds: 8), (_) {
       if (!mesh.canSendGame(peerAddress)) {
-        unawaited(_failed(StateError('The PS2 LAN game channel closed.')));
+        unawaited(_failed(StateError('The PS2 LAN game channel closed.'), preserveGame: true));
         return;
       }
-      unawaited(bridge.pump().catchError(_failed));
+      unawaited(bridge.pump().catchError((Object error) => _failed(error)));
     });
   }
 
-  Future<void> _failed(Object error) async {
+  Future<void> _failed(Object error, {bool preserveGame = false}) async {
     if (_closed) return;
     failure = error;
-    await leave();
+    await _end(preserveGame: preserveGame);
   }
 
   void receive(String type, Map<String, dynamic> event) {
@@ -202,7 +205,7 @@ final class RetroLanMatch {
   void _remoteEnded() {
     if (_closed) return;
     remoteEnded = true;
-    unawaited(leave());
+    unawaited(_end(preserveGame: true));
   }
 
   void _receiveSignal(Map<String, dynamic> event) {
@@ -213,15 +216,18 @@ final class RetroLanMatch {
     }
   }
 
-  Future<void> leave() async {
+  Future<void> leave() => _end();
+
+  Future<void> _end({bool preserveGame = false}) async {
     if (_closed) return done;
     _closed = true;
+    _gameContinues = preserveGame && _bridge != null;
     _closing.complete();
     _early.clear();
     _pump?.cancel();
     _bridge?.close();
     _mesh?.stop();
-    await Future.wait([_releaseRoom().timeout(const Duration(seconds: 8), onTimeout: () {}), _closeGame()]);
+    await Future.wait([_releaseRoom().timeout(const Duration(seconds: 8), onTimeout: () {}), _finishGame()]);
     _done.complete();
   }
 
@@ -235,11 +241,12 @@ final class RetroLanMatch {
     }
   }
 
-  Future<void> _closeGame() async {
+  Future<void> _finishGame() async {
     try {
       final game = await _launching;
       if (game == null) return;
       await _bridge?.drained;
+      if (_gameContinues) return;
       await game.close();
       await game.done;
     } on Object catch (error) {

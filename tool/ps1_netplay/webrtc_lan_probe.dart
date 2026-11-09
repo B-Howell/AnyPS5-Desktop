@@ -30,6 +30,7 @@ Future<String> verifyWebRtcLanBridge() async {
 
   final left = match(WebRtcRoomFixture.host, host);
   final right = match(WebRtcRoomFixture.guest, guest);
+  final releaseHost = Completer<void>();
   try {
     final hosting = left.host(WebRtcRoomFixture.guest);
     await Future.any([
@@ -38,14 +39,24 @@ Future<String> verifyWebRtcLanBridge() async {
     ]).timeout(const Duration(seconds: 5));
     await Future.wait([hosting, right.join(WebRtcRoomFixture.roomId)]).timeout(const Duration(seconds: 10));
     await Future.wait([host.received.future, guest.received.future]).timeout(const Duration(seconds: 8));
-    await right.leave();
-    await left.done.timeout(const Duration(seconds: 5));
-    if (!gateway.released || !host.done.isCompleted || !guest.done.isCompleted) {
-      throw StateError('The PS2 LAN room did not release its virtual NICs.');
+    gateway.hostReleaseGate = releaseHost.future;
+    final guestLeaving = right.leave();
+    await left.ending.timeout(const Duration(seconds: 5));
+    if (!left.gameContinues || host.done.isCompleted || gateway.released) {
+      throw StateError('The host game did not stay open during room release.');
     }
-    return 'Windows WebRTC PS2 LAN room passed with distinct DHCP leases, matching frames and clean teardown.';
+    final repeatedLeave = left.leave();
+    releaseHost.complete();
+    await Future.wait([guestLeaving, repeatedLeave]).timeout(const Duration(seconds: 5));
+    await left.done.timeout(const Duration(seconds: 5));
+    if (!gateway.released || !left.gameContinues || host.done.isCompleted || !guest.done.isCompleted) {
+      throw StateError('The PS2 LAN room did not close while keeping the host game open.');
+    }
+    return 'Windows WebRTC PS2 LAN room passed with distinct DHCP leases, matching frames and the host game kept open.';
   } finally {
+    if (!releaseHost.isCompleted) releaseHost.complete();
     await Future.wait([left.leave(), right.leave()]).timeout(const Duration(seconds: 4));
+    if (!host.done.isCompleted) host.done.complete();
   }
 }
 

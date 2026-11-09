@@ -9,7 +9,7 @@ import '../../../tool/ps1_netplay/webrtc_room_fixture.dart';
 import '../../support/online_fakes.dart';
 
 void main() {
-  test('private PS2 room launches two distinct virtual NICs and releases them on exit', () async {
+  test('leaving a private PS2 room keeps the other player’s game open', () async {
     final digest = 'a' * 64;
     final gateway = WebRtcRoomFixture((
       titleId: 'SLUS21148',
@@ -66,6 +66,9 @@ void main() {
       );
       gateway.events[id] = owner.receive;
       addTearDown(owner.leave);
+      addTearDown(() {
+        if (!exits[id]!.isCompleted) exits[id]!.complete();
+      });
       return owner;
     }
 
@@ -107,6 +110,9 @@ void main() {
     final leaving = host.leave();
     try {
       await guest.done.timeout(const Duration(seconds: 2));
+      expect(guest.gameContinues, isTrue);
+      expect(host.gameContinues, isFalse);
+      expect(exits[WebRtcRoomFixture.guest]!.isCompleted, isFalse);
       expect(exits[WebRtcRoomFixture.host]!.isCompleted, isFalse);
       exchangeFinished.complete(<Uint8List>[]);
       await exits[WebRtcRoomFixture.host]!.future.timeout(const Duration(seconds: 2));
@@ -116,7 +122,48 @@ void main() {
       release.complete();
     }
     await Future.wait([leaving, guest.done]).timeout(const Duration(seconds: 2));
-    expect(closed, unorderedEquals([WebRtcRoomFixture.host, WebRtcRoomFixture.guest]));
+    expect(closed, [WebRtcRoomFixture.host]);
+    expect(gateway.released, isTrue);
+  });
+
+  test('losing the game channel ends the room and keeps both games open', () async {
+    final digest = 'c' * 64;
+    final gateway = WebRtcRoomFixture((
+      titleId: 'SLUS21148',
+      gameVersion: '1',
+      mode: RetroOnlineMode.lan,
+      capacity: 2,
+    ), digest);
+    final network = FakeGameNetwork();
+    final stopped = <Completer<void>>[];
+    RetroLanMatch match(String id) {
+      final done = Completer<void>();
+      stopped.add(done);
+      final match = RetroLanMatch(
+        rooms: gateway.client(id, expectedDigest: digest),
+        links: network.links,
+        launch: (_) async =>
+            (exchange: (_) async => <Uint8List>[], close: () async => done.complete(), done: done.future),
+      );
+      gateway.events[id] = match.receive;
+      addTearDown(match.leave);
+      addTearDown(() {
+        if (!done.isCompleted) done.complete();
+      });
+      return match;
+    }
+
+    final host = match(WebRtcRoomFixture.host);
+    final guest = match(WebRtcRoomFixture.guest);
+    final hosting = host.host(WebRtcRoomFixture.guest);
+    await gateway.invited.timeout(const Duration(seconds: 5));
+    await Future.wait([hosting, guest.join(WebRtcRoomFixture.roomId)]).timeout(const Duration(seconds: 5));
+    network.gameChannelReady = false;
+    await Future.wait([host.done, guest.done]).timeout(const Duration(seconds: 2));
+
+    expect(host.gameContinues, isTrue);
+    expect(guest.gameContinues, isTrue);
+    expect(stopped.any((game) => game.isCompleted), isFalse);
     expect(gateway.released, isTrue);
   });
 
