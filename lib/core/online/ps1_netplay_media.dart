@@ -27,6 +27,21 @@ enum Ps1NetplayExecution {
   };
 }
 
+enum Ps1NetplayRoomMode {
+  fresh('1'),
+  staged('2'),
+  ordinary('3');
+
+  const Ps1NetplayRoomMode(this.version);
+  final String version;
+
+  static Ps1NetplayRoomMode? tryRead(String version) => values.where((mode) => mode.version == version).singleOrNull;
+
+  bool get needsCheckpoint => this != fresh;
+  Ps1NetplayExecution get execution =>
+      this == ordinary ? Ps1NetplayExecution.ordinaryHandoff : Ps1NetplayExecution.standard;
+}
+
 /// Room routing uses the original disc's boot serial. Peers separately verify
 /// their full disc digests, firmware, core and deterministic settings.
 final class Ps1NetplayProfile {
@@ -37,9 +52,8 @@ final class Ps1NetplayProfile {
   static Ps1NetplayProfile? tryRead(String? serial) =>
       serial != null && _serial.hasMatch(serial) ? Ps1NetplayProfile._(serial) : null;
 
-  RetroRoomSpec get room => (titleId: titleId, gameVersion: '1', mode: RetroOnlineMode.synchronized, capacity: 2);
-  RetroRoomSpec get handoffRoom =>
-      (titleId: titleId, gameVersion: '2', mode: RetroOnlineMode.synchronized, capacity: 2);
+  RetroRoomSpec roomFor(Ps1NetplayRoomMode mode) =>
+      (titleId: titleId, gameVersion: mode.version, mode: RetroOnlineMode.synchronized, capacity: 2);
 }
 
 final class Ps1NetplayMediaFailure implements Exception {

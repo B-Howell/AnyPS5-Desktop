@@ -58,8 +58,8 @@ void main() {
       final game = GameLibrary.scan(folder.path).single;
       expect(game.retroSerial, serial);
       final profile = Ps1NetplayProfile.tryRead(serial)!;
-      expect(profile.handoffRoom.titleId, profile.room.titleId);
-      expect(profile.handoffRoom.gameVersion, isNot(profile.room.gameVersion));
+      expect(Ps1NetplayRoomMode.values.map((mode) => profile.roomFor(mode).titleId).toSet(), {serial});
+      expect(Ps1NetplayRoomMode.values.map((mode) => profile.roomFor(mode).gameVersion).toSet(), {'1', '2', '3'});
     }
     expect(Ps1NetplayProfile.tryRead('Not a disc serial'), isNull);
   });

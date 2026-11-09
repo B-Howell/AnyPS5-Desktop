@@ -9,6 +9,7 @@ import '../core/game_library.dart';
 import '../core/game_process.dart';
 import '../core/managed_retro.dart';
 import '../core/ps3_online_profile.dart';
+import '../core/toolkit_download.dart';
 import '../core/gamepad/pad_navigation.dart';
 import '../core/online/ps1_checkpoint_transfer.dart';
 import '../core/online/ps1_netplay_media.dart';
@@ -55,6 +56,7 @@ class EmbeddedRetroGame extends RunningGame {
     this.localNetplayStaging,
     this._ps2Lan,
     this._online,
+    this._sourcePaths,
   ) : super.embedded(_finished.future, DateTime.now());
 
   static const _channel = MethodChannel('anyps5/retro_core');
@@ -67,6 +69,7 @@ class EmbeddedRetroGame extends RunningGame {
   final _ready = Completer<bool>();
   final _netplayReady = Completer<bool>();
   final Ps1NetplayMedia? _netplayMedia;
+  final ({String core, String disc}) _sourcePaths;
   final bool _ps2Lan;
   bool get _netplay => _netplayMedia != null;
   late final Timer _watch;
@@ -77,6 +80,7 @@ class EmbeddedRetroGame extends RunningGame {
   bool _closing = false;
   bool _awaitNeutral = true;
   bool _portableCheckpoint = false;
+  int? _ordinaryCheckpointSource;
   String error = '';
   String resolutionError = '';
   bool hardwareRendering = false;
@@ -178,6 +182,7 @@ class EmbeddedRetroGame extends RunningGame {
       localNetplayStaging,
       ps2Lan != null,
       onlineProfile != null,
+      (core: core, disc: p.absolute(disc.path)),
     );
     session.tuning = RetroGameTuning(
       platform: disc.platform,
@@ -242,6 +247,12 @@ class EmbeddedRetroGame extends RunningGame {
         }
       }
       _portableCheckpoint = status['portableCheckpoint'] == true;
+      final source = status['localBlankCardCheckpoint'];
+      final sourceToken = !_netplay && source is int && source > 0 ? source : null;
+      if (_ordinaryCheckpointSource != sourceToken) {
+        _ordinaryCheckpointSource = sourceToken;
+        updated = true;
+      }
       if (status['netplayReady'] == true && !_netplayReady.isCompleted) {
         _netplayReady.complete(true);
       }
@@ -388,6 +399,33 @@ class EmbeddedRetroGame extends RunningGame {
     throw StateError('The emulator could not capture the checkpoint.');
   }
 
+  /// Captures the ordinary session through its blank-card exporter.
+  Future<Ps1CheckpointSnapshot> captureOrdinaryNetplayCheckpoint(Ps1NetplayMedia media) async {
+    final source = _ordinaryCheckpointSource;
+    bool available() =>
+        _ordinaryCheckpointSource == source &&
+        !_closing &&
+        !_finished.isCompleted &&
+        activeOptions['swanstation_CPU_ExecutionMode'] == media.execution.cpu;
+    if (source == null ||
+        media.execution != Ps1NetplayExecution.ordinaryHandoff ||
+        !p.equals(_sourcePaths.disc, media.disc) ||
+        !available() ||
+        await AssetDownload.sha256Of(_sourcePaths.core) != Ps1NetplayMedia.ordinaryHandoffCorePin ||
+        !available()) {
+      throw StateError('The ordinary PS1 session cannot share a match checkpoint.');
+    }
+    final result = await _exchangeCheckpoint('ps1LocalCheckpointExport', {
+      'texture': textureId,
+      'source': source,
+      'discHash': _decodeCheckpointDigest(media.discDigest),
+    });
+    if (available() && result is Map && result['frame'] is int && result['state'] is Uint8List) {
+      return (frame: result['frame'] as int, state: result['state'] as Uint8List);
+    }
+    throw StateError('The emulator could not capture the match checkpoint.');
+  }
+
   /// Restores into the isolated guest before starting its input timeline.
   Future<void> restoreNetplayCheckpoint(Ps1CheckpointSnapshot snapshot) async {
     if (await _exchangeCheckpoint('ps1CheckpointImport', {
@@ -434,6 +472,7 @@ class EmbeddedRetroGame extends RunningGame {
   }
 
   Future<void> replayNetplayHistory(int firstFrame, List<Ps1FrameInputs> frames) async {
+    _requirePortableCheckpoint();
     final result = await _exchangeCheckpoint('ps1CheckpointReplay', {
       'frame': firstFrame,
       'frames': [
@@ -461,16 +500,14 @@ class EmbeddedRetroGame extends RunningGame {
     return media;
   }
 
-  Uint8List _checkpointDiscHash() {
-    final digest = _requirePortableCheckpoint().identity.toJson()['disc'] as String;
-    return Uint8List.fromList([
-      for (var offset = 0; offset < digest.length; offset += 2)
-        int.parse(digest.substring(offset, offset + 2), radix: 16),
-    ]);
-  }
+  Uint8List _checkpointDiscHash() => _decodeCheckpointDigest(_requirePortableCheckpoint().discDigest);
+
+  static Uint8List _decodeCheckpointDigest(String digest) => Uint8List.fromList([
+    for (var offset = 0; offset < digest.length; offset += 2)
+      int.parse(digest.substring(offset, offset + 2), radix: 16),
+  ]);
 
   Future<Object> _exchangeCheckpoint(String method, Map<String, Object> arguments) async {
-    _requirePortableCheckpoint();
     final id = await _channel.invokeMethod<int>(method, arguments);
     if (id == null) throw StateError('The emulator did not accept the checkpoint request.');
     final timer = Stopwatch()..start();

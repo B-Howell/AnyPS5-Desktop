@@ -1,13 +1,18 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:anyps5_desktop/core/controllers/pad_info.dart';
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/host.dart';
+import 'package:anyps5_desktop/core/managed_retro.dart';
+import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:anyps5_desktop/core/together/game_sessions.dart';
 import 'package:anyps5_desktop/ui/together_model.dart';
+import 'package:anyps5_desktop/ui/embedded_retro_game.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -15,110 +20,271 @@ import '../support/fake_together.dart';
 import '../support/ui_support.dart';
 
 void main() {
-  test('PS1 handoff invite prompts for a compatible BIOS before joining', () async {
+  _LoopbackBinding();
+  for (final version in ['2', '3']) {
+    test('PS1 handoff invite version $version prompts for a compatible BIOS before joining', () async {
+      final server = await FakeTogether.start();
+      addTearDown(server.close);
+      const host = '12345678-1234-4234-8234-123456789ab1';
+      const roomId = '12345678-1234-4234-8234-123456789abc';
+      const protocol = RetroOnlineMode.synchronized;
+      final invite = GameInvite(
+        sessionId: roomId,
+        titleId: 'SCUS94426',
+        gameVersion: version,
+        engineBuild: 'anyps5-ps1-netplay-v1',
+      );
+      server.answers['GET game-sessions/$roomId'] = (
+        200,
+        {
+          'id': roomId,
+          'host': {'userId': host},
+          'kind': 'online',
+          'titleId': invite.titleId,
+          'gameVersion': invite.gameVersion,
+          'engineBuild': protocol.protocol,
+          'capacity': 2,
+          'joinable': false,
+          'properties': {'protocol': protocol.protocol, 'discSha256': 'a' * 64},
+        },
+      );
+
+      var chosen = Completer<String?>();
+      var picking = Completer<void>();
+      final fixture = makeFixture(
+        together: server.base,
+        system: HostSystem.windows,
+        environment: {'ANYPS5_PS1_NETPLAY': '1'},
+        pickFile: (label, extensions) {
+          expect(label, contains('SCPH-1001'));
+          expect(extensions, contains('bin'));
+          picking.complete();
+          return chosen.future;
+        },
+      );
+      final model = fixture.model;
+      addTearDown(() {
+        model.dispose();
+        fixture.dispose();
+      });
+      await signIn(model.together);
+
+      final folder = fixture.temp.path;
+      final cue = File(p.join(folder, 'game.cue'))..createSync();
+      model.games.add(
+        Game(
+          folder: folder,
+          titleId: 'PS1-fixture',
+          name: 'CTR fixture',
+          names: const {},
+          defaultLanguage: 'en',
+          version: '',
+          executable: ExecutableKind.disc,
+          retro: (platform: RetroPlatform.ps1, path: cue.path),
+          retroSerial: invite.titleId,
+        ),
+      );
+      final incompatible = Uint8List(512 * 1024)..[0] = 3;
+      final offline = File(p.join(folder, 'offline.bin'))..writeAsBytesSync(incompatible);
+      model.preferences.retroBiosSources['ps1'] = offline.path;
+
+      var joining = model.together.joinPs1Netplay(invite);
+      await picking.future.timeout(const Duration(seconds: 5));
+      chosen.complete(offline.path);
+      await joining;
+      expect(model.toast, contains('matching SCPH-1001'));
+
+      chosen = Completer<String?>();
+      picking = Completer<void>();
+      joining = model.together.joinPs1Netplay(invite);
+      await picking.future.timeout(const Duration(seconds: 5));
+      chosen.complete(null);
+      await joining;
+
+      chosen = Completer<String?>();
+      picking = Completer<void>();
+      joining = model.together.joinPs1Netplay(invite);
+      await picking.future.timeout(const Duration(seconds: 5));
+      await model.together.signOut();
+      final signedOutNotice = model.toast;
+      chosen.complete(offline.path);
+      await joining;
+      expect(model.toast, signedOutNotice);
+
+      expect(server.callsTo('game-sessions/$roomId/join'), isEmpty);
+      expect(model.running, isNull);
+      expect(model.preferences.retroBiosSources['ps1'], offline.path);
+      expect(offline.readAsBytesSync(), incompatible);
+      expect(
+        File(p.join(p.dirname(model.paths.toolkits), 'Emulators', 'PS1-Netplay', 'scph1001.bin')).existsSync(),
+        isFalse,
+      );
+    }, skip: Abi.current() != Abi.windowsX64);
+  }
+
+  final ordinaryFixture = Platform.environment['ANYPS5_TEST_PS1_ORDINARY_FIXTURE'];
+  test('ordinary PS1 capture sends the native source token, texture and verified disc digest', () async {
+    final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
+    final root = await Directory.systemTemp.createTemp('anyps5-source-capture-');
+    addTearDown(() => root.delete(recursive: true));
+    const execution = Ps1NetplayExecution.ordinaryHandoff;
+    final core = await ManagedRetro(root.path, packageDirectory: packages).ensurePs1NetplayCore(execution: execution);
+    final media = await Ps1NetplayMedia.verify(
+      profile: Ps1NetplayProfile.tryRead('SCUS94426')!,
+      disc: disc,
+      bios: bios,
+      core: core,
+      execution: execution,
+    );
+    const channel = MethodChannel('anyps5/retro_core');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final bytes = Uint8List.fromList([1, 2, 3]);
+    var ended = false;
+    var captures = 0;
+    final resultRequested = Completer<void>();
+    final delayedResult = Completer<Map<String, Object>>();
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'start':
+          return 41;
+        case 'status':
+          return {
+            'ended': ended,
+            'startupVisible': true,
+            'localBlankCardCheckpoint': 17,
+            'options': {
+              'swanstation_CPU_ExecutionMode': {
+                'values': ['Recompiler'],
+                'selected': 0,
+                'activeValue': 'Recompiler',
+              },
+            },
+          };
+        case 'ps1LocalCheckpointExport':
+          captures++;
+          expect(call.arguments['texture'], 41);
+          expect(call.arguments['source'], 17);
+          final digest = (call.arguments['discHash'] as Uint8List).map(
+            (byte) => byte.toRadixString(16).padLeft(2, '0'),
+          );
+          expect(digest.join(), media.discDigest);
+          return 51;
+        case 'ps1CheckpointResult':
+          expect(call.arguments, 51);
+          if (captures == 2) {
+            resultRequested.complete();
+            return delayedResult.future;
+          }
+          return {'frame': 616, 'state': bytes};
+        case 'stop':
+          ended = true;
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final source = await EmbeddedRetroGame.start(
+      p.dirname(core),
+      (platform: RetroPlatform.ps1, path: disc),
+      internalResolution: null,
+      graphics: const {},
+      onResolutionSelected: (_) {},
+      onGraphicsSelected: (_, _) {},
+      readPad: () => PadState.idle,
+      changed: () {},
+    );
+    addTearDown(() async {
+      await source.close();
+      await source.exitCode;
+    });
+    expect(await source.ready, isTrue);
+    final checkpoint = await source.captureOrdinaryNetplayCheckpoint(media);
+    expect(checkpoint.frame, 616);
+    expect(checkpoint.state, bytes);
+    expect(captures, 1);
+    final lateCapture = expectLater(source.captureOrdinaryNetplayCheckpoint(media), throwsStateError);
+    await resultRequested.future.timeout(const Duration(seconds: 5));
+    await source.close();
+    delayedResult.complete({'frame': 617, 'state': bytes});
+    await lateCapture;
+    await expectLater(source.captureOrdinaryNetplayCheckpoint(media), throwsStateError);
+    expect(captures, 2);
+  }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null);
+
+  test('ordinary PS1 invite installs the right core and continues the original invite', () async {
+    final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
     final server = await FakeTogether.start();
     addTearDown(server.close);
-    const host = '12345678-1234-4234-8234-123456789ab1';
-    const roomId = '12345678-1234-4234-8234-123456789abc';
-    const protocol = RetroOnlineMode.synchronized;
     const invite = GameInvite(
-      sessionId: roomId,
+      sessionId: '12345678-1234-4234-8234-123456789abc',
       titleId: 'SCUS94426',
-      gameVersion: '2',
+      gameVersion: '3',
       engineBuild: 'anyps5-ps1-netplay-v1',
     );
-    server.answers['GET game-sessions/$roomId'] = (
+    final path = 'game-sessions/${invite.sessionId}';
+    server.answers['GET me/game-session'] = (200, {'session': null});
+    server.answers['GET $path'] = (
       200,
       {
-        'id': roomId,
-        'host': {'userId': host},
+        'id': invite.sessionId,
+        'host': {'userId': '12345678-1234-4234-8234-123456789ab1'},
         'kind': 'online',
         'titleId': invite.titleId,
         'gameVersion': invite.gameVersion,
-        'engineBuild': protocol.protocol,
+        'engineBuild': invite.engineBuild,
         'capacity': 2,
         'joinable': false,
-        'properties': {'protocol': protocol.protocol, 'discSha256': 'a' * 64},
+        'properties': {'protocol': invite.engineBuild, 'discSha256': await Ps1NetplayMedia.cueDigest(disc)},
       },
     );
-
-    var chosen = Completer<String?>();
-    var picking = Completer<void>();
+    server.answers['POST $path/join'] = (409, {'error': 'fixture refused admission'});
     final fixture = makeFixture(
       together: server.base,
       system: HostSystem.windows,
-      environment: {'ANYPS5_PS1_NETPLAY': '1'},
-      pickFile: (label, extensions) {
-        expect(label, contains('SCPH-1001'));
-        expect(extensions, contains('bin'));
-        picking.complete();
-        return chosen.future;
-      },
+      environment: {'ANYPS5_PS1_NETPLAY': '1', 'ANYPS5_MANAGED_CORE_PACKAGES': packages},
+      pickFile: (_, _) async => bios,
     );
     final model = fixture.model;
     addTearDown(() {
       model.dispose();
       fixture.dispose();
     });
-    model.together.email = 'fixture@example.invalid';
-    await model.together.sendCode();
-    model.together.code = '123456';
-    await model.together.verify();
-    await Future.doWhile(() async {
-      if (model.together.hub.socket.status.name == 'ready') return false;
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      return true;
-    }).timeout(const Duration(seconds: 5));
-
-    final folder = fixture.temp.path;
-    final cue = File(p.join(folder, 'game.cue'))..createSync();
+    await signIn(model.together);
     model.games.add(
       Game(
-        folder: folder,
+        folder: p.dirname(disc),
         titleId: 'PS1-fixture',
         name: 'CTR fixture',
         names: const {},
         defaultLanguage: 'en',
         version: '',
         executable: ExecutableKind.disc,
-        retro: (platform: RetroPlatform.ps1, path: cue.path),
+        retro: (platform: RetroPlatform.ps1, path: disc),
         retroSerial: invite.titleId,
       ),
     );
-    final incompatible = Uint8List(512 * 1024)..[0] = 3;
-    final offline = File(p.join(folder, 'offline.bin'))..writeAsBytesSync(incompatible);
-    model.preferences.retroBiosSources['ps1'] = offline.path;
-
-    var joining = model.together.joinPs1Netplay(invite);
-    await picking.future.timeout(const Duration(seconds: 5));
-    chosen.complete(offline.path);
-    await joining;
-    expect(model.toast, contains('matching SCPH-1001'));
-
-    chosen = Completer<String?>();
-    picking = Completer<void>();
-    joining = model.together.joinPs1Netplay(invite);
-    await picking.future.timeout(const Duration(seconds: 5));
-    chosen.complete(null);
-    await joining;
-
-    chosen = Completer<String?>();
-    picking = Completer<void>();
-    joining = model.together.joinPs1Netplay(invite);
-    await picking.future.timeout(const Duration(seconds: 5));
-    await model.together.signOut();
-    final signedOutNotice = model.toast;
-    chosen.complete(offline.path);
-    await joining;
-    expect(model.toast, signedOutNotice);
-
-    expect(server.callsTo('game-sessions/$roomId/join'), isEmpty);
+    await model.together.joinPs1Netplay(invite);
+    final join = server.callsTo('$path/join').single;
+    expect(join.body, {'gameVersion': '3', 'engineBuild': invite.engineBuild});
+    final home = p.join(p.dirname(model.paths.toolkits), 'Emulators');
+    expect(File(p.join(home, 'PS1-Netplay-Ordinary', 'swanstation_libretro.dll')).existsSync(), isTrue);
+    expect(File(p.join(home, 'PS1-Netplay', 'swanstation_libretro.dll')).existsSync(), isFalse);
     expect(model.running, isNull);
-    expect(model.preferences.retroBiosSources['ps1'], offline.path);
-    expect(offline.readAsBytesSync(), incompatible);
-    expect(
-      File(p.join(p.dirname(model.paths.toolkits), 'Emulators', 'PS1-Netplay', 'scph1001.bin')).existsSync(),
-      isFalse,
-    );
-  }, skip: Abi.current() != Abi.windowsX64);
+  }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null);
+}
+
+class _LoopbackBinding extends AutomatedTestWidgetsFlutterBinding {
+  @override
+  bool get overrideHttpClient => false;
+}
+
+Future<void> signIn(TogetherModel together) async {
+  together.email = 'fixture@example.invalid';
+  await together.sendCode();
+  together.code = '123456';
+  await together.verify();
+  await Future.doWhile(() async {
+    if (together.hub.socket.status.name == 'ready') return false;
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    return true;
+  }).timeout(const Duration(seconds: 5));
 }

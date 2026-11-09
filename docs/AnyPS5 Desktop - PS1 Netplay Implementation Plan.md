@@ -355,8 +355,9 @@ source token, and kept the same worker rendering after cancellation and
 capture. A request while paused completed without advancing the
 texture. The preceding core reported no ordinary capture support.
 Local receipts are in `ps1-local-bridge-89f15e1`. This fixture calls
-the worker directly. The Flutter method-channel route still needs a
-launcher integration test.
+the worker directly. The capture route has a mocked Flutter
+method-channel test. Live launcher invocation still needs integration
+coverage.
 
 The native worker fixture can exercise that renderer boundary with
 `--ordinary-checkpoint --ordinary-restore`. The source uses the normal
@@ -367,8 +368,8 @@ zero. The fixture checks the held payload for the blank card, checks
 initial RAM against the held source, and compares the first match
 fingerprint after each seat supplies distinct inputs.
 It then resumes the original session and verifies its scratch save.
-The Recompiler choice is exercised by the native fixture. Existing
-in-app invitations still use the pinned Cached Interpreter profile.
+The fixture exercises the Recompiler choice. The launcher still creates
+its existing invitations with the pinned Cached Interpreter profile.
 
 The Windows headless CTR run passed with the blank-card core
 `d1619715fe11db0faa280890c741aff876fd5fd682f3cd00fbcafaa04732b7ac`.
@@ -390,8 +391,7 @@ DLL and the Recompiler profile to the match identity. The
 to the [native worker](../windows/runner/retro_core_host.cpp), which accepts
 it only for an isolated match seat using a core with the blank-card export.
 The profile is distinct from the existing Cached Interpreter profile.
-The installation targets the match core only. The invite flow still needs
-to detect a compatible source core and request the new profile on both ends.
+The installation targets the match core only.
 
 The optional test in [managed retro](../test/core/managed_retro_test.dart)
 accepts a local fixture file via `ANYPS5_TEST_PS1_ORDINARY_FIXTURE`. Its
@@ -401,6 +401,27 @@ profile, rejected using its DLL under the standard profile and preserved
 both offline and staged core fixtures. The native probe restored with
 the new core and refused the Recompiler profile with the preceding core.
 Local receipts are in `ps1-ordinary-package-fd8d600`.
+
+Room version 3 is the ordinary Play checkpoint invitation. The
+[guest flow](../lib/ui/together_ps1_netplay.dart) uses that version to
+select the ordinary profile, find a compatible disc, provision the BIOS
+and core, and join the original room. It expects one held checkpoint.
+Version 2 keeps the staged host's catch-up stream and version 1 starts
+from a fresh boot. The [launcher capture](../lib/ui/embedded_retro_game.dart)
+checks the disc path, source CPU and core hash before sending the
+session token and disc digest to the native blank-card endpoint.
+The source token binds the request to one session. The host flow still
+needs to pin the identity of its mounted disc and loaded core, since
+checking the current files at their paths only verifies those files.
+
+The [invite setup tests](../test/ui/ps1_netplay_setup_test.dart) check
+that both checkpoint invite versions can open BIOS setup and that
+canceling or signing out prevents admission. The local fixture uses the
+qualified package and CTR media to verify the version 3 join request
+against a fake room. It also checks that the launcher discards a capture
+reply if the source closes before the reply arrives. The host Quick Menu
+still needs the reversible session switch before it can issue a version
+3 invite.
 
 ### Windows development checkpoint
 

@@ -87,7 +87,9 @@ extension TogetherPs1Netplay on TogetherModel {
           detail: T.text('ps1OnlineInviteDetail'),
           kind: ActionRow(() {
             app.resumeGame();
-            unawaited(_startPs1Netplay(profile, friendId: friend.person.id, host: host, handoff: true));
+            unawaited(
+              _startPs1Netplay(profile, friendId: friend.person.id, host: host, mode: Ps1NetplayRoomMode.staged),
+            );
           }),
         ),
     ];
@@ -147,16 +149,12 @@ extension TogetherPs1Netplay on TogetherModel {
 
   Future<void> joinPs1Netplay(GameInvite invite) async {
     final profile = Ps1NetplayProfile.tryRead(invite.titleId);
-    if (profile == null ||
-        (invite.gameVersion != profile.room.gameVersion && invite.gameVersion != profile.handoffRoom.gameVersion)) {
+    final mode = Ps1NetplayRoomMode.tryRead(invite.gameVersion);
+    if (profile == null || mode == null) {
       await _unsupportedRetroInvite();
       return;
     }
-    await _startPs1Netplay(
-      profile,
-      roomId: invite.sessionId,
-      handoff: invite.gameVersion == profile.handoffRoom.gameVersion,
-    );
+    await _startPs1Netplay(profile, roomId: invite.sessionId, mode: mode);
   }
 
   Future<void> _startPs1Netplay(
@@ -165,7 +163,7 @@ extension TogetherPs1Netplay on TogetherModel {
     String? roomId,
     EmbeddedRetroGame? host,
     Game? selectedGame,
-    bool handoff = false,
+    Ps1NetplayRoomMode mode = Ps1NetplayRoomMode.fresh,
   }) async {
     final me = account.user?.id;
     final candidates = _ps1Candidates(profile).toList();
@@ -191,7 +189,7 @@ extension TogetherPs1Netplay on TogetherModel {
         return account.call(method, path, body);
       },
       me: me,
-      spec: handoff ? profile.handoffRoom : profile.room,
+      spec: profile.roomFor(mode),
       discDigest: discDigest,
       signal: (to, device, sessionId, kind, data) {
         if (!hub.socket.send(
@@ -212,9 +210,9 @@ extension TogetherPs1Netplay on TogetherModel {
           ? (app.running!.$1, host.stagedNetplayMedia!)
           : selectedGame != null
           ? (selectedGame, await app.verifyPs1Netplay(selectedGame, profile, bios: bios!))
-          : await _verifiedPs1(profile, candidates, invitedDigest, bios: bios!, requireHandoff: handoff);
+          : await _verifiedPs1(profile, candidates, invitedDigest, bios: bios!, mode: mode);
       if (!active()) return;
-      if (handoff && !media.supportsHandoff) return app.show(T.text('ps1OnlineHandoffCore'));
+      if (mode.needsCheckpoint && !media.supportsHandoff) return app.show(T.text('ps1OnlineHandoffCore'));
       late final Ps1NetplayMatch match;
       final owned = EmbeddedPs1NetplayRunner(
         (seat) => app.preparePs1Netplay(game, media, seat, canBoot: () => !match.closed && account.user?.id == me),
@@ -237,8 +235,8 @@ extension TogetherPs1Netplay on TogetherModel {
         runner: borrowed ?? owned,
         captureCheckpoint: borrowed?.capture,
         catchupSource: borrowed?.source,
-        restoreCheckpoint: handoff && host == null ? owned.restoreCheckpoint : null,
-        catchupReplay: handoff && host == null ? owned.replayHistory : null,
+        restoreCheckpoint: mode.needsCheckpoint && host == null ? owned.restoreCheckpoint : null,
+        catchupReplay: mode == Ps1NetplayRoomMode.staged && host == null ? owned.replayHistory : null,
         onRunning: app.refresh,
       );
       _ps1Match = opened = match;
@@ -262,7 +260,7 @@ extension TogetherPs1Netplay on TogetherModel {
           break;
       }
     } on Ps1NetplayMediaFailure catch (error) {
-      _showPs1MediaError(error, handoff: handoff);
+      _showPs1MediaError(error, handoff: mode.needsCheckpoint);
     } on Object {
       app.show(T.text('ps1OnlineDisconnected'));
     } finally {
@@ -285,11 +283,17 @@ extension TogetherPs1Netplay on TogetherModel {
     List<Game> candidates,
     String? invitedDigest, {
     required String bios,
-    required bool requireHandoff,
+    required Ps1NetplayRoomMode mode,
   }) async {
     for (final game in candidates) {
       try {
-        final media = await app.verifyPs1Netplay(game, profile, bios: bios, requireHandoff: requireHandoff);
+        final media = await app.verifyPs1Netplay(
+          game,
+          profile,
+          bios: bios,
+          requireHandoff: mode.needsCheckpoint,
+          execution: mode.execution,
+        );
         if (invitedDigest == null || media.discDigest == invitedDigest) return (game, media);
       } on Ps1NetplayMediaFailure catch (error) {
         if (error.problem != Ps1NetplayMediaProblem.disc) rethrow;
