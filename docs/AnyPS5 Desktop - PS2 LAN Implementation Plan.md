@@ -380,6 +380,10 @@ still keeps the online attempt busy until the old admission and leave
 requests settle, so a late leave cannot remove a new attempt from the
 same room. If the gateway never finishes a response, the online
 attempt remains in Closing while local shutdown can finish.
+While the admitted PS2 LAN game is loading, Guide opens a Quick Menu
+with **Cancel LAN Play** and the startup status. The action belongs to
+that match. Cancel releases its room and closes a worker that finishes
+opening after cancellation.
 The launcher verifies the ISO itself when joining. If the LAN core or
 BIOS is missing, the action opens the existing setup page. **Back**
 returns to the same friend or invite without creating, joining or

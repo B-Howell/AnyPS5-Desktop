@@ -2534,6 +2534,8 @@ class AppModel extends ChangeNotifier {
   String? _playAfterInstall;
 
   Game? starting;
+  bool _retroStartIsPs2Lan = false;
+  bool get startingPs2Lan => _retroStartIsPs2Lan && starting?.retro?.platform == RetroPlatform.ps2;
   String? _retroSetupDetail;
   int? _retroSetupPercent;
 
@@ -4371,6 +4373,7 @@ class AppModel extends ChangeNotifier {
     _retroSettled = settled;
     final launchTime = Stopwatch()..start();
     sounds.play(Cue.select);
+    _retroStartIsPs2Lan = ps2Lan != null;
     starting = game;
     _changed();
     EmbeddedRetroGame? lanRun;
@@ -6214,7 +6217,7 @@ class AppModel extends ChangeNotifier {
           ),
         ];
       case Layer.quickMenu when _retroLaunchGame != null:
-        final onlineRows = together.ps1QuickRows();
+        final onlineRows = [...together.ps1QuickRows(), ...together.ps2LanQuickRows()];
         return [
           PanelCategory(
             id: 'quickMenu',

@@ -3,6 +3,7 @@ part of 'together_model.dart';
 final class _Ps2LanAttempt {
   final cancellation = Completer<void>();
   RetroLanMatch? match;
+  Game? launchGame;
   bool playing = false;
 
   bool get cancelled => cancellation.isCompleted;
@@ -80,13 +81,17 @@ extension TogetherPs2Lan on TogetherModel {
     if (attempt.closing) {
       return [PanelRow(id: 'ps2-lan-status', title: T.text('ps2LanClosing'), kind: const InfoRow(''))];
     }
+    final starting = _ps2LanStarting(attempt);
+    final playing = attempt.playing && !starting;
     return [
       PanelRow(
         id: 'ps2-lan-status',
-        title: T.text(attempt.playing ? 'ps2LanLeave' : 'ps2LanCancel'),
+        title: T.text(playing ? 'ps2LanLeave' : 'ps2LanCancel'),
         detail: T.text(
-          attempt.playing
+          playing
               ? 'ps2LanUseGameMenu'
+              : starting
+              ? 'ps2LanStarting'
               : attempt.match == null
               ? 'ps2LanVerifying'
               : 'ps2LanConnecting',
@@ -100,7 +105,14 @@ extension TogetherPs2Lan on TogetherModel {
     ];
   }
 
-  List<PanelRow> ps2LanQuickRows() => _ps2Lan?.playing == true ? ps2LanRows() : const [];
+  bool _ps2LanStarting(_Ps2LanAttempt attempt) => app.startingPs2Lan && identical(app.starting, attempt.launchGame);
+
+  List<PanelRow> ps2LanQuickRows() {
+    final attempt = _ps2Lan;
+    if (attempt == null) return const [];
+    final embedded = app.embeddedGame?.isPs2Lan == true && identical(app.running?.$1, attempt.launchGame);
+    return _ps2LanStarting(attempt) || embedded ? ps2LanRows() : const [];
+  }
 
   Future<void> joinPs2Lan(GameInvite invite) async {
     if (!_ps2LanEnabled) return _unsupportedRetroInvite();
@@ -208,6 +220,7 @@ extension TogetherPs2Lan on TogetherModel {
           launch: (mac) async {
             if (!unchanged(await file.stat())) throw StateError('The verified PS2 disc changed before launch.');
             if (!_ps2LaunchAvailable) throw StateError('Another game started before PS2 LAN.');
+            attempt.launchGame = game;
             final run = await app.preparePs2Lan(game, mac, canBoot: () => active() && attempt.match?.closed == false);
             if (active()) {
               attempt.playing = true;

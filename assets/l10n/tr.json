@@ -300,6 +300,7 @@
   "ps2LanInviteDetail": "Aynı disk sürümünü kullanın. İlk kez oynuyorsanız LAN hafıza kartını Emülatörler → PS2 → Kurulum bölümünde ayarlayın.",
   "ps2LanVerifying": "PS2 diskiniz kontrol ediliyor…",
   "ps2LanConnecting": "Diğer oyuncu bekleniyor ve bağlantı kuruluyor…",
+  "ps2LanStarting": "PS2 LAN oyunu başlatılıyor…",
   "ps2LanCancel": "LAN Oyununu İptal Et",
   "ps2LanLeave": "LAN Oyunundan Ayrıl ve Oyunu Kapat",
   "ps2LanClosing": "LAN oturumu kapatılıyor…",

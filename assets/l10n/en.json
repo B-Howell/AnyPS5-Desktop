@@ -300,6 +300,7 @@
   "ps2LanInviteDetail": "Use the same disc revision. First time? Configure your LAN memory card under Emulators → PS2 → Setup.",
   "ps2LanVerifying": "Checking your PS2 disc…",
   "ps2LanConnecting": "Waiting for the other player and connecting…",
+  "ps2LanStarting": "Starting the PS2 LAN game…",
   "ps2LanCancel": "Cancel LAN Play",
   "ps2LanLeave": "Leave LAN Play and Close Game",
   "ps2LanClosing": "Closing the LAN session…",

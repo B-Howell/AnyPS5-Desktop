@@ -3,10 +3,12 @@ import 'dart:ffi';
 import 'dart:io';
 
 import 'package:anyps5_desktop/core/game_library.dart';
+import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:anyps5_desktop/core/toolkit_download.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
+import 'package:anyps5_desktop/ui/together_model.dart';
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +17,7 @@ import 'package:path/path.dart' as p;
 
 import '../support/fake_together.dart';
 import '../support/fixtures.dart' show ps2LanFixtureDll, writePs2IdentityIso;
+import '../support/online_fakes.dart';
 import '../support/ui_support.dart';
 
 void main() {
@@ -116,9 +119,11 @@ void main() {
     bool cancelLookup = false,
     bool cancelAdmission = false,
     bool hostChanged = false,
+    bool quickBootCancel = false,
   }) async {
     final server = await FakeTogether.start();
     addTearDown(server.close);
+    final network = FakeGameNetwork();
     final environment = {'ANYPS5_PS2_LAN': '1'};
     late File bios;
     final extensionsPicked = <List<String>>[];
@@ -126,6 +131,7 @@ void main() {
       together: server.base,
       system: HostSystem.windows,
       environment: environment,
+      gameLinks: () => network.links,
       pickFile: (_, extensions) async {
         extensionsPicked.add(extensions);
         return bios.path;
@@ -182,6 +188,9 @@ void main() {
     );
     const host = '12345678-1234-4234-8234-123456789ab1';
     const roomId = '12345678-1234-4234-8234-123456789abc';
+    const local = '12345678-1234-4234-8234-123456789ab2';
+    const hostDevice = '12345678-1234-4234-8234-123456789ab3';
+    if (quickBootCancel) server.me['id'] = local;
     final protocol = RetroOnlineMode.lan.protocol;
     final invite = {
       'sessionId': roomId,
@@ -258,6 +267,77 @@ void main() {
       expect(server.callsTo('game-sessions/$roomId'), isEmpty);
       expect(server.callsTo('game-sessions/$roomId/join'), isEmpty);
       expect(model.running, isNull);
+      return;
+    }
+    if (quickBootCancel) {
+      const path = 'game-sessions/$roomId';
+      final room = {
+        ...(server.answers['GET $path']!.$2 as Map<String, dynamic>),
+        'members': [
+          {'userId': local},
+          {
+            'userId': host,
+            'device': hostDevice,
+            'properties': {'protocol': protocol},
+          },
+        ],
+      };
+      server.answers.addAll({
+        'GET $path': (200, room),
+        'POST $path/join': (204, null),
+        'PUT $path/members/me': (200, room),
+        'GET $path/ice-servers': (200, {'iceServers': []}),
+        'POST $path/leave': (204, null),
+      });
+      const channel = MethodChannel('anyps5/retro_core');
+      final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final starting = Completer<void>();
+      final finishStart = Completer<void>();
+      var stopped = false;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'start') {
+          starting.complete();
+          await finishStart.future;
+          return 42;
+        }
+        if (call.method == 'stop') stopped = true;
+        return call.method == 'status' ? {'presented': false, 'ended': stopped} : null;
+      });
+      addTearDown(() async {
+        for (final row in model.together.ps2LanRows()) {
+          if (row.kind case final ActionRow action) action.run();
+        }
+        if (!finishStart.isCompleted) finishStart.complete();
+        await until(() => model.starting == null && model.running == null && model.together.ps2LanRows().isEmpty);
+        messenger.setMockMethodCallHandler(channel, null);
+      });
+      final peer = await network.links.link([]);
+      addTearDown(peer.close);
+      await peer.openChannel();
+      final offer = await peer.createOffer();
+      await peer.setLocal(offer);
+      press(continueId);
+      await server.nextFrame('signal', test: (frame) => frame['kind'] == 'renegotiate');
+      server.push('game_session.signal', {
+        'sessionId': roomId,
+        'from': host,
+        'device': hostDevice,
+        'kind': 'offer',
+        'data': {'sdp': offer['sdp']},
+      });
+      final answer = await server.nextFrame('signal', test: (frame) => frame['kind'] == 'answer');
+      await peer.setRemote({'type': 'answer', ...(answer['data'] as Map<String, dynamic>)});
+      await starting.future.timeout(const Duration(seconds: 5));
+      expect(model.starting?.titleId, 'PS2-TIMESPLITTERS');
+      model.padCommand(PadCommand.home);
+      expect(model.overlay, Layer.quickMenu);
+      expect(row('ps2-lan-status').title, 'Cancel LAN Play');
+      expect(row('ps2-lan-status').detail, 'Starting the PS2 LAN game…');
+      press('ps2-lan-status');
+      expect(row('ps2-lan-status').kind, isA<InfoRow>());
+      finishStart.complete();
+      await until(() => stopped && model.starting == null && model.running == null);
+      expect(server.callsTo('$path/leave'), hasLength(1));
       return;
     }
     if (hostChanged) {
@@ -405,6 +485,11 @@ void main() {
   test(
     'PS2 LAN refuses a room that changes host after the disc lookup',
     () => verifyBundledSetup(expired: false, hostChanged: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'PS2 LAN can be canceled from the Quick Menu before the worker opens',
+    () => verifyBundledSetup(expired: false, quickBootCancel: true),
     skip: Abi.current() != Abi.windowsX64,
   );
 }
