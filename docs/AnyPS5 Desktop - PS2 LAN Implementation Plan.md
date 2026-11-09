@@ -755,3 +755,32 @@ user save, or installed application was changed. The next useful retry should
 first determine why a course/car-confirmed pair does not render the race, with
 separate evidence for each peer; do not repeat the already-proven lobby steps
 unless the saved profiles or PCAP show that the handshake regressed.
+
+### GT4 offline race control and LAN capture correlation (2026-11-09)
+
+A single isolated PCSX2 v2.8.2 instance used the same USA v2.00 ISO,
+software renderer and a copy of the host's scratch card, with DEV9 Ethernet
+disabled. Arcade Mode → Single Race loaded Fuji Speedway '90s (FISCO 90's)
+and the Toyota SUPERAUTOBACS APEX MR-S (JGTC) '00 with automatic transmission,
+TCS & ASM and Racing Hard tires. The game rendered the prerace grid and
+the on-track two-lap countdown at roughly 60 VPS. This control exercises
+the same course and car assets without the two-console start protocol.
+It rules out a general failure to render that race on the test setup.
+The private Xvfb and PCSX2 processes exited, and the source card hash
+matched before and after. The receipt and captures are under
+`/tmp/gt4-offline-934f1a1a`.
+
+A payload-by-payload comparison of the earlier LAN endpoint PCAPs found the
+same multiset of 680 UDP/3658 datagrams at both interfaces. During the
+black-screen interval from 16:33:10 to 16:35:39 local, 99 datagrams traveled
+in each direction, all with 16-byte payloads. The last captured game-port
+datagram was at 16:37:26.793, before either recorded F9 result. These are
+interface observations. They do not prove that each guest received or
+processed every datagram, or establish the meaning of the repeated packets.
+The captured setup also matches the two-console role and monitor choices
+in the [original LAN manual](https://www.gran-turismo.com/local/jp/data1/pdf/gt4_lan.pdf).
+
+The next comparison should inspect guest DEV9 receive and race-start
+behavior in two headless instances of the embedded Windows core, using
+copies of the distinct role cards and synchronized input receipts at the
+Driving Options confirmation. A full LAN race and results are still open.
