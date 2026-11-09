@@ -3,14 +3,11 @@ part of 'together_model.dart';
 extension TogetherPs1Netplay on TogetherModel {
   bool get _ps1NetplayEnabled => environment['ANYPS5_PS1_NETPLAY'] == '1' && app.managedRetroAvailable;
 
-  Ps1NetplayProfile? _ps1Profile(String titleId) =>
-      Ps1NetplayProfile.qualified.where((profile) => profile.titleId == titleId).firstOrNull;
-
   List<PanelRow> ps1LocalLaunchRows(Game game) {
     if (!_ps1NetplayEnabled || app.running != null || app.starting != null || _verifyingPs1 || _ps1Match != null) {
       return const [];
     }
-    final profile = Ps1NetplayProfile.qualified.where((profile) => _ps1Candidates(profile).contains(game)).firstOrNull;
+    final profile = Ps1NetplayProfile.tryRead(game.retroSerial);
     if (profile == null) return const [];
     return [
       PanelRow(
@@ -57,7 +54,7 @@ extension TogetherPs1Netplay on TogetherModel {
     final host = app.embeddedGame;
     final media = host?.stagedNetplayMedia;
     final titleId = media?.identity.toJson()['title'];
-    final profile = titleId is String ? _ps1Profile(titleId) : null;
+    final profile = titleId is String ? Ps1NetplayProfile.tryRead(titleId) : null;
     if (game == null || host == null || profile == null) return const [];
     final online = hub.friends.friends.where((friend) => friend.presence.online).toList();
     if (account.user == null || hub.socket.status != SocketStatus.ready || online.isEmpty) {
@@ -94,7 +91,7 @@ extension TogetherPs1Netplay on TogetherModel {
     return disc != null &&
         disc.platform == RetroPlatform.ps1 &&
         p.extension(disc.path).toLowerCase() == '.cue' &&
-        profile.hintsAt(serial: game.titleId, name: game.name);
+        game.retroSerial == profile.titleId;
   });
 
   List<PanelRow> ps1NetplayRows() {
@@ -122,25 +119,26 @@ extension TogetherPs1Netplay on TogetherModel {
         app.starting != null) {
       return const [];
     }
+    final selected = app.selectedGame;
+    final profile = Ps1NetplayProfile.tryRead(selected?.retroSerial);
+    if (selected == null || profile == null) return const [];
     return [
-      for (final profile in Ps1NetplayProfile.qualified)
-        if (_ps1Candidates(profile).isNotEmpty)
-          PanelRow(
-            id: 'ps1-netplay-host-${profile.titleId}',
-            title: T.format('ps1OnlineInvite', [profile.title]),
-            detail: T.text('ps1OnlineInviteDetail'),
-            kind: ActionRow(() {
-              app.open(Layer.friends);
-              unawaited(_startPs1Netplay(profile, friendId: friend.person.id));
-            }),
-          ),
+      PanelRow(
+        id: 'ps1-netplay-host-${profile.titleId}',
+        title: T.format('ps1OnlineInvite', [selected.name]),
+        detail: T.text('ps1OnlineInviteDetail'),
+        kind: ActionRow(() {
+          app.open(Layer.friends);
+          unawaited(_startPs1Netplay(profile, friendId: friend.person.id, selectedGame: selected));
+        }),
+      ),
     ];
   }
 
   Future<void> _unsupportedRetroInvite() async => app.show(T.text('retroOnlineUnavailable'));
 
   Future<void> joinPs1Netplay(GameInvite invite) async {
-    final profile = _ps1Profile(invite.titleId);
+    final profile = Ps1NetplayProfile.tryRead(invite.titleId);
     if (profile == null ||
         (invite.gameVersion != profile.room.gameVersion && invite.gameVersion != profile.handoffRoom.gameVersion)) {
       await _unsupportedRetroInvite();
@@ -158,6 +156,7 @@ extension TogetherPs1Netplay on TogetherModel {
     String? friendId,
     String? roomId,
     EmbeddedRetroGame? host,
+    Game? selectedGame,
     bool handoff = false,
   }) async {
     final me = account.user?.id;
@@ -178,10 +177,27 @@ extension TogetherPs1Netplay on TogetherModel {
     _verifyingPs1 = true;
     app.show(T.text('ps1OnlineVerifying'));
     Ps1NetplayMatch? opened;
+    RetroOnlineRooms rooms([String? discDigest]) => RetroOnlineRooms(
+      call: account.call,
+      me: me,
+      spec: handoff ? profile.handoffRoom : profile.room,
+      discDigest: discDigest,
+      signal: (to, device, sessionId, kind, data) {
+        if (!hub.socket.send(
+          OnlinePeerSignal.frame(to: to, device: device, sessionId: sessionId, kind: kind, data: data),
+        )) {
+          throw StateError('The AnyTogether connection closed.');
+        }
+      },
+    );
     try {
-      final (game, media) = host == null
-          ? await _verifiedPs1(profile, candidates)
-          : (app.running!.$1, host.stagedNetplayMedia!);
+      final invitedDigest = roomId == null ? null : await rooms().invitedDiscDigest(roomId);
+      if (account.user?.id != me || !hostAvailable()) return;
+      final (game, media) = host != null
+          ? (app.running!.$1, host.stagedNetplayMedia!)
+          : selectedGame != null
+          ? (selectedGame, await app.verifyPs1Netplay(selectedGame, profile))
+          : await _verifiedPs1(profile, candidates, invitedDigest);
       if (account.user?.id != me || !hostAvailable()) return;
       if (handoff && !media.supportsHandoff) return app.show(T.text('ps1OnlineCore'));
       late final Ps1NetplayMatch match;
@@ -200,18 +216,7 @@ extension TogetherPs1Netplay on TogetherModel {
               exchange: host.exchangeNetplayFrames,
             );
       match = Ps1NetplayMatch(
-        rooms: RetroOnlineRooms(
-          call: account.call,
-          me: me,
-          spec: handoff ? profile.handoffRoom : profile.room,
-          signal: (to, device, sessionId, kind, data) {
-            if (!hub.socket.send(
-              OnlinePeerSignal.frame(to: to, device: device, sessionId: sessionId, kind: kind, data: data),
-            )) {
-              throw StateError('The AnyTogether connection closed.');
-            }
-          },
-        ),
+        rooms: rooms(roomId == null ? media.discDigest : invitedDigest),
         links: app.services.gameLinks?.call() ?? WebRtcGameLinks(),
         identity: media.identity,
         runner: borrowed ?? owned,
@@ -260,10 +265,15 @@ extension TogetherPs1Netplay on TogetherModel {
     }),
   );
 
-  Future<(Game, Ps1NetplayMedia)> _verifiedPs1(Ps1NetplayProfile profile, List<Game> candidates) async {
+  Future<(Game, Ps1NetplayMedia)> _verifiedPs1(
+    Ps1NetplayProfile profile,
+    List<Game> candidates,
+    String? invitedDigest,
+  ) async {
     for (final game in candidates) {
       try {
-        return (game, await app.verifyPs1Netplay(game, profile));
+        final media = await app.verifyPs1Netplay(game, profile);
+        if (invitedDigest == null || media.discDigest == invitedDigest) return (game, media);
       } on Ps1NetplayMediaFailure catch (error) {
         if (error.problem != Ps1NetplayMediaProblem.disc) rethrow;
       }

@@ -1,17 +1,12 @@
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
-  test('uses the disc serial for a renamed game and separates handoff rooms', () {
-    final profile = Ps1NetplayProfile.qualified.single;
-    expect(profile.hintsAt(serial: 'PS1-SCUS-94426', name: 'Custom display name'), isTrue);
-    expect(profile.handoffRoom.titleId, profile.room.titleId);
-    expect(profile.handoffRoom.gameVersion, isNot(profile.room.gameVersion));
-  });
-
   late Directory folder;
   late File cue;
 
@@ -21,6 +16,40 @@ void main() {
   });
 
   tearDown(() => folder.delete(recursive: true));
+
+  test('identifies any data disc from its boot serial without a manifest or a known title', () async {
+    for (final (mode, stride, dataOffset, serial) in [
+      ('MODE2/2352', 2352, 24, 'SLUS00402'),
+      ('MODE1/2048', 2048, 0, 'SLES12345'),
+    ]) {
+      final track = File(p.join(folder.path, 'renamed.bin'));
+      final image = Uint8List(stride * 24);
+      int sector(int lba) => (lba + 1) * stride + dataOffset;
+      final pvd = sector(16);
+      image.setRange(pvd, pvd + 7, [1, ...'CD001'.codeUnits, 1]);
+      final fields = ByteData.sublistView(image);
+      fields.setUint32(pvd + 158, 20, Endian.little);
+      fields.setUint32(pvd + 166, 2048, Endian.little);
+      final entry = sector(20);
+      const file = 'SYSTEM.CNF;1';
+      final boot =
+          'BOOT = cdrom:\\DIR\\${serial.substring(0, 4)}_${serial.substring(4, 7)}.${serial.substring(7)};1\r\n';
+      image[entry] = 46;
+      image[entry + 32] = file.length;
+      image.setRange(entry + 33, entry + 33 + file.length, file.codeUnits);
+      fields.setUint32(entry + 2, 21, Endian.little);
+      fields.setUint32(entry + 10, boot.length, Endian.little);
+      image.setRange(sector(21), sector(21) + boot.length, boot.codeUnits);
+      await track.writeAsBytes(image);
+      await cue.writeAsString('FILE\trenamed.bin BINARY\n TRACK 01 $mode\n INDEX 01 00:00:01\n');
+      final game = GameLibrary.scan(folder.path).single;
+      expect(game.retroSerial, serial);
+      final profile = Ps1NetplayProfile.tryRead(serial)!;
+      expect(profile.handoffRoom.titleId, profile.room.titleId);
+      expect(profile.handoffRoom.gameVersion, isNot(profile.room.gameVersion));
+    }
+    expect(Ps1NetplayProfile.tryRead('Not a disc serial'), isNull);
+  });
 
   test('fingerprints track bytes and layout independently of the local track name', () async {
     await File(p.join(folder.path, 'Track One.bin')).writeAsBytes([1, 2, 3]);

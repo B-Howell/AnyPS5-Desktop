@@ -238,7 +238,7 @@ the two input epochs. The control run finished at the same frame with
 The portable state includes memory card data, so checkpoint exchange
 uses session-owned storage. The deterministic profile is selected at
 boot for this experimental path. Converting a normal play session in
-place and verifying the handoff over real WebRTC remain open.
+place remains open.
 
 An opt-in local staging mode now runs the deterministic worker before a
 peer connects. The [embedded bridge](../lib/ui/embedded_retro_game.dart)
@@ -256,7 +256,7 @@ online fingerprint. The control probe confirmed 360 frames with both
 seats active, then verified an already-online host's replacement guest.
 
 On a Windows experimental build with `ANYPS5_PS1_NETPLAY=1` and the
-portable core, open the qualified game's options and select **Play with
+portable core, open a recognized PS1 CUE game's options and select **Play with
 online co-op available**. This starts the session-owned memory card
 without touching the regular game save. In the running game, choose
 **Quick Menu → Online couch co-op** and pick an online friend. The
@@ -273,16 +273,22 @@ match ends.
 
 ### Windows development checkpoint
 
-Set `ANYPS5_PS1_NETPLAY=1` on an experimental Windows x64 build to expose
-CTR invitations from a friend's options and accept them in AnyTogether Games.
-Both players need the supported
-US CUE and track files, an SCPH-1001 BIOS dump and the pinned SwanStation DLL.
-[Media verification](../lib/core/online/ps1_netplay_media.dart) hashes these
-locally and sends only the compatibility fingerprints. The
-[launcher integration](../lib/ui/together_ps1_netplay.dart) routes CTR
-invites separately from PS5 and uses the
-[embedded match runner](../lib/ui/ps1_netplay_runner.dart) to start both
-players at frame zero. Each copy displays CTR's original split-screen.
+Set `ANYPS5_PS1_NETPLAY=1` on an experimental Windows x64 build to invite
+friends to the selected PS1 game or accept invites in AnyTogether Games.
+The [boot serial reader](../lib/core/ps1_disc_serial.dart) reads the CUE's
+data track. The library records that serial separately from its existing
+IDs and save paths. No title registration is required. This path accepts
+CUEs with a recognized boot serial. CHD, PBP, playlists and discs without
+a supported boot record still need identity support.
+
+Both players need matching CUE and track content, an SCPH-1001 BIOS dump,
+and the pinned SwanStation DLL. [Media verification](../lib/core/online/ps1_netplay_media.dart)
+hashes the local files. The private room advertises the disc fingerprint
+so the guest can choose the matching revision when multiple local copies
+share a serial. The direct handshake checks the full compatibility identity.
+The [launcher integration](../lib/ui/together_ps1_netplay.dart) routes PS1
+invites separately from PS5. The game controls its local multiplayer mode
+and camera layout, including split-screen where applicable.
 
 [Shared room handling](../lib/core/online/retro_online_rooms.dart) uses a private
 two-seat `online` room with a versioned marker in its properties and build
@@ -297,6 +303,24 @@ if either player leaves or stops advancing. It also compares RAM fingerprints
 every 120 confirmed frames and stops the match at the first mismatch. The
 other player may see a disconnect if the link closes before their copy
 receives the final fingerprint.
+
+The [headless Flutter runner](../windows/runner/tests/ps1_webrtc_loopback.cpp)
+registers the real Windows WebRTC plugin without creating a view. Its
+[Dart probe](../tool/ps1_netplay/webrtc_loopback.dart) connects two local
+peers over real data channels with in-process signaling. It verified a
+3 MiB synthetic checkpoint, 180 replay frames, and 120 matching live input
+frames. For a Windows developer build, use `flutter build bundle --debug
+--target-platform windows-x64 --target tool/ps1_netplay/webrtc_loopback.dart
+--asset-dir <stage>/data/flutter_assets`. Compile the C++ runner in an
+x64 MSVC developer shell with the Flutter engine and wrapper headers and
+the plugin headers. Link `flutter_windows.dll.lib`, `flutter_wrapper_app.lib`,
+`flutter_wrapper_plugin.lib`, `flutter_webrtc_plugin.lib` and `user32.lib`.
+Stage the matching debug Flutter DLL, plugin DLL and libwebrtc DLL next
+to the executable and `icudtl.dat` under `data`. Run the executable with
+the `data` directory as its only argument. This probe isolates transport
+from the emulator and hosted service. Native-core correctness is covered
+by the separate worker probe. Authenticated invites and WAN or relay
+play still require end-to-end verification.
 
 The [Windows worker](../windows/runner/retro_core_host.cpp) starts with
 isolated storage, the full BIOS boot and two digital pads. It holds until both inputs for a

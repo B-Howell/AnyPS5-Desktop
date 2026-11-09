@@ -851,7 +851,7 @@ class TogetherModel {
   /// A game's name in this library, else its title ID.
   String gameName(String titleId) =>
       app.games.where((game) => game.titleId == titleId).firstOrNull?.nameFor([T.language.code]) ??
-      Ps1NetplayProfile.qualified.where((profile) => profile.titleId == titleId).firstOrNull?.title ??
+      app.games.where((game) => game.retroSerial == titleId).firstOrNull?.nameFor([T.language.code]) ??
       titleId;
 
   /// "Playing Neon Alley · 25 min", "Online", "Idle", "Do Not Disturb", "Offline", with the

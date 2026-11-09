@@ -23,15 +23,23 @@ typedef RetroRoomSpec = ({String titleId, String gameVersion, RetroOnlineMode mo
 /// Private invitation and device binding shared by the retro gameplay modes.
 /// The gameplay adapter decides how to handle an authenticated signal.
 final class RetroOnlineRooms {
-  const RetroOnlineRooms({required this.call, required this.signal, required this.me, required this.spec});
+  const RetroOnlineRooms({
+    required this.call,
+    required this.signal,
+    required this.me,
+    required this.spec,
+    this.discDigest,
+  });
 
   String get protocol => spec.mode.protocol;
   static final _uuid = RegExp(r'^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$', caseSensitive: false);
+  static final _digest = RegExp(r'^[0-9a-f]{64}$');
 
   final OnlineCall call;
   final OnlineSignal signal;
   final String me;
   final RetroRoomSpec spec;
+  final String? discDigest;
 
   Future<RetroRoom> host() async {
     await _requireIdle();
@@ -43,7 +51,7 @@ final class RetroOnlineRooms {
       'versionRule': 'exact',
       'capacity': spec.capacity,
       'joinable': false,
-      'properties': {'protocol': protocol},
+      'properties': {'protocol': protocol, if (discDigest != null) 'discSha256': discDigest},
     });
     final RetroRoom room;
     try {
@@ -71,6 +79,14 @@ final class RetroOnlineRooms {
     if (room.hostId == me) throw StateError('The retro room belongs to this account.');
     await call('POST', '$path/join', {'gameVersion': spec.gameVersion, 'engineBuild': protocol});
     return _publish(room);
+  }
+
+  /// Reads an invited host's disc fingerprint before choosing a local copy.
+  Future<String?> invitedDiscDigest(String id) async {
+    final json = await call('GET', _path(id));
+    final room = _room(json, id: id);
+    if (room.hostId == me) throw StateError('The retro room belongs to this account.');
+    return (json['properties'] as Map)['discSha256'] as String?;
   }
 
   Future<void> invite(RetroRoom room, String userId) async {
@@ -184,7 +200,10 @@ final class RetroOnlineRooms {
         json['joinable'] != false ||
         json['endedAt'] != null ||
         properties is! Map ||
-        properties['protocol'] != protocol) {
+        properties['protocol'] != protocol ||
+        (properties.containsKey('discSha256') &&
+            (properties['discSha256'] is! String || !_digest.hasMatch(properties['discSha256'] as String))) ||
+        (discDigest != null && properties['discSha256'] != discDigest)) {
       throw StateError('This invite is not for a compatible retro room.');
     }
     return (id: actual, hostId: hostId);

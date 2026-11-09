@@ -4,35 +4,25 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import '../ps1_disc_serial.dart';
 import 'ps1_netplay_identity.dart';
 import 'retro_online_rooms.dart';
 
 enum Ps1NetplayMediaProblem { disc, bios, core }
 
-/// A local qualification record. Title hints only choose which files to hash.
-/// The full disc digest is the compatibility gate.
+/// Room routing uses the original disc's boot serial. Peers separately verify
+/// their full disc digests, firmware, core and deterministic settings.
 final class Ps1NetplayProfile {
-  const Ps1NetplayProfile({required this.titleId, required this.title, required this.discPin});
+  const Ps1NetplayProfile._(this.titleId);
 
   final String titleId;
-  final String title;
-  final String discPin;
+  static final _serial = RegExp(r'^[A-Z]{4}[0-9]{5}$');
+  static Ps1NetplayProfile? tryRead(String? serial) =>
+      serial != null && _serial.hasMatch(serial) ? Ps1NetplayProfile._(serial) : null;
 
   RetroRoomSpec get room => (titleId: titleId, gameVersion: '1', mode: RetroOnlineMode.synchronized, capacity: 2);
   RetroRoomSpec get handoffRoom =>
       (titleId: titleId, gameVersion: '2', mode: RetroOnlineMode.synchronized, capacity: 2);
-
-  bool hintsAt({required String serial, required String name}) =>
-      serial.toUpperCase().replaceFirst('PS1-', '').replaceAll('-', '') == titleId ||
-      name.toLowerCase().contains(title.toLowerCase());
-
-  static const qualified = [
-    Ps1NetplayProfile(
-      titleId: 'SCUS94426',
-      title: 'Crash Team Racing',
-      discPin: '7061d0d774c4d73bd3bc90afaa1b6d35a9fcdd797c5d92d973af55423e2ce59f',
-    ),
-  ];
 }
 
 final class Ps1NetplayMediaFailure implements Exception {
@@ -40,7 +30,7 @@ final class Ps1NetplayMediaFailure implements Exception {
   final Ps1NetplayMediaProblem problem;
 }
 
-/// The exact local media matched against a qualified PS1 profile.
+/// The exact local media and deterministic PS1 settings.
 /// Paths stay on this computer. Only [identity] is sent to the other player.
 final class Ps1NetplayMedia {
   const Ps1NetplayMedia._(this.disc, this.bios, this.core, this.identity);
@@ -53,6 +43,7 @@ final class Ps1NetplayMedia {
   final String bios;
   final String core;
   final Ps1NetplayIdentity identity;
+  String get discDigest => identity.toJson()['disc'] as String;
   bool get supportsHandoff => identity.toJson()['core'] == portableCorePin;
 
   static final _file = RegExp(r'^FILE\s+(?:"([^"]+)"|(\S+))\s+(\S+)\s*$', caseSensitive: false);
@@ -63,7 +54,15 @@ final class Ps1NetplayMedia {
     required String bios,
     required String core,
   }) async {
-    final cue = await _verify(Ps1NetplayMediaProblem.disc, {profile.discPin}, () => cueDigest(disc));
+    final String cue;
+    try {
+      if (Ps1DiscSerial.read(disc) != profile.titleId) throw const FormatException('Wrong PS1 disc serial.');
+      cue = await cueDigest(disc);
+    } on FileSystemException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
+    } on FormatException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
+    }
     final firmware = await _verify(Ps1NetplayMediaProblem.bios, {biosPin}, () => _hashFile(bios));
     final library = await _verify(Ps1NetplayMediaProblem.core, {corePin, portableCorePin}, () => _hashFile(core));
     return Ps1NetplayMedia._(

@@ -168,6 +168,29 @@ void main() {
     expect(requests, ['GET', 'GET', 'GET']);
   });
 
+  test('reads the invited disc fingerprint and rejects a change before joining', () async {
+    final digest = 'b' * 64;
+    var advertised = digest;
+    var joined = false;
+    RetroOnlineRooms rooms([String? expected]) => RetroOnlineRooms(
+      spec: _spec,
+      me: _guest,
+      discDigest: expected,
+      call: (method, path, [body]) async {
+        if (path == 'me/game-session') return {'session': null};
+        if (method == 'POST') joined = true;
+        return _view()..['properties'] = {'protocol': _spec.mode.protocol, 'discSha256': advertised};
+      },
+      signal: (_, _, _, _, _) {},
+    );
+    expect(await rooms().invitedDiscDigest(_roomId), digest);
+    advertised = 'c' * 64;
+    await expectLater(rooms(digest).join(_roomId), throwsStateError);
+    expect(joined, isFalse);
+    advertised = 'invalid';
+    await expectLater(rooms().invitedDiscDigest(_roomId), throwsStateError);
+  });
+
   test('removes an owned room when the provider drops the protocol marker', () async {
     final requests = <(String, String)>[];
     final rooms = RetroOnlineRooms(

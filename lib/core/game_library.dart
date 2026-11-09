@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'binary.dart';
 import 'family/family_rules.dart' show AgeLevels;
 import 'game_addons.dart';
+import 'ps1_disc_serial.dart';
 import 'ps3_disc.dart';
 import 'self_unwrap.dart';
 
@@ -53,6 +54,7 @@ class Game {
     this.background,
     this.music,
     this.retro,
+    this.retroSerial,
     this.ageLevels,
     this.update,
     this.addons = const [],
@@ -77,6 +79,7 @@ class Game {
   final String? background;
   final String? music;
   final RetroDisc? retro;
+  final String? retroSerial;
 
   /// param.json's age ratings (`ageLevel`): "default" or a region such as "US", to an age; null
   /// when the dump has none.
@@ -209,6 +212,7 @@ abstract final class GameLibrary {
           a.version != b.version ||
           a.executable != b.executable ||
           a.retro != b.retro ||
+          a.retroSerial != b.retroSerial ||
           a.icon != b.icon ||
           a.background != b.background ||
           a.music != b.music ||
@@ -390,6 +394,7 @@ abstract final class GameLibrary {
       version: '',
       executable: ExecutableKind.disc,
       retro: (platform: platform, path: disc),
+      retroSerial: platform == RetroPlatform.ps1 ? Ps1DiscSerial.read(disc) : null,
     );
   }
 
@@ -523,6 +528,7 @@ abstract final class GameLibrary {
         music: localFile('music', {'.wav', '.mp3', '.m4a'}),
         ageLevels: AgeLevels.parse(json['ageLevel']),
         retro: (platform: platform, path: disc),
+        retroSerial: platform == RetroPlatform.ps1 ? Ps1DiscSerial.read(disc) : null,
       );
     } on FileSystemException {
       return null;
