@@ -342,6 +342,33 @@ and the DLL SHA-256 was
 This verifies boot, patch rejection and repeat launch on Windows.
 Provider connection, lobby admission and co-op remain separate tests.
 
+The same Windows DLL also passed a loopback test with the v2 network
+policy enabled. The probe configured the scratch RPCN host to a listener
+on `127.0.0.1`, used a loopback bind address, disabled UPnP, and
+provided only synthetic account data. With the expected count set to
+25, RPCS3 rejected the patch and exited without attempting a connection.
+With the correct count of 26, RPCS3 logged attestation before it began
+connecting, and the listener received a TLS ClientHello. Both processes
+exited cleanly. Sampled emulator sockets stayed on loopback. The listener
+closed at the handshake boundary, so this test did not send a login or
+join a lobby.
+
+A second loopback run used a freshly generated self-signed certificate
+for an unrelated hostname. The pinned Windows client completed TLS
+1.2 anyway, then waited for the RPCN protocol greeting. The listener
+sent no greeting, and the core did not attempt login. This matches
+the pinned client's `SSL_VERIFY_NONE` setting.
+[Pinned RPCN transport](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/rpcs3/Emu/NP/rpcn_client.cpp)
+
+Before opening the release catalog, the managed online policy needs
+an authenticated provider endpoint. Bind the reviewed host and peer
+identity to the native policy, then reject a missing or mismatched
+identity before setting `connected` or waking the RPCN packet threads.
+The linked Windows wolfSSL library exposes peer certificate retrieval
+and DER access for a pin-based implementation. A loopback test with
+matching and mismatching certificates must cover that boundary before
+trying a reviewed live provider.
+
 The [profile tests](../test/core/ps3_online_profile_test.dart) use synthetic
 files to verify safe reopening, artifact hashes and the isolated online
 launch arguments. The [offline boot test](../test/ui/ps3_online_boot_test.dart)
