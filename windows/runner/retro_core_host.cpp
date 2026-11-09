@@ -581,6 +581,7 @@ class RetroCoreSession {
         local_staging_(local_staging),
         match_cpu_(match_cpu),
         returning_(std::move(returning)),
+        recovery_accepted_(!returning_),
         texture_(flutter::PixelBufferTexture([this](size_t, size_t) { return CopyFrame(); })) {
     if (local_staging_ && netplay_seat != 0u)
       throw std::invalid_argument("Only the PS1 host can start in local play.");
@@ -656,6 +657,7 @@ class RetroCoreSession {
   }
 
   void SetInput(uint16_t buttons, const std::array<int16_t, 4>& axes) {
+    if (!recovery_accepted_) return;
     std::lock_guard<std::mutex> lock(input_mutex_);
     buttons_ = buttons;
     axes_ = axes;
@@ -747,6 +749,11 @@ class RetroCoreSession {
   }
 
   int64_t recovered_source() const { return recovered_source_.load(); }
+  bool AcceptOrdinaryRecovery(int64_t source) {
+    if (recovered_source() != source || !startup_visible_ || stop_ || ended_) return false;
+    recovery_accepted_ = true;
+    return true;
+  }
 
   std::optional<int64_t> RequestCatchup(uint32_t first, std::vector<Ps1Ports> frames) {
     if (!CheckpointReady() || frames.empty() || frames.size() > kPs1CatchupBatch ||
@@ -879,7 +886,7 @@ class RetroCoreSession {
   }
 
   bool SetOption(const std::string& key, const std::string& value) {
-    if (online_ || netplay_ || (lan_ && key == kPs2Resolution)) return false;
+    if (!recovery_accepted_ || online_ || netplay_ || (lan_ && key == kPs2Resolution)) return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
     if (ordinary_settings_frozen_) return false;
     const auto option = options_.find(key);
@@ -904,7 +911,8 @@ class RetroCoreSession {
   }
 
   bool SetTuningOptions(const Map& expected, const Map& values) {
-    if (online_ || netplay_ || !presented_ || !hardware_frame_ || values.empty() || expected.size() != values.size())
+    if (!recovery_accepted_ || online_ || netplay_ || !presented_ || !hardware_frame_ ||
+        values.empty() || expected.size() != values.size())
       return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
     if (ordinary_settings_frozen_ || graphics_applying_ || graphics_queued_) return false;
@@ -1414,7 +1422,7 @@ class RetroCoreSession {
 
   bool CheckpointReady() const { return checkpoint_supported_ && netplay_ready_ && !stop_ && !ended_; }
   bool LocalBlankCardCheckpointReady() const {
-    return local_blank_checkpoint_supported_ && startup_visible_ && !stop_ && !ended_;
+    return recovery_accepted_ && local_blank_checkpoint_supported_ && startup_visible_ && !stop_ && !ended_;
   }
 
   // Caller holds netplay_mutex_.
@@ -1862,7 +1870,7 @@ class RetroCoreSession {
         if (next < now - frame_time) next = now;
         std::this_thread::sleep_until(next);
       }
-      if (card) StoreCard(card_path, card, card_size);
+      if (card && recovery_accepted_) StoreCard(card_path, card, card_size);
     } catch (const std::exception& failure) {
       std::lock_guard<std::mutex> lock(settings_mutex_);
       error_ = failure.what();
@@ -1903,6 +1911,7 @@ class RetroCoreSession {
   const bool local_staging_;
   const Ps1MatchCpu match_cpu_;
   std::shared_ptr<const Ps1OrdinaryRecovery> returning_;
+  std::atomic<bool> recovery_accepted_;
   std::atomic<int64_t> recovered_source_{0};
   flutter::TextureVariant texture_;
   int64_t texture_id_ = -1;
@@ -2207,16 +2216,26 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
     }
     return;
   }
+  if (method == "ps1LocalCheckpointAccept") {
+    const auto* fields = std::get_if<Map>(arguments);
+    if (!ordinary_recovery_ || !session_ || !fields)
+      return result->Error("checkpoint", "The private PS1 recovery checkpoint is unavailable.");
+    const auto texture = fields->find(Value("texture"));
+    const auto source = fields->find(Value("source"));
+    if (texture == fields->end() || source == fields->end() ||
+        IntegerValue(texture->second) != session_->texture_id() ||
+        IntegerValue(source->second) != ordinary_recovery_->source ||
+        !session_->AcceptOrdinaryRecovery(ordinary_recovery_->source))
+      return result->Error("checkpoint", "The original PS1 game is not ready to resume.");
+    ordinary_recovery_.reset();
+    return result->Success(Value(true));
+  }
   if (!session_) {
     result->Success();
     return;
   }
   if (method == "status") {
-    auto status = session_->Status();
-    if (ordinary_recovery_ && session_->recovered_source() == ordinary_recovery_->source &&
-        std::get<bool>(status.at(Value("startupVisible"))) && !std::get<bool>(status.at(Value("ended"))))
-      ordinary_recovery_.reset();
-    result->Success(Value(std::move(status)));
+    result->Success(Value(session_->Status()));
   } else if (method == "ps1LocalCheckpointDetach") {
     const auto* fields = std::get_if<Map>(arguments);
     if (!fields) return result->Error("checkpoint", "Expected the parked PS1 session.");

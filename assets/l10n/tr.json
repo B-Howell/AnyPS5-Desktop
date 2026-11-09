@@ -279,6 +279,7 @@
   "ps1OnlineBiosPicker": "Çevrimiçi PS1 oyunu için SCPH-1001 BIOS dökümünü seç",
   "ps1OnlineCore": "PS1 Kurulumu'nda desteklenen SwanStation çekirdeğini yükle.",
   "ps1OnlineHandoffCore": "Çevrimiçi yerel eşli oyun için bu sürümün kontrol noktası destekli SwanStation paketi gerekir.",
+  "ps1OnlineReturnFailed": "Asıl oyuna dönülemedi. Yeniden denemek için Oyna'yı seçin.",
   "ps1OnlineVerifying": "PS1 oyunu çevrimiçi oyun için doğrulanıyor.",
   "ps1OnlineMismatch": "Oyuncuların PS1 çevrimiçi oyun dosyaları veya ayarları farklı.",
   "ps1OnlineDesync": "Oyun kopyalarının eşzamanı bozuldu. Oyun sona erdi.",

@@ -344,8 +344,8 @@ directory. Pass `--ordinary-control-core` with the preceding checkpoint
 core to check that it cannot handle the new request. This entry point
 captures state only. Starting the match also needs a verified compatible
 core and settings, isolated match cards, and a reversible handoff from
-the local session. The Quick Menu still uses the existing co-op-ready
-flow.
+the local session. The ordinary Play invitation described below uses
+that separate handoff.
 
 The Windows headless worker used hardware rendering and captured a
 4,359,173-byte checkpoint from CTR at telemetry frame 616. The fixture
@@ -368,8 +368,9 @@ zero. The fixture checks the held payload for the blank card, checks
 initial RAM against the held source, and compares the first match
 fingerprint after each seat supplies distinct inputs.
 It then resumes the original session and verifies its scratch save.
-The fixture exercises the Recompiler choice. The launcher still creates
-its existing invitations with the pinned Cached Interpreter profile.
+The fixture exercises the Recompiler choice used by the ordinary Play
+handoff. The older co-op-ready path uses the pinned Cached Interpreter
+profile.
 
 The Windows headless CTR run passed with the blank-card core
 `d1619715fe11db0faa280890c741aff876fd5fd682f3cd00fbcafaa04732b7ac`.
@@ -420,8 +421,22 @@ canceling or signing out prevents admission. The local fixture uses the
 qualified package and CTR media to verify the version 3 join request
 against a fake room. It also checks that the launcher discards a capture
 reply if the source closes before the reply arrives. The host Quick Menu
-still needs the reversible session switch before it can issue a version
-3 invite.
+offers **Online couch co-op** for eligible ordinary PS1 sessions. With
+`ANYPS5_PS1_NETPLAY=1`, ordinary Play can select the pinned handoff core
+when its verified package is available. The host preflight requires a
+recognized disc serial, a CUE image, and a single eligible BIOS in that
+session's system directory. The pinned core and media digests are
+verified before room creation.
+
+The [launcher runner](../lib/ui/ps1_netplay_runner.dart) leaves the source
+playing until the peer's handshake reaches preparation. It then parks the
+source, detaches it, waits for the old worker to exit, and imports the
+blank-card checkpoint into the isolated match worker at frame zero.
+AnyPS5 retains the game artwork through the gap between workers. Closing
+the room or failing to prepare the match releases the held source or
+reopens it at the invite point after the isolated worker has exited.
+The original save directory belongs to the local session. Match play
+uses isolated storage.
 
 ### Holding and recovering the ordinary host
 
@@ -439,7 +454,7 @@ advance it while parked.
 original worker. It releases the hold only after a successful restore and
 refreshes the card pointer before the next frame or save. Canceling a
 park request before consuming its result releases the unmodified source.
-The launcher will own the explicit restore after consuming a park result.
+The launcher requests that restore when the room ends before detach.
 Canceling a restore already in flight discards its reply. A successful
 restore still releases the source.
 `ps1LocalCheckpointDetach` moves a consumed park's private snapshot to
@@ -449,14 +464,18 @@ disc, core, system directory, save directory and active options from the
 source. A later `ps1LocalCheckpointReopen` uses only those saved values
 and starts the original profile paused after applying the snapshot.
 Park waits for pending settings to settle and freezes new changes until
-resume or cancel. The host retains the token across a failed match boot
-or return attempt and clears it once the restored session has presented a
-visible frame. After unpause, a return that cannot produce that frame
-within eight seconds fails with the recovery still available.
-`ps1LocalCheckpointDiscard` can free it with the same token once the
-worker has exited. The Quick Menu still needs to own the switch, wait
-for `ps1RecoveredSource` to match the ticket, and unpause the restored
-session.
+resume or cancel. The launcher waits for `ps1RecoveredSource` to match
+before unpausing the restored session. After it presents a visible frame,
+`ps1LocalCheckpointAccept` acknowledges the ticket and restored texture.
+The native host clears the snapshot only if that worker is still active
+and ready. Status polls leave it intact. A failed boot or a Stop before
+acceptance leaves the snapshot available so Play can retry the return.
+The restored worker may run neutral frames to produce the first visible
+image. Until acceptance it ignores player input and settings changes,
+and stopping it leaves the persistent memory card untouched.
+After unpause, a return that cannot produce a visible frame within eight
+seconds also leaves recovery available. `ps1LocalCheckpointDiscard` can
+free it with the same token once the worker has exited.
 
 The [headless driver](../windows/runner/tests/run_ps1_netplay_probe.py)
 accepts `--ordinary-checkpoint --ordinary-restore --ordinary-park`. The
@@ -484,6 +503,20 @@ in `ps1-host-replace-e56c544`. The legacy match control also passed 120
 frames. Successful discard and the visibility watchdog have static
 coverage. The fixture exercises native method dispatch with an in-memory
 texture registrar. It does not exercise the Quick Menu or a WAN invite.
+
+The recovery acknowledgement regression stops a real CTR return after a
+visible frame and reopens the same checkpoint, comparing its RAM to the
+parked source. It rejects acceptance before a visible frame and against
+the previous texture, then verifies that accepted recovery consumes the
+ticket. The fixture changes a marker in the scratch card on disk and
+checks that Stop before acceptance leaves it intact. Stop after
+acceptance saves the restored card. The
+[launcher tests](../test/ui/ps1_netplay_setup_test.dart) also send a
+visible status with the wrong token, check that input is gated through
+acceptance, and exercise cancellation during park and detach.
+These tests cover the worker transition and invite
+components. A full Quick Menu host-and-guest run over the production
+service remains to be verified.
 
 ### Windows development checkpoint
 

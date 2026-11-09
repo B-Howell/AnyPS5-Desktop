@@ -172,6 +172,14 @@ int VerifyReplacement(ProbeTexture& texture, char** argv) {
   std::filesystem::rename(disabled, core_path);
   const auto recovered_texture = messenger.Call("ps1LocalCheckpointReopen", ticket);
   const auto recovered = messenger.Wait("ps1RecoveredSource");
+  auto card_path = std::filesystem::u8path(argv[6]) / std::filesystem::u8path(argv[2]).stem();
+  card_path += L".srm";
+  CheckpointBytes source_card(std::filesystem::file_size(card_path));
+  RestoreCard(card_path, source_card.data(), source_card.size());
+  if (source_card.empty()) throw std::runtime_error("The source did not save its scratch card");
+  auto disk_marker = source_card;
+  disk_marker.back() ^= 1;
+  StoreCard(card_path, disk_marker.data(), disk_marker.size());
   const auto& options = std::get<Map>(recovered.at(Value("options")));
   const auto& restored_crop = std::get<Map>(options.at(Value(crop))).at(Value("activeValue"));
   if (IntegerValue(recovered_texture) == IntegerValue(texture_id) ||
@@ -181,9 +189,29 @@ int VerifyReplacement(ProbeTexture& texture, char** argv) {
   messenger.Call("pause", Value(false));
   if (!std::get<bool>(messenger.Wait("startupVisible").at(Value("hardware"))))
     throw std::runtime_error("The original renderer was not recovered");
+  messenger.Call("stop");
+  messenger.Wait("ended");
+  CheckpointBytes saved_card(source_card.size());
+  RestoreCard(card_path, saved_card.data(), saved_card.size());
+  if (saved_card != disk_marker)
+    throw std::runtime_error("Stopping a provisional recovery wrote to the original card");
+  const auto retry_texture = messenger.Call("ps1LocalCheckpointReopen", ticket);
+  messenger.Wait("ps1RecoveredSource");
+  if (fingerprint() != before) throw std::runtime_error("Retry lost the original frame");
+  const Value acceptance(Map{{Value("texture"), retry_texture}, {Value("source"), ticket}});
+  messenger.Call("ps1LocalCheckpointAccept", acceptance, "checkpoint");
+  messenger.Call("pause", Value(false));
+  messenger.Wait("startupVisible");
+  messenger.Call("ps1LocalCheckpointAccept",
+                 Value(Map{{Value("texture"), recovered_texture}, {Value("source"), ticket}}), "checkpoint");
+  if (!std::get<bool>(messenger.Call("ps1LocalCheckpointAccept", acceptance)))
+    throw std::runtime_error("The recovered frame was not accepted");
   messenger.Call("ps1LocalCheckpointReopen", ticket, "checkpoint");
   messenger.Call("stop");
   messenger.Wait("ended");
+  RestoreCard(card_path, saved_card.data(), saved_card.size());
+  if (saved_card != source_card)
+    throw std::runtime_error("Accepted recovery did not save the restored card");
   std::cout << "Native method channel replaced the PS1 worker and recovered its original frame." << std::endl;
   return 0;
 }

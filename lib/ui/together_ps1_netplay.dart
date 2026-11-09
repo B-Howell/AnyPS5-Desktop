@@ -44,9 +44,10 @@ extension TogetherPs1Netplay on TogetherModel {
   }
 
   List<PanelRow> ps1QuickRows() {
-    if (!_ps1NetplayEnabled || app.embeddedGame?.isNetplay != true) return const [];
+    if (!_ps1NetplayEnabled) return const [];
     if (_ps1Match != null) return ps1NetplayRows();
-    if (app.embeddedGame?.stagedNetplayMedia == null) return const [];
+    final host = app.embeddedGame;
+    if (host == null || _ps1HostMode(host, app.running?.$1) == null) return const [];
     return [
       PanelRow(
         id: 'ps1-invite-from-game',
@@ -56,13 +57,27 @@ extension TogetherPs1Netplay on TogetherModel {
     ];
   }
 
+  Ps1NetplayRoomMode? _ps1HostMode(EmbeddedRetroGame host, Game? game) {
+    if (host.stagedNetplayMedia != null) return Ps1NetplayRoomMode.staged;
+    final disc = game?.retro;
+    if (!app.ordinaryPs1RecoveryPending &&
+        host.canParkOrdinaryPs1 &&
+        disc != null &&
+        disc.platform == RetroPlatform.ps1 &&
+        p.extension(disc.path).toLowerCase() == '.cue' &&
+        Ps1NetplayProfile.tryRead(game?.retroSerial) != null) {
+      return Ps1NetplayRoomMode.ordinary;
+    }
+    return null;
+  }
+
   List<PanelRow> ps1InviteFriendRows() {
     final game = app.running?.$1;
     final host = app.embeddedGame;
-    final media = host?.stagedNetplayMedia;
-    final titleId = media?.identity.toJson()['title'];
-    final profile = titleId is String ? Ps1NetplayProfile.tryRead(titleId) : null;
-    if (game == null || host == null || profile == null) return const [];
+    if (game == null || host == null) return const [];
+    final mode = _ps1HostMode(host, game);
+    final profile = Ps1NetplayProfile.tryRead(game.retroSerial);
+    if (mode == null || profile == null) return const [];
     final online = hub.friends.friends.where((friend) => friend.presence.online).toList();
     if (account.user == null || hub.socket.status != SocketStatus.ready || online.isEmpty) {
       return [
@@ -87,9 +102,7 @@ extension TogetherPs1Netplay on TogetherModel {
           detail: T.text('ps1OnlineInviteDetail'),
           kind: ActionRow(() {
             app.resumeGame();
-            unawaited(
-              _startPs1Netplay(profile, friendId: friend.person.id, host: host, mode: Ps1NetplayRoomMode.staged),
-            );
+            unawaited(_startPs1Netplay(profile, friendId: friend.person.id, host: host, mode: mode));
           }),
         ),
     ];
@@ -183,6 +196,7 @@ extension TogetherPs1Netplay on TogetherModel {
     _verifyingPs1 = true;
     app.show(T.text('ps1OnlineVerifying'));
     Ps1NetplayMatch? opened;
+    var holdingTransition = false;
     RetroOnlineRooms rooms([String? discDigest]) => RetroOnlineRooms(
       call: (method, path, [body]) {
         if (account.user?.id != me) throw StateError('The AnyTogether account changed.');
@@ -204,9 +218,26 @@ extension TogetherPs1Netplay on TogetherModel {
       bool active() => account.user?.id == me && hostAvailable();
       if (!active()) return;
       if (roomId != null && invitedDigest == null) return app.show(T.text('ps1OnlineDisc'));
-      final bios = host == null ? await app.preparePs1NetplayBios(canContinue: active) : null;
+      final ordinaryHost = mode == Ps1NetplayRoomMode.ordinary ? host : null;
+      final bios = ordinaryHost != null
+          ? await ordinaryHost.ordinaryMatchBios()
+          : host == null
+          ? await app.preparePs1NetplayBios(canContinue: active)
+          : null;
       if (!active() || (host == null && bios == null)) return;
-      final (game, media) = host != null
+      if (ordinaryHost != null && bios == null) return app.show(T.text('ps1OnlineBios'));
+      final (game, media) = ordinaryHost != null
+          ? (
+              app.running!.$1,
+              await Ps1NetplayMedia.verify(
+                profile: profile,
+                disc: app.running!.$1.retro!.path,
+                bios: bios!,
+                core: ordinaryHost.corePath,
+                execution: mode.execution,
+              ),
+            )
+          : host != null
           ? (app.running!.$1, host.stagedNetplayMedia!)
           : selectedGame != null
           ? (selectedGame, await app.verifyPs1Netplay(selectedGame, profile, bios: bios!))
@@ -217,7 +248,7 @@ extension TogetherPs1Netplay on TogetherModel {
       final owned = EmbeddedPs1NetplayRunner(
         (seat) => app.preparePs1Netplay(game, media, seat, canBoot: () => !match.closed && account.user?.id == me),
       );
-      final borrowed = host == null
+      final borrowed = host == null || ordinaryHost != null
           ? null
           : Ps1LocalHandoff(
               ready: () => host.netplayReady,
@@ -228,19 +259,40 @@ extension TogetherPs1Netplay on TogetherModel {
               begin: host.startNetplayFrames,
               exchange: host.exchangeNetplayFrames,
             );
+      final switching = ordinaryHost == null
+          ? null
+          : OrdinaryPs1NetplayRunner(
+              match: owned,
+              park: () => ordinaryHost.captureOrdinaryNetplayCheckpoint(media, park: true),
+              detach: () {
+                holdingTransition = true;
+                app.setOrdinaryPs1Transition(game);
+                return ordinaryHost.detachOrdinaryCheckpoint();
+              },
+              unpark: ordinaryHost.resumeOrdinaryCheckpoint,
+              drainWorker: app.waitForRetroWorkerExit,
+              importMatch: owned.restoreCheckpoint,
+              recover: (ticket) => app.restoreOrdinaryPs1(game, ticket, ordinaryHost.corePath, ordinaryHost.sourceHome),
+            );
       match = Ps1NetplayMatch(
         rooms: rooms(roomId == null ? media.discDigest : invitedDigest),
         links: app.services.gameLinks?.call() ?? WebRtcGameLinks(),
         identity: media.identity,
-        runner: borrowed ?? owned,
-        captureCheckpoint: borrowed?.capture,
+        runner: switching ?? borrowed ?? owned,
+        captureCheckpoint: switching?.capture ?? borrowed?.capture,
         catchupSource: borrowed?.source,
         restoreCheckpoint: mode.needsCheckpoint && host == null ? owned.restoreCheckpoint : null,
         catchupReplay: mode == Ps1NetplayRoomMode.staged && host == null ? owned.replayHistory : null,
         onRunning: app.refresh,
       );
       _ps1Match = opened = match;
-      if (host != null) unawaited(host.exitCode.then((_) => match.leave()));
+      if (host != null) {
+        unawaited(
+          host.exitCode.then((_) async {
+            if (switching?.detaching != true) await match.leave();
+          }),
+        );
+      }
       app.refresh();
       if (roomId != null) {
         await match.join(roomId);
@@ -249,6 +301,10 @@ extension TogetherPs1Netplay on TogetherModel {
         await match.host(friendId!);
       }
       await match.done;
+      if (switching != null && app.ordinaryPs1RecoveryPending) {
+        app.show(T.text('ps1OnlineReturnFailed'));
+        return;
+      }
       switch (match.session?.ended) {
         case Ps1NetplayEnd.mismatch:
           app.show(T.text('ps1OnlineMismatch'));
@@ -264,6 +320,7 @@ extension TogetherPs1Netplay on TogetherModel {
     } on Object {
       app.show(T.text('ps1OnlineDisconnected'));
     } finally {
+      if (holdingTransition) app.setOrdinaryPs1Transition(null);
       if (identical(_ps1Match, opened)) _ps1Match = null;
       _verifyingPs1 = false;
       app.refresh();

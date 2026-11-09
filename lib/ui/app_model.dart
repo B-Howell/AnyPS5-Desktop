@@ -2112,6 +2112,8 @@ class AppModel extends ChangeNotifier {
   late final _emulatorMenu = _EmulatorMenu(this);
   late final _retroRestartTrials = _RetroRestartTrials(this);
   Completer<void>? _retroSettled;
+  Game? _ordinaryPs1Transition;
+  ({Game game, int ticket, String core, String home})? _ordinaryPs1Recovery;
 
   late final RetroSettingsModel retroSettings = RetroSettingsModel(
     this,
@@ -3746,6 +3748,15 @@ class AppModel extends ChangeNotifier {
 
   /// Plays [game]; [trace] turns detailed logging on for this start only.
   Future<void> play(Game game, {bool trace = false}) async {
+    if (_ordinaryPs1Transition != null) return;
+    if (_ordinaryPs1Recovery case final recovery? when recovery.game.id == game.id) {
+      try {
+        await restoreOrdinaryPs1(game, recovery.ticket, recovery.core, recovery.home);
+      } on Object {
+        show(T.text('ps1OnlineReturnFailed'));
+      }
+      return;
+    }
     if (game.retro case final RetroDisc disc) {
       await _playRetro(game, disc);
       return;
@@ -4077,6 +4088,40 @@ class AppModel extends ChangeNotifier {
     return _playRetro(game, disc, netplay: (media: media, seat: 0), localNetplayStaging: true);
   }
 
+  Future<void> waitForRetroWorkerExit() async => await _retroSettled?.future;
+
+  void setOrdinaryPs1Transition(Game? game) {
+    _ordinaryPs1Transition = game;
+    _changed();
+  }
+
+  bool get ordinaryPs1RecoveryPending => _ordinaryPs1Recovery != null;
+
+  Future<void> restoreOrdinaryPs1(Game game, int ticket, String core, String home) async {
+    final disc = game.retro;
+    if (disc?.platform != RetroPlatform.ps1 || _disposed) {
+      throw StateError('The original PS1 game is unavailable.');
+    }
+    final pending = (game: game, ticket: ticket, core: core, home: home);
+    _ordinaryPs1Recovery = pending;
+    final booted = Completer<EmbeddedRetroGame?>();
+    closeOverlay();
+    final launch = _playRetro(game, disc!, booted: booted, ordinaryRecovery: (ticket: ticket, core: core, home: home));
+    final restored = await Future.any([booted.future, launch.then<EmbeddedRetroGame?>((_) => null)]);
+    if (restored == null) throw StateError('The original PS1 game could not resume.');
+    var accepted = false;
+    try {
+      accepted = await restored.acceptOrdinaryRecovery(ticket);
+      if (!accepted) throw StateError('The original PS1 game could not resume.');
+    } finally {
+      if (!accepted) {
+        await restored.close();
+        await waitForRetroWorkerExit();
+      }
+    }
+    if (_ordinaryPs1Recovery == pending) _ordinaryPs1Recovery = null;
+  }
+
   Future<RetroLanGame> preparePs2Lan(
     Game game,
     Uint8List mac, {
@@ -4265,6 +4310,7 @@ class AppModel extends ChangeNotifier {
     bool localNetplayStaging = false,
     ({Uint8List mac, String system, String saves})? ps2Lan,
     Ps3OnlineProfile? onlineProfile,
+    ({int ticket, String core, String home})? ordinaryRecovery,
   }) async {
     if (managedSetupConsole != null || starting != null || running != null || canBoot?.call() == false) return;
     final allowed = together.family.beforePlay(game);
@@ -4279,9 +4325,15 @@ class AppModel extends ChangeNotifier {
     final override = ps3 ? null : retroCoreOverride;
     final program = retroSettings.program(disc.platform);
     final standalone =
-        onlineProfile == null && netplay == null && ps2Lan == null && program != null && File(program).existsSync();
-    final managed =
+        ordinaryRecovery == null &&
         onlineProfile == null &&
+        netplay == null &&
+        ps2Lan == null &&
+        program != null &&
+        File(program).existsSync();
+    final managed =
+        ordinaryRecovery == null &&
+            onlineProfile == null &&
             netplay == null &&
             ps2Lan == null &&
             override == null &&
@@ -4289,7 +4341,9 @@ class AppModel extends ChangeNotifier {
             managedRetroAvailable
         ? _managedRetro
         : null;
-    final embeddedHome = onlineProfile != null
+    final embeddedHome = ordinaryRecovery != null
+        ? ordinaryRecovery.home
+        : onlineProfile != null
         ? p.dirname(onlineProfile.core)
         : ps2Lan != null
         ? _ps2LanCoreHome
@@ -4316,6 +4370,7 @@ class AppModel extends ChangeNotifier {
     starting = game;
     _changed();
     EmbeddedRetroGame? lanRun;
+    var ordinaryCore = ordinaryRecovery?.core;
     try {
       if (managed != null) {
         final label = ManagedRetro.platformName(disc.platform);
@@ -4332,7 +4387,17 @@ class AppModel extends ChangeNotifier {
             return;
           }
         }
-        if (!ps3) await _installManagedCore(managed, disc.platform);
+        if (disc.platform == RetroPlatform.ps1 &&
+            (services.environment ?? Platform.environment)['ANYPS5_PS1_NETPLAY'] == '1') {
+          try {
+            ordinaryCore = await managed.ensurePs1NetplayCore(execution: Ps1NetplayExecution.ordinaryHandoff);
+          } on FormatException {
+            // A preview without the matching package can still play locally.
+          } on FileSystemException {
+            // Keep the ordinary managed install available.
+          }
+        }
+        if (!ps3 && ordinaryCore == null) await _installManagedCore(managed, disc.platform);
         _setRetroSetup(null);
       }
       if (canBoot?.call() == false) {
@@ -4420,6 +4485,8 @@ class AppModel extends ChangeNotifier {
           localNetplayStaging: localNetplayStaging,
           ps2Lan: ps2Lan,
           onlineProfile: onlineProfile,
+          ordinaryRecovery: ordinaryRecovery?.ticket,
+          ordinaryCore: ordinaryCore,
         );
       } else {
         retroSettings.applyQueuedGraphics(program!, disc.platform);
@@ -4560,7 +4627,7 @@ class AppModel extends ChangeNotifier {
 
   Game? get launchCardGame {
     final session = embeddedGame;
-    if (session == null) return starting;
+    if (session == null) return starting ?? _ordinaryPs1Transition;
     return !session.startupVisible || session.progress != null ? running?.$1 : null;
   }
 

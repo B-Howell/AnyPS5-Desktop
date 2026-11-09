@@ -279,6 +279,7 @@
   "ps1OnlineBiosPicker": "Select your SCPH-1001 BIOS dump for PS1 online play",
   "ps1OnlineCore": "Install the supported SwanStation core in PS1 Setup.",
   "ps1OnlineHandoffCore": "Online couch co-op needs this build's checkpoint-enabled SwanStation package.",
+  "ps1OnlineReturnFailed": "The original game could not resume. Select Play to try again.",
   "ps1OnlineVerifying": "Verifying your PS1 game for online play.",
   "ps1OnlineMismatch": "The players have different PS1 netplay files or settings.",
   "ps1OnlineDesync": "The two copies fell out of sync. The match ended.",

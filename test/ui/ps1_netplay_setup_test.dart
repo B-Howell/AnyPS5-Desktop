@@ -8,10 +8,12 @@ import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/managed_retro.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
+import 'package:anyps5_desktop/core/online/ps1_netplay_session.dart';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:anyps5_desktop/core/together/game_sessions.dart';
 import 'package:anyps5_desktop/ui/together_model.dart';
 import 'package:anyps5_desktop/ui/embedded_retro_game.dart';
+import 'package:anyps5_desktop/ui/ps1_netplay_runner.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -21,6 +23,144 @@ import '../support/ui_support.dart';
 
 void main() {
   _LoopbackBinding();
+  test('ordinary host imports a new epoch and restores the original after stopping the match', () async {
+    final events = <String>[];
+    final state = Uint8List.fromList([1, 2, 3]);
+    final runner = OrdinaryPs1NetplayRunner(
+      match: _FixtureMatch(events),
+      park: () async {
+        events.add('park');
+        return (frame: 616, state: state);
+      },
+      detach: () async {
+        events.add('detach');
+        return 17;
+      },
+      unpark: () async => events.add('unpark'),
+      drainWorker: () async => events.add('drain'),
+      importMatch: (snapshot) async {
+        expect(snapshot, (frame: 0, state: state));
+        events.add('import');
+      },
+      recover: (ticket) async => events.add('recover $ticket'),
+    );
+    await runner.prepare(0);
+    expect(await runner.capture(), (frame: 0, state: state));
+    await runner.start();
+    await runner.stop();
+    await runner.stop();
+    expect(events, ['park', 'detach', 'drain', 'prepare 0', 'import', 'start', 'stop', 'drain', 'recover 17']);
+  });
+
+  test('canceling during park releases the original without detaching it', () async {
+    final events = <String>[];
+    final parked = Completer<void>();
+    final runner = OrdinaryPs1NetplayRunner(
+      match: _FixtureMatch(events),
+      park: () async {
+        events.add('park');
+        await parked.future;
+        return (frame: 616, state: Uint8List.fromList([1]));
+      },
+      detach: () async => throw StateError('Unexpected detach'),
+      unpark: () async => events.add('unpark'),
+      drainWorker: () async => throw StateError('Unexpected drain'),
+      importMatch: (_) async => throw StateError('Unexpected import'),
+      recover: (_) async => throw StateError('Unexpected restore'),
+    );
+    final preparation = expectLater(runner.prepare(0), throwsStateError);
+    final stopped = runner.stop();
+    parked.complete();
+    await preparation;
+    await stopped;
+    expect(events, ['park', 'stop', 'unpark']);
+  });
+
+  test('canceling during detach drains the source before reopening it', () async {
+    final events = <String>[];
+    final detaching = Completer<void>();
+    final ticket = Completer<int>();
+    final runner = OrdinaryPs1NetplayRunner(
+      match: _FixtureMatch(events),
+      park: () async => (frame: 616, state: Uint8List.fromList([1])),
+      detach: () {
+        events.add('detach');
+        detaching.complete();
+        return ticket.future;
+      },
+      unpark: () async => throw StateError('Unexpected unpark'),
+      drainWorker: () async => events.add('drain'),
+      importMatch: (_) async => throw StateError('Unexpected import'),
+      recover: (token) async => events.add('recover $token'),
+    );
+    final preparation = expectLater(runner.prepare(0), throwsStateError);
+    await detaching.future;
+    final stopped = runner.stop();
+    ticket.complete(17);
+    await preparation;
+    await stopped;
+    expect(events, ['detach', 'stop', 'drain', 'drain', 'recover 17']);
+  });
+
+  test('reopening waits for the matching recovery token before unpausing', () async {
+    final root = await Directory.systemTemp.createTemp('anyps5-return-');
+    addTearDown(() => root.delete(recursive: true));
+    const channel = MethodChannel('anyps5/retro_core');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    var polls = 0;
+    var resumed = false;
+    var stopped = false;
+    final input = Completer<void>();
+    var padReads = 0;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'ps1LocalCheckpointReopen':
+          expect(call.arguments, 17);
+          return 41;
+        case 'status':
+          polls++;
+          return {'ps1RecoveredSource': polls > 1 ? 17 : 18, 'startupVisible': polls == 1 || resumed, 'ended': stopped};
+        case 'pause':
+          expect(polls, greaterThan(1));
+          expect(call.arguments, false);
+          resumed = true;
+        case 'ps1LocalCheckpointAccept':
+          expect(resumed, isTrue);
+          expect(call.arguments, {'source': 17, 'texture': 41});
+          return true;
+        case 'stop':
+          stopped = true;
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final game = await EmbeddedRetroGame.start(
+      root.path,
+      (platform: RetroPlatform.ps1, path: p.join(root.path, 'game.cue')),
+      internalResolution: null,
+      graphics: const {},
+      onResolutionSelected: (_) {},
+      onGraphicsSelected: (_, _) {},
+      readPad: () {
+        padReads++;
+        if (!input.isCompleted) input.complete();
+        return PadState.idle;
+      },
+      changed: () {},
+      ordinaryRecovery: 17,
+    );
+    addTearDown(() async {
+      await game.close();
+      await game.exitCode;
+    });
+    expect(await game.ready.timeout(const Duration(seconds: 3)), isTrue);
+    expect(resumed, isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(padReads, 0);
+    expect(await game.acceptOrdinaryRecovery(17), isTrue);
+    await input.future.timeout(const Duration(seconds: 3));
+  });
+
   for (final version in ['2', '3']) {
     test('PS1 handoff invite version $version prompts for a compatible BIOS before joining', () async {
       final server = await FakeTogether.start();
@@ -270,6 +410,23 @@ void main() {
     expect(File(p.join(home, 'PS1-Netplay', 'swanstation_libretro.dll')).existsSync(), isFalse);
     expect(model.running, isNull);
   }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null);
+}
+
+class _FixtureMatch implements Ps1NetplayRunner {
+  _FixtureMatch(this.events);
+  final List<String> events;
+
+  @override
+  Future<void> prepare(int seat) async => events.add('prepare $seat');
+
+  @override
+  Future<void> start() async => events.add('start');
+
+  @override
+  Future<void> stop() async => events.add('stop');
+
+  @override
+  Future<Ps1NetplayTick> sync(List<Ps1NetplayFrame> remote, int? acknowledgedFrame) async => throw UnimplementedError();
 }
 
 class _LoopbackBinding extends AutomatedTestWidgetsFlutterBinding {

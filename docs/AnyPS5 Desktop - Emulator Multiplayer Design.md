@@ -36,16 +36,16 @@ ready, and the guest receives the next free controller seat. For titles with
 separate single-player and local multiplayer modes, players use the game's
 own mode selector.
 
-The [current PS1 match controller](../lib/core/online/ps1_netplay_match.dart)
-and [embedded runner](../lib/ui/ps1_netplay_runner.dart) boot both copies
-together. Joining an existing game needs a separate bootstrap path. Verify
-the guest's copy and core before touching the running game. At an agreed
-frame boundary, capture the host state, give the guest a bounded verified
-checkpoint and keep a bounded history of subsequent inputs. Let the guest
-catch up before assigning its seat. If capture, transfer, restore or catch-up
-fails, close the pending invitation and continue the host's game. A guest
-leaving returns their controller to neutral. Keep guest saves isolated and
-keep local paths and unrelated save data out of the payload.
+The [PS1 match controller](../lib/core/online/ps1_netplay_match.dart)
+and [embedded runner](../lib/ui/ps1_netplay_runner.dart) support fresh
+boots and two ways to start from a running game. A co-op-ready session
+keeps a bounded input history while the guest catches up. The ordinary
+Play preview waits for the compatible guest handshake, holds the
+original game at a frame boundary, and starts both match workers from
+the same blank-card checkpoint. The original session reopens at that
+point when the match ends. Its private recovery snapshot stays in the
+native host. Both paths isolate match storage and bind the invite to the
+verified game media.
 
 The [late-join harness](../tool/ps1_netplay/late_join.py) tests the underlying
 state transfer on two independent local processes and different disc paths.
@@ -65,10 +65,10 @@ restores against the disc already mounted on the guest. The portable
 serializer omits the display title, disc path and legacy path trailer.
 Ordinary save states still use their existing format.
 
-Portable snapshots can contain memory-card data. Treat this probe's
-snapshots as trusted local artifacts and use isolated cards. Live transfer
-needs an explicit card-sharing policy and a validated bootstrap in the
-match controller before it can be exposed in the Quick Menu.
+Portable snapshots can contain memory-card data. Treat the older probe's
+snapshots as trusted local artifacts. The ordinary Play preview exports
+only the blank-card snapshot and has its own pinned core and recovery
+handshake. The PS1 implementation plan records its qualification scope.
 
 The acceptance test for the Quick Menu also needs a successful invitation,
 cancel and disconnect during catch-up, proof that host playback and saves
