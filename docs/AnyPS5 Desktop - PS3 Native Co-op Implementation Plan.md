@@ -29,6 +29,43 @@ loopback or a private test network. Verify `/_health` and the configured
 publishes port 10061 by default, so set an explicit private bind for the
 pilot.
 
+The [Refresh smoke probe](../tool/ps3_refresh_probe.sh) runs the pinned
+Linux x64 v3.7.2 release with PostgreSQL in a new loopback-only network
+namespace. Refresh v3.7.2 needs PostgreSQL even when registration and login
+are disabled. On Ubuntu 22.04, download `postgresql-14`,
+`postgresql-client-14` and `libpq5` with `apt-get download`, then extract
+the three packages into the same scratch directory with `dpkg-deb -x`.
+The probe needs the extracted directory and the release ZIP.
+
+```sh
+bash tool/ps3_refresh_probe.sh /path/Refresh_for_Linux_x64.zip /path/postgresql-runtime
+```
+
+The probe verifies the ZIP digest, uses fresh storage, disables account
+registration and login, and keeps Patchwork and ticket verification
+enabled. It checks that Refresh and PostgreSQL are the only listeners
+and that both bind to loopback. The real `/_health` response must report
+`Healthy` and `POST /lbp/login` must reject a synthetic request with
+HTTP 403. On Ubuntu 22.04 in WSL, PostgreSQL 14.24 and Refresh passed those
+checks and left no listening sockets after shutdown. A separate
+cancellation test stopped the Refresh process with SIGSTOP, sent TERM
+to the probe and verified that both services still shut down. The probe
+also rejected a wrong release ZIP and an invocation outside the private
+namespace. This qualifies the game server and database startup with no
+console, emulator or account.
+
+Matchmaking still needs a compatible RPCN server. The
+[pinned RPCS3 client](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/rpcs3/Emu/NP/rpcn_client.cpp)
+requires RPCN protocol 32. [RPCN 1.9.0 at `9a94d603`](https://github.com/RipleyTom/rpcn/blob/9a94d603efbd1d5b2e0704366f8abe7d2840109f/src/server.rs)
+advertises 32 and is a candidate for an isolated pilot.
+[RPCN 1.12.1 at `7a3c3c48`](https://github.com/RipleyTom/rpcn/blob/7a3c3c480d54d7b51a7a231655c778821097ee4e/src/server.rs)
+advertises 34, which the pinned client rejects. This comparison covers
+source versions. A hosted provider's live protocol still needs verification.
+For private RPCN, also qualify ticket trust. The
+[Refresh authentication handler](https://github.com/LittleBigRefresh/Refresh/blob/v3.7.2/Refresh.Interfaces.Game/Endpoints/Handshake/AuthenticationEndpoints.cs)
+uses the library's RPCN signing key for verification, so a freshly
+generated private server key cannot be assumed to work with that build.
+
 Once the exact title update and protected client patch qualify, point the
 isolated client profile at the private server using
 [Refresher AutoDiscover and Patchwork](https://docs.lbpbonsai.com/rpcs3.html).
