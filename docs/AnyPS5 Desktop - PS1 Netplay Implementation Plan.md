@@ -95,6 +95,22 @@ A headless pass is local evidence. It cannot qualify different machines.
 
 ## 2. Prove the frame protocol without a service
 
+The [compatibility metadata](../lib/core/online/ps1_netplay_identity.dart)
+validates title and protocol version plus SHA-256 digests for disc tracks,
+BIOS, core, deterministic profile and initial memory card. Its
+[tests](../test/core/online/ps1_netplay_identity_test.dart) check that mismatches
+are distinguishable and local paths cannot be passed as identity fields.
+
+The [input wire codec](../lib/core/online/ps1_netplay_wire.dart) encodes up to
+eight complete controller snapshots in a 108-byte datagram. It validates the
+match epoch, assigned seat, receive window and cumulative acknowledgement.
+The [codec tests](../test/core/online/ps1_netplay_wire_test.dart) include
+malformed packets and a PS5 separation control. A receiver must retain seven
+frames of overlap for redundant snapshots or trim validated old snapshots
+at the receive-window boundary. The session layer still owns peer binding,
+duplicate suppression, readiness and the WebRTC connection.
+
+
 **Planned modules:** A testable frame driver and bounded history in
 `windows/runner/ps1_netplay_timeline.{h,cpp}`. Keep the existing runner as the
 core adapter. Add a transport-independent codec in
