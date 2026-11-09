@@ -81,6 +81,8 @@ class EmbeddedRetroGame extends RunningGame {
   String resolutionError = '';
   bool hardwareRendering = false;
   bool presented = false;
+  bool _startupVisible = false;
+  bool get startupVisible => _startupVisible;
   ({String label, int? percent})? progress;
   double aspect = 4 / 3;
   int filter = 0;
@@ -243,6 +245,10 @@ class EmbeddedRetroGame extends RunningGame {
       }
       if (!presented && status['presented'] == true) {
         presented = true;
+        updated = true;
+      }
+      if (!_startupVisible && (status['startupVisible'] as bool? ?? presented)) {
+        _startupVisible = true;
         _ready.complete(true);
         updated = true;
       }

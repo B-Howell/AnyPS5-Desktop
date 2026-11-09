@@ -106,6 +106,15 @@ Resume and Close return to the same session. Losing focus clears held
 inputs. Settings for existing portable DuckStation and PCSX2
 installations remain available as an advanced path.
 
+The existing launch card keeps the title, cover, and single progress bar
+visible during embedded PS1 and PS2 startup, including while the core
+outputs blank frames. The [Windows host](../windows/runner/retro_core_host.cpp)
+reports when Flutter first reads a visible game frame. The
+[embedded session](../lib/ui/embedded_retro_game.dart) latches that signal
+for the [launch card and startup timeout](../lib/ui/app_model.dart).
+Later in-game fades do not show the card again. RPCS3 retains its
+compile and shader progress.
+
 | Core | Controls exercised in the same session |
 | --- | --- |
 | SwanStation | Internal resolution and texture filtering |

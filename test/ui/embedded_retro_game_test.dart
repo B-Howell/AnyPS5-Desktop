@@ -223,9 +223,17 @@ void main() {
     final coverRect = tester.getRect(cover);
     final barRect = tester.getRect(bar);
 
-    status = {'presented': true, 'progressLabel': 'Compiling PPU modules', 'progressPercent': 43};
+    status = {'presented': true, 'startupVisible': false};
     await tester.pump(const Duration(milliseconds: 150));
-    expect(model.starting, isNull);
+    expect(model.starting, game);
+    expect(bar, findsOneWidget);
+    expect(tester.widget<LinearProgressIndicator>(bar).value, isNull);
+    expect(tester.getRect(cover), coverRect);
+    expect(tester.getRect(bar), barRect);
+
+    status = {'presented': true, 'startupVisible': false, 'progressLabel': 'Compiling PPU modules', 'progressPercent': 43};
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(model.starting, game);
     expect(bar, findsOneWidget);
     expect(tester.widget<LinearProgressIndicator>(bar).value, 0.43);
     expect(find.text('43%'), findsOneWidget);
@@ -237,11 +245,16 @@ void main() {
     expect(find.text('72%'), findsOneWidget);
     expect(tester.getRect(cover), coverRect);
 
-    status = {'presented': true};
+    status = {'presented': true, 'startupVisible': true};
     await tester.pump(const Duration(milliseconds: 150));
+    expect(model.starting, isNull);
     expect(cover, findsNothing);
     expect(bar, findsNothing);
     expect(find.byType(Texture), findsOneWidget);
+
+    status = {'presented': true, 'startupVisible': false};
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(bar, findsNothing);
 
     status = {'ended': true};
     await tester.pump(const Duration(milliseconds: 150));

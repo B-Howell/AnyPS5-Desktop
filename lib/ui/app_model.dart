@@ -4494,7 +4494,7 @@ class AppModel extends ChangeNotifier {
   Game? get launchCardGame {
     final session = embeddedGame;
     if (session == null) return starting;
-    return !session.presented || session.progress != null ? running?.$1 : null;
+    return !session.startupVisible || session.progress != null ? running?.$1 : null;
   }
 
   Duration retroStartTimeout = const Duration(minutes: 3);

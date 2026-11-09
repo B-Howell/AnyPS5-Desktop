@@ -263,6 +263,22 @@ struct Frame {
   std::vector<uint8_t> pixels;
   size_t width = 0;
   size_t height = 0;
+
+  bool HasVisiblePixels() const {
+    // Sample the frame across its full area. Ignore alpha and near-black
+    // renderer clears. This only runs until the first visible boot frame.
+    const auto columns = std::min<size_t>(width, 64);
+    const auto rows = std::min<size_t>(height, 36);
+    for (size_t row = 0; row < rows; ++row) {
+      const auto y = (2 * row + 1) * height / (2 * rows);
+      for (size_t column = 0; column < columns; ++column) {
+        const auto x = (2 * column + 1) * width / (2 * columns);
+        const auto* rgb = pixels.data() + 4 * (y * width + x);
+        if (std::max({rgb[0], rgb[1], rgb[2]}) > 12) return true;
+      }
+    }
+    return false;
+  }
 };
 struct FrameLease {
   std::shared_ptr<Frame> frame;
@@ -782,6 +798,7 @@ class RetroCoreSession {
     Map status{
         {Value("ready"), Value(frame_ready_.load())},
         {Value("presented"), Value(presented_.load())},
+        {Value("startupVisible"), Value(startup_visible_.load())},
         {Value("ended"), Value(ended_.load())},
         {Value("error"), Value(error_)},
         {Value("aspect"), Value(static_cast<double>(aspect_.load()))},
@@ -987,6 +1004,7 @@ class RetroCoreSession {
     std::lock_guard<std::mutex> lock(frame_mutex_);
     if (!frame_) return nullptr;
     presented_ = true;
+    if (!startup_visible_ && (ps3_ || frame_->HasVisiblePixels())) startup_visible_ = true;
     auto* lease = new FrameLease{frame_, {}};
     lease->buffer = {lease->frame->pixels.data(), lease->frame->width, lease->frame->height,
                      [](void* data) { delete static_cast<FrameLease*>(data); }, lease};
@@ -1752,6 +1770,7 @@ class RetroCoreSession {
   std::atomic<bool> hardware_frame_{false};
   std::atomic<unsigned> frame_width_{0}, frame_height_{0};
   std::atomic<bool> stop_{false}, paused_{false}, ended_{false}, frame_ready_{false}, presented_{false};
+  std::atomic<bool> startup_visible_{false};
   std::atomic<int> pixel_format_{0};
   std::atomic<float> aspect_{4.f / 3.f};
   std::mutex frame_mutex_, input_mutex_, settings_mutex_;
