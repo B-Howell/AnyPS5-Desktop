@@ -1,11 +1,23 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:anyps5_desktop/core/game_library.dart';
+import 'package:anyps5_desktop/core/managed_retro.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+
+final class _FileAccess extends IOOverrides {
+  final paths = <String>[];
+
+  @override
+  File createFile(String path) {
+    paths.add(path);
+    return super.createFile(path);
+  }
+}
 
 void main() {
   late Directory folder;
@@ -29,6 +41,45 @@ void main() {
     expect(ordinary.coreDigests, {Ps1NetplayMedia.ordinaryHandoffCorePin});
     expect(standard.coreDigests, {Ps1NetplayMedia.corePin, Ps1NetplayMedia.portableCorePin});
   });
+
+  final ordinaryFixture = Platform.environment['ANYPS5_TEST_PS1_ORDINARY_FIXTURE'];
+  final standardFixture = Platform.environment['ANYPS5_TEST_PS1_STANDARD_FIXTURE'];
+  test('changing the match core reuses only the verified disc and firmware', () async {
+    final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
+    final [_, String stock] = jsonDecode(await File(standardFixture!).readAsString()) as List;
+    final core = await ManagedRetro(
+      folder.path,
+      packageDirectory: packages,
+    ).ensurePs1NetplayCore(execution: Ps1NetplayExecution.ordinaryHandoff);
+    final source = await Ps1NetplayMedia.verify(
+      profile: Ps1NetplayProfile.tryRead('SCUS94426')!,
+      disc: disc,
+      bios: bios,
+      core: core,
+      execution: Ps1NetplayExecution.ordinaryHandoff,
+    );
+    final files = _FileAccess();
+    final match = await IOOverrides.runWithIOOverrides(
+      () => source.withVerifiedCore(stock, Ps1NetplayExecution.standard),
+      files,
+    );
+    expect(files.paths.toSet(), {stock});
+    expect(match.disc, source.disc);
+    expect(match.bios, source.bios);
+    expect(match.identity.toJson(), {
+      ...source.identity.toJson(),
+      'core': Ps1NetplayMedia.corePin,
+      'profile': Ps1NetplayExecution.standard.digest,
+    });
+    await expectLater(
+      source.withVerifiedCore(core, Ps1NetplayExecution.standard),
+      throwsA(isA<Ps1NetplayMediaFailure>().having((error) => error.problem, 'problem', Ps1NetplayMediaProblem.core)),
+    );
+    await expectLater(
+      source.withVerifiedCore(stock, Ps1NetplayExecution.standard, canContinue: () => false),
+      throwsStateError,
+    );
+  }, skip: !Platform.isWindows || ordinaryFixture == null || standardFixture == null);
 
   test('identifies any data disc from its boot serial without a manifest or a known title', () async {
     for (final (mode, stride, dataOffset, serial) in [

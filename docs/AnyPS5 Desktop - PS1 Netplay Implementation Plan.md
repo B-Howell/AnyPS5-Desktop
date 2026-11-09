@@ -441,8 +441,9 @@ uses isolated storage.
 A fresh-start, staged or ordinary checkpoint invite for the running PS1
 game appears in the guest's Quick Menu when the local worker supports
 recovery. The launcher verifies the local disc against the room before
-parking the game. It verifies the isolated match's core separately when
-the invite uses a different core. A fresh-start invite uses the supported
+parking the game. When the invite uses a different core, the launcher
+hashes that core separately and reuses the verified disc and BIOS from
+the current acceptance attempt. A fresh-start invite uses the supported
 core from PS1 Setup and boots from the disc. If that core is missing,
 the running game remains available and the launcher points to PS1 Setup.
 A staged invite imports the host's checkpoint and replays the

@@ -4048,23 +4048,11 @@ class AppModel extends ChangeNotifier {
     if (disc == null || disc.platform != RetroPlatform.ps1) {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
     }
-    final managed = _managedRetro;
-    final override = retroCoreOverride;
-    var core = p.join(override ?? managed.root, ManagedRetro.libraryName(RetroPlatform.ps1));
-    if ((requireHandoff || execution == Ps1NetplayExecution.ordinaryHandoff) && override == null) {
-      try {
-        core = await managed.ensurePs1NetplayCore(execution: execution);
-      } on FormatException {
-        throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
-      } on FileSystemException {
-        throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
-      }
-    }
     final media = await Ps1NetplayMedia.verify(
       profile: profile,
       disc: disc.path,
       bios: bios,
-      core: core,
+      core: await resolvePs1NetplayCore(execution, requireHandoff: requireHandoff),
       execution: execution,
       canContinue: canContinue,
     );
@@ -4072,6 +4060,21 @@ class AppModel extends ChangeNotifier {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
     }
     return media;
+  }
+
+  Future<String> resolvePs1NetplayCore(Ps1NetplayExecution execution, {required bool requireHandoff}) async {
+    final managed = _managedRetro;
+    final override = retroCoreOverride;
+    if (override != null || (!requireHandoff && execution != Ps1NetplayExecution.ordinaryHandoff)) {
+      return p.join(override ?? managed.root, ManagedRetro.libraryName(RetroPlatform.ps1));
+    }
+    try {
+      return await managed.ensurePs1NetplayCore(execution: execution);
+    } on FormatException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+    } on FileSystemException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+    }
   }
 
   Future<EmbeddedRetroGame> preparePs1Netplay(

@@ -101,11 +101,7 @@ final class Ps1NetplayMedia {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
     }
     final firmware = await _verify(Ps1NetplayMediaProblem.bios, {biosPin}, () => _hashFile(bios, canContinue));
-    final library = await _verify(
-      Ps1NetplayMediaProblem.core,
-      execution.coreDigests,
-      () => _hashFile(core, canContinue),
-    );
+    final library = await _verifiedCoreDigest(core, execution, canContinue);
     return Ps1NetplayMedia._(
       p.absolute(disc),
       p.absolute(bios),
@@ -122,6 +118,26 @@ final class Ps1NetplayMedia {
       execution,
     );
   }
+
+  /// Reuses the media checked for this invitation while verifying a different
+  /// worker core. The verified disc and BIOS paths cannot be replaced here.
+  Future<Ps1NetplayMedia> withVerifiedCore(
+    String core,
+    Ps1NetplayExecution execution, {
+    bool Function()? canContinue,
+  }) async {
+    final library = await _verifiedCoreDigest(core, execution, canContinue);
+    return Ps1NetplayMedia._(
+      disc,
+      bios,
+      p.absolute(core),
+      Ps1NetplayIdentity.tryRead({...identity.toJson(), 'core': library, 'profile': execution.digest})!,
+      execution,
+    );
+  }
+
+  static Future<String> _verifiedCoreDigest(String path, Ps1NetplayExecution execution, bool Function()? canContinue) =>
+      _verify(Ps1NetplayMediaProblem.core, execution.coreDigests, () => _hashFile(path, canContinue));
 
   static Future<String> _verify(
     Ps1NetplayMediaProblem problem,

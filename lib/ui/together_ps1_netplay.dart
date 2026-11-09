@@ -314,12 +314,9 @@ extension TogetherPs1Netplay on TogetherModel {
               runningGame!,
               mode == Ps1NetplayRoomMode.ordinary
                   ? sourceMedia
-                  : await app.verifyPs1Netplay(
-                      runningGame,
-                      profile,
-                      bios: bios!,
-                      requireHandoff: mode.needsCheckpoint,
-                      execution: mode.execution,
+                  : await sourceMedia.withVerifiedCore(
+                      await app.resolvePs1NetplayCore(mode.execution, requireHandoff: mode.needsCheckpoint),
+                      mode.execution,
                       canContinue: active,
                     ),
             )
