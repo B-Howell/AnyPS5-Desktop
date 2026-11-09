@@ -442,13 +442,21 @@ park request before consuming its result releases the unmodified source.
 The launcher will own the explicit restore after consuming a park result.
 Canceling a restore already in flight discards its reply. A successful
 restore still releases the source.
-For the in-app switch, keep the private snapshot in the launcher-side
-native host while it replaces the ordinary worker with the isolated
-match worker. Bind the return to the original disc, core and storage
-paths. If match startup or peer preparation fails, reopen the original
-profile, restore the private snapshot, and then release input. The
-current operations keep the snapshot inside the original worker, so
-they do not yet cover that replacement.
+`ps1LocalCheckpointDetach` moves a consumed park's private snapshot to
+the [launcher-side native host](../windows/runner/retro_core_host.h) and
+ends the source worker. The host returns an opaque token. It retains the
+disc, core, system directory, save directory and active options from the
+source. A later `ps1LocalCheckpointReopen` uses only those saved values
+and starts the original profile paused after applying the snapshot.
+Park waits for pending settings to settle and freezes new changes until
+resume or cancel. The host retains the token across a failed match boot
+or return attempt and clears it once the restored session has presented a
+visible frame. After unpause, a return that cannot produce that frame
+within eight seconds fails with the recovery still available.
+`ps1LocalCheckpointDiscard` can free it with the same token once the
+worker has exited. The Quick Menu still needs to own the switch, wait
+for `ps1RecoveredSource` to match the ticket, and unpause the restored
+session.
 
 The [headless driver](../windows/runner/tests/run_ps1_netplay_probe.py)
 accepts `--ordinary-checkpoint --ordinary-restore --ordinary-park`. The
@@ -462,6 +470,20 @@ source and the pinned blank-card DLL. The two restored match workers
 also agreed at frame 120, and the preceding Cached Interpreter build
 passed its separate 120-frame control. Logs are in the local
 `ps1-local-park-34f1b3e` directory.
+
+`--ordinary-checkpoint --ordinary-replace --ordinary-control-core`
+exercises the native method codec, including a stale texture, a failed
+match boot, a live match that blocks return, a failed return using a
+temporarily unavailable scratch DLL, and reopening on a new texture.
+It compares the recovered state and a non-default crop setting with the
+parked source before unpausing and checks the scratch save at teardown.
+The Windows CTR run passed with the pinned blank-card DLL. The return
+attempt failed while the scratch DLL was unavailable and recovered the
+source RAM and Overscan setting after the DLL returned. Local logs are
+in `ps1-host-replace-e56c544`. The legacy match control also passed 120
+frames. Successful discard and the visibility watchdog have static
+coverage. The fixture exercises native method dispatch with an in-memory
+texture registrar. It does not exercise the Quick Menu or a WAN invite.
 
 ### Windows development checkpoint
 

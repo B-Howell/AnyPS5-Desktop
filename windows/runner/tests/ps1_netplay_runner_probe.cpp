@@ -14,12 +14,13 @@ static MMRESULT WINAPI SilentWaveOutWrite(HWAVEOUT, LPWAVEHDR header, UINT) {
 
 #include <iomanip>
 #include <iostream>
+#include <flutter/method_result_functions.h>
 
 class ProbeTexture final : public flutter::TextureRegistrar {
  public:
   int64_t RegisterTexture(flutter::TextureVariant* texture) override {
     texture_ = texture;
-    return 1;
+    return ++registered_;
   }
 
   bool MarkTextureFrameAvailable(int64_t) override {
@@ -39,13 +40,166 @@ class ProbeTexture final : public flutter::TextureRegistrar {
 
  private:
   flutter::TextureVariant* texture_ = nullptr;
+  int64_t registered_ = 0;
   std::atomic<uint64_t> published_{0};
 };
+
+class ProbeMessenger final : public flutter::BinaryMessenger {
+ public:
+  void Send(const std::string&, const uint8_t*, size_t, flutter::BinaryReply) const override {}
+  void SetMessageHandler(const std::string&, flutter::BinaryMessageHandler handler) override {
+    handler_ = std::move(handler);
+  }
+
+  Value Call(const std::string& method, Value arguments = {}, const char* expected_error = nullptr) {
+    const auto& codec = flutter::StandardMethodCodec::GetInstance();
+    const auto message = codec.EncodeMethodCall({method, std::make_unique<Value>(std::move(arguments))});
+    Value value;
+    std::string error;
+    bool replied = false;
+    flutter::MethodResultFunctions<Value> response(
+        [&](const Value* reply) { if (reply) value = *reply; },
+        [&](const auto& code, const auto& message, const Value*) {
+          error = code;
+          if (!expected_error) error += ": " + message;
+        },
+        [&] { error = "unimplemented"; });
+    handler_(message->data(), message->size(), [&](const uint8_t* reply, size_t size) {
+      replied = codec.DecodeAndProcessResponseEnvelope(reply, size, &response);
+    });
+    if (!replied || error != (expected_error ? expected_error : ""))
+      throw std::runtime_error(method + " returned " + error);
+    return value;
+  }
+
+  Map Wait(const char* key) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (std::chrono::steady_clock::now() < deadline) {
+      auto status = std::get<Map>(Call("status"));
+      const auto field = status.find(Value(key));
+      if (field != status.end() &&
+          (!std::holds_alternative<bool>(field->second) || std::get<bool>(field->second))) return status;
+      if (std::get<bool>(status.at(Value("ended"))))
+        throw std::runtime_error(std::get<std::string>(status.at(Value("error"))));
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    throw std::runtime_error(std::string("Timed out waiting for ") + key);
+  }
+
+  Value Take(const Value& id) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline) {
+      auto reply = Call("ps1CheckpointResult", id);
+      if (!std::holds_alternative<std::monostate>(reply)) return reply;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    throw std::runtime_error("Timed out waiting for a checkpoint");
+  }
+
+ private:
+  flutter::BinaryMessageHandler handler_;
+};
+
+int VerifyReplacement(ProbeTexture& texture, char** argv) {
+  ProbeMessenger messenger;
+  RetroCoreHost host(&messenger, &texture);
+  const auto system = std::filesystem::u8path(argv[3]).parent_path().u8string();
+  Map ordinary{{Value("core"), Value(std::string(argv[1]))}, {Value("disc"), Value(std::string(argv[2]))},
+               {Value("system"), Value(system)}, {Value("saves"), Value(std::string(argv[6]))}};
+  auto match = ordinary;
+  match.emplace(Value("ps1NetplaySeat"), Value(0));
+  match.emplace(Value("ps1NetplayBios"), Value(std::string(argv[3])));
+  match.emplace(Value("ps1NetplayCpu"), Value("Recompiler"));
+  const auto texture_id = messenger.Call("start", Value(ordinary));
+  const auto source = messenger.Wait("localBlankCardCheckpoint").at(Value("localBlankCardCheckpoint"));
+  constexpr auto crop = "swanstation_Display_CropMode";
+  const auto crop_value = [crop](const char* value) {
+    return Value(Map{{Value("key"), Value(crop)}, {Value("value"), Value(value)}});
+  };
+  if (!std::get<bool>(messenger.Call("option", crop_value("Overscan"))))
+    throw std::runtime_error("Could not configure the original game");
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  messenger.Call("pause", Value(true));
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  const auto fingerprint = [] {
+    const auto dll = GetModuleHandleW(L"swanstation_libretro.dll");
+    const auto* ram = static_cast<const uint8_t*>(Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data")(2));
+    return NetplayFingerprint(ram, 2 * 1024 * 1024);
+  };
+  const auto before = fingerprint();
+  const CheckpointBytes digest(32, 1);
+  Map source_args{{Value("texture"), texture_id}, {Value("source"), source}};
+  auto park_args = source_args;
+  park_args.emplace(Value("discHash"), Value(digest));
+  auto blank = messenger.Take(messenger.Call("ps1LocalCheckpointPark", Value(park_args)));
+  if (!std::holds_alternative<Map>(blank)) throw std::runtime_error("Could not park the source");
+  if (std::get<bool>(messenger.Call("option", crop_value("None"))))
+    throw std::runtime_error("The parked source accepted a settings change");
+  messenger.Call("ps1LocalCheckpointDetach", Value(Map{{Value("texture"), Value(123)}, {Value("source"), source}}),
+                 "checkpoint");
+  const auto ticket = messenger.Call("ps1LocalCheckpointDetach", Value(source_args));
+  auto failed = match;
+  failed.at(Value("core")) = Value(std::string(argv[4]));
+  messenger.Call("start", Value(failed));
+  messenger.Wait("ended");
+  messenger.Call("start", Value(match));
+  messenger.Wait("netplayReady");
+  Map restore{{Value("discHash"), Value(digest)}, {Value("frame"), Value(0)},
+              {Value("state"), std::get<Map>(blank).at(Value("state"))}};
+  if (!std::get<bool>(messenger.Take(messenger.Call("ps1CheckpointImport", Value(restore)))) ||
+      fingerprint() != before) throw std::runtime_error("The match lost the source frame");
+  messenger.Call("ps1LocalCheckpointReopen", ticket, "busy");
+  messenger.Call("ps1LocalCheckpointDiscard", ticket, "busy");
+  messenger.Call("stop");
+  messenger.Wait("ended");
+  const auto core_path = std::filesystem::u8path(argv[1]);
+  auto disabled = core_path;
+  disabled += L".unavailable";
+  const auto scratch = std::filesystem::u8path(argv[6]).parent_path();
+  if (!core_path.is_absolute() || core_path.parent_path() != scratch ||
+      core_path.filename() != L"swanstation_libretro.dll" || std::filesystem::exists(disabled))
+    throw std::runtime_error("The replacement test requires a private core copy");
+  std::filesystem::rename(core_path, disabled);
+  try {
+    messenger.Call("ps1LocalCheckpointReopen", ticket);
+    const auto failure = messenger.Wait("ended").at(Value("error"));
+    if (std::get<std::string>(failure).find("Could not load") == std::string::npos)
+      throw std::runtime_error("The missing recovery core did not fail as expected");
+  } catch (...) {
+    std::filesystem::rename(disabled, core_path);
+    throw;
+  }
+  std::filesystem::rename(disabled, core_path);
+  const auto recovered_texture = messenger.Call("ps1LocalCheckpointReopen", ticket);
+  const auto recovered = messenger.Wait("ps1RecoveredSource");
+  const auto& options = std::get<Map>(recovered.at(Value("options")));
+  const auto& restored_crop = std::get<Map>(options.at(Value(crop))).at(Value("activeValue"));
+  if (IntegerValue(recovered_texture) == IntegerValue(texture_id) ||
+      IntegerValue(recovered.at(Value("ps1RecoveredSource"))) != IntegerValue(source) ||
+      std::get<std::string>(restored_crop) != "Overscan" || fingerprint() != before)
+    throw std::runtime_error("The original frame was not recovered");
+  messenger.Call("pause", Value(false));
+  if (!std::get<bool>(messenger.Wait("startupVisible").at(Value("hardware"))))
+    throw std::runtime_error("The original renderer was not recovered");
+  messenger.Call("ps1LocalCheckpointReopen", ticket, "checkpoint");
+  messenger.Call("stop");
+  messenger.Wait("ended");
+  std::cout << "Native method channel replaced the PS1 worker and recovered its original frame." << std::endl;
+  return 0;
+}
 
 int main(int argc, char** argv) {
   if (argc < 5 || argc > 7) return 2;
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
   ProbeTexture texture;
+  if (argc == 7 && std::string_view(argv[5]) == "replace") {
+    try {
+      return VerifyReplacement(texture, argv);
+    } catch (const std::exception& failure) {
+      std::cerr << failure.what() << '\n';
+      return 8;
+    }
+  }
   const auto seat = std::stoul(argv[4]);
   const bool local_staging = argc == 6 && std::string_view(argv[5]) == "local";
   const bool recompiler = argc == 6 && std::string_view(argv[5]) == "recompiler";

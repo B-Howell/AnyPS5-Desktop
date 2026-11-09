@@ -9,6 +9,7 @@
 #include <memory>
 
 class RetroCoreSession;
+struct Ps1OrdinaryRecovery;
 
 class RetroCoreHost {
  public:
@@ -22,6 +23,7 @@ class RetroCoreHost {
 
   flutter::TextureRegistrar* textures_;
   std::shared_ptr<RetroCoreSession> session_;
+  std::shared_ptr<const Ps1OrdinaryRecovery> ordinary_recovery_;
   flutter::MethodChannel<flutter::EncodableValue> channel_;
 };
 

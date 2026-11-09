@@ -139,6 +139,11 @@ Save in-game first for those trials. The menu marks startup-only settings.
 
 ## RPCS3 preview and release gates
 
+AnyPS5 loads the RPCS3 Libretro library directly in its embedded runner.
+RetroArch served as a separate frontend for the stock-core boot control.
+The launcher supplies its own video, audio, controller and progress
+integration. Users only need the verified core package and its prerequisites.
+
 The [frontend patch](../tool/patches/rpcs3-libretro-frontend.patch) relays
 compilation progress, reports active controller ports and confines offline
 peer-to-peer traffic to loopback. The [package builder](../tool/build-rpcs3-preview.sh)

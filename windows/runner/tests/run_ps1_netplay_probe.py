@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from queue import Queue
 from shutil import copyfile
-from subprocess import CREATE_NO_WINDOW, IDLE_PRIORITY_CLASS, PIPE, Popen, TimeoutExpired
+from subprocess import CREATE_NO_WINDOW, IDLE_PRIORITY_CLASS, PIPE, Popen, TimeoutExpired, run
 import sys
 from tempfile import TemporaryDirectory
 from threading import Thread
@@ -89,6 +89,8 @@ def main():
                         help="Restore an ordinary hardware checkpoint into two isolated match workers")
     parser.add_argument("--ordinary-park", action="store_true",
                         help="Hold and recover the original worker using its private native checkpoint")
+    parser.add_argument("--ordinary-replace", action="store_true",
+                        help="Exercise replacing and recovering workers through the native method channel")
     args = parser.parse_args()
     if args.frames < 120:
         parser.error("at least 120 frames are required to compare a fingerprint")
@@ -108,6 +110,8 @@ def main():
         parser.error("--ordinary-restore requires --ordinary-checkpoint")
     if args.ordinary_park and not args.ordinary_restore:
         parser.error("--ordinary-park requires --ordinary-restore")
+    if args.ordinary_replace and (not args.ordinary_checkpoint or not args.ordinary_control_core):
+        parser.error("--ordinary-replace requires --ordinary-checkpoint and --ordinary-control-core")
 
     with ExitStack() as cleanup:
         if args.ordinary_checkpoint:
@@ -261,6 +265,16 @@ def verify_ordinary_checkpoint(args, cleanup):
             assert peer.send("local-support") == "no"
             assert peer.send(f"blank-checkpoint 1 {path}") == "unavailable"
     assert card.read_bytes() == private
+    if args.ordinary_replace:
+        private_core = root / args.core.name
+        copyfile(args.core, private_core)
+        result = run([args.probe.resolve(), private_core, disc, bios, args.ordinary_control_core.resolve(),
+                      "replace", saves], timeout=60, capture_output=True, text=True,
+                     creationflags=CREATE_NO_WINDOW | IDLE_PRIORITY_CLASS)
+        if result.returncode:
+            raise RuntimeError(result.stderr.strip() or f"Native replacement exited {result.returncode}")
+        print(result.stdout.strip())
+        assert card.read_bytes() == private
     print(f"Ordinary {renderer} worker exported {size} bytes at frame {frame}, kept the source card, "
           "and continued publishing after cancellation and export.")
 
