@@ -195,15 +195,25 @@ new verified package is built and selected.
 
 Use a disposable [MSYS2](https://www.msys2.org/) installation. The upstream
 recipe replaces several CLANG64 import archives with static libraries, so
-keep this install separate from your normal development toolchain. Update
-MSYS2 first, then run these commands in its **CLANG64** shell from a checkout
-of this PR. Use a short build path with space for the compiler outputs.
+keep this install separate from your normal development toolchain. A signed
+[portable MSYS2 archive](https://www.msys2.org/docs/installer/) works for
+headless builds. Verify its detached signature against the published
+fingerprint before extracting. Run `pacman -Syu` and open a fresh shell if
+the runtime update closes the first one. Finish updating, then run these
+commands in **CLANG64** from a checkout of this branch. Use a short build path
+with space for the compiler outputs.
 
 ```bash
 pacman -S --needed base-devel curl git p7zip \
   mingw-w64-clang-x86_64-{clang,cmake,lld,ninja,llvm,nasm,pkgconf,opencv,glew,vulkan-headers,vulkan-loader}
 bash tool/build-rpcs3-preview.sh /c/anyps5-ps3-review
 ```
+
+For the dashboard update importer and native-online profile testing, add
+`--network-policy` to the build command and use a new output directory.
+That variant exports the policy selector the installer checks before loading
+a staged PKG. For the import and provider acceptance checks, see the
+[PS3 native co-op plan](<AnyPS5 Desktop - PS3 Native Co-op Implementation Plan.md>).
 
 The output path must be new. The resulting `packages` directory contains
 `rpcs3_libretro.dll.zip` and `ps3-core-digests.txt`. Keep the two SHA-256 values
