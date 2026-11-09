@@ -1,11 +1,15 @@
 part of 'together_model.dart';
 
 final class _Ps3PartyAttempt {
+  _Ps3PartyAttempt(this.runningHost);
+
+  final EmbeddedRetroGame? runningHost;
   final cancelled = Completer<void>();
   final done = Completer<void>();
   String? roomId;
   bool roomEnded = false;
   bool disposed = false;
+  bool inviteSent = false;
 
   void cancel() {
     if (!cancelled.isCompleted) cancelled.complete();
@@ -18,6 +22,11 @@ extension TogetherPs3Online on TogetherModel {
     if (attempt != null && identical(attempt, party)) attempt.cancel();
   }
 
+  void ps3WorkerExited(EmbeddedRetroGame worker) {
+    final attempt = _ps3Party;
+    if (attempt != null && identical(attempt.runningHost, worker)) attempt.cancel();
+  }
+
   bool get _ps3LaunchAvailable =>
       app.managedRetroAvailable &&
       app.running == null &&
@@ -25,7 +34,33 @@ extension TogetherPs3Online on TogetherModel {
       !app.stopping &&
       app.managedSetupConsole == null;
 
-  bool get _ps3PartyAvailable => _ps3LaunchAvailable && !_ps2LanBusy && _ps1Match == null && !_verifyingPs1;
+  bool get _ps3PartyIdle => !_ps2LanBusy && _ps1Match == null && !_verifyingPs1;
+  bool get _ps3PartyAvailable => _ps3LaunchAvailable && _ps3PartyIdle;
+
+  bool _canHostPs3FromGame(Game game, EmbeddedRetroGame worker, Ps3OnlineRelease release) =>
+      app.managedRetroAvailable &&
+      !app.stopping &&
+      app.managedSetupConsole == null &&
+      identical(app.running?.$1, game) &&
+      identical(app.embeddedGame, worker) &&
+      worker.startupVisible &&
+      worker.ps3ProviderStatus == Ps3ProviderStatus.ready &&
+      identical(worker.ps3OnlineRelease, release) &&
+      app.services.ps3OnlineReleases.contains(release);
+
+  ({Game game, EmbeddedRetroGame worker, Ps3OnlineRelease release})? get _ps3QuickHost {
+    final game = app.running?.$1;
+    final worker = app.embeddedGame;
+    final release = worker?.ps3OnlineRelease;
+    if (!_ps3PartyIdle ||
+        game == null ||
+        worker == null ||
+        release == null ||
+        !_canHostPs3FromGame(game, worker, release)) {
+      return null;
+    }
+    return (game: game, worker: worker, release: release);
+  }
 
   Ps3OnlineRelease? _ps3PartyRelease(Game game, {String? version}) {
     if (game.retro?.platform != RetroPlatform.ps3) return null;
@@ -82,7 +117,8 @@ extension TogetherPs3Online on TogetherModel {
       game,
       partyRelease: release,
       partyAction: invite == null ? 'ps3PartyHost' : 'ps3PartyJoin',
-      onPartyReady: (profile) => _startPs3Party(game, release, profile, me: me, friendId: friendId, invite: invite),
+      onPartyReady: (profile) =>
+          _startPs3Party(game, release, profile: profile, me: me, friendId: friendId, invite: invite),
     );
   }
 
@@ -92,7 +128,7 @@ extension TogetherPs3Online on TogetherModel {
     if (attempt.cancelled.isCompleted) {
       return [PanelRow(id: 'ps3-party-leave', title: T.text('ps3PartyClosing'), kind: const InfoRow(''))];
     }
-    final playing = app.isPlayingPs3Party(attempt);
+    final playing = app.isPlayingPs3Party(attempt) || attempt.inviteSent && attempt.runningHost != null;
     return [
       PanelRow(
         id: 'ps3-party-leave',
@@ -114,22 +150,56 @@ extension TogetherPs3Online on TogetherModel {
 
   List<PanelRow> ps3PartyQuickRows() {
     final attempt = _ps3Party;
-    if (attempt == null || (!app.isStartingPs3Party(attempt) && !app.isPlayingPs3Party(attempt))) return const [];
-    return ps3PartyRows();
+    if (attempt != null) {
+      return app.isStartingPs3Party(attempt) ||
+              app.isPlayingPs3Party(attempt) ||
+              (attempt.runningHost != null && identical(app.embeddedGame, attempt.runningHost))
+          ? ps3PartyRows()
+          : const [];
+    }
+    return [
+      if (_ps3QuickHost != null)
+        PanelRow(
+          id: 'ps3-party-invite-from-game',
+          title: T.text('ps3PartyInviteFromGame'),
+          kind: ActionRow(() => app.open(Layer.retroOnlineFriends)),
+        ),
+    ];
+  }
+
+  List<PanelRow> ps3PartyInviteFriendRows() {
+    final host = _ps3QuickHost;
+    final me = account.user?.id;
+    if (host == null) return const [];
+    return _retroInviteFriendRows(
+      prefix: 'ps3-party-invite',
+      title: 'ps3PartyInviteFromGame',
+      detail: 'ps3PartyGameMenu',
+      unavailable: 'ps3PartyUnavailable',
+      invite: (friend) {
+        if (me == null) return;
+        unawaited(
+          _startPs3Party(host.game, host.release, me: me, friendId: friend.person.id, runningHost: host.worker),
+        );
+      },
+    );
   }
 
   Future<void> _startPs3Party(
     Game game,
-    Ps3OnlineRelease release,
-    Ps3OnlineProfile profile, {
+    Ps3OnlineRelease release, {
+    Ps3OnlineProfile? profile,
+    EmbeddedRetroGame? runningHost,
     required String me,
     String? friendId,
     GameInvite? invite,
   }) async {
+    assert((profile == null) != (runningHost == null));
     if (account.user?.id != me || hub.socket.status != SocketStatus.ready) {
       return app.show(T.text('ps3PartyUnavailable'));
     }
-    if (!_ps3PartyAvailable) return app.show(T.text('ps3PartyBusy'));
+    bool canStart() => runningHost == null ? _ps3LaunchAvailable : _canHostPs3FromGame(game, runningHost, release);
+    if (!_ps3PartyIdle || !canStart()) return app.show(T.text('ps3PartyBusy'));
     final rooms = RetroOnlineRooms(
       call: (method, path, [body]) {
         if (account.user?.id != me) throw StateError('The AnyTogether account changed.');
@@ -145,22 +215,34 @@ extension TogetherPs3Online on TogetherModel {
       ),
       profileDigest: release.partyFingerprint,
     );
-    final attempt = _ps3Party = _Ps3PartyAttempt()..roomId = invite?.sessionId;
-    bool active() => !attempt.cancelled.isCompleted && account.user?.id == me;
+    final owner = app.currentProfile?.id;
+    final attempt = _ps3Party = _Ps3PartyAttempt(runningHost)..roomId = invite?.sessionId;
+    bool active() => !attempt.cancelled.isCompleted && account.user?.id == me && app.currentProfile?.id == owner;
     RetroRoom? room;
     Future<void>? launch;
-    app.returnTo((layer: Layer.friends, category: 'friends', row: 'ps3-party-leave'));
+    if (runningHost == null) {
+      app.returnTo((layer: Layer.friends, category: 'friends', row: 'ps3-party-leave'));
+    } else {
+      app.resumeGame();
+    }
     try {
       room = invite == null
           ? await rooms.host(cancelBeforeAdmission: attempt.cancelled)
           : await rooms.join(invite.sessionId, expectedHost: invite.from?.id, cancelBeforeAdmission: attempt.cancelled);
       attempt.roomId = room.id;
       if (!active()) return;
-      if (!_ps3LaunchAvailable) return app.show(T.text('ps3PartyBusy'));
+      if (!canStart()) return app.show(T.text('ps3PartyBusy'));
       if (friendId != null) await rooms.invite(room, friendId);
       if (!active()) return;
-      launch = app.playVerifiedPs3Online(game, profile, canBoot: active, party: attempt);
-      await Future.any<void>([launch, attempt.cancelled.future]);
+      if (runningHost == null) {
+        launch = app.playVerifiedPs3Online(game, profile!, canBoot: active, party: attempt);
+        await Future.any<void>([launch, attempt.cancelled.future]);
+      } else {
+        if (!canStart()) return app.show(T.text('ps3PartyBusy'));
+        attempt.inviteSent = true;
+        app.show(T.text('ps3PartyGameMenu'));
+        await attempt.cancelled.future;
+      }
     } on RetroRoomHostMismatch {
       if (active()) app.show(T.text('retroInviteHostChanged'));
     } on Object {

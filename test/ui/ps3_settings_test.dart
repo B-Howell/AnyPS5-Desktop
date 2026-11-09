@@ -31,6 +31,7 @@ void main() {
   setUpAll(T.load);
 
   Future<void> verifySetup(String mode) async {
+    final quickHost = mode == 'solo-quick-host';
     const title = 'BCUS98208';
     const ppu = 'PPU-545c1abbf1c562d60fca7435401f020beab76b53';
     const patch =
@@ -239,7 +240,7 @@ void main() {
       final friend = model.together.hub.friends.friends.single;
       final room = {
         'id': roomId,
-        'host': {'userId': mode == 'host' ? localId : friendId},
+        'host': {'userId': mode == 'host' || quickHost ? localId : friendId},
         'kind': 'online',
         'titleId': title,
         'gameVersion': '01.30',
@@ -261,7 +262,7 @@ void main() {
         model.together.openFriend(friend);
         activate('ps3-party-invite');
         expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
-      } else {
+      } else if (!quickHost) {
         final invite = {
           'sessionId': roomId,
           'from': server.person(friendId, 'ana', 'Ana'),
@@ -367,7 +368,7 @@ void main() {
     });
     expect(launch.toString(), isNot(contains('fake-token')));
     expect(launch.toString(), isNot(contains('test-only')));
-    if (server != null) {
+    if (server != null && !quickHost) {
       final action = mode == 'host' ? 'invites' : 'join';
       expect(server.callsTo('game-sessions/$roomId/$action', method: 'POST'), hasLength(1));
       if (mode == 'host') {
@@ -386,6 +387,38 @@ void main() {
         isFalse,
       );
       expect(calls.any((call) => call.method == 'pause'), isFalse);
+      if (quickHost) {
+        final worker = model.embeddedGame;
+        expect(model.panelCategories().single.rows.any((row) => row.id == 'ps3-party-invite-from-game'), isFalse);
+        providerStatus = 3;
+        await waitFor(() => worker?.ps3ProviderStatus?.name == 'ready');
+        activate('ps3-party-invite-from-game');
+        expect(model.overlay, Layer.retroOnlineFriends);
+        activate('retro-invite-back');
+        expect(model.overlay, Layer.quickMenu);
+        activate('ps3-party-invite-from-game');
+        activate('ps3-party-invite-$friendId');
+        expect(model.overlay, isNull);
+        const path = 'game-sessions/$roomId';
+        await waitFor(() => server!.callsTo('$path/invites', method: 'POST').length == 1);
+        await waitFor(() => model.together.ps3PartyRows().singleOrNull?.title == 'Leave AnyTogether Room');
+        final sent = server!.callsTo('game-sessions', method: 'POST').single.body;
+        expect(sent['properties'], {'protocol': protocol, 'profileSha256': releases.single.partyFingerprint});
+        expect(sent.toString(), isNot(contains('fake-token')));
+        model.open(Layer.quickMenu);
+        activate('ps3-party-leave');
+        await waitFor(() => model.together.ps3PartyRows().isEmpty);
+        expect(server.callsTo(path, method: 'DELETE'), hasLength(1));
+        expect(model.embeddedGame, same(worker));
+        expect(stopped, isFalse);
+        activate('ps3-party-invite-from-game');
+        activate('ps3-party-invite-$friendId');
+        await waitFor(() => server.callsTo('$path/invites', method: 'POST').length == 2);
+        await model.stopRunningGame();
+        await waitFor(() => model.together.ps3PartyRows().isEmpty);
+        expect(server.callsTo(path, method: 'DELETE'), hasLength(2));
+        expect(calls.where((call) => call.method == 'start'), hasLength(1));
+      }
       if (mode.startsWith('guest')) {
         if (mode == 'guest-provider-rejected') {
           expect(server!.callsTo('game-sessions/$roomId/leave'), isEmpty);
@@ -467,6 +500,7 @@ void main() {
 
   for (final mode in [
     'solo',
+    'solo-quick-host',
     'host',
     'guest',
     'guest-ended',

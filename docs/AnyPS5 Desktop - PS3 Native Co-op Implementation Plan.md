@@ -558,6 +558,12 @@ the embedded worker reports its first presented frame. Cancel releases
 the room and keeps Closing visible while the worker shuts down, including
 when it arrives after cancellation. After the first presented frame,
 **Leave AnyTogether Room** releases the room and leaves the game open.
+A running game with a reviewed release and a successful provider sign-in
+can also host from **Quick Menu → Invite a Friend to Online Play**. The
+picker binds to the running worker and its verified release. It resumes
+the game while AnyTogether sends the invitation. Leaving the room keeps
+the game open for another invite. Closing the worker releases its room.
+Players still meet in the game's own online menu.
 If the embedded core reports a connection, sign-in, or signaling failure
 before its first successful provider connection, AnyPS5 displays the
 specific reason and releases that launch's party room. The same startup

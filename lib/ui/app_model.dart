@@ -4579,6 +4579,7 @@ class AppModel extends ChangeNotifier {
         booted.complete(window == _GameWindowState.ready && !stopping && run is EmbeddedRetroGame ? run : null);
       }
       final code = await run.exitCode;
+      if (ps3 && run is EmbeddedRetroGame) together.ps3WorkerExited(run);
       if (ps3 && onlineProfile == null) {
         _trophyWatch?.cancel();
         _loadTrophies(game);
@@ -6186,10 +6187,11 @@ class AppModel extends ChangeNotifier {
             id: 'retroOnlineFriends',
             title: T.text('retroOnlineChooseFriend'),
             rows: [
-              if (running?.$1.retro?.platform == RetroPlatform.ps2)
-                ...together.ps2LanInviteFriendRows()
-              else
-                ...together.ps1InviteFriendRows(),
+              ...switch (running?.$1.retro?.platform) {
+                RetroPlatform.ps2 => together.ps2LanInviteFriendRows(),
+                RetroPlatform.ps3 => together.ps3PartyInviteFriendRows(),
+                _ => together.ps1InviteFriendRows(),
+              },
               PanelRow(id: 'retro-invite-back', title: T.text('back'), kind: ActionRow(() => open(Layer.quickMenu))),
             ],
           ),
