@@ -85,6 +85,41 @@ the GOTY title ID and its own update data. Enable online only after verifying
 that the provider-approved protection loads for that title ID and the
 isolated native lobby test passes.
 
+### Embedded update installation checkpoint
+
+On the pinned Linux x64 network-policy core, an install-only Libretro probe
+opened each package via `retro_load_game` without calling `retro_run`.
+The probe set the system and save directories to an empty scratch profile,
+selected offline policy, and ran each invocation in a separate network
+namespace with the input package mounted read-only. The final package alone
+failed because it requires installed version `01.28`. Starting with an
+empty profile, all eleven packages installed in order from `01.19` through
+`01.28`, then `01.30`. Each returned success with zero video and audio
+callbacks. The socket traces recorded no Internet bind, connect or send
+calls during installation. The rejected install left no update executable.
+The tested chain totaled 466,960,160 bytes. The SHA-256 of the eleven raw
+package SHA-256 digests concatenated in installation order was
+`8aa306ac11d0d485d126bf8210c507ad861108224d4830cc1b2b30ac7af94a65`.
+
+The resulting `dev_hdd0/game/BCUS98208` contained the expected `01.30`
+`PARAM.SFO` and executable. Both matched the files independently extracted
+from the final package. A separate disc launch with the same scratch
+profile and copied firmware found that update, reported `APP_VER=01.30`
+and logged the expected Patchwork PPU hash. The game produced video and
+non-silent audio, changed its output from 1280×720 to 1920×1080 during
+play, and stopped cleanly. The traced Internet socket calls stayed on
+loopback. The installed profile and original disc were untouched.
+The probe used core SHA-256
+`12f8905517226005767c03b663bab5ca2da9dbc8e0c452bdbd8bed6fda4d67c3`.
+
+The dashboard importer should resolve the complete reviewed update chain
+before offering Install, then run the package operation without a gameplay
+surface. Install into a fresh staging profile, confirm the installed title,
+version and executable fingerprint, and only then make it available to
+online setup. If a package fails, report its required version and keep the
+previous profile usable. Qualify this flow with the Windows core before
+exposing it in Game Settings.
+
 ## 2. Make the embedded profile honor the selected settings
 
 **Existing seam:** [PS3 settings model](../lib/ui/ps3_settings_model.dart), [embedded launch contract](../lib/ui/embedded_retro_game.dart), [native core option handling](../windows/runner/retro_core_host.cpp) and [frontend patch](../tool/patches/rpcs3-libretro-frontend.patch). The frontend supplies saved values for recognized boot and graphics options. Upstream network options being listed does not prove an effective network profile on launch.
