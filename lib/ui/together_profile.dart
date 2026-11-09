@@ -614,9 +614,9 @@ extension TogetherProfiles on TogetherModel {
         PanelRow(
           id: 'game-accept-${invite.sessionId}',
           title: T.format('gameJoin', [invite.from?.displayName ?? '', gameName(invite.titleId)]),
-          detail: T.text(
-            invite.engineBuild == RetroOnlineMode.lan.protocol ? 'ps2LanInviteDetail' : 'gameInvitedDetail',
-          ),
+          detail: invite.engineBuild == RetroOnlineMode.lan.protocol
+              ? ps2LanInviteDetail(invite)
+              : T.text('gameInvitedDetail'),
           person: invite.from == null ? null : TogetherModel.card(invite.from!, status: PersonStatus.playing),
           kind: ActionRow(
             () => unawaited(switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {

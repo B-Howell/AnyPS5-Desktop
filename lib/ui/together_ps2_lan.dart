@@ -24,10 +24,27 @@ extension TogetherPs2Lan on TogetherModel {
   bool get ps2LanSetupAvailable =>
       _ps2LanEnabled && _ps2LaunchAvailable && !_ps2LanBusy && _ps1Match == null && !_verifyingPs1;
 
+  String? get _ps2LanSetupIssue => !app.ps2LanCoreInstalled
+      ? 'ps2LanCore'
+      : app.ps2LanBiosPath == null
+      ? 'ps2LanBios'
+      : null;
+
   RetroRoomSpec? _ps2LanSpec(Game game) {
     final serial = game.retroSerial;
     if (game.retro?.platform != RetroPlatform.ps2 || serial == null || game.version.isEmpty) return null;
     return (titleId: serial, gameVersion: game.version, mode: RetroOnlineMode.lan, capacity: 2);
+  }
+
+  RetroRoomSpec _ps2LanInviteSpec(GameInvite invite) =>
+      (titleId: invite.titleId, gameVersion: invite.gameVersion, mode: RetroOnlineMode.lan, capacity: 2);
+
+  Iterable<Game> _ps2LanCandidates(RetroRoomSpec spec) => app.games.where((game) => _ps2LanSpec(game) == spec);
+
+  String ps2LanInviteDetail(GameInvite invite) {
+    if (!_ps2LanEnabled) return T.text('retroOnlineUnavailable');
+    if (_ps2LanCandidates(_ps2LanInviteSpec(invite)).isEmpty) return T.text('ps2LanDisc');
+    return T.text(_ps2LanSetupIssue ?? 'ps2LanInviteDetail');
   }
 
   List<PanelRow> ps2LanInvites(Friend friend) {
@@ -47,11 +64,8 @@ extension TogetherPs2Lan on TogetherModel {
       PanelRow(
         id: 'ps2-lan-invite',
         title: T.format('ps2LanInvite', [game.name]),
-        detail: T.text('ps2LanInviteDetail'),
-        kind: ActionRow(() {
-          app.open(Layer.friends);
-          unawaited(_startPs2Lan(spec, [game], friendId: friend.person.id));
-        }),
+        detail: T.text(_ps2LanSetupIssue ?? 'ps2LanInviteDetail'),
+        kind: ActionRow(() => unawaited(_startPs2Lan(spec, [game], friendId: friend.person.id))),
       ),
     ];
   }
@@ -85,9 +99,8 @@ extension TogetherPs2Lan on TogetherModel {
 
   Future<void> joinPs2Lan(GameInvite invite) async {
     if (!_ps2LanEnabled) return _unsupportedRetroInvite();
-    final spec = (titleId: invite.titleId, gameVersion: invite.gameVersion, mode: RetroOnlineMode.lan, capacity: 2);
-    final candidates = app.games.where((game) => _ps2LanSpec(game) == spec);
-    await _startPs2Lan(spec, candidates, roomId: invite.sessionId);
+    final spec = _ps2LanInviteSpec(invite);
+    await _startPs2Lan(spec, _ps2LanCandidates(spec), roomId: invite.sessionId);
   }
 
   Future<void> _startPs2Lan(RetroRoomSpec spec, Iterable<Game> candidates, {String? friendId, String? roomId}) async {
@@ -97,8 +110,8 @@ extension TogetherPs2Lan on TogetherModel {
       return app.show(T.text('ps2LanBusy'));
     }
     if (candidates.isEmpty) return app.show(T.text('ps2LanDisc'));
-    if (!app.ps2LanCoreInstalled) return app.show(T.text('ps2LanCore'));
-    if (app.ps2LanBiosPath == null) return app.show(T.text('ps2LanBios'));
+    if (_ps2LanSetupIssue != null) return app.openPs2LanSetup();
+    if (friendId != null) app.open(Layer.friends);
 
     final attempt = _ps2Lan = _Ps2LanAttempt();
     bool active() => identical(_ps2Lan, attempt) && !attempt.cancelled && account.user?.id == me;

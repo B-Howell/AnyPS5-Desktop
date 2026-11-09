@@ -150,6 +150,10 @@ class _EmulatorMenu {
       _originGameId = null;
       _page = null;
       if (origin == null) return false;
+      if (origin.layer == Layer.friendOptions && app.together.chosen == null) {
+        app.open(Layer.friends, cue: Cue.back);
+        return true;
+      }
       if (gameId != null) {
         final index = app.games.indexWhere((game) => game.id == gameId);
         if (index < 0) return false;

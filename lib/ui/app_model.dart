@@ -4073,6 +4073,11 @@ class AppModel extends ChangeNotifier {
 
   bool get ps2LanCoreInstalled => ManagedRetro(_ps2LanCoreHome).supportsPs2Lan;
 
+  void openPs2LanSetup() {
+    if (!together.ps2LanSetupAvailable) return show(T.text('ps2LanBusy'));
+    _emulatorMenu.openPage(_emulatorMenu._ps2LanSetupPage);
+  }
+
   Future<void> _preparePs2LanMedia({required bool bios}) async {
     if (!together.ps2LanSetupAvailable) return show(T.text('ps2LanBusy'));
     final origin = spot;

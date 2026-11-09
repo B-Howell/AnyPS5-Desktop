@@ -368,7 +368,16 @@ Offline cards and saves remain separate. A Windows file lock prevents
 another instance from opening the same LAN profile until the game exits.
 Closing the game releases the lock and retains the card.
 
-Before inviting a peer, open **Settings → Emulators → PS2 → Setup → Set up
+The invite and accept actions show which prerequisite is missing. An
+incoming invite first looks up the serial and revision in the library.
+The launcher verifies the ISO itself when joining. If the LAN core or
+BIOS is missing, the action opens the existing setup page. **Back**
+returns to the same friend or invite without creating, joining or
+declining a room. If sign-out cleared the selected friend, Back opens
+Friends. The [launcher invite test](../test/ui/ps2_lan_invite_test.dart)
+checks both directions and the missing-disc case.
+
+You can also open **Settings → Emulators → PS2 → Setup → Set up
 LAN network**. Choose **Install PS2 LAN core** and select the pinned
 `pcsx2_libretro.dll.zip`. The installer verifies the ZIP, DLL and DEV9
 export before publishing it under `Emulators/PS2-LAN`. LAN setup and rooms
