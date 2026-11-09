@@ -802,10 +802,21 @@ the [native runner probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp)
 accepts a second private copy of the same pinned DLL as its final
 argument. It checks duplicate-slot and shared-module rejection, distinct
 audio and texture output, and continued presentation after the primary
-worker unloads. Both cores confirmed 480 frames in one process. This
-isolates the workers for a future same-binary checkpoint handoff. The
-launcher still creates a single primary worker, and this test does not
-drive the second core from rollback corrections.
+worker unloads. Both cores confirmed 480 frames in one process.
+
+The primary worker can also capture an in-process checkpoint at a frame
+boundary. The presentation worker restores it with Libretro's
+same-binary context, then processes one or two controller frames per
+request. It can continue from its previous render without another
+restore. Its mailbox wakes on render and shutdown, and presentation jobs
+publish video without sending audio, input packets, or confirmed state.
+The probe uses two copies of the same pinned DLL and the same BIOS and
+disc. The handoff checks the disc path and checkpoint bounds, and the
+caller must supply an identical core and BIOS before launcher wiring.
+The probe restores frame 240, steps twice, and checks RAM against an
+uninterrupted run. The launcher still creates a single primary worker.
+Scheduling handoffs during actual replay and retesting full-race
+presentation remain open.
 
 The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
 [driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real

@@ -185,8 +185,9 @@ void VerifyIsolatedCores(char** argv) {
   constexpr uint32_t kFinish = 480;
   ProbeTexture primary_texture, presentation_texture, rejected_texture;
   std::atomic<size_t> audio_frames[2]{};
-  const auto make = [&](ProbeTexture& texture, const char* core, Slot slot, uint16_t mask) {
-    std::vector<uint16_t> trace(kFinish, mask);
+  const auto make = [&](ProbeTexture& texture, const char* core, Slot slot, uint16_t mask,
+                        uint32_t limit) {
+    std::vector<uint16_t> trace(limit, mask);
     trace[0] = trace[1] = 0;
     return std::make_unique<RetroCoreSession>(
         &texture, core, argv[2], "", "", "", std::map<std::string, std::string>{}, 0u,
@@ -207,10 +208,10 @@ void VerifyIsolatedCores(char** argv) {
     }
     throw std::runtime_error("Timed out opening the isolated core");
   };
-  auto primary = make(primary_texture, argv[1], Slot::kPrimary, 8);
+  auto primary = make(primary_texture, argv[1], Slot::kPrimary, 8, kFinish);
   ready(*primary);
   const auto expect_rejected = [&](const char* core, Slot slot, std::string_view expected) {
-    auto rejected = make(rejected_texture, core, slot, 256);
+    auto rejected = make(rejected_texture, core, slot, 256, kFinish);
     try {
       ready(*rejected);
     } catch (const std::runtime_error& error) {
@@ -221,18 +222,18 @@ void VerifyIsolatedCores(char** argv) {
   };
   expect_rejected(argv[1], Slot::kPresentation, "The emulator DLL instance already has a callback owner.");
   expect_rejected(argv[6], Slot::kPrimary, "The emulator callback slot is already in use.");
-  auto presentation = make(presentation_texture, argv[6], Slot::kPresentation, 256);
+  auto presentation = make(presentation_texture, argv[6], Slot::kPresentation, 256, kFinish);
   ready(*presentation);
 
   uint32_t sent[2]{};
-  auto pump = [&](RetroCoreSession& worker, unsigned index, uint32_t target, uint16_t mask) {
+  auto pump = [&](RetroCoreSession& worker, unsigned index, uint32_t target, uint16_t mask, uint32_t limit) {
     const auto status = worker.SyncNetplay({}, std::nullopt);
     if (!status) throw std::runtime_error("The isolated core stopped");
     std::optional<uint32_t> ack;
     for (const auto& row : std::get<List>(status->at(Value("local")))) {
       const auto& input = std::get<List>(row);
       ack = static_cast<uint32_t>(*IntegerValue(input[0]));
-      if (*IntegerValue(input[1]) != (*ack >= 2 && *ack < kFinish ? mask : 0))
+      if (*IntegerValue(input[1]) != (*ack >= 2 && *ack < limit ? mask : 0))
         throw std::runtime_error("An isolated core captured the other worker's input");
     }
     const auto frame = static_cast<uint32_t>(*IntegerValue(status->at(Value("frame"))));
@@ -255,21 +256,21 @@ void VerifyIsolatedCores(char** argv) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   };
-  wait([&] { return pump(*primary, 0, kSplit, 8) == kSplit - 1; });
+  wait([&] { return pump(*primary, 0, kSplit, 8, kFinish) == kSplit - 1; });
   if (primary_texture.published() <= primary_video || presentation_texture.published() != idle_video ||
       audio_frames[0] == 0 || audio_frames[1] != idle_audio)
     throw std::runtime_error("The primary did not publish audio and video independently of the idle core");
   if (!presentation->StartNetplay()) throw std::runtime_error("Could not start the presentation timeline");
   wait([&] {
-    const auto first = pump(*primary, 0, kFinish, 8);
-    const auto second = pump(*presentation, 1, kSplit, 256);
+    const auto first = pump(*primary, 0, kFinish, 8, kFinish);
+    const auto second = pump(*presentation, 1, kSplit, 256, kFinish);
     return first == kFinish - 1 && second == kSplit - 1;
   });
   primary.reset();
   const auto continued_video = presentation_texture.published();
   const auto continued_audio = audio_frames[1].load();
   wait([&] {
-    return pump(*presentation, 1, kFinish, 256) == kFinish - 1 &&
+    return pump(*presentation, 1, kFinish, 256, kFinish) == kFinish - 1 &&
            presentation->rollback_audio_drained() == kFinish - 1;
   });
   presentation->Stop();
@@ -279,6 +280,55 @@ void VerifyIsolatedCores(char** argv) {
     throw std::runtime_error("The presentation core lost its texture or callback owner");
   std::cout << "Two isolated PS1 cores each confirmed " << kFinish
             << " frames in one process with separate video and audio callbacks." << std::endl;
+
+  presentation.reset();
+  sent[0] = 0;
+  auto source = make(primary_texture, argv[1], Slot::kPrimary, 8, kSplit);
+  ready(*source);
+  if (!source->StartNetplay()) throw std::runtime_error("Could not start the checkpoint source");
+  wait([&] { return pump(*source, 0, kSplit, 8, kSplit) == kSplit - 1; });
+  auto capture = source->CapturePresentation();
+  if (!capture.valid() || capture.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+    throw std::runtime_error("Timed out capturing the presentation state");
+  auto snapshot = capture.get();
+  if (!snapshot || snapshot->frame != kSplit)
+    throw std::runtime_error("The primary captured the wrong presentation frame");
+  auto spare = make(presentation_texture, argv[6], Slot::kPresentation, 256, kFinish);
+  ready(*spare);
+  const auto spare_audio = audio_frames[1].load();
+  const auto spare_video = presentation_texture.published();
+  const Ps1Ports ports{{{8, {}}, {}}};
+  if (spare->RenderPresentation(std::nullopt, {ports}).valid())
+    throw std::runtime_error("The presentation core advanced before receiving its initial checkpoint");
+  const auto wait_render = [](std::future<bool> render) {
+    if (!render.valid() || render.wait_for(std::chrono::seconds(5)) != std::future_status::ready || !render.get())
+      throw std::runtime_error("The presentation core did not render independently of the network timeline");
+  };
+  wait_render(spare->RenderPresentation(std::move(snapshot), {ports}));
+  wait_render(spare->RenderPresentation(std::nullopt, {ports}));
+  if (spare->StartNetplay() || spare->SyncNetplay({{0, {}}}, std::nullopt))
+    throw std::runtime_error("The presentation core accepted network input");
+  if (presentation_texture.published() <= spare_video || audio_frames[1] != spare_audio)
+    throw std::runtime_error("The restored core did not produce video alone");
+  const auto fingerprint = [](const char* path) {
+    const auto dll = GetModuleHandleW(std::filesystem::u8path(path).c_str());
+    if (!dll) throw std::runtime_error("The test core module was not loaded");
+    const auto* ram = static_cast<const uint8_t*>(Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data")(2));
+    const auto size = Symbol<size_t (*)(unsigned)>(dll, "retro_get_memory_size")(2);
+    if (!ram || !size) throw std::runtime_error("The test core did not expose RAM");
+    return NetplayFingerprint(ram, size);
+  };
+  const auto restored = fingerprint(argv[6]);
+  source.reset();
+  sent[0] = 0;
+  auto control = make(primary_texture, argv[1], Slot::kPrimary, 8, kSplit + 2);
+  ready(*control);
+  if (!control->StartNetplay()) throw std::runtime_error("Could not start the uninterrupted control");
+  wait([&] { return pump(*control, 0, kSplit + 2, 8, kSplit + 2) == kSplit + 1; });
+  if (restored != fingerprint(argv[1]))
+    throw std::runtime_error("Presentation RAM diverged from uninterrupted emulation");
+  std::cout << "Same-binary restore advanced two frames, published silent video and matched uninterrupted CTR RAM."
+            << std::endl;
 }
 
 int main(int argc, char** argv) {

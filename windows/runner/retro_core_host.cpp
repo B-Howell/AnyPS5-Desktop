@@ -17,11 +17,13 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <iterator>
 #include <map>
 #include <mutex>
@@ -559,6 +561,11 @@ class RetroCoreSession {
  public:
   enum class CallbackSlot : size_t { kPrimary, kPresentation };
   using AudioSink = std::function<void(const int16_t*, size_t)>;
+  struct PresentationState {
+    uint32_t frame;
+    std::string disc;
+    CheckpointBytes bytes;
+  };
   int64_t rollback_audio_drained() const { return rollback_audio_drained_; }
   int64_t trace_max_work_us() const { return trace_max_work_us_; }
   int64_t trace_work_overruns() const { return trace_work_overruns_; }
@@ -641,6 +648,10 @@ class RetroCoreSession {
   }
   void Stop() {
     stop_ = true;
+    if (callback_slot_ == CallbackSlot::kPresentation) {
+      std::lock_guard<std::mutex> lock(netplay_mutex_);
+      presentation_ready_.notify_one();
+    }
     if (lan_) lan_->Close();
   }
   void Join() { if (worker_.joinable()) worker_.join(); }
@@ -696,7 +707,7 @@ class RetroCoreSession {
   bool StartNetplay() {
     if (!netplay_ || !netplay_ready_ || stop_ || ended_) return false;
     std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
-    if (checkpoint_ || (StagingLocal() && !netplay_held_)) return false;
+    if (checkpoint_ || presentation_only_ || (StagingLocal() && !netplay_held_)) return false;
     if (netplay_held_) {
       netplay_->Reset();
       checkpoint_history_.clear();
@@ -707,7 +718,31 @@ class RetroCoreSession {
     }
     netplay_->Start();
     netplay_started_ = true;
+    presentation_ready_.notify_one();
     return true;
+  }
+
+  std::future<std::optional<PresentationState>> CapturePresentation() {
+    std::lock_guard<std::mutex> lock(netplay_mutex_);
+    if (!rollback_ || callback_slot_ != CallbackSlot::kPrimary || !netplay_started_ || stop_ || ended_ ||
+        presentation_busy_) return {};
+    presentation_busy_ = true;
+    return presentation_capture_.emplace().get_future();
+  }
+
+  std::future<bool> RenderPresentation(std::optional<PresentationState> snapshot, std::vector<Ps1Ports> inputs) {
+    if (inputs.empty() || inputs.size() > 2 ||
+        (snapshot && (snapshot->disc != disc_ || snapshot->bytes.empty() ||
+                      snapshot->bytes.size() > kMaxPs1Checkpoint ||
+                      snapshot->frame > ps1_netplay::Timeline::kMaxFrame - inputs.size()))) return {};
+    std::lock_guard<std::mutex> lock(netplay_mutex_);
+    if (!rollback_ || callback_slot_ != CallbackSlot::kPresentation || !netplay_ready_ || netplay_started_ ||
+        stop_ || ended_ || presentation_busy_ || (!snapshot && !presentation_only_)) return {};
+    presentation_only_ = true;
+    presentation_busy_ = true;
+    presentation_render_.emplace(PresentationRender{std::move(snapshot), std::move(inputs), {}});
+    presentation_ready_.notify_one();
+    return presentation_render_->result.get_future();
   }
 
   std::optional<uint32_t> HoldNetplay() {
@@ -846,7 +881,7 @@ class RetroCoreSession {
                                 const std::optional<uint32_t>& acknowledged) {
     if (!netplay_ || stop_ || ended_) return std::nullopt;
     std::lock_guard<std::mutex> lock(netplay_mutex_);
-    if (StagingLocal() || !netplay_->Receive(remote, acknowledged)) return std::nullopt;
+    if (StagingLocal() || presentation_only_ || !netplay_->Receive(remote, acknowledged)) return std::nullopt;
     PublishConfirmedFingerprint();
     List local;
     for (const auto& sample : netplay_->LocalPacket()) {
@@ -1274,15 +1309,20 @@ class RetroCoreSession {
 
   bool Environment(unsigned command, void* data) {
     if (command == kSavestateContext) {
-      if (!rollback_checkpoint_active_) return false;
+      const auto context = rollback_context_.load();
+      if (context == RollbackContext::kInactive) return false;
       if (data) {
-        *static_cast<int*>(data) = 1;  // RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_INSTANCE
+        *static_cast<int*>(data) = static_cast<int>(context);
         rollback_context_queried_ = true;
       }
       return true;
     }
     if (command == kShutdown) {
-      stop_ = true;
+      if (callback_slot_ == CallbackSlot::kPresentation) {
+        Stop();
+      } else {
+        stop_ = true;
+      }
       return true;
     }
     if (command == kGetInputBitmasks) return netplay_ != nullptr;
@@ -1605,6 +1645,77 @@ class RetroCoreSession {
     }
   }
 
+  enum class RollbackContext { kInactive, kSameInstance = 1, kSameBinary = 2 };
+  using SerializeRollback = bool (*)(void*, size_t);
+  using UnserializeRollback = bool (*)(const void*, size_t);
+
+  bool SaveRollback(SerializeRollback serialize, CheckpointBytes& bytes) {
+    rollback_context_ = RollbackContext::kSameInstance;
+    const bool saved = serialize(bytes.data(), bytes.size());
+    rollback_context_ = RollbackContext::kInactive;
+    return saved;
+  }
+
+  bool RestoreRollback(UnserializeRollback unserialize, const CheckpointBytes& bytes, RollbackContext context) {
+    suppress_frame_ = true;
+    rollback_context_queried_ = false;
+    rollback_context_ = context;
+    const bool restored = unserialize(bytes.data(), bytes.size());
+    rollback_context_ = RollbackContext::kInactive;
+    suppress_frame_ = false;
+    return restored && rollback_context_queried_;
+  }
+
+  struct PresentationRender {
+    std::optional<PresentationState> snapshot;
+    std::vector<Ps1Ports> inputs;
+    std::promise<bool> result;
+  };
+
+  void ServicePresentation(SerializeRollback serialize, UnserializeRollback unserialize,
+                           size_t state_size, void (*step)()) {
+    std::optional<std::promise<std::optional<PresentationState>>> capture;
+    std::optional<PresentationRender> render;
+    uint32_t cursor;
+    {
+      std::lock_guard<std::mutex> lock(netplay_mutex_);
+      if (!presentation_capture_ && !presentation_render_) return;
+      capture = std::exchange(presentation_capture_, std::nullopt);
+      render = std::exchange(presentation_render_, std::nullopt);
+      cursor = netplay_->cursor();
+    }
+    std::optional<PresentationState> snapshot;
+    bool rendered = false;
+    if (capture) {
+      CheckpointBytes bytes(state_size);
+      if (SaveRollback(serialize, bytes) && !stop_) snapshot.emplace(PresentationState{cursor, disc_, std::move(bytes)});
+    } else {
+      if (const auto& source = render->snapshot) {
+        presentation_cursor_.reset();
+        if (source->bytes.size() == state_size &&
+            RestoreRollback(unserialize, source->bytes, RollbackContext::kSameBinary)) {
+          presentation_cursor_ = source->frame;
+        }
+      }
+      if (presentation_cursor_ &&
+          *presentation_cursor_ <= ps1_netplay::Timeline::kMaxFrame - render->inputs.size()) {
+        for (const auto& ports : render->inputs) {
+          if (stop_) break;
+          netplay_ports_ = ports;
+          step();
+          ++*presentation_cursor_;
+        }
+        rendered = !stop_;
+      }
+    }
+    {
+      std::lock_guard<std::mutex> lock(netplay_mutex_);
+      presentation_busy_ = false;
+    }
+    if (capture) capture->set_value(std::move(snapshot));
+    if (render) render->result.set_value(rendered);
+  }
+
   void RunNetplay(HMODULE dll, void (*step)(), std::chrono::steady_clock::duration frame_time,
                   const uint8_t* memory, size_t memory_size) {
     using Clock = std::chrono::steady_clock;
@@ -1638,8 +1749,8 @@ class RetroCoreSession {
         ++next_audio_frame;
       }
     };
-    const auto serialize = rollback_ ? Symbol<bool (*)(void*, size_t)>(dll, "retro_serialize") : nullptr;
-    const auto unserialize = rollback_ ? Symbol<bool (*)(const void*, size_t)>(dll, "retro_unserialize") : nullptr;
+    const auto serialize = rollback_ ? Symbol<SerializeRollback>(dll, "retro_serialize") : nullptr;
+    const auto unserialize = rollback_ ? Symbol<UnserializeRollback>(dll, "retro_unserialize") : nullptr;
     const auto state_size = rollback_ ? Symbol<size_t (*)()>(dll, "retro_serialize_size")() : 0;
     const auto memory_data = rollback_ ? Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data") : nullptr;
     if (rollback_ && (!state_size || state_size > kMaxPs1Checkpoint))
@@ -1657,6 +1768,7 @@ class RetroCoreSession {
         if (work.count() > 16667) ++trace_work_overruns_;
       };
       release_audio();
+      if (rollback_) ServicePresentation(serialize, unserialize, state_size, step);
       if (checkpoint_supported_) ServiceCheckpoint(save, load, maximum + kPs1CheckpointPrefix, step);
       while (rollback_ && !stop_) {
         std::optional<uint32_t> correction;
@@ -1668,13 +1780,7 @@ class RetroCoreSession {
         const auto& checkpoint = checkpoints[*correction % checkpoints.size()];
         if (checkpoint.frame != correction)
           throw std::runtime_error("The PS1 rollback checkpoint is unavailable.");
-        suppress_frame_ = true;
-        rollback_context_queried_ = false;
-        rollback_checkpoint_active_ = true;
-        const bool restored = unserialize(checkpoint.bytes.data(), checkpoint.bytes.size());
-        rollback_checkpoint_active_ = false;
-        suppress_frame_ = false;
-        if (!restored || !rollback_context_queried_)
+        if (!RestoreRollback(unserialize, checkpoint.bytes, RollbackContext::kSameInstance))
           throw std::runtime_error("The PS1 core rejected the in-memory rollback checkpoint.");
         memory = static_cast<const uint8_t*>(memory_data(2));
         if (!memory) throw std::runtime_error("The PS1 core lost main RAM during rollback.");
@@ -1723,6 +1829,12 @@ class RetroCoreSession {
       }
       started_before = started;
       if (!advance) {
+        if (callback_slot_ == CallbackSlot::kPresentation && !started) {
+          std::unique_lock<std::mutex> lock(netplay_mutex_);
+          presentation_ready_.wait(lock, [this] { return stop_ || netplay_started_ || presentation_render_.has_value(); });
+          next = Clock::now();
+          continue;
+        }
         // The invitation owner releases a staged host on timeout or disconnect.
         if (!local_staging_ &&
             Clock::now() - last_advance > (started ? std::chrono::seconds(15) : std::chrono::seconds(60)))
@@ -1736,10 +1848,8 @@ class RetroCoreSession {
       if (checkpoint_needed) {
         auto& checkpoint = checkpoints[frame % checkpoints.size()];
         checkpoint.bytes.resize(state_size);
-        rollback_checkpoint_active_ = true;
-        const bool saved = serialize(checkpoint.bytes.data(), checkpoint.bytes.size());
-        rollback_checkpoint_active_ = false;
-        if (!saved) throw std::runtime_error("The PS1 core could not save a rollback checkpoint.");
+        if (!SaveRollback(serialize, checkpoint.bytes))
+          throw std::runtime_error("The PS1 core could not save a rollback checkpoint.");
         checkpoint.frame = frame;
       }
       suppress_frame_ = replaying;
@@ -2112,7 +2222,12 @@ class RetroCoreSession {
     audio_.Close();
     if (dll) FreeLibrary(dll);
     callbacks.Release();
-    ended_ = true;
+    {
+      std::lock_guard<std::mutex> lock(netplay_mutex_);
+      ended_ = true;
+      presentation_capture_.reset();
+      presentation_render_.reset();
+    }
   }
 
   static inline std::array<std::atomic<RetroCoreSession*>, 2> active_{nullptr, nullptr};
@@ -2194,8 +2309,14 @@ class RetroCoreSession {
   std::array<ps1_netplay::PadInput, 2> netplay_ports_{};
   std::vector<std::pair<uint32_t, std::string>> netplay_fingerprints_;
   std::optional<std::pair<uint32_t, std::string>> netplay_pending_fingerprint_;
-  std::atomic<bool> rollback_checkpoint_active_{false};
+  std::atomic<RollbackContext> rollback_context_{RollbackContext::kInactive};
   std::atomic<bool> rollback_context_queried_{false};
+  bool presentation_only_ = false;
+  bool presentation_busy_ = false;
+  std::condition_variable presentation_ready_;
+  std::optional<uint32_t> presentation_cursor_;
+  std::optional<std::promise<std::optional<PresentationState>>> presentation_capture_;
+  std::optional<PresentationRender> presentation_render_;
   std::shared_ptr<Frame> frame_;
   uint16_t buttons_ = 0;
   std::array<int16_t, 4> axes_{};
