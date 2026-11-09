@@ -519,6 +519,11 @@ def verify_native_rollback(args, cleanup):
         sleep(0.002)
     assert states[0][0] <= gap
     assert gap not in fingerprints[1], "A speculative fingerprint was published before correction"
+    if args.presentation_core:
+        deadline = monotonic() + 2
+        while int(peers[1].send("audio-drained")) != gap - 1:
+            assert monotonic() < deadline, "Confirmed audio did not reach the held frame"
+            sleep(0.002)
     before = [peer.send("audio").split() for peer in peers]
     assert before[0] == before[1] and int(before[0][0]) > 0, "Audio escaped before correction"
     deadline = monotonic() + target / 25 + 15
@@ -545,6 +550,9 @@ def verify_native_rollback(args, cleanup):
         assert steps > 0 and video > 0, "The spare core never published video during replay"
         assert gap_crossing <= depth <= 16, f"Unexpected peak prediction depth: {depth}"
         assert steps < 60, f"The primary did not catch the spare after the single correction: {steps} steps"
+        underruns, queue_peak = map(int, peers[1].send("audio-pacing").split())
+        assert 1 <= queue_peak <= 64, "Confirmed audio did not use the bounded playout queue"
+        print(f"Confirmed audio playout recovered from {underruns} underruns; peak queue {queue_peak} frames.")
         if target % 120 == 0:
             assert peers[1].send("fingerprint") == fingerprints[1][target - 1], (
                 "The probe read RAM from the wrong core")
@@ -648,6 +656,8 @@ def traced_rollback_race(args, cleanup):
                 assert steps > 0 and video > 0, "The spare core never published video during the race"
             print(f"Seat {seat}: {video} speculative texture updates across {steps} presentation steps; "
                   f"peak primary prediction depth {depth} frames.")
+            underruns, queue_peak = map(int, peer.send("audio-pacing").split())
+            print(f"Seat {seat}: {underruns} recovered audio underruns; peak queue {queue_peak} frames.")
 
 
 def traced_race(peers, frames, args, cleanup):

@@ -460,6 +460,97 @@ class StereoOutput {
   std::atomic<int64_t> dropped_frames_{0};
 };
 
+class ConfirmedPcmPlayout {
+ public:
+  using Emit = std::function<void(uint32_t, const int16_t*, size_t)>;
+
+  ConfirmedPcmPlayout(double rate, Emit emit)
+      : rate_(rate), emit_(std::move(emit)), worker_([this] { Run(); }) {}
+
+  ~ConfirmedPcmPlayout() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stopping_ = true;
+    }
+    ready_.notify_one();
+    worker_.join();
+  }
+
+  void Submit(uint32_t frame, const int16_t* pcm, size_t samples) {
+    Block block{frame, std::vector<int16_t>(pcm, pcm + samples)};
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (failure_) std::rethrow_exception(failure_);
+      if (blocks_.size() == 64) throw std::runtime_error("The confirmed PS1 audio queue is full.");
+      blocks_.push_back(std::move(block));
+      peak_ = std::max(peak_.load(), blocks_.size());
+    }
+    ready_.notify_one();
+  }
+
+  size_t peak() const { return peak_; }
+  size_t underruns() const { return underruns_; }
+
+ private:
+  struct Block {
+    uint32_t frame;
+    std::vector<int16_t> pcm;
+  };
+
+  void Run() {
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point next{};
+    bool waited_for_pcm = false;
+    std::unique_lock<std::mutex> lock(mutex_);
+    while (!stopping_) {
+      if (blocks_.empty()) {
+        waited_for_pcm = true;
+        ready_.wait(lock, [this] { return stopping_ || !blocks_.empty(); });
+        continue;
+      }
+      const auto samples = blocks_.front().pcm.size() / 2;
+      if (samples) {
+        const auto now = Clock::now();
+        const auto duration = std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>(static_cast<double>(samples) / rate_));
+        if (next == Clock::time_point{}) {
+          next = now + std::chrono::milliseconds(120);
+        } else if (waited_for_pcm && now > next + std::chrono::milliseconds(2)) {
+          ++underruns_;
+          next = now;
+        }
+        waited_for_pcm = false;
+        if (ready_.wait_until(lock, next, [this] { return stopping_; })) break;
+        const auto awake = Clock::now();
+        if (awake > next + duration) next = awake;
+        next += duration;
+      }
+      auto block = std::move(blocks_.front());
+      blocks_.pop_front();
+      lock.unlock();
+      try {
+        emit_(block.frame, block.pcm.data(), samples);
+      } catch (...) {
+        lock.lock();
+        failure_ = std::current_exception();
+        return;
+      }
+      lock.lock();
+    }
+  }
+
+  const double rate_;
+  const Emit emit_;
+  std::mutex mutex_;
+  std::condition_variable ready_;
+  std::deque<Block> blocks_;
+  std::exception_ptr failure_;
+  bool stopping_ = false;
+  std::atomic<size_t> peak_{0};
+  std::atomic<size_t> underruns_{0};
+  std::thread worker_;
+};
+
 template <typename T>
 T Symbol(HMODULE dll, const char* name) {
   auto address = GetProcAddress(dll, name);
@@ -575,6 +666,7 @@ class RetroCoreSession {
   uint32_t presentation_steps() const { return presentation_steps_; }
   uint32_t presentation_frames() const { return presentation_frames_; }
   uint32_t peak_prediction_depth() const { return peak_prediction_depth_; }
+  std::pair<size_t, size_t> trace_audio_pacing() const { return {audio_underruns_, audio_queue_peak_}; }
 
   RetroCoreSession(flutter::TextureRegistrar* registrar, std::string core,
                    std::string disc, std::string system, std::string saves,
@@ -1744,7 +1836,7 @@ class RetroCoreSession {
     if (render) render->result.set_value(rendered);
   }
 
-  void RunNetplay(HMODULE dll, void (*step)(), std::chrono::steady_clock::duration frame_time,
+  void RunNetplay(HMODULE dll, void (*step)(), std::chrono::steady_clock::duration frame_time, double sample_rate,
                   const uint8_t* memory, size_t memory_size) {
     using Clock = std::chrono::steady_clock;
     const auto save = reinterpret_cast<SavePortable>(GetProcAddress(dll, "retro_anyps5_export_checkpoint_v1"));
@@ -1760,6 +1852,16 @@ class RetroCoreSession {
     std::vector<RollbackState> checkpoints(netplay_->prediction_window());
     // The extra slot holds the frame being stepped before its confirmation.
     std::vector<RollbackAudioFrame> pending_audio(rollback_ ? checkpoints.size() + 1 : 0);
+    std::unique_ptr<ConfirmedPcmPlayout> playout;
+    if (presentation_core_) {
+      if (!std::isfinite(sample_rate) || sample_rate < 8000 || sample_rate > 192000)
+        throw std::runtime_error("The PS1 core supplied an invalid audio sample rate.");
+      playout = std::make_unique<ConfirmedPcmPlayout>(sample_rate, [this](uint32_t frame, const int16_t* pcm,
+                                                                        size_t samples) {
+        EmitAudio(pcm, samples);
+        rollback_audio_drained_ = frame;
+      });
+    }
     uint32_t next_audio_frame = 0;
     const auto release_audio = [&] {
       if (!rollback_) return;
@@ -1772,9 +1874,17 @@ class RetroCoreSession {
         const auto& audio = pending_audio[next_audio_frame % pending_audio.size()];
         if (audio.frame != next_audio_frame)
           throw std::runtime_error("The PS1 rollback audio frame is unavailable.");
-        EmitAudio(audio.pcm.data(), audio.samples / 2);
-        rollback_audio_drained_ = next_audio_frame;
+        if (playout) {
+          playout->Submit(next_audio_frame, audio.pcm.data(), audio.samples);
+        } else {
+          EmitAudio(audio.pcm.data(), audio.samples / 2);
+          rollback_audio_drained_ = next_audio_frame;
+        }
         ++next_audio_frame;
+      }
+      if (playout) {
+        audio_underruns_ = playout->underruns();
+        audio_queue_peak_ = playout->peak();
       }
     };
     const auto serialize = rollback_ ? Symbol<SerializeRollback>(dll, "retro_serialize") : nullptr;
@@ -2256,7 +2366,7 @@ class RetroCoreSession {
             Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data")(2));
         const auto size = Symbol<size_t (*)(unsigned)>(dll, "retro_get_memory_size")(2);
         ValidateNetplay(memory, size);
-        RunNetplay(dll, step, frame_time, memory, size);
+        RunNetplay(dll, step, frame_time, av.sample_rate, memory, size);
       }
       auto next = Clock::now();
       auto hardware_deadline = next + std::chrono::seconds(8);
@@ -2352,6 +2462,8 @@ class RetroCoreSession {
   std::atomic<uint32_t> presentation_frames_{0};
   std::atomic<uint32_t> peak_prediction_depth_{0};
   std::atomic<int64_t> rollback_audio_drained_{-1};
+  std::atomic<size_t> audio_underruns_{0};
+  std::atomic<size_t> audio_queue_peak_{0};
   std::atomic<int64_t> trace_max_work_us_{0};
   std::atomic<int64_t> trace_work_overruns_{0};
   std::atomic<int64_t> trace_blocked_polls_{0};

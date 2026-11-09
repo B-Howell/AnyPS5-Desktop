@@ -896,6 +896,27 @@ Peak primary work reached 64.765 ms and 144 iterations across both
 seats exceeded 16.667 ms. Keeping the input stream current improves
 cadence, while the worker budget and audio delivery still need work.
 
+The headless dual-core path now queues confirmed PCM on a separate
+playout worker. The queue holds at most 64 frame blocks, waits 120 ms
+before the first audio samples, and emits samples in order at the
+core's sample rate. After an underrun it resumes when confirmed PCM
+arrives. The probe compares every drained sample through the final
+frame and reports recovered underruns and queue depth. The startup
+reserve adds audio latency, and the silent sink measures delivery
+cadence without exercising a playback device. The standalone and
+launcher audio paths retain their existing behavior.
+
+The 120 ms loss-profile race finished in 233.31 seconds, with both
+finishes, all 114 RAM fingerprints and 10,104,619 stereo pairs
+matching. The largest PCM delivery gap fell from 347.163 ms to
+164.280 ms. The seats recovered from 264 and 265 queue underruns, and
+their queues peaked at 13 and 10 blocks. The largest texture gap was
+83.569 ms, and the worst primary iteration was 15.621 ms with no
+iterations above 16.667 ms in this run. These measurements show an
+improvement in silent delivery and leave continuous playout open.
+The native probe's `audio-queue-test` also checks the startup reserve,
+sample-count spacing and FIFO ordering independently of the race.
+
 The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
 [driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real
 embedded worker with a headless texture and audio sink. They check periodic

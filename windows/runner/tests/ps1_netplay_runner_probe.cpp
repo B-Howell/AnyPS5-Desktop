@@ -331,7 +331,33 @@ void VerifyIsolatedCores(char** argv) {
             << std::endl;
 }
 
+bool VerifyAudioQueueTiming() {
+  using Clock = std::chrono::steady_clock;
+  const auto start = Clock::now();
+  std::promise<bool> completed;
+  auto result = completed.get_future();
+  uint32_t expected = 0;
+  bool matched = true;
+  ConfirmedPcmPlayout playout(48000, [&](uint32_t frame, const int16_t* pcm, size_t frames) {
+    const auto elapsed = Clock::now() - start;
+    matched &= frame == expected && frames == 480 && pcm[0] == static_cast<int16_t>(frame + 10);
+    matched &= elapsed >= std::chrono::milliseconds(120 + frame * 10);
+    if (++expected == 2) completed.set_value(matched);
+  });
+  std::array<int16_t, 960> pcm{};
+  pcm[0] = 10;
+  playout.Submit(0, pcm.data(), pcm.size());
+  pcm[0] = 11;
+  playout.Submit(1, pcm.data(), pcm.size());
+  return result.wait_for(std::chrono::seconds(2)) == std::future_status::ready && result.get();
+}
+
 int main(int argc, char** argv) {
+  if (argc == 2 && std::string_view(argv[1]) == "audio-queue-test") {
+    if (!VerifyAudioQueueTiming()) return 10;
+    std::cout << "Confirmed PCM preserved order, the 120 ms reserve, and 10 ms sample deadlines." << std::endl;
+    return 0;
+  }
   if (argc < 5 || argc > 8) return 2;
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
   ProbeTexture texture;
@@ -447,6 +473,11 @@ int main(int argc, char** argv) {
     }
     if (rollback && command == "audio-drained") {
       std::cout << session.rollback_audio_drained() << std::endl;
+      continue;
+    }
+    if (dual && command == "audio-pacing") {
+      const auto [underruns, queue_peak] = session.trace_audio_pacing();
+      std::cout << underruns << ' ' << queue_peak << std::endl;
       continue;
     }
     if (rollback && command == "confirmed") {
