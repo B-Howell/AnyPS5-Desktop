@@ -739,8 +739,21 @@ and continuous in-app video and audio remain separate tests.
 The [native timeline](../windows/runner/ps1_netplay_timeline.h) owns the
 delay, retransmit window and ordered inputs. Its
 [unit test](../windows/runner/tests/ps1_netplay_timeline_test.cpp) checks
-gaps and conflicting inputs. The
-[console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
+gaps and conflicting inputs. The timeline can also be constructed with a
+bounded prediction window. It marks frames that need a checkpoint,
+reports the earliest incorrect prediction at a frame boundary, and
+preserves the sampled local inputs and monotonic transport counters on
+rewind. Only corrected, completed frames can become confirmed. The
+native test exercises 2,000 frames of delayed and out-of-order inputs
+against a known-good input sequence. When wiring the worker, key
+checkpoints by the emulation cursor and keep speculative fingerprints
+private until their frames are confirmed. If an earlier correction
+arrives during restore and invalidates the rewind target, restore that
+earlier checkpoint before stepping again. The launcher keeps its
+confirmed input mode until its native worker can restore checkpoints
+and schedule replay and presentation.
+
+The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
 [driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real
 embedded worker with a headless texture and audio sink. They check periodic
 RAM fingerprints and the race result against the recorded CTR trace.

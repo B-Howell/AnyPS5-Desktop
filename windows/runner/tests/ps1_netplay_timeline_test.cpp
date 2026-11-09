@@ -2,6 +2,58 @@
 
 #include <cassert>
 
+namespace {
+
+ps1_netplay::PadInput RecordedInput(uint32_t frame, uint32_t seat) {
+  if (frame < ps1_netplay::Timeline::kDelay) return {};
+  return {static_cast<uint16_t>((frame / 5 + seat) % 7),
+          {static_cast<int16_t>(frame % 41), static_cast<int16_t>(seat), 0, 0}};
+}
+
+void VerifyDelayedReplay() {
+  using ps1_netplay::FrameInput;
+  using ps1_netplay::PadInput;
+  using ps1_netplay::Timeline;
+
+  Timeline guest(1, Timeline::kMaxPrediction);
+  guest.Start();
+  std::vector<std::array<PadInput, 2>> played;
+  uint32_t verified = 0;
+  uint32_t rewinds = 0;
+  uint32_t published = 0;
+  constexpr uint32_t kFrames = 2000;
+  for (uint32_t tick = 0; tick < kFrames + 32 && verified < kFrames; ++tick) {
+    std::vector<FrameInput> arrived;
+    // Some newer inputs arrive first. Every gap has a delayed retry.
+    if (tick % 3 == 0) arrived.push_back({tick, RecordedInput(tick, 0)});
+    if (tick >= 9) arrived.push_back({tick - 9, RecordedInput(tick - 9, 0)});
+    assert(guest.Receive(arrived, guest.LocalPacket().back().frame));
+    if (const auto correction = guest.correction()) {
+      assert(*correction >= verified && *correction < played.size());
+      assert(guest.Rewind(*correction));
+      played.resize(*correction);
+      ++rewinds;
+    }
+    assert(guest.frame() >= published);
+    for (int step = 0; step < 3 && guest.cursor() < kFrames; ++step) {
+      std::array<PadInput, 2> ports{};
+      if (!guest.Prepare(RecordedInput(guest.cursor() + Timeline::kDelay, 1), ports)) break;
+      played.push_back(ports);
+      guest.Commit();
+    }
+    published = guest.frame();
+    if (const auto confirmed = guest.confirmed()) {
+      for (; verified <= *confirmed; ++verified) {
+        assert(played[verified][0] == RecordedInput(verified, 0));
+        assert(played[verified][1] == RecordedInput(verified, 1));
+      }
+    }
+  }
+  assert(verified == kFrames && rewinds > 100);
+}
+
+}  // namespace
+
 int main() {
   using ps1_netplay::FrameInput;
   using ps1_netplay::PadInput;
@@ -79,4 +131,65 @@ int main() {
   assert(host.frame() == 0 && !host.received() && !host.confirmed());
   assert((host.LocalPacket() == std::vector<FrameInput>{{0, {}}, {1, {}}}));
   assert(!host.Prepare(host_pad, host_inputs));
+
+  // With prediction enabled, a late matching sample confirms only completed
+  // frames. A mismatch arriving mid-step waits for the next frame boundary.
+  Timeline predicted(0, 2);
+  predicted.Start();
+  assert(predicted.Prepare(host_pad, host_inputs));
+  assert(predicted.needs_checkpoint());
+  assert(predicted.Receive({{0, {}}, {1, guest_pad}}, std::nullopt));
+  assert(!predicted.confirmed());
+  predicted.Commit();
+  assert(predicted.confirmed() == 0u);
+  assert(predicted.Prepare(host_pad, host_inputs));
+  assert(!predicted.needs_checkpoint());
+  assert(host_inputs[1] == guest_pad);
+  predicted.Commit();
+  assert(predicted.Prepare(host_pad, host_inputs));
+  assert(predicted.needs_checkpoint());
+  assert(host_inputs[1] == guest_pad);
+  assert(predicted.Receive({{3, {}}, {2, {}}}, std::nullopt));
+  assert(!predicted.correction());
+  predicted.Commit();
+  assert(predicted.correction() == 2u);
+  assert(predicted.frame() == 3u && predicted.confirmed() == 1u);
+  assert(!predicted.Prepare({}, host_inputs));
+  assert(!predicted.Rewind(1));
+  assert(predicted.Rewind(2));
+  assert(predicted.cursor() == 2u && predicted.frame() == 3u);
+  assert(predicted.Prepare({}, host_inputs));
+  assert(host_inputs[0] == host_pad && host_inputs[1] == PadInput{});
+  predicted.Commit();
+  assert(predicted.confirmed() == 2u && !predicted.correction());
+  assert(predicted.Prepare({}, host_inputs));
+  predicted.Commit();
+  assert(predicted.Prepare({}, host_inputs));
+  predicted.Commit();
+  assert(predicted.Prepare({}, host_inputs));
+  predicted.Commit();
+  assert(predicted.waiting());
+  assert(!predicted.Prepare({}, host_inputs));
+  assert(predicted.confirmed() == 3u);
+  assert(predicted.Receive({{5, guest_pad}}, std::nullopt));
+  assert(predicted.correction() == 5u);
+  assert(predicted.Receive({{4, guest_pad}}, std::nullopt));
+  assert(predicted.correction() == 4u);
+  assert(!predicted.Rewind(5));
+  assert(predicted.Rewind(4));
+  assert(predicted.frame() == 6u && predicted.cursor() == 4u);
+  assert(predicted.confirmed() == 3u);
+  assert(predicted.Prepare({}, host_inputs));
+  assert(host_inputs[1] == guest_pad);
+  predicted.Commit();
+  assert(predicted.Prepare({}, host_inputs));
+  assert(host_inputs[1] == guest_pad);
+  predicted.Commit();
+  assert(predicted.confirmed() == 5u);
+  predicted.Reset();
+  predicted.Start();
+  assert(predicted.Prepare(host_pad, host_inputs));
+  predicted.Commit();
+  assert(predicted.frame() == 1u && !predicted.confirmed());
+  VerifyDelayedReplay();
 }

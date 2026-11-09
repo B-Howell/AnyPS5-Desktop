@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -29,18 +30,21 @@ struct FrameInput {
   }
 };
 
-// Confirmed-input control. The emulator worker exclusively prepares/commits
-// frames; callers serialize exchanges with it. A waiting frame never calls
-// retro_run and cannot publish speculative audio, video, or save writes.
+// The emulator worker owns the cursor; callers serialize exchanges with it.
+// Prediction is opt-in for workers that can checkpoint and replay. The
+// default waits for confirmed inputs before advancing the emulator.
 class Timeline {
  public:
   static constexpr uint32_t kDelay = 2;
   static constexpr uint32_t kHistory = 64;
   static constexpr uint32_t kMaxFrame = 0xfffffffe;
   static constexpr uint32_t kMaxPacket = 8;
+  static constexpr uint32_t kMaxPrediction = 8;
 
-  explicit Timeline(unsigned seat) : seat_(seat) {
-    if (seat > 1) throw std::invalid_argument("Invalid PS1 netplay seat");
+  explicit Timeline(unsigned seat, uint32_t prediction_window = 0)
+      : seat_(seat), prediction_window_(prediction_window) {
+    if (seat > 1 || prediction_window > kMaxPrediction)
+      throw std::invalid_argument("Invalid PS1 netplay seat or prediction window");
     for (uint32_t frame = 0; frame < kDelay; ++frame) local_.emplace(frame, PadInput{});
   }
 
@@ -50,14 +54,28 @@ class Timeline {
     started_ = false;
     return true;
   }
-  void Reset() { *this = Timeline(seat_); }
+  void Reset() { *this = Timeline(seat_, prediction_window_); }
+  // The transport reports a monotonic frame. The emulator cursor can rewind.
   uint32_t frame() const { return frame_; }
+  uint32_t cursor() const { return cursor_; }
   std::optional<uint32_t> confirmed() const {
-    return frame_ ? std::optional<uint32_t>(frame_ - 1) : std::nullopt;
+    const auto next = NextUnconfirmed();
+    return next ? std::optional<uint32_t>(next - 1) : std::nullopt;
   }
   std::optional<uint32_t> received() const { return received_; }
-  bool waiting() const {
-    return !started_ || (!prepared_ && (remote_.find(frame_) == remote_.end() || !CanSample()));
+  bool waiting() const { return !started_ || (!prepared_ && !CanAdvance()); }
+
+  bool needs_checkpoint() const { return prepared_ && predictions_.count(cursor_) != 0; }
+  std::optional<uint32_t> correction() const { return prepared_ ? std::nullopt : correction_; }
+
+  // After restoring the checkpoint immediately before this frame, retry
+  // through the same local inputs and the newly received remote inputs.
+  bool Rewind(uint32_t frame) {
+    if (correction() != frame) return false;
+    cursor_ = frame;
+    predictions_.erase(predictions_.lower_bound(frame), predictions_.end());
+    correction_.reset();
+    return true;
   }
 
   bool Receive(const std::vector<FrameInput>& samples, std::optional<uint32_t> acknowledged) {
@@ -76,6 +94,13 @@ class Timeline {
       if (!(inserted.first->second == sample.input)) return false;
     }
     if (acknowledged && (!acknowledged_ || *acknowledged > *acknowledged_)) acknowledged_ = acknowledged;
+    for (const auto& [frame, input] : incoming) {
+      const auto predicted = predictions_.find(frame);
+      if (predicted != predictions_.end() && !(predicted->second == input) &&
+          (!correction_ || frame < *correction_)) {
+        correction_ = frame;
+      }
+    }
     remote_.merge(incoming);
     auto next = received_ ? *received_ + 1 : 0;
     while (remote_.count(next)) received_ = next++;
@@ -85,18 +110,25 @@ class Timeline {
 
   bool Prepare(const PadInput& local, std::array<PadInput, 2>& ports) {
     if (!started_ || prepared_ || !CanSample()) return false;
-    local_.emplace(frame_ + kDelay, local);
-    const auto other = remote_.find(frame_);
-    if (other == remote_.end()) return false;
-    ports[seat_] = local_.at(frame_);
-    ports[1 - seat_] = other->second;
+    local_.emplace(cursor_ + kDelay, local);
+    if (!CanAdvance()) return false;
+    const auto other = remote_.lower_bound(cursor_);
+    PadInput remote;
+    if (other != remote_.end() && other->first == cursor_) {
+      remote = other->second;
+    } else {
+      if (other != remote_.begin()) remote = std::prev(other)->second;
+      predictions_.emplace(cursor_, remote);
+    }
+    ports[seat_] = local_.at(cursor_);
+    ports[1 - seat_] = remote;
     prepared_ = true;
     return true;
   }
 
   void Commit() {
     if (!prepared_) throw std::logic_error("PS1 netplay frame was not prepared");
-    ++frame_;
+    frame_ = std::max(frame_, ++cursor_);
     prepared_ = false;
     Prune();
   }
@@ -114,31 +146,49 @@ class Timeline {
   }
 
  private:
+  uint32_t NextReceived() const { return received_ ? *received_ + 1 : 0; }
+
+  uint32_t NextUnconfirmed() const {
+    return std::min({cursor_, NextReceived(), correction_.value_or(cursor_)});
+  }
+
+  bool CanAdvance() const {
+    if (correction_ || !CanSample()) return false;
+    const auto next = NextReceived();
+    return cursor_ < next || cursor_ - next < prediction_window_;
+  }
+
   bool CanSample() const {
-    if (frame_ > kMaxFrame - kDelay) return false;
+    if (cursor_ > kMaxFrame - kDelay) return false;
     const auto unacknowledged = acknowledged_ ? *acknowledged_ + 1 : 0;
-    const auto target = frame_ + kDelay;
+    const auto target = cursor_ + kDelay;
     return target < unacknowledged || target - unacknowledged < kHistory;
   }
 
   void Prune() {
+    const auto next_unconfirmed = NextUnconfirmed();
+    predictions_.erase(predictions_.begin(), predictions_.lower_bound(next_unconfirmed));
     const auto oldest_remote = frame_ > kHistory ? frame_ - kHistory : 0;
     remote_.erase(remote_.begin(), remote_.lower_bound(oldest_remote));
     if (acknowledged_) {
       const auto overlap = *acknowledged_ >= kMaxPacket - 1 ? *acknowledged_ - (kMaxPacket - 1) : 0;
-      const auto oldest_local = std::min(frame_, overlap);
+      const auto oldest_local = std::min(next_unconfirmed, overlap);
       local_.erase(local_.begin(), local_.lower_bound(oldest_local));
     }
   }
 
   unsigned seat_;
+  uint32_t prediction_window_;
   bool started_ = false;
   bool prepared_ = false;
   uint32_t frame_ = 0;
+  uint32_t cursor_ = 0;
+  std::optional<uint32_t> correction_;
   std::optional<uint32_t> acknowledged_;
   std::optional<uint32_t> received_;
   std::map<uint32_t, PadInput> local_;
   std::map<uint32_t, PadInput> remote_;
+  std::map<uint32_t, PadInput> predictions_;
 };
 
 }  // namespace ps1_netplay
