@@ -391,13 +391,34 @@ The guest worker terminated during that step with Windows exception
 `0xc0000005`. The faulting module was unresolved in Event Viewer. The host
 stopped cleanly, and both scratch relay endpoints closed.
 
-This verifies actual DEV9 address acquisition, discovery and joining
-through the launcher packet rules. The match did not finish. The next
-native test needs crash diagnostics on the guest across the load boundary,
-followed by a full run over the launcher WebRTC route. The launcher also
-needs a PS2 network configuration path that survives across sessions.
-The local evidence beside the Windows DLL package includes the captured
-frames, logs and controller steps under `timesplitters-lan`.
+#### Renderer control and completed round
+
+The same disc, DLL, scratch-card template, controller sequence, and
+loopback transport were reused with a native fault recorder. With
+Software (SW), both core processes reached loading and then exited with
+`0xc0000005`. The recorder captured read faults at the indexed texel
+load in generated code (`movzx eax, byte ptr [rbx+rax]`). The byte pattern
+and registers match `ReadTexelImpl` in the pinned
+[LRPS2 software rasterizer](https://github.com/libretro/parallel-ps2/blob/da5b07ebebc18016e1ca5b401188a283971a0e8d/pcsx2/GS/Renderers/SW/GSDrawScanlineCodeGenerator.all.cpp#L3276).
+The reads targeted uncommitted memory. This identifies the crash site.
+The texture bounds or lifetime defect that led to it remains open.
+
+The D3D11 control used a windowless feature-level 11.0 device and the same
+Libretro v1 interface as the [embedded runner](../windows/runner/retro_core_host.cpp).
+Both consoles acquired leases, joined the same Vietnam Deathmatch, loaded
+into first-person gameplay, and reached the results screen after the
+timed round. The host scoreboard listed both players at 0–0. The guest
+results capture showed its score. Parts of the guest's separate score
+table capture appeared blank. At the last sample the host had sent 4,468
+and received 1,897 room frames, while the guest had sent 1,897 and received
+4,468. Both processes exited cleanly with empty fault logs.
+
+This qualifies a full D3D11 round through the launcher DHCP and packet
+rules over one-PC loopback. The real WebRTC run still needs two embedded
+game peers. The launcher also needs a PS2 network configuration path
+that survives across sessions. Local evidence beside the Windows DLL
+package includes captured frames, logs, input steps and the diagnostic
+source under `timesplitters-lan/renderer-control`.
 
 TimeSplitters: Future Perfect is a second PS2 fixture. Its US NTSC disc
 reports `SLUS21148` and version `1.00` in `SYSTEM.CNF`. The [original manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)
