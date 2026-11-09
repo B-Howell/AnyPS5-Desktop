@@ -438,13 +438,18 @@ reopens it at the invite point after the isolated worker has exited.
 The original save directory belongs to the local session. Match play
 uses isolated storage.
 
-An ordinary checkpoint invite for the running PS1 game also appears in
-the guest's Quick Menu. The launcher verifies the local disc against the
-room before parking the original game. Once the peer handshake succeeds,
-the guest opens the isolated match worker and imports the host's
-checkpoint. The guest's own recovery checkpoint stays local. Leaving or
-losing the room restores the guest's original game and memory card.
-Other PS1 invite modes still use the idle launch flow.
+A fresh-start, staged or ordinary checkpoint invite for the running PS1
+game appears in the guest's Quick Menu when the local worker supports
+recovery. The launcher verifies the local disc against the room before
+parking the game. It verifies the isolated match's core separately when
+the invite uses a different core. A fresh-start invite uses the supported
+core from PS1 Setup and boots from the disc. If that core is missing,
+the running game remains available and the launcher points to PS1 Setup.
+A staged invite imports the host's checkpoint and replays the
+host's inputs to the handoff frame. An ordinary invite imports the
+host's checkpoint at the start of the match. The guest's recovery
+checkpoint stays local. Leaving or losing the room restores the guest's
+original game and memory card.
 
 ### Holding and recovering the ordinary game
 

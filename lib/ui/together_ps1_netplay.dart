@@ -202,7 +202,7 @@ extension TogetherPs1Netplay on TogetherModel {
         app.starting != null ||
         game?.retroSerial != invite.titleId ||
         worker == null ||
-        Ps1NetplayRoomMode.tryRead(invite.gameVersion) != Ps1NetplayRoomMode.ordinary ||
+        Ps1NetplayRoomMode.tryRead(invite.gameVersion) == null ||
         _ps1HostMode(worker, game) != Ps1NetplayRoomMode.ordinary) {
       return null;
     }
@@ -286,7 +286,7 @@ extension TogetherPs1Netplay on TogetherModel {
             ]);
       if (!active()) return;
       if (roomId != null && invitedDigest == null) return app.show(T.text('ps1OnlineDisc'));
-      final ordinaryWorker = mode == Ps1NetplayRoomMode.ordinary ? localWorker : null;
+      final ordinaryWorker = roomId != null || mode == Ps1NetplayRoomMode.ordinary ? localWorker : null;
       final bios = ordinaryWorker != null
           ? await ordinaryWorker.ordinaryMatchBios()
           : localWorker == null
@@ -294,20 +294,37 @@ extension TogetherPs1Netplay on TogetherModel {
           : null;
       if (!active() || (localWorker == null && bios == null)) return;
       if (ordinaryWorker != null && bios == null) return app.show(T.text('ps1OnlineBios'));
-      final (game, media) = ordinaryWorker != null
+      final runningGame = localWorker == null ? null : app.running!.$1;
+      final sourceMedia = ordinaryWorker == null
+          ? null
+          : await Ps1NetplayMedia.verify(
+              profile: profile,
+              disc: runningGame!.retro!.path,
+              bios: bios!,
+              core: ordinaryWorker.corePath,
+              execution: Ps1NetplayExecution.ordinaryHandoff,
+              canContinue: active,
+            );
+      if (!active()) return;
+      if (invitedDigest != null && sourceMedia != null && sourceMedia.discDigest != invitedDigest) {
+        return app.show(T.text('ps1OnlineMismatchDisc'));
+      }
+      final (game, media) = sourceMedia != null
           ? (
-              app.running!.$1,
-              await Ps1NetplayMedia.verify(
-                profile: profile,
-                disc: app.running!.$1.retro!.path,
-                bios: bios!,
-                core: ordinaryWorker.corePath,
-                execution: mode.execution,
-                canContinue: active,
-              ),
+              runningGame!,
+              mode == Ps1NetplayRoomMode.ordinary
+                  ? sourceMedia
+                  : await app.verifyPs1Netplay(
+                      runningGame,
+                      profile,
+                      bios: bios!,
+                      requireHandoff: mode.needsCheckpoint,
+                      execution: mode.execution,
+                      canContinue: active,
+                    ),
             )
           : localWorker != null
-          ? (app.running!.$1, localWorker.stagedNetplayMedia!)
+          ? (runningGame!, localWorker.stagedNetplayMedia!)
           : selectedGame != null
           ? (selectedGame, await app.verifyPs1Netplay(selectedGame, profile, bios: bios!, canContinue: active))
           : await _verifiedPs1(profile, candidates, invitedDigest, bios: bios!, mode: mode, canContinue: active);
@@ -335,7 +352,7 @@ extension TogetherPs1Netplay on TogetherModel {
           ? null
           : OrdinaryPs1NetplayRunner(
               match: owned,
-              park: () => ordinaryWorker.captureOrdinaryNetplayCheckpoint(media, park: true),
+              park: () => ordinaryWorker.captureOrdinaryNetplayCheckpoint(sourceMedia!, park: true),
               detach: () {
                 holdingTransition = true;
                 app.setOrdinaryPs1Transition(game);

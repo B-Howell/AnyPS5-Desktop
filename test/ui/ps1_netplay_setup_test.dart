@@ -424,8 +424,24 @@ void main() {
     expect(captures, 2);
   }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null);
 
-  Future<void> verifyOrdinaryHandoff({required bool guestMode}) async {
+  final standardFixture = Platform.environment['ANYPS5_TEST_PS1_STANDARD_FIXTURE'];
+  Future<void> verifyOrdinaryHandoff({
+    required bool guestMode,
+    Ps1NetplayRoomMode mode = Ps1NetplayRoomMode.ordinary,
+  }) async {
     final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
+    var packageDirectory = packages;
+    String? stockCore;
+    if (mode != Ps1NetplayRoomMode.ordinary) {
+      final [String standardPackage, String stock] = jsonDecode(await File(standardFixture!).readAsString()) as List;
+      stockCore = stock;
+      final both = await Directory.systemTemp.createTemp('anyps5-ps1-invite-cores-');
+      addTearDown(() => both.delete(recursive: true));
+      for (final source in [p.join(packages, 'swanstation-netplay-ordinary.zip'), standardPackage]) {
+        await File(source).copy(p.join(both.path, p.basename(source)));
+      }
+      packageDirectory = both.path;
+    }
     const hostId = '12345678-1234-4234-8234-123456789ab1';
     const friendId = '12345678-1234-4234-8234-123456789ab2';
     const device = '12345678-1234-4234-8234-123456789ab3';
@@ -442,7 +458,7 @@ void main() {
     final fixture = makeFixture(
       together: server.base,
       system: HostSystem.windows,
-      environment: {'ANYPS5_PS1_NETPLAY': '1', 'ANYPS5_MANAGED_CORE_PACKAGES': packages},
+      environment: {'ANYPS5_PS1_NETPLAY': '1', 'ANYPS5_MANAGED_CORE_PACKAGES': packageDirectory},
       gameLinks: () => network.links,
     );
     final model = fixture.model;
@@ -471,6 +487,20 @@ void main() {
     final home = p.join(p.dirname(model.paths.toolkits), 'Emulators');
     final system = await Directory(p.join(home, 'system')).create(recursive: true);
     final localBios = await File(bios).copy(p.join(system.path, 'scph1001.bin'));
+    final managed = ManagedRetro(home, packageDirectory: packageDirectory);
+    final matchCore = switch (mode) {
+      Ps1NetplayRoomMode.ordinary => await managed.ensurePs1NetplayCore(execution: mode.execution),
+      Ps1NetplayRoomMode.staged => p.join(home, 'PS1-Netplay', ManagedRetro.libraryName(RetroPlatform.ps1)),
+      Ps1NetplayRoomMode.fresh => (await File(
+        stockCore!,
+      ).copy(p.join(home, ManagedRetro.libraryName(RetroPlatform.ps1)))).path,
+    };
+    var hostCore = matchCore;
+    if (mode == Ps1NetplayRoomMode.staged) {
+      final hostHome = await Directory.systemTemp.createTemp('anyps5-ps1-staged-host-');
+      addTearDown(() => hostHome.delete(recursive: true));
+      hostCore = await ManagedRetro(hostHome.path, packageDirectory: packageDirectory).ensurePs1NetplayCore();
+    }
     final game = Game(
       folder: p.dirname(disc),
       titleId: 'PS1-fixture',
@@ -493,7 +523,6 @@ void main() {
     final matchProgress = Stopwatch();
     final finishPark = Completer<void>();
     final finishRecovery = Completer<void>();
-    late String core;
     messenger.setMockMethodCallHandler(channel, (call) async {
       switch (call.method) {
         case 'start':
@@ -503,14 +532,16 @@ void main() {
           if (worker == 1) {
             expect(arguments['ps1NetplaySeat'], isNull);
             expect(arguments['saves'], p.join(home, 'saves', 'ps1'));
-            core = arguments['core'] as String;
             native.add('local');
           } else {
             expect(worker, 2);
             expect(arguments['ps1NetplaySeat'], guestMode ? 1 : 0);
-            expect(arguments['ps1NetplayCpu'], Ps1NetplayExecution.ordinaryHandoff.cpu);
+            expect(arguments['ps1NetplayCpu'], mode == Ps1NetplayRoomMode.ordinary ? mode.execution.cpu : isNull);
             expect(arguments['saves'], Directory.systemTemp.path);
-            expect(arguments['core'], core);
+            expect(
+              await File(arguments['core'] as String).resolveSymbolicLinks(),
+              await File(matchCore).resolveSymbolicLinks(),
+            );
             native.add('match');
           }
           return 40 + worker;
@@ -534,10 +565,24 @@ void main() {
           native.add('park');
           return 51;
         case 'ps1CheckpointImport':
+          expect(mode.needsCheckpoint, isTrue);
           expect(call.arguments['state'], guestMode ? hostBytes : bytes);
           expect(call.arguments['frame'], 0);
           native.add('import');
           return 52;
+        case 'ps1CheckpointReplay':
+          expect(mode, Ps1NetplayRoomMode.staged);
+          expect(call.arguments, {
+            'frame': 0,
+            'frames': [
+              [
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+              ],
+            ],
+          });
+          native.add('replay');
+          return 53;
         case 'ps1CheckpointResult':
           if (call.arguments == 51) await finishPark.future;
           return call.arguments == 51 ? {'frame': 616, 'state': bytes} : true;
@@ -581,20 +626,25 @@ void main() {
     await signIn(model.together);
     expect(await eventually(() => model.together.hub.friends.friends.isNotEmpty), isTrue);
     localPlay = model.play(game);
-    expect(await eventually(() => model.embeddedGame?.canParkOrdinaryPs1 == true && model.starting == null), isTrue);
+    expect(
+      await eventually(() => model.embeddedGame?.canParkOrdinaryPs1 == true && model.starting == null),
+      isTrue,
+      reason: '${model.toast}, native: $native',
+    );
+    if (mode != Ps1NetplayRoomMode.ordinary) expect(p.equals(model.embeddedGame!.corePath, matchCore), isFalse);
     final media = await Ps1NetplayMedia.verify(
       profile: Ps1NetplayProfile.tryRead(titleId)!,
       disc: disc,
       bios: localBios.path,
-      core: core,
-      execution: Ps1NetplayExecution.ordinaryHandoff,
+      core: hostCore,
+      execution: mode.execution,
     );
     final room = {
       'id': roomId,
       'host': {'userId': hostId},
       'kind': 'online',
       'titleId': titleId,
-      'gameVersion': '3',
+      'gameVersion': mode.version,
       'engineBuild': protocol.protocol,
       'capacity': 2,
       'joinable': false,
@@ -632,7 +682,7 @@ void main() {
         'sessionId': roomId,
         'from': server.person(hostId, 'remote', 'Remote'),
         'titleId': titleId,
-        'gameVersion': '3',
+        'gameVersion': mode.version,
         'engineBuild': protocol.protocol,
       });
       server.answers['GET me/game-session'] = (200, {'session': null, 'invites': server.gameInvites});
@@ -656,6 +706,21 @@ void main() {
       expect(server.callsTo('$path/join'), isEmpty);
       expect(native, ['local']);
       server.answers['GET $path'] = (200, room);
+      if (mode == Ps1NetplayRoomMode.fresh) {
+        final held = await File(matchCore).rename('$matchCore.unavailable');
+        await model.openQuickMenu();
+        choose('game-accept-$roomId');
+        expect(
+          await eventually(
+            () => model.toast == 'Install the supported SwanStation core in PS1 Setup.',
+            timeout: const Duration(seconds: 25),
+          ),
+          isTrue,
+        );
+        expect(server.callsTo('$path/join'), isEmpty);
+        expect(native, ['local']);
+        await held.rename(matchCore);
+      }
       await model.openQuickMenu();
       choose('game-accept-$roomId');
       expect(
@@ -668,7 +733,16 @@ void main() {
         runner: _FixtureMatch([]),
         seat: 0,
         hostEpoch: 17,
-        captureCheckpoint: () async => (frame: 0, state: hostBytes),
+        captureCheckpoint: mode.needsCheckpoint ? () async => (frame: 0, state: hostBytes) : null,
+        catchupSource: mode == Ps1NetplayRoomMode.staged
+            ? (
+                hold: () async => 1,
+                read: (_) async {
+                  const neutral = (buttons: 0, leftX: 0, leftY: 0, rightX: 0, rightY: 0);
+                  return (nextFrame: 1, frames: [(neutral, neutral)]);
+                },
+              )
+            : null,
         sendSignal: (signal) async => server.push('game_session.signal', {
           'sessionId': roomId,
           'from': hostId,
@@ -683,8 +757,16 @@ void main() {
       await host.open();
       final answer = await server.nextFrame('signal', test: (frame) => (frame['data'] as Map)['kind'] == 'answer');
       host.receiveSignal(Ps1NetplaySignal.tryRead(answer['data'])!);
-      expect(await eventually(() => matchPumped), isTrue, reason: 'Guest did not start: $native');
-      expect(native, ['local', 'park', 'detach', 'match', 'import', 'start match']);
+      expect(await eventually(() => matchPumped), isTrue, reason: 'Guest did not start: $native, ${model.toast}');
+      expect(native, [
+        'local',
+        'park',
+        'detach',
+        'match',
+        if (mode.needsCheckpoint) 'import',
+        if (mode == Ps1NetplayRoomMode.staged) 'replay',
+        'start match',
+      ]);
       await model.openQuickMenu();
       choose('ps1-netplay-leave');
       expect(await eventually(() => model.together.ps1NetplayRows().isEmpty), isTrue);
@@ -843,16 +925,27 @@ void main() {
     expect(guest.session.ended, Ps1NetplayEnd.peerLeft);
   }
 
+  const handoffFixtureTimeout = Timeout(Duration(seconds: 90));
   test(
     'Quick Menu starts an ordinary host match and returns to the original session',
     () => verifyOrdinaryHandoff(guestMode: false),
     skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null,
+    timeout: handoffFixtureTimeout,
   );
   test(
     'Quick Menu joins an ordinary PS1 invite and returns to the original session',
     () => verifyOrdinaryHandoff(guestMode: true),
     skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null,
+    timeout: handoffFixtureTimeout,
   );
+  for (final mode in [Ps1NetplayRoomMode.fresh, Ps1NetplayRoomMode.staged]) {
+    test(
+      'Quick Menu joins a ${mode.name} PS1 invite and returns to the original session',
+      () => verifyOrdinaryHandoff(guestMode: true, mode: mode),
+      skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null || standardFixture == null,
+      timeout: handoffFixtureTimeout,
+    );
+  }
 
   test('ordinary PS1 invite installs the right core and continues the original invite', () async {
     final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;

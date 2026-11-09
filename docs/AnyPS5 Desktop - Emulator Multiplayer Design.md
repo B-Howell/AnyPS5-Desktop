@@ -224,9 +224,23 @@ a connection failure.
 
 ## Acceptance before exposing Play Together
 
+- On a clean AnyPS5 install, set up the needed emulator inside Settings,
+  select user-supplied firmware and games, and start or accept a session
+  from the dashboard or Quick Menu. Report incompatible media, missing
+  setup and expired invites where the player can act on them.
 - Two players on separate networks each run a local copy and complete a level
   or race with their own controller. Verify invites, compatibility refusals,
-  disconnects and a second session after cleanup.
+  disconnects and a second session after cleanup. Qualify each supported
+  route separately, including synchronized couch multiplayer, virtual LAN,
+  and native online providers. A local or mocked run cannot qualify WAN play.
+- In synchronized couch multiplayer, the guest's controller occupies the
+  game's second controller port on both local copies. Both players see the
+  game's normal shared or split-screen view. Starting another race or round
+  through the game's own menu keeps the same AnyPS5 party connected.
+- For a session started from a running game, verify that leaving or a
+  connection failure returns the player to their original game with their
+  local saves intact. Keep the other player's session usable where the
+  native game mode permits it.
 - Record local button-to-display latency, RTT, jitter, stalls and desyncs.
   For synchronized emulation, also record rollback depth and replay cost.
   Compare with offline local play. Local rendering removes streaming delay;
