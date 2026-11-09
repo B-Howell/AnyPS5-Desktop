@@ -311,6 +311,9 @@ After the old room finishes closing, a retained host can choose
 the running game's verified disc regardless of the library selection.
 Back returns to the Quick Menu. Choosing a friend resumes the game
 while AnyPS5 verifies the disc and connects the room.
+A retained guest can accept a matching pending invite directly in the
+Quick Menu. AnyPS5 still rechecks the disc digest and room before
+reusing the worker, then returns the player to the game.
 **Close Game** still shuts down the local game. Cancel during startup
 also closes a worker that returns after cancellation. Local worker
 cleanup runs independently of the room release request. Another LAN

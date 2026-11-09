@@ -74,12 +74,17 @@ extension TogetherPs2Lan on TogetherModel {
 
   Iterable<Game> _ps2LanCandidates(RetroRoomSpec spec) => app.games.where((game) => _ps2LanSpec(game) == spec);
 
+  bool _canJoinPs2FromGame(GameInvite invite) {
+    if (!_ps2LanEnabled || _ps2LanBusy || _ps1Match != null || _verifyingPs1) return false;
+    final worker = _ps2ReusableWorker(host: false);
+    return worker != null && _ps2LanCandidates(_ps2LanInviteSpec(invite)).any((game) => game.id == worker.game.id);
+  }
+
   String ps2LanInviteDetail(GameInvite invite) {
     if (!_ps2LanEnabled) return T.text('retroOnlineUnavailable');
     final candidates = _ps2LanCandidates(_ps2LanInviteSpec(invite));
     if (candidates.isEmpty) return T.text('ps2LanDisc');
-    final reuse = _ps2ReusableWorker(host: false);
-    if (reuse != null && candidates.any((game) => game.id == reuse.game.id)) return T.text('ps2LanInviteDetail');
+    if (_canJoinPs2FromGame(invite)) return T.text('ps2LanUseGameMenu');
     return T.text(_ps2LanSetupIssue ?? 'ps2LanInviteDetail');
   }
 
@@ -217,7 +222,7 @@ extension TogetherPs2Lan on TogetherModel {
                     invite.engineBuild == spec.mode.protocol &&
                     _ps2LanInviteSpec(invite) == spec,
               )) {
-            return app.show(T.text('ps2LanInviteExpired'));
+            return app.show(T.text('retroInviteExpired'));
           }
           unawaited(
             _startPs2Lan(
@@ -231,6 +236,7 @@ extension TogetherPs2Lan on TogetherModel {
         },
       );
     }
+    final quickJoin = roomId != null && reuse != null && app.overlay == Layer.quickMenu;
     if (fromGame != null) {
       app.resumeGame();
     } else if (friendId != null) {
@@ -341,7 +347,9 @@ extension TogetherPs2Lan on TogetherModel {
           if (owned()) unawaited(hub.games.refresh().catchError((Object _) {}));
         }
         if (active() && match.attached) {
-          if (reuse != null && canLaunch() && app.overlay == Layer.friends) app.resumeGame();
+          if (reuse != null && canLaunch() && app.overlay == (quickJoin ? Layer.quickMenu : Layer.friends)) {
+            app.resumeGame();
+          }
           app.show(T.text('ps2LanUseGameMenu'));
         }
         await match.done;

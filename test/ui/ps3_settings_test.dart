@@ -402,8 +402,19 @@ void main() {
           'gameVersion': '01.30',
           'engineBuild': protocol,
         });
+        const unrelatedRoom = '12345678-1234-4234-8234-123456789abe';
+        server.gameInvites.add({...server.gameInvites.last, 'sessionId': unrelatedRoom, 'gameVersion': '01.29'});
         await model.together.hub.games.refresh();
-        model.open(Layer.friends);
+        model.open(Layer.quickMenu);
+        expect(model.panelCategories().single.rows.any((row) => row.id == 'game-accept-$unrelatedRoom'), isFalse);
+        final accept = model.panelCategories().single.rows.singleWhere((row) => row.id == 'game-accept-$roomId');
+        final originalInvite = server.gameInvites.removeAt(0);
+        await model.together.hub.games.refresh();
+        (accept.kind as ActionRow).run();
+        expect(model.toast, contains('no longer active'));
+        expect(server.callsTo(path, method: 'GET'), isEmpty);
+        server.gameInvites.insert(0, originalInvite);
+        await model.together.hub.games.refresh();
         server.answers['GET $path'] = (
           200,
           {
@@ -416,7 +427,7 @@ void main() {
         await waitFor(() => model.together.ps3PartyRows().isEmpty);
         expect(server.callsTo('$path/join'), isEmpty);
         expect(model.embeddedGame, same(worker));
-        expect(model.overlay, Layer.friends);
+        expect(model.overlay, Layer.quickMenu);
         expect(model.toast, contains('same online profile'));
         server.answers['GET $path'] = valid;
         activate('game-accept-$roomId');

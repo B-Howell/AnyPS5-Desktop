@@ -6230,6 +6230,7 @@ class AppModel extends ChangeNotifier {
               ...together.ps1QuickRows(),
               ...together.ps2LanQuickRows(),
               ...together.ps3PartyQuickRows(),
+              ...together.runningGameInviteRows(),
               PanelRow(
                 id: 'closeGame',
                 title: T.text('quickCloseGame'),

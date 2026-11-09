@@ -231,7 +231,10 @@ extension TogetherPs3Online on TogetherModel {
     bool active() => !attempt.cancelled.isCompleted && account.user?.id == me && app.currentProfile?.id == owner;
     RetroRoom? room;
     Future<void>? launch;
-    if (runningWorker == null || invite != null) {
+    final quickJoin = runningWorker != null && invite != null && app.overlay == Layer.quickMenu;
+    if (quickJoin) {
+      app.refresh();
+    } else if (runningWorker == null || invite != null) {
       app.returnTo((layer: Layer.friends, category: 'friends', row: 'ps3-party-leave'));
     } else {
       app.resumeGame();
@@ -251,7 +254,7 @@ extension TogetherPs3Online on TogetherModel {
       } else {
         if (!canStart()) return app.show(T.text('ps3PartyBusy'));
         attempt.attached = true;
-        if (invite != null && app.overlay == Layer.friends) app.resumeGame();
+        if (invite != null && app.overlay == (quickJoin ? Layer.quickMenu : Layer.friends)) app.resumeGame();
         app.show(T.text('ps3PartyGameMenu'));
         await attempt.cancelled.future;
       }

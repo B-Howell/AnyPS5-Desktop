@@ -408,7 +408,7 @@
   "ps2LanPackageDetail": "Doğrulanmış LRPS2 LAN önizleme ZIP dosyasını seçin.",
   "ps2LanBundledPackageDetail": "Bu sürümle gelen doğrulanmış LAN çekirdeğini yükleyin.",
   "ps2LanSetupContinue": "LAN Oyununa Devam Et",
-  "ps2LanInviteExpired": "Bu davet artık geçerli değil. Arkadaşınızdan yeni bir davet isteyin.",
+  "retroInviteExpired": "Bu davet artık geçerli değil. Arkadaşınızdan yeni bir davet isteyin.",
   "ps2LanPackagePicker": "PS2 LAN çekirdeği ZIP dosyasını seçin",
   "ps2LanPackageInstalling": "PS2 LAN çekirdeği doğrulanıyor ve kuruluyor…",
   "ps2LanPackageInstalled": "PS2 LAN çekirdeği kuruldu.",

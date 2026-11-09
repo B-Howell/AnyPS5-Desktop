@@ -474,7 +474,7 @@ void main() {
           await connectPeer(nextRoom, () => press('ps2-lan-invite-$host'));
           expect(server.callsTo('game-sessions', method: 'POST').last.body['titleId'], 'SLUS21148');
         } else {
-          model.open(Layer.friends);
+          model.open(Layer.quickMenu);
           await connectPeer(nextRoom, () => press('game-accept-$nextRoom'));
         }
         await until(

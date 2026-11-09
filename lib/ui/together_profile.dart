@@ -601,6 +601,61 @@ extension TogetherProfiles on TogetherModel {
     }
   }
 
+  Future<void> _acceptGameInvite(GameInvite invite) => switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {
+    RetroOnlineMode.synchronized => joinPs1Netplay(invite),
+    RetroOnlineMode.lan => joinPs2Lan(invite),
+    RetroOnlineMode.nativeOnline => joinPs3Party(invite),
+    null when RetroOnlineMode.isRetroProtocol(invite.engineBuild) => _unsupportedRetroInvite(),
+    null => joinFriendGame(invite.sessionId, titleId: invite.titleId, host: invite.from?.displayName ?? ''),
+  };
+
+  PanelRow _gameAcceptRow(GameInvite invite, {String? gameTitle, void Function()? accept}) => PanelRow(
+    id: 'game-accept-${invite.sessionId}',
+    title: T.format('gameJoin', [invite.from?.displayName ?? '', gameTitle ?? gameName(invite.titleId)]),
+    detail: switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {
+      RetroOnlineMode.lan => ps2LanInviteDetail(invite),
+      RetroOnlineMode.nativeOnline => ps3PartyInviteDetail(invite),
+      _ => T.text('gameInvitedDetail'),
+    },
+    person: invite.from == null ? null : TogetherModel.card(invite.from!, status: PersonStatus.playing),
+    kind: ActionRow(accept ?? () => unawaited(_acceptGameInvite(invite))),
+  );
+
+  bool _canAcceptRunningInvite(GameInvite invite) => switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {
+    RetroOnlineMode.lan => _canJoinPs2FromGame(invite),
+    RetroOnlineMode.nativeOnline => _ps3ReadyGame(invite: invite) != null,
+    _ => false,
+  };
+
+  List<PanelRow> runningGameInviteRows() {
+    final worker = app.embeddedGame;
+    final game = app.running?.$1;
+    final owner = account.user?.id;
+    if (worker == null || game == null || owner == null || hub.socket.status != SocketStatus.ready) return const [];
+    return [
+      for (final invite in hub.games.invites.where(_canAcceptRunningInvite))
+        _gameAcceptRow(
+          invite,
+          gameTitle: game.name,
+          accept: () {
+            if (!identical(app.embeddedGame, worker) || account.user?.id != owner) return;
+            final current = hub.games.invites
+                .where(
+                  (entry) =>
+                      entry.sessionId == invite.sessionId &&
+                      entry.engineBuild == invite.engineBuild &&
+                      entry.titleId == invite.titleId &&
+                      entry.gameVersion == invite.gameVersion &&
+                      entry.from?.id == invite.from?.id,
+                )
+                .firstOrNull;
+            if (current == null) return app.show(T.text('retroInviteExpired'));
+            if (_canAcceptRunningInvite(current)) unawaited(_acceptGameInvite(current));
+          },
+        ),
+    ];
+  }
+
   /// Friends panel rows: invites to answer, friends' games to join, and (while hosting) friends
   /// to invite.
   List<PanelRow> gameRows() {
@@ -612,25 +667,7 @@ extension TogetherProfiles on TogetherModel {
       ...ps2LanRows(),
       ...ps3PartyRows(),
       for (final invite in games.invites) ...[
-        PanelRow(
-          id: 'game-accept-${invite.sessionId}',
-          title: T.format('gameJoin', [invite.from?.displayName ?? '', gameName(invite.titleId)]),
-          detail: switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {
-            RetroOnlineMode.lan => ps2LanInviteDetail(invite),
-            RetroOnlineMode.nativeOnline => ps3PartyInviteDetail(invite),
-            _ => T.text('gameInvitedDetail'),
-          },
-          person: invite.from == null ? null : TogetherModel.card(invite.from!, status: PersonStatus.playing),
-          kind: ActionRow(
-            () => unawaited(switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {
-              RetroOnlineMode.synchronized => joinPs1Netplay(invite),
-              RetroOnlineMode.lan => joinPs2Lan(invite),
-              RetroOnlineMode.nativeOnline => joinPs3Party(invite),
-              null when RetroOnlineMode.isRetroProtocol(invite.engineBuild) => _unsupportedRetroInvite(),
-              null => joinFriendGame(invite.sessionId, titleId: invite.titleId, host: invite.from?.displayName ?? ''),
-            }),
-          ),
-        ),
+        _gameAcceptRow(invite),
         PanelRow(
           id: 'game-decline-${invite.sessionId}',
           title: T.format('gameDecline', [invite.from?.displayName ?? '']),

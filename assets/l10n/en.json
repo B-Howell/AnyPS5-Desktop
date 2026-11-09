@@ -309,7 +309,7 @@
   "ps2LanUseGameMenu": "Open the game's LAN mode and choose the network configuration on memory card slot 1. Use automatic IP (DHCP).",
   "ps2LanSetupTitle": "Set up LAN network",
   "ps2LanSetupContinue": "Continue to LAN Play",
-  "ps2LanInviteExpired": "This invite is no longer active. Ask your friend to send a new one.",
+  "retroInviteExpired": "This invite is no longer active. Ask your friend to send a new one.",
   "ps3OnlineReadiness": "Online Readiness",
   "ps3OnlineReadinessDetail": "Check your disc and update before setting up online play.",
   "ps3OnlineDiscUnavailable": "Disc unavailable",
