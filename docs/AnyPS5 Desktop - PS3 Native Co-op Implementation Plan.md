@@ -247,6 +247,20 @@ It qualifies the Windows hardware path for the pause interaction.
 The next online control needs the Windows v3 core and a private
 transport path to RPCN and Refresh before trying a paired join.
 
+A single-client transport preflight connected a synthetic Windows client
+to the real RPCN and Refresh services in a WSL namespace with only the
+loopback interface and no routes. Windows bound RPCN TLS, RPCN UDP
+signaling and Refresh HTTP on 127.0.0.1. The relay crossed the
+namespace through private Unix sockets and left the RPCN TLS handshake
+end to end. The client rejected an untrusted certificate, accepted the
+fixture certificate, logged in over RPCN protocol 32, received two
+matching signaling replies and verified Refresh health. The three
+Windows listeners released on shutdown. The relay qualifies service
+reachability. A real Windows game still needs a bounded egress check
+for its emulated socket and DNS traffic, followed by authenticated
+in-game requests. The single-client signaling relay does not route
+peer gameplay packets or qualify a two-player lobby.
+
 The Quick Menu labels the current status **RPCN connection** and
 describes game sign-in and lobby handling separately. The
 [English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
