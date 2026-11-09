@@ -15,7 +15,7 @@ from time import monotonic, sleep
 
 class Peer:
     def __init__(self, executable, core, disc, bios, seat, *, local=False, saves=None, recompiler=False,
-                 rollback=False):
+                 rollback=False, audio_control=False):
         self.lines = Queue()
         arguments = [executable, core, disc, bios, str(seat)]
         if local:
@@ -24,6 +24,8 @@ class Peer:
             arguments.append("recompiler")
         if rollback:
             arguments.append("rollback")
+        if audio_control:
+            arguments.append("audio-control")
         if saves is not None:
             arguments.extend(("ordinary", saves))
         self.process = Popen(
@@ -454,7 +456,7 @@ def verify_native_rollback(args, cleanup):
     peers = []
     for prediction in (False, True):
         peer = Peer(args.probe.resolve(), args.core.resolve(), args.disc.resolve(), args.bios.resolve(),
-                    0, rollback=prediction)
+                    0, rollback=prediction, audio_control=not prediction)
         cleanup.callback(peer.close)
         peers.append(peer)
     assert all(peer.receive() == "ready" for peer in peers)
@@ -463,11 +465,13 @@ def verify_native_rollback(args, cleanup):
     sent = [set(), set()]
     fingerprints = [{}, {}]
     gap = 119
+    target = max(args.frames, 240)
 
     def pump(seat, hold_gap):
         frame, _, local, _ = states[seat]
         inputs = [(index, 256 if gap <= index < gap + 8 else 0)
-                  for index in range(frame + 12) if index not in sent[seat] and (index != gap or not hold_gap)]
+                  for index in range(min(target, frame + 12))
+                  if index not in sent[seat] and (index != gap or not hold_gap)]
         states[seat] = peers[seat].sync(local[-1][0], inputs)
         assert states[seat][0] >= frame, "Published progress moved backward during replay"
         sent[seat].update(index for index, _ in inputs)
@@ -476,7 +480,7 @@ def verify_native_rollback(args, cleanup):
                 f"Worker {seat} changed a published fingerprint at frame {index}")
 
     deadline = monotonic() + 35
-    while states[1][0] < gap + 3:
+    while states[0][0] < gap or states[1][0] < gap + 3:
         if monotonic() > deadline:
             raise TimeoutError(f"Native worker did not predict through the gap: {states}")
         for seat in range(2):
@@ -484,7 +488,8 @@ def verify_native_rollback(args, cleanup):
         sleep(0.002)
     assert states[0][0] <= gap
     assert gap not in fingerprints[1], "A speculative fingerprint was published before correction"
-    target = max(args.frames, 240)
+    before = [peer.send("audio").split() for peer in peers]
+    assert before[0] == before[1] and int(before[0][0]) > 0, "Audio escaped before correction"
     deadline = monotonic() + target / 25 + 15
     last_fingerprint = target // 120 * 120 - 1
     while min(state[0] for state in states) < target or any(last_fingerprint not in hashes for hashes in fingerprints):
@@ -495,8 +500,14 @@ def verify_native_rollback(args, cleanup):
         sleep(0.002)
     for frame in range(gap, target, 120):
         assert fingerprints[0][frame] == fingerprints[1][frame], f"Corrected RAM diverged at frame {frame}"
+    after = [peer.send("audio").split() for peer in peers]
+    while after[0] != after[1] and monotonic() < deadline:
+        sleep(0.002)
+        after = [peer.send("audio").split() for peer in peers]
+    assert after[0] == after[1] and int(after[0][0]) > int(before[0][0]), (
+        f"Corrected audio did not match the confirmed-input control: {after}")
     print(f"Native rollback corrected frame {gap}, drove {target} frames and matched "
-          f"{target // 120} confirmed RAM fingerprints.")
+          f"{target // 120} confirmed RAM fingerprints and {after[0][0]} stereo sample pairs.")
 
 
 def read_trace(trace):

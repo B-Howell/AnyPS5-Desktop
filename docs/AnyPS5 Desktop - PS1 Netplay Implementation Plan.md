@@ -755,18 +755,23 @@ The [Windows embedded worker](../windows/runner/retro_core_host.cpp)
 has a headless-only rollback mode. It stores at most one in-memory
 SwanStation checkpoint per prediction slot, uses the same-instance
 save-state context, and discards speculative fingerprints on rewind.
-Replay steps suppress video and audio output. The confirmed input
-mode remains the launcher default while presentation and pacing are
-being integrated.
+Replay steps suppress video output. A bounded PCM buffer keeps each
+frame's audio until its inputs are confirmed and replaces the earlier
+samples if that frame is replayed. The worker hands confirmed audio
+to the output in frame order. The confirmed input mode remains the
+launcher default while presentation and device pacing are being
+integrated.
 
 The [native driver](../windows/runner/tests/run_ps1_netplay_probe.py)
 accepts `--rollback --frames 720` with the stock command's disc and BIOS
 arguments and the [SPU-patched Release core](<AnyPS5 Desktop - PS1 Determinism Harness.md>).
 It withholds frame 119 until the prediction worker passes it, checks
-that no speculative RAM fingerprint escaped, then changes that frame's
-second-controller input and compares confirmed RAM with the control.
-This test covers native checkpoint restoration. It does not measure a
-full race, 120 ms frame pacing, or uninterrupted presentation.
+that no speculative RAM fingerprint or PCM escaped, then changes that
+frame's second-controller input. A silent capture compares the stereo
+sample count and PCM digest against the confirmed-input control as
+well as comparing confirmed RAM. This covers native checkpoint
+restoration and audio ordering. Full-race pacing, device underruns,
+and uninterrupted video presentation need separate verification.
 
 The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
 [driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real

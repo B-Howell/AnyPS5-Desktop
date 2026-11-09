@@ -21,6 +21,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <mutex>
@@ -163,6 +164,7 @@ constexpr int kD3D11 = 7;
 constexpr char kPs3Resolution[] = "rpcs3_resolution_scale";
 constexpr unsigned kMaxFrameSize = 4096;
 constexpr size_t kMaxPs1Checkpoint = 12 * 1024 * 1024;
+constexpr size_t kMaxPs1AudioSamplesPerFrame = 8192;
 constexpr size_t kPs1CheckpointPrefix = 40;
 constexpr uint32_t kPs1CatchupHistory = 1024;
 constexpr uint32_t kPs1CatchupBatch = 120;
@@ -555,6 +557,8 @@ struct Ps1OrdinaryRecovery {
 
 class RetroCoreSession {
  public:
+  using AudioSink = std::function<void(const int16_t*, size_t)>;
+
   RetroCoreSession(flutter::TextureRegistrar* registrar, std::string core,
                    std::string disc, std::string system, std::string saves,
                    std::string initial_resolution = {},
@@ -566,12 +570,13 @@ class RetroCoreSession {
                    std::vector<std::string> packages = {},
                    Ps1MatchCpu match_cpu = Ps1MatchCpu::kCachedInterpreter,
                    std::shared_ptr<const Ps1OrdinaryRecovery> returning = {},
-                   bool rollback = false)
+                   bool rollback = false, AudioSink audio_sink = {})
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
         netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(
                                    *netplay_seat, rollback ? ps1_netplay::Timeline::kMaxPrediction : 0)
                               : nullptr),
         rollback_(rollback),
+        audio_sink_(std::move(audio_sink)),
         match_storage_(netplay_ ? std::make_unique<Ps1MatchStorage>(netplay_bios) : nullptr),
         lan_(lan_mac ? std::make_unique<Ps2VirtualLan>(*lan_mac) : nullptr),
         system_(match_storage_ ? match_storage_->system() : std::move(system)),
@@ -1554,6 +1559,40 @@ class RetroCoreSession {
     netplay_pending_fingerprint_.reset();
   }
 
+  struct RollbackAudioFrame {
+    uint32_t frame = 0;
+    size_t samples = 0;
+    bool overflow = false;
+    std::array<int16_t, kMaxPs1AudioSamplesPerFrame> pcm{};
+  };
+
+  void EmitAudio(const int16_t* stereo, size_t frames) {
+    if (!frames) return;
+    audio_frames_ += frames;
+    if (audio_sink_) {
+      audio_sink_(stereo, frames);
+    } else {
+      audio_.Write(stereo, frames);
+    }
+  }
+
+  void OnAudio(const int16_t* stereo, size_t frames) {
+    if (paused_ || !frames) return;
+    if (rollback_) {
+      // The software PS1 core submits PCM synchronously during retro_run.
+      auto* capture = rollback_audio_capture_;
+      if (!capture) return;
+      if (!stereo || frames > (capture->pcm.size() - capture->samples) / 2) {
+        capture->overflow = true;
+        return;
+      }
+      std::copy_n(stereo, frames * 2, capture->pcm.data() + capture->samples);
+      capture->samples += frames * 2;
+    } else if (!suppress_frame_) {
+      EmitAudio(stereo, frames);
+    }
+  }
+
   void RunNetplay(HMODULE dll, void (*step)(), std::chrono::steady_clock::duration frame_time,
                   const uint8_t* memory, size_t memory_size) {
     using Clock = std::chrono::steady_clock;
@@ -1568,6 +1607,24 @@ class RetroCoreSession {
       CheckpointBytes bytes;
     };
     std::array<RollbackState, ps1_netplay::Timeline::kMaxPrediction> checkpoints;
+    // The extra slot holds the frame being stepped before its confirmation.
+    std::vector<RollbackAudioFrame> pending_audio(rollback_ ? checkpoints.size() + 1 : 0);
+    uint32_t next_audio_frame = 0;
+    const auto release_audio = [&] {
+      if (!rollback_) return;
+      std::optional<uint32_t> confirmed;
+      {
+        std::lock_guard<std::mutex> lock(netplay_mutex_);
+        confirmed = netplay_->confirmed();
+      }
+      while (confirmed && next_audio_frame <= *confirmed) {
+        const auto& audio = pending_audio[next_audio_frame % pending_audio.size()];
+        if (audio.frame != next_audio_frame)
+          throw std::runtime_error("The PS1 rollback audio frame is unavailable.");
+        EmitAudio(audio.pcm.data(), audio.samples / 2);
+        ++next_audio_frame;
+      }
+    };
     const auto serialize = rollback_ ? Symbol<bool (*)(void*, size_t)>(dll, "retro_serialize") : nullptr;
     const auto unserialize = rollback_ ? Symbol<bool (*)(const void*, size_t)>(dll, "retro_unserialize") : nullptr;
     const auto state_size = rollback_ ? Symbol<size_t (*)()>(dll, "retro_serialize_size")() : 0;
@@ -1579,6 +1636,7 @@ class RetroCoreSession {
     auto last_advance = next;
     bool started_before = false;
     while (!stop_) {
+      release_audio();
       if (checkpoint_supported_) ServiceCheckpoint(save, load, maximum + kPs1CheckpointPrefix, step);
       while (rollback_ && !stop_) {
         std::optional<uint32_t> correction;
@@ -1658,8 +1716,18 @@ class RetroCoreSession {
         checkpoint.frame = frame;
       }
       suppress_frame_ = replaying;
+      if (rollback_) {
+        auto& audio = pending_audio[frame % pending_audio.size()];
+        audio.frame = frame;
+        audio.samples = 0;
+        audio.overflow = false;
+        rollback_audio_capture_ = &audio;
+      }
       step();
+      const auto* captured_audio = std::exchange(rollback_audio_capture_, nullptr);
       suppress_frame_ = false;
+      if (captured_audio && captured_audio->overflow)
+        throw std::runtime_error("The PS1 rollback audio frame exceeded its PCM capacity.");
       ++steps_;
       std::string fingerprint;
       if (!staging && (frame + 1) % 120 == 0) fingerprint = NetplayFingerprint(memory, memory_size);
@@ -1678,6 +1746,7 @@ class RetroCoreSession {
         if (!fingerprint.empty()) netplay_pending_fingerprint_.emplace(frame, std::move(fingerprint));
         PublishConfirmedFingerprint();
       }
+      release_audio();
       last_advance = Clock::now();
       next += frame_time;
       if (next < last_advance - frame_time) next = last_advance;
@@ -1784,20 +1853,12 @@ class RetroCoreSession {
           });
       Symbol<void (*)(void (*)(int16_t, int16_t))>(dll, "retro_set_audio_sample")(
           [](int16_t left, int16_t right) {
-            auto* session = active_.load();
             const int16_t stereo[]{left, right};
-            if (!session->paused_ && !session->suppress_frame_) {
-              ++session->audio_frames_;
-              session->audio_.Write(stereo, 1);
-            }
+            active_.load()->OnAudio(stereo, 1);
           });
       Symbol<void (*)(size_t (*)(const int16_t*, size_t))>(dll, "retro_set_audio_sample_batch")(
           [](const int16_t* samples, size_t frames) {
-            auto* session = active_.load();
-            if (!session->paused_ && !session->suppress_frame_) {
-              session->audio_frames_ += frames;
-              session->audio_.Write(samples, frames);
-            }
+            active_.load()->OnAudio(samples, frames);
             return frames;
           });
       Symbol<void (*)(void (*)())>(dll, "retro_set_input_poll")([] {});
@@ -1889,7 +1950,7 @@ class RetroCoreSession {
       AvInfo av{};
       av_info(&av);
       SetAspect(av.geometry.aspect);
-      const bool audio_open = audio_.Open(av.sample_rate);
+      const bool audio_open = audio_sink_ || audio_.Open(av.sample_rate);
       const double fps = std::isfinite(av.fps) && av.fps > 30 && av.fps <= 120 ? av.fps : 60.0;
       {
         std::lock_guard<std::mutex> lock(telemetry_mutex_);
@@ -1980,6 +2041,8 @@ class RetroCoreSession {
   const std::string core_, disc_;
   const std::unique_ptr<ps1_netplay::Timeline> netplay_;
   const bool rollback_;
+  const AudioSink audio_sink_;
+  static inline thread_local RollbackAudioFrame* rollback_audio_capture_ = nullptr;
   const std::unique_ptr<Ps1MatchStorage> match_storage_;
   const std::unique_ptr<Ps2VirtualLan> lan_;
   std::atomic<bool> lan_ready_{false};

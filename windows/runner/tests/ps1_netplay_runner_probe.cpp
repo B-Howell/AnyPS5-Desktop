@@ -195,15 +195,31 @@ int main(int argc, char** argv) {
   const bool local_staging = argc == 6 && std::string_view(argv[5]) == "local";
   const bool recompiler = argc == 6 && std::string_view(argv[5]) == "recompiler";
   const bool rollback = argc == 6 && std::string_view(argv[5]) == "rollback";
-  if (argc == 6 && !local_staging && !recompiler && !rollback) return 2;
+  const bool audio_control = argc == 6 && std::string_view(argv[5]) == "audio-control";
+  if (argc == 6 && !local_staging && !recompiler && !rollback && !audio_control) return 2;
   const bool ordinary = argc == 7 && std::string_view(argv[5]) == "ordinary";
   if (argc == 7 && !ordinary) return 2;
   const auto bios_directory = std::filesystem::u8path(argv[3]).parent_path().u8string();
+  std::mutex audio_mutex;
+  size_t audio_frames = 0;
+  uint64_t audio_hash = 14695981039346656037ull;
+  RetroCoreSession::AudioSink audio_sink;
+  if (rollback || audio_control) {
+    audio_sink = [&](const int16_t* samples, size_t frames) {
+      std::lock_guard<std::mutex> lock(audio_mutex);
+      audio_frames += frames;
+      for (size_t i = 0; i < frames * 2; ++i) {
+        audio_hash ^= static_cast<uint16_t>(samples[i]);
+        audio_hash *= 1099511628211ull;
+      }
+    };
+  }
   RetroCoreSession session(&texture, argv[1], argv[2], ordinary ? bios_directory : "",
                            ordinary ? argv[6] : "", "", {},
                            ordinary ? std::nullopt : std::optional<unsigned>(seat), argv[3], local_staging,
                            std::nullopt, std::nullopt, {},
-                           recompiler ? Ps1MatchCpu::kRecompiler : Ps1MatchCpu::kCachedInterpreter, {}, rollback);
+                           recompiler ? Ps1MatchCpu::kRecompiler : Ps1MatchCpu::kCachedInterpreter, {}, rollback,
+                           std::move(audio_sink));
   if (!session.Start()) return 3;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
   while (std::chrono::steady_clock::now() < deadline) {
@@ -219,6 +235,11 @@ int main(int argc, char** argv) {
   std::cout << "ready" << std::endl;
   std::string command;
   while (std::cin >> command && command != "quit") {
+    if ((rollback || audio_control) && command == "audio") {
+      std::lock_guard<std::mutex> lock(audio_mutex);
+      std::cout << audio_frames << ' ' << audio_hash << std::endl;
+      continue;
+    }
     if (command == "published") {
       std::cout << texture.published() << std::endl;
       continue;
