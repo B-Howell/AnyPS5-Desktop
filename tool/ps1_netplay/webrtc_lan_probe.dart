@@ -1,15 +1,13 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:anyps5_desktop/core/online/online_peer_mesh.dart';
 import 'package:anyps5_desktop/core/online/retro_lan_match.dart';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
-import 'package:anyps5_desktop/ui/online_webrtc.dart';
 
 import 'webrtc_room_fixture.dart';
 
 Future<String> verifyWebRtcLanBridge() async {
-  final links = _InterruptibleLinks();
+  final links = WebRtcProbeLinks();
   var reconnecting = Completer<void>();
   var reconnected = Completer<void>();
   var recoveryUser = WebRtcRoomFixture.host;
@@ -111,71 +109,6 @@ Future<String> verifyWebRtcLanBridge() async {
     await Future.wait([left.leave(), right.leave()]).timeout(const Duration(seconds: 4));
     if (!host.done.isCompleted) host.done.complete();
   }
-}
-
-// Injects only connection-state notifications. The data channels and frame
-// exchange still use the real Windows WebRTC plugin.
-final class _InterruptibleLinks implements GameLinks {
-  final _delegate = WebRtcGameLinks();
-  final opened = <_InterruptibleLink>[];
-
-  @override
-  Future<GameLink> link(List<Map<String, dynamic>> iceServers) async {
-    final link = _InterruptibleLink(await _delegate.link(iceServers));
-    opened.add(link);
-    return link;
-  }
-}
-
-final class _InterruptibleLink implements GameLink, RestartableGameLink {
-  _InterruptibleLink(this._link);
-
-  final GameLink _link;
-  final offerCredentials = <String>[];
-  void Function(String)? _onState;
-  void reportState(String state) => _onState?.call(state);
-
-  @override
-  set onState(void Function(String) handler) => _link.onState = _onState = handler;
-  @override
-  set onCandidate(void Function(Map<String, dynamic>) handler) => _link.onCandidate = handler;
-  @override
-  set onMessage(void Function(Uint8List) handler) => _link.onMessage = handler;
-  @override
-  set onStreamMessage(void Function(Uint8List) handler) => _link.onStreamMessage = handler;
-  @override
-  Future<Map<String, dynamic>> createOffer() async {
-    final offer = await _link.createOffer();
-    final credential = RegExp(r'^a=ice-ufrag:([^\r\n]+)', multiLine: true).firstMatch(offer['sdp'] as String);
-    if (credential == null) throw StateError('WebRTC offer had no ICE credentials.');
-    offerCredentials.add(credential.group(1)!);
-    return offer;
-  }
-
-  @override
-  Future<void> restartIce() => (_link as RestartableGameLink).restartIce();
-  @override
-  Future<bool> routeConnected() => (_link as RestartableGameLink).routeConnected();
-  @override
-  Future<Map<String, dynamic>> createAnswer() => _link.createAnswer();
-  @override
-  Future<void> setLocal(Map<String, dynamic> description) => _link.setLocal(description);
-  @override
-  Future<void> setRemote(Map<String, dynamic> description) => _link.setRemote(description);
-  @override
-  Future<void> addCandidate(Map<String, dynamic> candidate) => _link.addCandidate(candidate);
-  @override
-  Future<void> openChannel() => _link.openChannel();
-  @override
-  bool get gameOpen => _link.gameOpen;
-  @override
-  bool get streamOpen => _link.streamOpen;
-  @override
-  bool send(Uint8List data) => _link.send(data);
-  @override
-  bool sendStream(Uint8List data) => _link.sendStream(data);
-  @override
-  Future<void> close() => _link.close();
 }
 
 final class _FixtureNic {

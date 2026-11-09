@@ -68,6 +68,11 @@ void main() {
       isNull,
     );
     expect(Ps1NetplaySignal.tryRead({...offer, 'room': 'another room'}), isNull);
+    expect(Ps1NetplaySignal.tryRead({...offer, 'route': 0}), isNull);
+    expect(Ps1NetplaySignal.tryRead({...offer, 'route': 1.0}), isNull);
+    expect(Ps1NetplaySignal.tryRead({...offer, 'route': 1})?.route, 1);
+    expect(Ps1NetplaySignal.tryRead({'version': 1, 'kind': 'restart', 'data': {}}), isNull);
+    expect(Ps1NetplaySignal.tryRead({'version': 1, 'kind': 'restart', 'data': {}, 'route': 1})?.route, 1);
     expect(
       signal('candidate', {'candidate': 'candidate:early', 'sdpMid': null, 'sdpMLineIndex': 0}).kind,
       Ps1NetplaySignalKind.candidate,
@@ -154,6 +159,63 @@ void main() {
     expect(network.all.single.closed, isTrue);
     expect(runner.seat, isNull);
     expect(peer.session.phase, Ps1NetplayPhase.closed);
+  });
+
+  test('a failed guest route retries signaling and keeps both runners in the same match', () async {
+    final network = FakeGameNetwork();
+    final hostLink = await network.links.link([]);
+    final guestLink = await network.links.link([]);
+    final hostRunner = _Runner();
+    final guestRunner = _Runner();
+    final attempts = <Ps1NetplaySignalKind, int>{};
+    Future<void> relay(Ps1NetplayPeer target, Ps1NetplaySignal message) async {
+      if (message.toJson().containsKey('route') && message.kind != Ps1NetplaySignalKind.candidate) {
+        final count = attempts.update(message.kind, (value) => value + 1, ifAbsent: () => 1);
+        if (count == 1) return;
+      }
+      target.receiveSignal(message);
+    }
+
+    late final Ps1NetplayPeer guest;
+    final host = Ps1NetplayPeer(
+      link: hostLink,
+      identity: identity,
+      runner: hostRunner,
+      seat: 0,
+      hostEpoch: 42,
+      sendSignal: (message) => relay(guest, message),
+    );
+    guest = Ps1NetplayPeer(
+      link: guestLink,
+      identity: identity,
+      runner: guestRunner,
+      seat: 1,
+      sendSignal: (message) => relay(host, message),
+    );
+    addTearDown(() => Future.wait([host.leave(), guest.leave()]));
+    await guest.open();
+    await host.open();
+    expect(await eventually(() => hostRunner.sawRemote && guestRunner.sawRemote), isTrue);
+    network.all[0].rejectLocalDescriptions = 1;
+    network.all[1].rejectLocalDescriptions = 1;
+    network.all[1].reportState('failed');
+    expect(guest.session.phase, Ps1NetplayPhase.running);
+    expect(
+      await eventually(
+        () => attempts.length == 3 && attempts.values.every((count) => count >= 2),
+        timeout: const Duration(seconds: 6),
+      ),
+      isTrue,
+    );
+    expect(network.all[0].routeRestarts, 1);
+    expect(network.all[1].routeRestarts, 0);
+    expect(network.all, hasLength(2));
+    expect(host.session.phase, Ps1NetplayPhase.running);
+    expect(guest.session.phase, Ps1NetplayPhase.running);
+    expect(hostRunner.stopped || guestRunner.stopped, isFalse);
+    host.receiveSignal(signal('candidate', {'candidate': 'candidate:obsolete', 'sdpMid': '0', 'sdpMLineIndex': 0}));
+    await Future<void>.delayed(Duration.zero);
+    expect(network.all[0].candidatesIn.any((candidate) => candidate['candidate'] == 'candidate:obsolete'), isFalse);
   });
 
   test('a checkpoint crosses the negotiated reliable stream before gameplay starts', () async {

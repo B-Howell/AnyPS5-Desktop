@@ -264,6 +264,7 @@ class FakeGameLink implements GameLink, RestartableGameLink {
   bool _wantsChannel = false;
   bool closed = false;
   int routeRestarts = 0;
+  int rejectLocalDescriptions = 0;
   String state = 'new';
 
   void reportState(String next) {
@@ -299,6 +300,10 @@ class FakeGameLink implements GameLink, RestartableGameLink {
 
   @override
   Future<void> setLocal(Map<String, dynamic> description) async {
+    if (rejectLocalDescriptions > 0) {
+      rejectLocalDescriptions--;
+      throw StateError('Fixture rejected a local description.');
+    }
     _local = true;
     scheduleMicrotask(() => _onCandidate?.call({'candidate': 'candidate:$id', 'sdpMid': '0', 'sdpMLineIndex': 0}));
     _maybeConnect();

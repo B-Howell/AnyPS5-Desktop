@@ -132,7 +132,7 @@ final class Ps1NetplayMatch {
         if (_signals.length < 65 &&
             (expected == null || event['from'] == expected) &&
             event['kind'] == 'message' &&
-            Ps1NetplaySignal.tryRead(event['data']) != null) {
+            Ps1NetplaySignal.tryRead(event['data'])?.route == 0) {
           _signals.add(event);
         }
         return;

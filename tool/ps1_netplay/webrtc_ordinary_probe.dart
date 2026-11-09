@@ -10,7 +10,6 @@ import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_session.dart';
 import 'package:anyps5_desktop/core/toolkit_download.dart';
 import 'package:anyps5_desktop/ui/embedded_retro_game.dart';
-import 'package:anyps5_desktop/ui/online_webrtc.dart';
 import 'package:anyps5_desktop/ui/ps1_netplay_runner.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -90,7 +89,7 @@ Future<String> verifyOrdinaryWebRtc(String config) async {
         recoveryAccepted = true;
       },
     );
-    final links = WebRtcGameLinks();
+    final links = WebRtcProbeLinks();
     final gateway = WebRtcRoomFixture(profile.roomFor(mode), media.discDigest);
     final hostRoom = sender = Ps1NetplayMatch(
       rooms: gateway.client(WebRtcRoomFixture.host, expectedDigest: media.discDigest),
@@ -148,8 +147,14 @@ Future<String> verifyOrdinaryWebRtc(String config) async {
     }
 
     await _waitUntil(() async => confirmedThrough(119));
+    final hostLink = links.opened.singleWhere((link) => link.offerCredentials.isNotEmpty);
+    final guestLink = links.opened.singleWhere((link) => !identical(link, hostLink));
+    final rejected = {'restart', 'offer', 'answer'};
+    gateway.rejectSignal = (_, kind, data) =>
+        kind == 'message' && data is Map && data['route'] == 1 && rejected.remove(data['kind']);
     final inputGap = Completer<void>();
     guestInputs.holdSync = inputGap.future;
+    guestLink.reportState('failed');
     try {
       await _waitUntil(
         () async =>
@@ -157,9 +162,22 @@ Future<String> verifyOrdinaryWebRtc(String config) async {
             hostRoom.session?.progressStalled == true &&
             guestRoom.session?.progressStalled == true,
       );
+      await _waitUntil(
+        () async =>
+            confirmedThrough(119) &&
+            hostLink.answersApplied == 2 &&
+            await hostLink.routeConnected() &&
+            await guestLink.routeConnected(),
+      );
     } finally {
       guestInputs.holdSync = null;
       inputGap.complete();
+    }
+    if (rejected.isNotEmpty ||
+        links.opened.length != 2 ||
+        hostLink.offerCredentials.length != 2 ||
+        hostLink.offerCredentials.first == hostLink.offerCredentials.last) {
+      throw StateError('ICE recovery did not retry signaling with fresh credentials on the original links.');
     }
     await _waitUntil(() async => confirmedThrough(359));
     if (hostRoom.session?.progressStalled != false || guestRoom.session?.progressStalled != false) {
@@ -190,7 +208,8 @@ Future<String> verifyOrdinaryWebRtc(String config) async {
     final resumedAt = await pictures();
     await _waitUntil(() async => await pictures() >= resumedAt + 15);
     return 'Ordinary PS1 WebRTC passed for ${profile.titleId}: 360 confirmed frames, three matching RAM fingerprints, '
-        'both pads, recovery from an input gap, an unchanged local card, and hardware playback after room release.';
+        'both pads, fresh ICE credentials after failed-route signaling retries, an unchanged local card, '
+        'and hardware playback after room release.';
   } finally {
     try {
       await Future.wait([if (receiver != null) receiver.leave(), if (sender != null) sender.leave()])

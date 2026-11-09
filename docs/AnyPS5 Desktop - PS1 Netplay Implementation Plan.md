@@ -576,6 +576,23 @@ frames, matched three RAM fingerprints, preserved the local card
 during the match, and returned to hardware playback. The focused
 Windows suite passed 67 tests, including the Quick Menu status change.
 
+On a failed ICE route during an active match, the
+[PS1 route recovery](../lib/core/online/ps1_ice_recovery.dart) keeps both
+existing channels and the input epoch. Only the host creates a new
+offer. The guest can request it, and both ends can replay their current
+description and candidates. The authenticated room carries numbered
+signals so old route traffic cannot replace the current description.
+Retries run every 750 ms and stop after eight seconds. A closed channel
+still ends the match and follows the existing return-to-game path.
+The [peer regression](../test/core/online/ps1_netplay_peer_test.dart)
+also rejects the first local description on each side and verifies
+that the same negotiation continues. The offscreen CTR and Tekken 3
+probes on the first revision used an injected failure notification and
+rejected the first request, offer, and answer through the local gateway
+fixture. Both applied fresh ICE credentials and reached 360 confirmed
+frames on their original two links. The final SDP retry changes were
+verified in the focused suite. Physical route loss and WAN remain open.
+
 ### Windows development checkpoint
 
 Set `ANYPS5_PS1_NETPLAY=1` on an experimental Windows x64 build to invite

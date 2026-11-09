@@ -6,11 +6,13 @@ import 'ps1_checkpoint_transfer.dart';
 import 'ps1_netplay_identity.dart';
 import 'ps1_netplay_session.dart';
 
-enum Ps1NetplaySignalKind { offer, answer, candidate }
+part 'ps1_ice_recovery.dart';
+
+enum Ps1NetplaySignalKind { offer, answer, candidate, restart }
 
 /// Signaling payload carried inside an authenticated, one-use room exchange.
 final class Ps1NetplaySignal {
-  const Ps1NetplaySignal._(this.kind, this.data);
+  const Ps1NetplaySignal._(this.kind, this.data, this.route);
 
   static const version = 1;
   static const _maxSdp = 64 * 1024;
@@ -18,20 +20,29 @@ final class Ps1NetplaySignal {
 
   final Ps1NetplaySignalKind kind;
   final Map<String, dynamic> data;
+  final int route;
 
   static Ps1NetplaySignal? tryRead(Object? value) {
-    if (value is! Map || value.length != 3 || value['version'] is! int || value['version'] != version) return null;
+    if (value is! Map || value['version'] is! int || value['version'] != version) return null;
+    final hasRoute = value.containsKey('route');
+    final route = hasRoute ? value['route'] : 0;
+    if (value.length != (hasRoute ? 4 : 3) || route is! int || (hasRoute && (route < 1 || route > 0x7fffffff))) {
+      return null;
+    }
     final kind = Ps1NetplaySignalKind.values.where((kind) => kind.name == value['kind']).firstOrNull;
     final data = value['data'];
     if (kind == null || data is! Map) return null;
-    return _read(kind, data);
+    return _read(kind, data, route: route);
   }
 
-  static Ps1NetplaySignal? _read(Ps1NetplaySignalKind kind, Map<dynamic, dynamic> data) {
+  static Ps1NetplaySignal? _read(Ps1NetplaySignalKind kind, Map<dynamic, dynamic> data, {int route = 0}) {
+    if (kind == Ps1NetplaySignalKind.restart) {
+      return route > 0 && data.isEmpty ? Ps1NetplaySignal._(kind, const {}, route) : null;
+    }
     if (kind != Ps1NetplaySignalKind.candidate) {
       final sdp = data['sdp'];
       if (data.length != 2 || data['type'] != kind.name || !_validString(sdp, _maxSdp)) return null;
-      return Ps1NetplaySignal._(kind, Map.unmodifiable({'type': kind.name, 'sdp': sdp}));
+      return Ps1NetplaySignal._(kind, Map.unmodifiable({'type': kind.name, 'sdp': sdp}), route);
     }
 
     final candidate = data['candidate'];
@@ -46,13 +57,17 @@ final class Ps1NetplaySignal {
         (mid == null && index == null)) {
       return null;
     }
-    return Ps1NetplaySignal._(kind, Map.unmodifiable({'candidate': candidate, 'sdpMid': mid, 'sdpMLineIndex': index}));
+    return Ps1NetplaySignal._(
+      kind,
+      Map.unmodifiable({'candidate': candidate, 'sdpMid': mid, 'sdpMLineIndex': index}),
+      route,
+    );
   }
 
   static bool _validString(Object? value, int limit) =>
       value is String && value.isNotEmpty && value.length <= limit && !value.contains('\u0000');
 
-  Map<String, Object> toJson() => {'version': version, 'kind': kind.name, 'data': data};
+  Map<String, Object> toJson() => {'version': version, 'kind': kind.name, 'data': data, if (route > 0) 'route': route};
 }
 
 /// Connects one authenticated PS1 match to a dedicated WebRTC peer.
@@ -110,6 +125,13 @@ final class Ps1NetplayPeer {
   final _earlyCandidates = <Map<String, dynamic>>[];
   final _remoteCandidates = <(Object?, Object?, Object?)>{};
   final _localCandidates = <(Object?, Object?, Object?)>{};
+  late final _ice = _Ps1IceRecovery(
+    link: _link,
+    host: _host,
+    active: () => !_finished && session.phase == Ps1NetplayPhase.running,
+    disconnect: session.disconnect,
+    send: sendSignal,
+  );
 
   Timer? _poll;
   Timer? _connectTimeout;
@@ -132,7 +154,11 @@ final class Ps1NetplayPeer {
       ..onMessage = session.receiveInput
       ..onCandidate = _localCandidate
       ..onState = (state) {
-        if (state == 'failed' || state == 'closed') session.disconnect();
+        if (state == 'failed' && _ice.available) {
+          _ice.request();
+        } else if (state == 'failed' || state == 'closed' || state == 'game-closed') {
+          session.disconnect();
+        }
       };
     _poll = Timer.periodic(_pollInterval, (_) => _tick());
     _connectTimeout = Timer(_timeout, () {
@@ -163,6 +189,11 @@ final class Ps1NetplayPeer {
   /// Accepts a signal already bound by the caller to this match and peer.
   void receiveSignal(Ps1NetplaySignal signal) {
     if (_finished) return;
+    if (signal.route != 0) {
+      _ice.receive(signal);
+      return;
+    }
+    if (_ice.route != 0) return;
     if (signal.kind == Ps1NetplaySignalKind.candidate) {
       if (_remoteCandidates.length >= _maxCandidates || !_remoteCandidates.add(_candidateKey(signal.data))) return;
     } else {
@@ -229,7 +260,12 @@ final class Ps1NetplayPeer {
       (data['candidate'], data['sdpMid'], data['sdpMLineIndex']);
 
   void _localCandidate(Map<String, dynamic> data) {
-    if (_finished || _localCandidates.length >= _maxCandidates) return;
+    if (_finished) return;
+    if (_ice.route != 0) {
+      _ice.localCandidate(data);
+      return;
+    }
+    if (_localCandidates.length >= _maxCandidates) return;
     final signal = Ps1NetplaySignal._read(Ps1NetplaySignalKind.candidate, {
       'candidate': data['candidate'],
       'sdpMid': data['sdpMid'],
@@ -258,6 +294,7 @@ final class Ps1NetplayPeer {
 
   Future<void> _closeLink() async {
     _closing = true;
+    _ice.close();
     _poll?.cancel();
     _connectTimeout?.cancel();
     _pending.clear();
