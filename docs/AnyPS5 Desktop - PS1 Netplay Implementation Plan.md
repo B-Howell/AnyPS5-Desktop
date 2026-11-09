@@ -208,6 +208,11 @@ A patched native single-core test completed the same race under 120 ms RTT,
 All 114 fingerprints matched. Peak worker costs were 59.06 and 71.75 ms,
 which exceed the 16.67 ms budget. The earlier separate prediction lane is
 the implementation target for smooth rollback.
+A scratch Windows prototype then ran two isolated core workers per peer
+and passed the same 13,706-frame race with 114 matching checkpoints.
+That run shared the machine with the PS2 test and used the Python harness
+clock. Treat it as a correctness result. Native frame-budget qualification
+and continuous in-app video and audio remain separate tests.
 The [native timeline](../windows/runner/ps1_netplay_timeline.h) owns the
 delay, retransmit window and ordered inputs. Its
 [unit test](../windows/runner/tests/ps1_netplay_timeline_test.cpp) checks
