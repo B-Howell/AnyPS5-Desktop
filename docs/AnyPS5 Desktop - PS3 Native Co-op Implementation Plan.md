@@ -66,6 +66,29 @@ For private RPCN, also qualify ticket trust. The
 uses the library's RPCN signing key for verification, so a freshly
 generated private server key cannot be assumed to work with that build.
 
+The RPCN 1.9.0 candidate built on Ubuntu 22.04 in WSL with Rust 1.95.0
+and `cargo build --release --locked -j3`. The tested binary's SHA-256
+was `3db016aab580761cbf085cb5f34638b8f0c70f9f8138e562539d50e963229408`.
+In a fresh loopback-only namespace it opened TLS on `127.0.0.1:31313`
+and UDP signaling on `[::1]:3657`. The probe verified the local TLS
+certificate and the protocol-32 greeting, rejected an unknown login,
+then authenticated two disposable fixtures. Both registered over UDP
+and queried the other fixture's advertised endpoint. The server shut
+down cleanly and released both listeners. The probe also rejected an
+invocation outside the private namespace before starting the server.
+
+The running RPCN server issued a signed test ticket. OpenSSL verified
+the ticket with the deployment's temporary public key and rejected the
+same ticket under the public key shipped by RPCN. Both keys used the
+same curve. This isolates the trust boundary between two otherwise
+working services. A private deployment needs an explicit, RPCN-only
+trusted public key in Refresh, with ticket verification, expiration
+checks, and Patchwork enforcement enabled. The combined test should
+submit real tickets from both fixture users to Refresh and reject an
+untrusted, altered, or expired ticket before attempting in-game login.
+The RPCN probe exercised the wire protocol without loading the emulator
+or playing a level.
+
 Once the exact title update and protected client patch qualify, point the
 isolated client profile at the private server using
 [Refresher AutoDiscover and Patchwork](https://docs.lbpbonsai.com/rpcs3.html).
