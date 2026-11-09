@@ -820,3 +820,20 @@ card hashes matched after teardown and the loopback adapters closed.
 The paired input sequence, per-step counters and frame captures are in
 the local `gt4-embedded-4e5723` receipt. Next, finish a full embedded race
 on the same private LAN and capture the results from both consoles.
+
+### Offscreen race automation follow-up
+
+Two more attempts replayed the same paired menu inputs. A Windows file
+sharing error opening a step command interrupted the first driving
+attempt. The local harness now retries transient sharing failures before
+consuming a command. With that change, the pair reached step 78 with
+the same race clock at 27.46 seconds. The host sent 5,183 and received
+5,299 UDP/5000 frames. The guest sent 5,299 and received 5,181.
+
+The minimap-only driver lost its red marker when the cars overlapped
+and missed the first corner. Both cars stopped at the tire barrier.
+The harness then shut down both cores with exit zero, empty fault logs,
+and unchanged source cards. This run confirms the command retry and
+repeatable shared race entry. A full race still needs a driver that can
+recover from occluded markers and read the road at corners. Captures
+and logs are in the local `gt4-finish-eaa3a732` receipt.
