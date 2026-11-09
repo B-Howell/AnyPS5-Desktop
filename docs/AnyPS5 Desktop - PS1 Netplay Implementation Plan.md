@@ -324,6 +324,40 @@ The guest rejected a truncated checkpoint and a wrong disc digest.
 The local install and race receipts are under `ps1-netplay-package`.
 This verifies package setup and the native checkpoint path on one PC.
 
+### Checkpoint capture from ordinary Play
+
+The [Windows runner](../windows/runner/retro_core_host.cpp) reports a
+`localBlankCardCheckpoint` source token after an ordinary PS1 session
+presents a visible frame with a core that exposes the blank-card exporter.
+`ps1LocalCheckpointExport` requires that token and the texture ID and
+queues a read-only capture on the emulation thread at a frame boundary.
+It returns a request ID for the existing result and cancel methods.
+The returned capture frame is the ordinary runner's telemetry counter.
+The match still needs its own input epoch. A busy card can reject the
+capture while ordinary play continues. The worker only calls the
+blank-card exporter for these requests.
+
+The [native worker fixture](../windows/runner/tests/ps1_netplay_runner_probe.cpp)
+and its [driver](../windows/runner/tests/run_ps1_netplay_probe.py) exercise
+this path with `--ordinary-checkpoint` and a temporary BIOS and save
+directory. Pass `--ordinary-control-core` with the preceding checkpoint
+core to check that it cannot handle the new request. This entry point
+captures state only. Starting the match also needs a verified compatible
+core and settings, isolated match cards, and a reversible handoff from
+the local session. The Quick Menu still uses the existing co-op-ready
+flow.
+
+The Windows headless worker used hardware rendering and captured a
+4,359,173-byte checkpoint from CTR at telemetry frame 616. The fixture
+verified the blank card and absence of its synthetic private marker,
+preserved the original scratch save through teardown, rejected a wrong
+source token, and kept the same worker rendering after cancellation and
+capture. A request while paused completed without advancing the
+texture. The preceding core reported no ordinary capture support.
+Local receipts are in `ps1-local-bridge-89f15e1`. This fixture calls
+the worker directly. It leaves the Flutter method-channel route and
+hardware-to-match restore to the launcher integration test.
+
 ### Windows development checkpoint
 
 Set `ANYPS5_PS1_NETPLAY=1` on an experimental Windows x64 build to invite

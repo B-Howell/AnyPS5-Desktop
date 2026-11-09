@@ -5,6 +5,7 @@ from contextlib import ExitStack
 import json
 from pathlib import Path
 from queue import Queue
+from shutil import copyfile
 from subprocess import CREATE_NO_WINDOW, IDLE_PRIORITY_CLASS, PIPE, Popen, TimeoutExpired
 import sys
 from tempfile import TemporaryDirectory
@@ -13,11 +14,13 @@ from time import monotonic, sleep
 
 
 class Peer:
-    def __init__(self, executable, core, disc, bios, seat, *, local=False):
+    def __init__(self, executable, core, disc, bios, seat, *, local=False, saves=None):
         self.lines = Queue()
         arguments = [executable, core, disc, bios, str(seat)]
         if local:
             arguments.append("local")
+        if saves is not None:
+            arguments.extend(("ordinary", saves))
         self.process = Popen(
             arguments,
             stdin=PIPE, stdout=PIPE, text=True,
@@ -76,6 +79,10 @@ def main():
     parser.add_argument("--cutover", action="store_true", help="Replace the second player and verify the new input epoch")
     parser.add_argument("--cutover-frame", type=int, help="Trace frame where the replacement guest takes over")
     parser.add_argument("--local-handoff", action="store_true", help="Join a host already playing locally")
+    parser.add_argument("--ordinary-checkpoint", action="store_true",
+                        help="Verify that normal play exports only a blank match card")
+    parser.add_argument("--ordinary-control-core", type=Path,
+                        help="Also check an older core lacks the ordinary-play export capability")
     args = parser.parse_args()
     if args.frames < 120:
         parser.error("at least 120 frames are required to compare a fingerprint")
@@ -87,8 +94,15 @@ def main():
         parser.error("a traced cutover requires --cutover-frame")
     if args.local_handoff and (not args.checkpoint_guest or args.trace or args.cutover):
         parser.error("--local-handoff requires --checkpoint-guest and runs independently of --trace and --cutover")
+    if args.ordinary_checkpoint and (args.local_handoff or args.checkpoint_guest or args.trace):
+        parser.error("--ordinary-checkpoint runs independently of netplay checks")
+    if args.ordinary_control_core and not args.ordinary_checkpoint:
+        parser.error("--ordinary-control-core requires --ordinary-checkpoint")
 
     with ExitStack() as cleanup:
+        if args.ordinary_checkpoint:
+            verify_ordinary_checkpoint(args, cleanup)
+            return
         if args.local_handoff:
             verify_local_handoff(args, cleanup)
             return
@@ -137,6 +151,77 @@ def main():
                 assert peers[1].send("pad 8") == "pad"
                 advance(frame + 180)
             verify_checkpoint(args, peers[0], cleanup, during_transfer)
+
+
+def verify_ordinary_checkpoint(args, cleanup):
+    root = Path(cleanup.enter_context(TemporaryDirectory(prefix="anyps5-ordinary-ps1-")))
+    saves = root / "saves"
+    saves.mkdir()
+    bios = root / "scph1001.bin"
+    copyfile(args.bios, bios)
+    disc = args.disc.resolve()
+    card = saves / (disc.stem + ".srm")
+    marker = b"AnyPS5 synthetic ordinary save marker"
+    snapshot = root / "snapshot"
+    path = json.dumps(snapshot.as_posix())
+
+    def boot(core, owner):
+        peer = Peer(args.probe.resolve(), core.resolve(), disc, bios, 0, saves=saves)
+        owner.callback(peer.close)
+        assert peer.receive() == "ready"
+        return peer
+
+    with ExitStack() as seed:
+        boot(args.core, seed)
+    blank = card.read_bytes()
+    assert len(blank) == 128 * 1024
+    private = blank[:-len(marker)] + marker
+    card.write_bytes(private)
+
+    with ExitStack() as active:
+        peer = boot(args.core, active)
+        renderer = peer.send("renderer")
+        assert peer.send("local-support") == "yes"
+        assert peer.send(f"checkpoint 1 {path}") == "unavailable"
+        assert peer.send(f"stale-blank 1 {path}") == "unavailable"
+        assert peer.send(f"cancel-blank 1 {path}") == "cancelled"
+        assert not snapshot.exists()
+        before = int(peer.send("published"))
+        deadline = monotonic() + 3
+        while True:
+            reply = peer.send(f"blank-checkpoint 1 {path}")
+            if reply not in ("rejected", "unavailable") or monotonic() >= deadline:
+                break
+            sleep(0.017)
+        name, frame, size = reply.split()
+        data = snapshot.read_bytes()
+        assert name == "checkpoint" and int(frame) > 0 and int(size) == len(data)
+        assert marker not in data and blank in data
+        assert card.read_bytes() == private
+        deadline = monotonic() + 3
+        while int(peer.send("published")) <= before + 1:
+            if monotonic() >= deadline:
+                raise TimeoutError("Ordinary play stopped publishing after the checkpoint")
+            sleep(0.017)
+        assert peer.send("pause") == "pause"
+        sleep(0.05)
+        paused = peer.send("published")
+        # Some frame boundaries are busy. A rejected request must still
+        # complete without stepping or unpausing the source.
+        paused_reply = peer.send(f"blank-checkpoint 1 {path}")
+        assert paused_reply.startswith("checkpoint ") or paused_reply == "rejected"
+        assert peer.send("published") == paused
+        assert peer.send("resume") == "resume"
+    assert card.read_bytes() == private
+
+    if args.ordinary_control_core:
+        with ExitStack() as active:
+            peer = boot(args.ordinary_control_core, active)
+            assert peer.send("local-support") == "no"
+            assert peer.send(f"blank-checkpoint 1 {path}") == "unavailable"
+    assert card.read_bytes() == private
+    print(f"Ordinary {renderer} worker exported {size} bytes at frame {frame}, kept the source card, "
+          "and continued publishing after cancellation and export.")
 
 
 def verify_checkpoint(args, host, cleanup, during_transfer):

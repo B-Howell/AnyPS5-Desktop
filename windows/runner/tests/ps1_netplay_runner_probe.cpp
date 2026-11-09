@@ -43,12 +43,17 @@ class ProbeTexture final : public flutter::TextureRegistrar {
 };
 
 int main(int argc, char** argv) {
-  if (argc != 5 && argc != 6) return 2;
+  if (argc < 5 || argc > 7) return 2;
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
   ProbeTexture texture;
   const auto seat = std::stoul(argv[4]);
   const bool local_staging = argc == 6 && std::string_view(argv[5]) == "local";
-  RetroCoreSession session(&texture, argv[1], argv[2], "", "", "", {}, seat, argv[3], local_staging);
+  const bool ordinary = argc == 7 && std::string_view(argv[5]) == "ordinary";
+  if (argc == 7 && !ordinary) return 2;
+  const auto bios_directory = std::filesystem::u8path(argv[3]).parent_path().u8string();
+  RetroCoreSession session(&texture, argv[1], argv[2], ordinary ? bios_directory : "",
+                           ordinary ? argv[6] : "", "", {},
+                           ordinary ? std::nullopt : std::optional<unsigned>(seat), argv[3], local_staging);
   if (!session.Start()) return 3;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
   while (std::chrono::steady_clock::now() < deadline) {
@@ -57,15 +62,25 @@ int main(int argc, char** argv) {
       std::cerr << std::get<std::string>(status.at(Value("error"))) << '\n';
       return 4;
     }
-    if (std::get<bool>(status.at(Value("netplayReady")))) break;
+    if (std::get<bool>(status.at(Value(ordinary ? "startupVisible" : "netplayReady")))) break;
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
-  if (!std::get<bool>(session.Status().at(Value("netplayReady")))) return 4;
+  if (!std::get<bool>(session.Status().at(Value(ordinary ? "startupVisible" : "netplayReady")))) return 4;
   std::cout << "ready" << std::endl;
   std::string command;
   while (std::cin >> command && command != "quit") {
     if (command == "published") {
       std::cout << texture.published() << std::endl;
+      continue;
+    }
+    if (ordinary && (command == "pause" || command == "resume")) {
+      session.Pause(command == "pause");
+      std::cout << command << std::endl;
+      continue;
+    }
+    if (ordinary && command == "renderer") {
+      const auto status = session.Status();
+      std::cout << (std::get<bool>(status.at(Value("hardware"))) ? "hardware" : "software") << std::endl;
       continue;
     }
     if (command == "history") {
@@ -110,7 +125,15 @@ int main(int argc, char** argv) {
       if (std::chrono::steady_clock::now() >= until) return 7;
       continue;
     }
-    if (command == "checkpoint" || command == "restore") {
+    if (command == "local-support") {
+      const auto status = session.Status();
+      const auto available = status.find(Value("localBlankCardCheckpoint"));
+      std::cout << (available != status.end() && IntegerValue(available->second) ? "yes" : "no") << std::endl;
+      continue;
+    }
+    if (command == "checkpoint" || command == "blank-checkpoint" || command == "cancel-blank" ||
+        command == "stale-blank" ||
+        command == "restore") {
       unsigned digest_byte;
       std::string path;
       if (!(std::cin >> digest_byte >> std::quoted(path)) || digest_byte > UINT8_MAX) return 7;
@@ -128,9 +151,25 @@ int main(int argc, char** argv) {
         std::ifstream file(std::filesystem::u8path(path), std::ios::binary);
         if (!file.read(reinterpret_cast<char*>(restore.data()), static_cast<std::streamsize>(restore.size()))) return 7;
       }
-      const auto request = session.RequestCheckpoint(digest, std::move(restore), first);
+      std::optional<int64_t> request;
+      if (command == "checkpoint" || command == "restore") {
+        request = session.RequestCheckpoint(digest, std::move(restore), first);
+      } else {
+        const auto status = session.Status();
+        const auto entry = status.find(Value("localBlankCardCheckpoint"));
+        const auto source = entry == status.end() ? 0 : IntegerValue(entry->second).value_or(0);
+        request = session.RequestBlankCardCheckpoint(source + (command == "stale-blank" ? 1 : 0), digest);
+      }
       if (!request) {
         std::cout << "unavailable" << std::endl;
+        continue;
+      }
+      if (command == "cancel-blank") {
+        session.CancelCheckpoint(*request);
+        const auto discarded = session.TakeCheckpoint(*request);
+        const auto* available = std::get_if<bool>(&discarded);
+        if (!available || *available) return 7;
+        std::cout << "cancelled" << std::endl;
         continue;
       }
       const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
@@ -139,7 +178,7 @@ int main(int argc, char** argv) {
         if (const auto* snapshot = std::get_if<Map>(&value)) {
           const auto& bytes = std::get<CheckpointBytes>(snapshot->at(Value("state")));
           const auto frame = std::get<int64_t>(snapshot->at(Value("frame")));
-          if (command != "checkpoint" || bytes.size() <= 40 || bytes[8] != digest[0]) return 7;
+          if (command == "restore" || bytes.size() <= 40 || bytes[8] != digest[0]) return 7;
           std::ofstream file(std::filesystem::u8path(path), std::ios::binary);
           if (!file.write(reinterpret_cast<const char*>(bytes.data()),
                           static_cast<std::streamsize>(bytes.size()))) return 7;
@@ -149,7 +188,7 @@ int main(int argc, char** argv) {
           break;
         }
         if (const auto* restored = std::get_if<bool>(&value)) {
-          if (command != "restore") return 7;
+          if (command == "checkpoint") return 7;
           std::cout << (*restored ? "restored" : "rejected") << std::endl;
           break;
         }
