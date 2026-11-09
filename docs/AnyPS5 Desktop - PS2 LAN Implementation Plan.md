@@ -384,6 +384,11 @@ While the admitted PS2 LAN game is loading, Guide opens a Quick Menu
 with **Cancel LAN Play** and the startup status. The action belongs to
 that match. Cancel releases its room and closes a worker that finishes
 opening after cancellation.
+During play, the Quick Menu takes local controller input and sends
+neutral input to the game. The online PS2 worker stays running and
+the LAN bridge continues exchanging frames. The Quick Menu reports
+the game as running. The local network-card setup can still pause
+while its Quick Menu is open.
 The launcher verifies the ISO itself when joining. If the LAN core or
 BIOS is missing, the action opens the existing setup page. **Back**
 returns to the same friend or invite without creating, joining or

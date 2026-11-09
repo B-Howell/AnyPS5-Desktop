@@ -55,6 +55,7 @@ class EmbeddedRetroGame extends RunningGame {
     this._netplayMedia,
     this.localNetplayStaging,
     this._ps2Lan,
+    this._localPs2LanSetup,
     this._online,
     this._sourcePaths,
     this._ordinaryRecovery,
@@ -75,7 +76,9 @@ class EmbeddedRetroGame extends RunningGame {
   bool _recoveryRestored = false;
   bool get _awaitingRecoveryRestore => _ordinaryRecovery != null && !_recoveryRestored;
   final bool _ps2Lan;
+  final bool _localPs2LanSetup;
   bool get _netplay => _netplayMedia != null;
+  bool get pausesForOverlay => !_netplay && !_online && (!_ps2Lan || _localPs2LanSetup) && !_awaitingRecoveryRestore;
   late final Timer _watch;
   late final Timer _input;
   bool _reading = false;
@@ -149,6 +152,7 @@ class EmbeddedRetroGame extends RunningGame {
     ({Ps1NetplayMedia media, int seat})? netplay,
     bool localNetplayStaging = false,
     ({Uint8List mac, String system, String saves})? ps2Lan,
+    bool localPs2LanSetup = false,
     Ps3OnlineProfile? onlineProfile,
     int? ordinaryRecovery,
     String? ordinaryCore,
@@ -210,6 +214,7 @@ class EmbeddedRetroGame extends RunningGame {
       netplay?.media,
       localNetplayStaging,
       ps2Lan != null,
+      localPs2LanSetup,
       onlineProfile != null,
       (core: core, disc: p.absolute(disc.path), system: p.join(folder, 'system')),
       ordinaryRecovery,
@@ -384,7 +389,7 @@ class EmbeddedRetroGame extends RunningGame {
     if (_closing) return;
     if (_playing != playing) {
       _playing = playing;
-      if (!_netplay && !_online && !_awaitingRecoveryRestore) {
+      if (pausesForOverlay) {
         unawaited(_channel.invokeMethod<void>('pause', !playing));
       }
     }

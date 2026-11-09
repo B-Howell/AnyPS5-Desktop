@@ -120,6 +120,7 @@ void main() {
     bool cancelAdmission = false,
     bool hostChanged = false,
     bool quickBootCancel = false,
+    bool quickMenuDuringPlay = false,
   }) async {
     final server = await FakeTogether.start();
     addTearDown(server.close);
@@ -190,7 +191,7 @@ void main() {
     const roomId = '12345678-1234-4234-8234-123456789abc';
     const local = '12345678-1234-4234-8234-123456789ab2';
     const hostDevice = '12345678-1234-4234-8234-123456789ab3';
-    if (quickBootCancel) server.me['id'] = local;
+    if (quickBootCancel || quickMenuDuringPlay) server.me['id'] = local;
     final protocol = RetroOnlineMode.lan.protocol;
     final invite = {
       'sessionId': roomId,
@@ -239,8 +240,10 @@ void main() {
       const channel = MethodChannel('anyps5/retro_core');
       final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       var stopped = false;
+      var paused = false;
       messenger.setMockMethodCallHandler(channel, (call) async {
         if (call.method == 'stop') stopped = true;
+        if (call.method == 'pause') paused = call.arguments == true;
         return switch (call.method) {
           'start' => 42,
           'status' => {'presented': true, 'ended': stopped},
@@ -253,6 +256,11 @@ void main() {
       await until(() => model.embeddedGame?.presented == true && model.starting == null);
       expect(model.overlay, isNull);
       expect(model.running?.$1.titleId, 'PS2-GT4');
+      model.padCommand(PadCommand.home);
+      expect(model.quickMenuPaused, isTrue);
+      await until(() => paused);
+      model.padCommand(PadCommand.home);
+      await until(() => !paused);
       await model.stopRunningGame();
       await until(() => model.overlay == Layer.emulatorMenu && !model.ps2LanSetupActive);
       expect(row(continueId).kind, isA<ActionRow>());
@@ -269,7 +277,7 @@ void main() {
       expect(model.running, isNull);
       return;
     }
-    if (quickBootCancel) {
+    if (quickBootCancel || quickMenuDuringPlay) {
       const path = 'game-sessions/$roomId';
       final room = {
         ...(server.answers['GET $path']!.$2 as Map<String, dynamic>),
@@ -293,6 +301,9 @@ void main() {
       final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       final starting = Completer<void>();
       final finishStart = Completer<void>();
+      final pauseRequests = <Object?>[];
+      final inputRequests = <Object?>[];
+      var exchanges = 0;
       var stopped = false;
       messenger.setMockMethodCallHandler(channel, (call) async {
         if (call.method == 'start') {
@@ -301,7 +312,13 @@ void main() {
           return 42;
         }
         if (call.method == 'stop') stopped = true;
-        return call.method == 'status' ? {'presented': false, 'ended': stopped} : null;
+        if (call.method == 'pause') pauseRequests.add(call.arguments);
+        if (call.method == 'input') inputRequests.add(call.arguments);
+        if (call.method == 'ps2LanExchange') {
+          exchanges++;
+          return <Uint8List>[];
+        }
+        return call.method == 'status' ? {'presented': quickMenuDuringPlay, 'ended': stopped} : null;
       });
       addTearDown(() async {
         for (final row in model.together.ps2LanRows()) {
@@ -329,6 +346,23 @@ void main() {
       await peer.setRemote({'type': 'answer', ...(answer['data'] as Map<String, dynamic>)});
       await starting.future.timeout(const Duration(seconds: 5));
       expect(model.starting?.titleId, 'PS2-TIMESPLITTERS');
+      if (quickMenuDuringPlay) {
+        finishStart.complete();
+        await until(() => model.embeddedGame?.presented == true && model.starting == null && exchanges > 0);
+        inputRequests.clear();
+        model.padCommand(PadCommand.home);
+        expect(model.overlay, Layer.quickMenu);
+        expect(row('ps2-lan-status').kind, isA<ActionRow>());
+        final before = exchanges;
+        await until(() => exchanges > before);
+        expect(inputRequests, anyElement(equals([0, 0, 0, 0, 0])));
+        expect(pauseRequests, isEmpty);
+        expect(model.quickMenuPaused, isFalse);
+        model.padCommand(PadCommand.home);
+        expect(model.overlay, isNull);
+        expect(pauseRequests, isEmpty);
+        return;
+      }
       model.padCommand(PadCommand.home);
       expect(model.overlay, Layer.quickMenu);
       expect(row('ps2-lan-status').title, 'Cancel LAN Play');
@@ -490,6 +524,11 @@ void main() {
   test(
     'PS2 LAN can be canceled from the Quick Menu before the worker opens',
     () => verifyBundledSetup(expired: false, quickBootCancel: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'PS2 LAN keeps exchanging frames while the Quick Menu is open',
+    () => verifyBundledSetup(expired: false, quickMenuDuringPlay: true),
     skip: Abi.current() != Abi.windowsX64,
   );
 }

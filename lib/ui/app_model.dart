@@ -4491,6 +4491,7 @@ class AppModel extends ChangeNotifier {
           netplay: netplay,
           localNetplayStaging: localNetplayStaging,
           ps2Lan: ps2Lan,
+          localPs2LanSetup: _ps2LanSetupActive,
           onlineProfile: onlineProfile,
           ordinaryRecovery: ordinaryRecovery?.ticket,
           ordinaryCore: ordinaryCore,
@@ -5457,7 +5458,7 @@ class AppModel extends ChangeNotifier {
     }
     final (game, run) = playing;
     final front = _frontForGuide;
-    quickMenuPaused = run is EmbeddedRetroGame;
+    _quickMenuOptionsSent = false;
     if (!front && preferences.pauseOnMenu && game.retro == null) {
       // An engine that takes presses: Options held on player 1's pad through the remote pad
       // bridge, whoever drives it (sent three times, 40 ms apart; the menu ~210 ms after the
@@ -5466,12 +5467,14 @@ class AppModel extends ChangeNotifier {
       if (server != null && server.gameTakesPresses) {
         final sent = server.pressButtons(RemotePacket.options);
         await Future<void>.delayed(const Duration(milliseconds: 210));
-        quickMenuPaused = await sent;
-        _padLog?.call('quick menu: ${quickMenuPaused ? 'Options pressed through the bridge' : 'no bridge took it'}');
+        _quickMenuOptionsSent = await sent;
+        _padLog?.call(
+          'quick menu: ${_quickMenuOptionsSent ? 'Options pressed through the bridge' : 'no bridge took it'}',
+        );
       } else {
         final key = optionsKey(game);
         final paused = key != null && await desktop.pressKey(run.pid, key);
-        quickMenuPaused = paused;
+        _quickMenuOptionsSent = paused;
         _padLog?.call('quick menu: ${paused ? 'pressed $key in the game' : 'could not pause the game'}');
       }
     }
@@ -5482,9 +5485,14 @@ class AppModel extends ChangeNotifier {
     if (!front) await raiseLauncher();
   }
 
-  /// Whether the game under the quick menu was sent its Options (paused, as far as the launcher
-  /// can tell).
-  bool quickMenuPaused = false;
+  bool _quickMenuOptionsSent = false;
+
+  /// Whether the embedded worker pauses for this menu or Options was sent to a standalone game.
+  bool get quickMenuPaused => switch (running?.$2) {
+    EmbeddedRetroGame(:final pausesForOverlay) => pausesForOverlay,
+    null => false,
+    _ => _quickMenuOptionsSent,
+  };
 
   /// PS held: Close Game? over a game in front; the home menu in the launcher.
   void homeHeld() {
