@@ -1825,7 +1825,9 @@ class AppModel extends ChangeNotifier {
     _navigator?.handle(event);
   }
 
-  bool get _retroSession => running?.$1.retro != null || starting?.retro != null;
+  Game? get _retroLaunchGame => starting?.retro != null ? starting : _ordinaryPs1Transition;
+
+  bool get _retroSession => running?.$1.retro != null || _retroLaunchGame != null;
 
   /// What the user moved the launcher with last: the controller's hints or the keys'.
   InputMode inputMode = InputMode.keyboardMouse;
@@ -5443,7 +5445,7 @@ class AppModel extends ChangeNotifier {
     final playing = running;
     if (!preferences.onboarded) return;
     if (playing == null) {
-      if (starting?.retro == null) return;
+      if (_retroLaunchGame == null) return;
       open(Layer.quickMenu);
       if (!_frontForGuide) await raiseLauncher();
       return;
@@ -5482,7 +5484,7 @@ class AppModel extends ChangeNotifier {
   /// PS held: Close Game? over a game in front; the home menu in the launcher.
   void homeHeld() {
     if (!preferences.onboarded) return;
-    if (running == null && starting?.retro != null) {
+    if (running == null && _retroLaunchGame != null) {
       unawaited(openQuickMenu());
       return;
     }
@@ -6209,14 +6211,17 @@ class AppModel extends ChangeNotifier {
             ],
           ),
         ];
-      case Layer.quickMenu when starting?.retro != null:
+      case Layer.quickMenu when _retroLaunchGame != null:
+        final onlineRows = together.ps1QuickRows();
         return [
           PanelCategory(
             id: 'quickMenu',
-            title: starting!.name,
+            title: _retroLaunchGame!.name,
             rows: [
-              PanelRow(id: 'retroPreparing', title: _retroSetupDetail ?? T.text('starting'), kind: const InfoRow('')),
+              if (onlineRows.isEmpty)
+                PanelRow(id: 'retroPreparing', title: _retroSetupDetail ?? T.text('starting'), kind: const InfoRow('')),
               PanelRow(id: 'resume', title: T.text('quickResume'), kind: ActionRow(resumeGame)),
+              ...onlineRows,
             ],
           ),
         ];

@@ -46,6 +46,7 @@ final class Ps1NetplaySession {
     this.restoreCheckpoint,
     this.catchupSource,
     this.catchupReplay,
+    this.onStatusChanged,
     this.onRunning,
     int? hostEpoch,
     this.timeout = const Duration(seconds: 30),
@@ -80,6 +81,7 @@ final class Ps1NetplaySession {
   final Future<void> Function(Ps1CheckpointSnapshot)? restoreCheckpoint;
   final Ps1CatchupSource? catchupSource;
   final Ps1CatchupReplay? catchupReplay;
+  final void Function()? onStatusChanged;
   final void Function()? onRunning;
   final Duration timeout;
 
@@ -92,6 +94,7 @@ final class Ps1NetplaySession {
   final _done = Completer<void>();
   bool _peerIdentified = false;
   bool _preparing = false;
+  bool get preparingGame => _phase == Ps1NetplayPhase.preparing && _preparing;
   bool _ready = false;
   bool _peerReady = false;
   bool _startSent = false;
@@ -343,7 +346,9 @@ final class Ps1NetplaySession {
   Future<void> _prepare() async {
     _preparing = true;
     try {
-      await runner.prepare(seat);
+      final preparing = runner.prepare(seat);
+      onStatusChanged?.call();
+      await preparing;
       if (_phase == Ps1NetplayPhase.closed) return;
       final transfer = _checkpointTransfer;
       if (transfer != null) {
@@ -388,6 +393,7 @@ final class Ps1NetplaySession {
       _phase = Ps1NetplayPhase.running;
       _touch();
       if (seat == 1) _sendControl('started');
+      onStatusChanged?.call();
       if (_phase == Ps1NetplayPhase.running) onRunning?.call();
     } on Object {
       _close(Ps1NetplayEnd.runner, notify: true);
@@ -541,6 +547,7 @@ final class Ps1NetplaySession {
       }
     }
     unawaited(_stop());
+    onStatusChanged?.call();
   }
 
   Future<void> _stop() async {

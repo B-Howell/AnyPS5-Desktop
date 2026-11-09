@@ -520,10 +520,25 @@ local worker stays active while waiting for the guest to connect. A
 local gateway and paired test links run the real invitation and
 checkpoint protocol.
 The mocked native channel verifies the park, detach, isolated boot,
-frame-zero import, and running match. Leaving through the Quick Menu
-closes the peer and room and restores the original game on a new
+frame-zero import, and running match. The online row shows **Waiting for
+the other player** until the compatible peer handshake completes and
+then **Preparing both games** until play begins. Cancel remains
+available during both stages. During teardown, **Ending online play**
+replaces the action with a status row until cleanup finishes. The
+Quick Menu also recognizes the loading card during a worker handoff,
+including the gap between the two workers. The integration test holds
+the native park and reopen replies and checks the Quick Menu's rows
+before progressing. Leaving through the Quick
+Menu closes the peer and room and restores the original game on a new
 texture. This covers launcher orchestration. A two-client run with real
 workers, WebRTC, and the production service remains to be verified.
+
+On Windows, the focused suite passed 66 tests using the pinned CTR
+fixture. The suite includes the [PS1 setup](../test/ui/ps1_netplay_setup_test.dart),
+media, session, room and embedded worker tests plus the existing retro
+startup, session and menu window tests. The new assertions reproduced
+the stale waiting message and the missing row during recovery before
+the fix. The Guide command was dispatched through the launcher model.
 
 ### Windows development checkpoint
 

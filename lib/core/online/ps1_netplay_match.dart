@@ -20,7 +20,7 @@ final class Ps1NetplayMatch {
     this.restoreCheckpoint,
     this.catchupSource,
     this.catchupReplay,
-    this.onRunning,
+    this.onStatusChanged,
   });
 
   final RetroOnlineRooms rooms;
@@ -31,7 +31,7 @@ final class Ps1NetplayMatch {
   final Future<void> Function(Ps1CheckpointSnapshot)? restoreCheckpoint;
   final Ps1CatchupSource? catchupSource;
   final Ps1CatchupReplay? catchupReplay;
-  final void Function()? onRunning;
+  final void Function()? onStatusChanged;
   final _closing = Completer<void>();
   final _done = Completer<void>();
   final _signals = <Map<String, dynamic>>[];
@@ -106,7 +106,7 @@ final class Ps1NetplayMatch {
       restoreCheckpoint: seat == 1 ? restoreCheckpoint : null,
       catchupSource: seat == 0 ? catchupSource : null,
       catchupReplay: seat == 1 ? catchupReplay : null,
-      onRunning: onRunning,
+      onStatusChanged: onStatusChanged,
       seat: seat,
       hostEpoch: seat == 0 ? Random.secure().nextInt(0x7fffffff) + 1 : null,
       sendSignal: (message) async => rooms.send(room, bound, message.toJson()),
@@ -151,6 +151,7 @@ final class Ps1NetplayMatch {
       // Wait for any in-flight creation so it cannot leave a room behind.
       final peer = _peer;
       if (peer == null) {
+        onStatusChanged?.call();
         try {
           await _entering;
         } on Object {

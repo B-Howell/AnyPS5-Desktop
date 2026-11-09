@@ -273,6 +273,8 @@
   "ps1OnlineCancel": "Çevrimiçi oturumu iptal et",
   "ps1OnlinePlaying": "Oyun devam ediyor",
   "ps1OnlineWaiting": "Diğer oyuncu bekleniyor",
+  "ps1OnlinePreparing": "İki oyuncunun oyunu hazırlanıyor",
+  "ps1OnlineEnding": "Çevrimiçi oyun sonlandırılıyor",
   "ps1OnlineUnavailable": "Çevrimiçi PS1 oyunları için bu özelliğin etkin olduğu bir Windows sürümü ve AnyTogether bağlantısı gerekiyor.",
   "ps1OnlineDisc": "Bu oyunun desteklenen CUE ve parça dosyalarını PS1 kitaplığına ekle.",
   "ps1OnlineBios": "Çevrimiçi PS1 oyunu için eşleşen bir SCPH-1001 BIOS dökümü gerekir. Doğru dosyayla tekrar dene.",

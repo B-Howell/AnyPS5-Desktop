@@ -297,7 +297,7 @@ class PanelView extends StatelessWidget {
                                   color: model.accentChoice.color,
                                 ).copyWith(letterSpacing: 1.4 * scale),
                               ),
-                            if (model.overlay == Layer.quickMenu)
+                            if (model.overlay == Layer.quickMenu && model.running != null)
                               Text(
                                 T.upper(T.text(model.quickMenuPaused ? 'quickPaused' : 'quickRunning')),
                                 style: AppText.display(

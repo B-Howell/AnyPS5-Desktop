@@ -119,14 +119,25 @@ extension TogetherPs1Netplay on TogetherModel {
   List<PanelRow> ps1NetplayRows() {
     if (!_ps1NetplayEnabled) return const [];
     if (_ps1Match case final match?) {
-      final playing = match.session?.phase == Ps1NetplayPhase.running;
+      final session = match.session;
+      final playing = session?.phase == Ps1NetplayPhase.running;
+      final ending = match.closed || session?.phase == Ps1NetplayPhase.closed;
       return [
-        PanelRow(
-          id: 'ps1-netplay-leave',
-          title: T.text(playing ? 'ps1OnlineLeave' : 'ps1OnlineCancel'),
-          detail: T.text(playing ? 'ps1OnlinePlaying' : 'ps1OnlineWaiting'),
-          kind: ActionRow(() => unawaited(match.leave()), destructive: true),
-        ),
+        if (ending)
+          PanelRow(id: 'ps1-netplay-ending', title: T.text('ps1OnlineEnding'), kind: const InfoRow(''))
+        else
+          PanelRow(
+            id: 'ps1-netplay-leave',
+            title: T.text(playing ? 'ps1OnlineLeave' : 'ps1OnlineCancel'),
+            detail: T.text(
+              playing
+                  ? 'ps1OnlinePlaying'
+                  : session?.preparingGame == true
+                  ? 'ps1OnlinePreparing'
+                  : 'ps1OnlineWaiting',
+            ),
+            kind: ActionRow(() => unawaited(match.leave()), destructive: true),
+          ),
       ];
     }
     return const [];
@@ -283,7 +294,7 @@ extension TogetherPs1Netplay on TogetherModel {
         catchupSource: borrowed?.source,
         restoreCheckpoint: mode.needsCheckpoint && host == null ? owned.restoreCheckpoint : null,
         catchupReplay: mode == Ps1NetplayRoomMode.staged && host == null ? owned.replayHistory : null,
-        onRunning: app.refresh,
+        onStatusChanged: app.refresh,
       );
       _ps1Match = opened = match;
       if (host != null) {

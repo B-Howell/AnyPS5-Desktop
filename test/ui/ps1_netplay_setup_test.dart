@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:anyps5_desktop/core/controllers/pad_info.dart';
 import 'package:anyps5_desktop/core/game_library.dart';
+import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/managed_retro.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
@@ -418,6 +419,8 @@ void main() {
     var ended = false;
     var recoveredPlaying = false;
     var matchPumped = false;
+    final finishPark = Completer<void>();
+    final finishRecovery = Completer<void>();
     late String core;
     messenger.setMockMethodCallHandler(channel, (call) async {
       switch (call.method) {
@@ -464,6 +467,7 @@ void main() {
           native.add('import');
           return 52;
         case 'ps1CheckpointResult':
+          if (call.arguments == 51) await finishPark.future;
           return call.arguments == 51 ? {'frame': 616, 'state': bytes} : true;
         case 'ps1LocalCheckpointDetach':
           native.add('detach');
@@ -479,6 +483,7 @@ void main() {
           worker = 3;
           ended = false;
           native.add('reopen');
+          await finishRecovery.future;
           return 43;
         case 'pause':
           if (worker == 3 && call.arguments == false) recoveredPlaying = true;
@@ -533,10 +538,9 @@ void main() {
       'GET $path/ice-servers': (200, {'iceServers': []}),
       'DELETE $path': (200, <String, Object>{}),
     });
-    void choose(String id) {
-      final row = model.panelCategories().expand((category) => category.rows).singleWhere((row) => row.id == id);
-      (row.kind as ActionRow).run();
-    }
+    PanelRow row(String id) =>
+        model.panelCategories().expand((category) => category.rows).singleWhere((row) => row.id == id);
+    void choose(String id) => (row(id).kind as ActionRow).run();
 
     await model.openQuickMenu();
     choose('ps1-invite-from-game');
@@ -551,6 +555,9 @@ void main() {
     expect(server.callsTo('$path/invites').single.body['userIds'], [friendId]);
     final offer = await server.nextFrame('signal', test: (frame) => (frame['data'] as Map)['kind'] == 'offer');
     expect(native, ['local']);
+    await model.openQuickMenu();
+    expect(row('ps1-netplay-leave').detail, 'Waiting for the other player');
+    choose('resume');
     final guestStarted = Completer<void>();
     final guest = Ps1NetplayPeer(
       link: await network.links.link([]),
@@ -571,8 +578,17 @@ void main() {
       onRunning: guestStarted.complete,
     );
     addTearDown(guest.leave);
+    addTearDown(() {
+      if (!finishPark.isCompleted) finishPark.complete();
+      if (!finishRecovery.isCompleted) finishRecovery.complete();
+    });
     await guest.open();
     guest.receiveSignal(Ps1NetplaySignal.tryRead(offer['data'])!);
+    expect(await eventually(() => native.contains('park')), isTrue);
+    await model.openQuickMenu();
+    expect(row('ps1-netplay-leave').detail, 'Preparing both games');
+    choose('resume');
+    finishPark.complete();
     await guestStarted.future.timeout(
       const Duration(seconds: 5),
       onTimeout: () => fail('Guest did not start: ${guest.session.phase}, ${guest.session.ended}. Host calls: $native'),
@@ -581,6 +597,15 @@ void main() {
     expect(native, ['local', 'park', 'detach', 'match', 'import', 'start match']);
     await model.openQuickMenu();
     choose('ps1-netplay-leave');
+    expect(await eventually(() => native.contains('reopen')), isTrue);
+    expect(model.starting, same(game));
+    model.padCommand(PadCommand.home);
+    expect(model.overlay, Layer.quickMenu);
+    final returning = row('ps1-netplay-ending');
+    expect(returning.title, 'Ending online play');
+    expect(returning.focusable, isFalse);
+    choose('resume');
+    finishRecovery.complete();
     expect(await eventually(() => server.callsTo(path, method: 'DELETE').isNotEmpty), isTrue);
     expect(native, [
       'local',
