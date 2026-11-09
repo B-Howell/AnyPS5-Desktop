@@ -814,9 +814,31 @@ The probe uses two copies of the same pinned DLL and the same BIOS and
 disc. The handoff checks the disc path and checkpoint bounds, and the
 caller must supply an identical core and BIOS before launcher wiring.
 The probe restores frame 240, steps twice, and checks RAM against an
-uninterrupted run. The launcher still creates a single primary worker.
-Scheduling handoffs during actual replay and retesting full-race
-presentation remain open.
+uninterrupted run.
+
+Pass `--presentation-core` with a separate byte-identical DLL to the
+headless rollback driver to enable scheduled handoffs during replay.
+The spare publishes to the primary texture while the primary corrects
+its timeline. It samples local inputs through the same two-frame buffer
+and can preview only within the native prediction window. The primary
+resumes video after it catches the spare, and continues to own
+confirmed PCM and RAM throughout. The probe counts actual texture
+updates forwarded from the spare. The launcher still creates one
+primary worker. Its production integration needs verified pairing and
+separate validation of display timing and audio device underruns.
+
+The dual-core run under the same network profile finished all 13,706
+frames in 292.82 seconds with matching placements, 114 matching RAM
+fingerprints, and 10,104,619 matching stereo pairs through the final
+frame. The spare supplied 3,758 and 5,316 texture updates for seats 1
+and 2. Peak primary-worker iterations were 14.214 and 16.325 ms, with
+zero over 16.667 ms. Peak video delivery gaps still reached 238.405
+and 230.052 ms, and peak confirmed PCM delivery gaps reached 333.695
+and 233.346 ms. The timing counter covers the primary thread, including
+both replay slices, and excludes the spare thread. The result passes
+the primary work budget and still fails the presentation cadence gate.
+The eight-frame prediction window remains shorter than the modeled
+ten-tick burst.
 
 The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
 [driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real

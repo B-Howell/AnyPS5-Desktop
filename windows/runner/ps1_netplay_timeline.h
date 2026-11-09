@@ -126,6 +126,21 @@ class Timeline {
     return true;
   }
 
+  // Presentation can sample ahead of replay. The authoritative Prepare call
+  // keeps the same delayed local sample and resolves the remote pad again.
+  bool Preview(uint32_t frame, const PadInput& local, std::array<PadInput, 2>& ports) {
+    const auto next = NextUnconfirmed();
+    if (!started_ || frame < frame_ || frame < next || frame - next >= prediction_window_ ||
+        !CanSampleAt(frame)) return false;
+    const auto current = local_.find(frame);
+    if (current == local_.end()) return false;
+    local_.emplace(frame + kDelay, local);
+    ports[seat_] = current->second;
+    const auto remote = remote_.upper_bound(frame);
+    ports[1 - seat_] = remote == remote_.begin() ? PadInput{} : std::prev(remote)->second;
+    return true;
+  }
+
   void Commit() {
     if (!prepared_) throw std::logic_error("PS1 netplay frame was not prepared");
     frame_ = std::max(frame_, ++cursor_);
@@ -159,9 +174,13 @@ class Timeline {
   }
 
   bool CanSample() const {
-    if (cursor_ > kMaxFrame - kDelay) return false;
+    return CanSampleAt(cursor_);
+  }
+
+  bool CanSampleAt(uint32_t frame) const {
+    if (frame > kMaxFrame - kDelay) return false;
     const auto unacknowledged = acknowledged_ ? *acknowledged_ + 1 : 0;
-    const auto target = cursor_ + kDelay;
+    const auto target = frame + kDelay;
     return target < unacknowledged || target - unacknowledged < kHistory;
   }
 

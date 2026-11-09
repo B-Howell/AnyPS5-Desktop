@@ -1,6 +1,7 @@
 """Check two real Windows runner workers without opening a desktop window."""
 
 import argparse
+import hashlib
 from contextlib import ExitStack
 import json
 from pathlib import Path
@@ -15,7 +16,7 @@ from time import monotonic, perf_counter, sleep
 
 class Peer:
     def __init__(self, executable, core, disc, bios, seat, *, local=False, saves=None, recompiler=False,
-                 rollback=False, audio_control=False, input_trace=None):
+                 rollback=False, audio_control=False, input_trace=None, presentation_core=None):
         self.lines = Queue()
         arguments = [executable, core, disc, bios, str(seat)]
         if local:
@@ -23,7 +24,9 @@ class Peer:
         if recompiler:
             arguments.append("recompiler")
         if rollback:
-            arguments.append("rollback")
+            arguments.append("rollback-dual" if presentation_core else "rollback")
+            if presentation_core:
+                arguments.append(presentation_core)
             if input_trace is not None:
                 arguments.append(input_trace)
         if audio_control:
@@ -85,6 +88,8 @@ def main():
     parser.add_argument("--frames", type=int, default=650)
     parser.add_argument("--rollback", action="store_true",
                         help="Compare a native prediction worker to a confirmed-input control")
+    parser.add_argument("--presentation-core", type=Path,
+                        help="Use a separate byte-identical DLL for video during native rollback")
     parser.add_argument("--trace", type=Path, help="Drive the exact two-player CTR fixture and require the race finish")
     parser.add_argument("--checkpoint-guest", type=Path, help="Verify a held peer can import with a renamed CUE")
     parser.add_argument("--cutover", action="store_true", help="Replace the second player and verify the new input epoch")
@@ -101,6 +106,12 @@ def main():
     parser.add_argument("--ordinary-replace", action="store_true",
                         help="Exercise replacing and recovering workers through the native method channel")
     args = parser.parse_args()
+    if args.presentation_core:
+        if not args.rollback or args.presentation_core.samefile(args.core):
+            parser.error("--presentation-core requires rollback and a separate DLL copy")
+        with args.core.open("rb") as primary, args.presentation_core.open("rb") as presentation:
+            if hashlib.file_digest(primary, "sha256").digest() != hashlib.file_digest(presentation, "sha256").digest():
+                parser.error("The presentation DLL must match the primary DLL")
     if args.frames < 120:
         parser.error("at least 120 frames are required to compare a fingerprint")
     if args.rollback and (args.checkpoint_guest or args.ordinary_checkpoint or args.local_handoff):
@@ -458,10 +469,18 @@ def verify_new_input_epoch(host, guest, *, input_masks=None):
 
 
 def verify_native_rollback(args, cleanup):
+    target = max(args.frames, 240)
+    local_trace = None
+    if args.presentation_core:
+        directory = Path(cleanup.enter_context(TemporaryDirectory(prefix="anyps5-rollback-short-")))
+        local_trace = directory / "local.txt"
+        local_trace.write_text("0\n" * target, encoding="ascii")
     peers = []
     for prediction in (False, True):
         peer = Peer(args.probe.resolve(), args.core.resolve(), args.disc.resolve(), args.bios.resolve(),
-                    0, rollback=prediction, audio_control=not prediction)
+                    0, rollback=prediction, audio_control=not prediction,
+                    input_trace=local_trace if prediction else None,
+                    presentation_core=args.presentation_core.resolve() if prediction and args.presentation_core else None)
         cleanup.callback(peer.close)
         peers.append(peer)
     assert all(peer.receive() == "ready" for peer in peers)
@@ -470,7 +489,6 @@ def verify_native_rollback(args, cleanup):
     sent = [set(), set()]
     fingerprints = [{}, {}]
     gap = 119
-    target = max(args.frames, 240)
 
     def pump(seat, hold_gap):
         frame, _, local, _ = states[seat]
@@ -514,6 +532,13 @@ def verify_native_rollback(args, cleanup):
         after = [peer.send("audio").split() for peer in peers]
     assert after[0] == after[1] and int(after[0][0]) > int(before[0][0]), (
         f"Corrected audio did not match the confirmed-input control: {after}")
+    if args.presentation_core:
+        steps, video = map(int, peers[1].send("presentation-steps").split())
+        assert steps > 0 and video > 0, "The spare core never published video during replay"
+        if target % 120 == 0:
+            assert peers[1].send("fingerprint") == fingerprints[1][target - 1], (
+                "The probe read RAM from the wrong core")
+        print(f"The spare core published {video} texture updates across {steps} presentation steps.")
     print(f"Native rollback corrected frame {gap}, drove {target} frames and matched "
           f"{target // 120} confirmed RAM fingerprints and {after[0][0]} stereo sample pairs.")
 
@@ -538,7 +563,8 @@ def traced_rollback_race(args, cleanup):
         trace = directory / f"seat-{seat}.txt"
         trace.write_text("\n".join(str(pads[seat]) for pads in frames), encoding="ascii")
         peer = Peer(args.probe.resolve(), args.core.resolve(), args.disc.resolve(), args.bios.resolve(),
-                    seat, rollback=True, input_trace=trace)
+                    seat, rollback=True, input_trace=trace,
+                    presentation_core=args.presentation_core.resolve() if args.presentation_core else None)
         cleanup.callback(peer.close)
         peers.append(peer)
     assert all(peer.receive() == "ready" for peer in peers)
@@ -599,6 +625,10 @@ def traced_rollback_race(args, cleanup):
               f"{published} video updates, max gap {video_gap / 1000:.3f} ms, "
               f"{long_gaps} gaps over two ticks; max confirmed PCM gap {audio_gap / 1000:.3f} ms; "
               f"max native work {work / 1000:.3f} ms, {overruns} iterations over 16.667 ms.")
+        if args.presentation_core:
+            steps, video = map(int, peer.send("presentation-steps").split())
+            assert steps > 0 and video > 0, "The spare core never published video during the race"
+            print(f"Seat {seat}: {video} speculative texture updates across {steps} presentation steps.")
 
 
 def traced_race(peers, frames, args, cleanup):

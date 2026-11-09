@@ -191,5 +191,19 @@ int main() {
   assert(predicted.Prepare(host_pad, host_inputs));
   predicted.Commit();
   assert(predicted.frame() == 1u && !predicted.confirmed());
+  Timeline preview(0, 4);
+  preview.Start();
+  assert(preview.Prepare(host_pad, host_inputs));
+  preview.Commit();
+  assert(preview.Preview(1, host_pad, host_inputs));
+  assert(preview.frame() == 1 && preview.cursor() == 1 && !preview.confirmed());
+  assert(preview.LocalPacket().back() == (FrameInput{3, host_pad}));
+  assert(!preview.Preview(4, guest_pad, host_inputs));
+  assert(preview.Prepare(guest_pad, host_inputs));
+  preview.Commit();
+  assert(preview.Prepare({}, host_inputs));
+  preview.Commit();
+  assert(preview.Prepare({}, host_inputs));
+  assert(host_inputs[0] == host_pad);
   VerifyDelayedReplay();
 }

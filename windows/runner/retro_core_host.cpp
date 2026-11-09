@@ -569,6 +569,8 @@ class RetroCoreSession {
   int64_t rollback_audio_drained() const { return rollback_audio_drained_; }
   int64_t trace_max_work_us() const { return trace_max_work_us_; }
   int64_t trace_work_overruns() const { return trace_work_overruns_; }
+  uint32_t presentation_steps() const { return presentation_steps_; }
+  uint32_t presentation_frames() const { return presentation_frames_; }
 
   RetroCoreSession(flutter::TextureRegistrar* registrar, std::string core,
                    std::string disc, std::string system, std::string saves,
@@ -621,6 +623,15 @@ class RetroCoreSession {
 
   ~RetroCoreSession() { Stop(); Join(); }
 
+  bool AttachPresentationCore(std::unique_ptr<RetroCoreSession> core) {
+    if (!core || !rollback_ || callback_slot_ != CallbackSlot::kPrimary || worker_.joinable() ||
+        presentation_core_ || core->callback_slot_ != CallbackSlot::kPresentation ||
+        core->worker_.joinable() || core->disc_ != disc_) return false;
+    core->presentation_target_ = this;
+    presentation_core_ = std::move(core);
+    return true;
+  }
+
   bool Start() {
     if (installing_packages()) {
       worker_ = std::thread([this] { RunPackageInstall(); });
@@ -628,6 +639,7 @@ class RetroCoreSession {
     }
     texture_id_ = registrar_->RegisterTexture(&texture_);
     if (texture_id_ < 0) return false;
+    if (presentation_core_ && !presentation_core_->Start()) return false;
     worker_ = std::thread([this] { Run(); });
     return true;
   }
@@ -648,13 +660,17 @@ class RetroCoreSession {
   }
   void Stop() {
     stop_ = true;
+    if (presentation_core_) presentation_core_->Stop();
     if (callback_slot_ == CallbackSlot::kPresentation) {
       std::lock_guard<std::mutex> lock(netplay_mutex_);
       presentation_ready_.notify_one();
     }
     if (lan_) lan_->Close();
   }
-  void Join() { if (worker_.joinable()) worker_.join(); }
+  void Join() {
+    if (worker_.joinable()) worker_.join();
+    if (presentation_core_) presentation_core_->Join();
+  }
 
   std::optional<List> ExchangeLan(const List& input) {
     if (!lan_ || !lan_ready_ || stop_ || ended_ || input.size() > Ps2VirtualLan::kBatchSize)
@@ -1196,7 +1212,12 @@ class RetroCoreSession {
         output[3] = 255;
       }
     }
-    SubmitFrame(std::move(frame), false);
+    if (rendering_on_target_) {
+      presentation_target_->SubmitFrame(std::move(frame), false);
+      ++presentation_target_->presentation_frames_;
+    } else {
+      SubmitFrame(std::move(frame), false);
+    }
   }
 
   Map TuningTelemetry() {
@@ -1702,7 +1723,9 @@ class RetroCoreSession {
         for (const auto& ports : render->inputs) {
           if (stop_) break;
           netplay_ports_ = ports;
+          rendering_on_target_ = presentation_target_ != nullptr;
           step();
+          rendering_on_target_ = false;
           ++*presentation_cursor_;
         }
         rendered = !stop_;
@@ -1759,17 +1782,76 @@ class RetroCoreSession {
     auto next = Clock::now();
     auto last_advance = next;
     bool started_before = false;
+    std::optional<uint32_t> presented_cursor;
+    std::future<bool> presentation_render;
+    bool replay_slice = false;
+    auto tick_begin = Clock::now();
     while (!stop_) {
-      const auto trace_work_start = input_trace_.empty() ? Clock::time_point{} : Clock::now();
+      if (!replay_slice && (presentation_core_ || !input_trace_.empty())) tick_begin = Clock::now();
       const auto record_trace_work = [&] {
-        if (trace_work_start == Clock::time_point{}) return;
-        const auto work = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - trace_work_start);
+        if (input_trace_.empty()) return;
+        const auto work = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - tick_begin);
         trace_max_work_us_ = std::max(trace_max_work_us_.load(), work.count());
         if (work.count() > 16667) ++trace_work_overruns_;
       };
       release_audio();
       if (rollback_) ServicePresentation(serialize, unserialize, state_size, step);
       if (checkpoint_supported_) ServiceCheckpoint(save, load, maximum + kPs1CheckpointPrefix, step);
+      ps1_netplay::PadInput local;
+      {
+        std::lock_guard<std::mutex> lock(input_mutex_);
+        local = {buttons_, axes_};
+      }
+      if (presentation_core_) {
+        if (presentation_render.valid() &&
+            presentation_render.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+          bool rendered = false;
+          try {
+            rendered = presentation_render.get();
+          } catch (const std::future_error&) {
+            // The spare can exit independently. The primary still owns the match.
+          }
+          if (rendered) {
+            ++presentation_steps_;
+          } else {
+            presented_cursor.reset();
+          }
+        }
+        if (!presentation_render.valid() && !replay_slice) {
+          uint32_t cursor;
+          uint32_t frame;
+          Ps1Ports ports{};
+          bool render = false;
+          {
+            std::lock_guard<std::mutex> lock(netplay_mutex_);
+            cursor = netplay_->cursor();
+            if (presented_cursor && cursor >= *presented_cursor) presented_cursor.reset();
+            const auto correction = netplay_->correction();
+            frame = presented_cursor.value_or(cursor);
+            const bool handoff = correction && cursor - *correction >= 2 && cursor == netplay_->frame();
+            const bool keep_rendering = presented_cursor && cursor + 1 < *presented_cursor;
+            if ((handoff || keep_rendering) && (input_trace_.empty() || frame < input_trace_.size())) {
+              auto sample = local;
+              if (!input_trace_.empty()) {
+                const auto target = frame + ps1_netplay::Timeline::kDelay;
+                sample = {target < input_trace_.size() ? input_trace_[target] : uint16_t{0}, {}};
+              }
+              render = netplay_->Preview(frame, sample, ports);
+            }
+          }
+          if (render) {
+            std::optional<PresentationState> snapshot;
+            if (!presented_cursor) {
+              CheckpointBytes bytes(state_size);
+              if (!SaveRollback(serialize, bytes))
+                throw std::runtime_error("The PS1 core could not save a presentation checkpoint.");
+              snapshot.emplace(PresentationState{cursor, disc_, std::move(bytes)});
+            }
+            presentation_render = presentation_core_->RenderPresentation(std::move(snapshot), {ports});
+            if (presentation_render.valid()) presented_cursor = frame + 1;
+          }
+        }
+      }
       while (rollback_ && !stop_) {
         std::optional<uint32_t> correction;
         {
@@ -1790,11 +1872,6 @@ class RetroCoreSession {
           netplay_pending_fingerprint_.reset();
       }
       if (stop_) break;
-      ps1_netplay::PadInput local;
-      {
-        std::lock_guard<std::mutex> lock(input_mutex_);
-        local = {buttons_, axes_};
-      }
       bool started;
       bool staging;
       bool epoch_reset;
@@ -1841,6 +1918,7 @@ class RetroCoreSession {
           throw std::runtime_error(started ? "PS1 netplay stopped waiting for the other player."
                                            : "PS1 netplay did not start in time.");
         record_trace_work();
+        replay_slice = false;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
         next = Clock::now();
         continue;
@@ -1852,7 +1930,7 @@ class RetroCoreSession {
           throw std::runtime_error("The PS1 core could not save a rollback checkpoint.");
         checkpoint.frame = frame;
       }
-      suppress_frame_ = replaying;
+      suppress_frame_ = replaying || presentation_render.valid() || (presented_cursor && frame < *presented_cursor);
       if (rollback_) {
         auto& audio = pending_audio[frame % pending_audio.size()];
         audio.frame = frame;
@@ -1885,6 +1963,11 @@ class RetroCoreSession {
       }
       release_audio();
       last_advance = Clock::now();
+      if (!replay_slice && presented_cursor && replaying && last_advance - tick_begin < std::chrono::microseconds(7500)) {
+        replay_slice = true;
+        continue;
+      }
+      replay_slice = false;
       next += frame_time;
       if (next < last_advance - frame_time) next = last_advance;
       record_trace_work();
@@ -2222,6 +2305,7 @@ class RetroCoreSession {
     audio_.Close();
     if (dll) FreeLibrary(dll);
     callbacks.Release();
+    if (presentation_core_) presentation_core_->Stop();
     {
       std::lock_guard<std::mutex> lock(netplay_mutex_);
       ended_ = true;
@@ -2240,6 +2324,11 @@ class RetroCoreSession {
   const AudioSink audio_sink_;
   const std::vector<uint16_t> input_trace_;
   const CallbackSlot callback_slot_;
+  std::unique_ptr<RetroCoreSession> presentation_core_;
+  RetroCoreSession* presentation_target_ = nullptr;
+  bool rendering_on_target_ = false;
+  std::atomic<uint32_t> presentation_steps_{0};
+  std::atomic<uint32_t> presentation_frames_{0};
   std::atomic<int64_t> rollback_audio_drained_{-1};
   std::atomic<int64_t> trace_max_work_us_{0};
   std::atomic<int64_t> trace_work_overruns_{0};

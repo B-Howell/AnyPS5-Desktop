@@ -332,7 +332,7 @@ void VerifyIsolatedCores(char** argv) {
 }
 
 int main(int argc, char** argv) {
-  if (argc < 5 || argc > 7) return 2;
+  if (argc < 5 || argc > 8) return 2;
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
   ProbeTexture texture;
   if (argc == 7 && std::string_view(argv[5]) == "isolated-cores") {
@@ -353,16 +353,19 @@ int main(int argc, char** argv) {
     }
   }
   const auto seat = std::stoul(argv[4]);
+  const auto primary_core_path = std::filesystem::u8path(argv[1]);
   const bool local_staging = argc == 6 && std::string_view(argv[5]) == "local";
   const bool recompiler = argc == 6 && std::string_view(argv[5]) == "recompiler";
-  const bool rollback = argc >= 6 && std::string_view(argv[5]) == "rollback";
+  const bool dual = argc >= 7 && std::string_view(argv[5]) == "rollback-dual";
+  const bool rollback = dual || (argc >= 6 && std::string_view(argv[5]) == "rollback");
   const bool audio_control = argc == 6 && std::string_view(argv[5]) == "audio-control";
   if (argc == 6 && !local_staging && !recompiler && !rollback && !audio_control) return 2;
   const bool ordinary = argc == 7 && std::string_view(argv[5]) == "ordinary";
   if (argc == 7 && !ordinary && !rollback) return 2;
+  if (argc == 8 && !dual) return 2;
   std::vector<uint16_t> trace;
-  if (rollback && argc == 7) {
-    std::ifstream input(std::filesystem::u8path(argv[6]));
+  if (rollback && argc == (dual ? 8 : 7)) {
+    std::ifstream input(std::filesystem::u8path(argv[dual ? 7 : 6]));
     unsigned value;
     while (input >> value) {
       if (value > UINT16_MAX || trace.size() >= 60000) return 2;
@@ -392,12 +395,18 @@ int main(int argc, char** argv) {
       }
     };
   }
+  ProbeTexture spare_texture;
   RetroCoreSession session(&texture, argv[1], argv[2], ordinary ? bios_directory : "",
                            ordinary ? argv[6] : "", "", {},
                            ordinary ? std::nullopt : std::optional<unsigned>(seat), argv[3], local_staging,
                            std::nullopt, std::nullopt, {},
                            recompiler ? Ps1MatchCpu::kRecompiler : Ps1MatchCpu::kCachedInterpreter, {}, rollback,
                            std::move(audio_sink), std::move(trace));
+  if (dual && !session.AttachPresentationCore(std::make_unique<RetroCoreSession>(
+      &spare_texture, argv[6], argv[2], "", "", "", std::map<std::string, std::string>{}, seat, argv[3],
+      false, std::nullopt, std::nullopt, std::vector<std::string>{}, Ps1MatchCpu::kCachedInterpreter,
+      nullptr, true, [](const int16_t*, size_t) {}, std::vector<uint16_t>{},
+      RetroCoreSession::CallbackSlot::kPresentation))) return 3;
   if (!session.Start()) return 3;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
   while (std::chrono::steady_clock::now() < deadline) {
@@ -413,6 +422,10 @@ int main(int argc, char** argv) {
   std::cout << "ready" << std::endl;
   std::string command;
   while (std::cin >> command && command != "quit") {
+    if (dual && command == "presentation-steps") {
+      std::cout << session.presentation_steps() << ' ' << session.presentation_frames() << std::endl;
+      continue;
+    }
     if ((rollback || audio_control) && command == "audio") {
       std::lock_guard<std::mutex> lock(audio_mutex);
       std::cout << audio_frames << ' ' << audio_hash << std::endl;
@@ -531,7 +544,8 @@ int main(int argc, char** argv) {
       const auto status = session.Status();
       if (!(std::cin >> count) || count == 0 || count > 128 ||
           !std::get<bool>(status.at(Value("ordinaryCheckpointParked")))) return 7;
-      const auto dll = GetModuleHandleW(L"swanstation_libretro.dll");
+      const auto dll = GetModuleHandleW(primary_core_path.c_str());
+      if (!dll) return 7;
       auto* card = static_cast<uint8_t*>(Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data")(0));
       const auto size = Symbol<size_t (*)(unsigned)>(dll, "retro_get_memory_size")(0);
       if (!card || size != 128 * 1024) return 7;
@@ -629,7 +643,8 @@ int main(int argc, char** argv) {
     }
     if (command == "fingerprint") {
       // The driver withholds remote input before reading the held worker.
-      const auto dll = GetModuleHandleW(L"swanstation_libretro.dll");
+      const auto dll = GetModuleHandleW(primary_core_path.c_str());
+      if (!dll) return 7;
       const auto* ram = static_cast<const uint8_t*>(Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data")(2));
       if (!ram) return 7;
       std::cout << NetplayFingerprint(ram, 2 * 1024 * 1024) << std::endl;
@@ -668,7 +683,7 @@ int main(int argc, char** argv) {
       size_t offset, count;
       if (!(std::cin >> offset >> count) || count > 256 || offset > 2 * 1024 * 1024 ||
           count > 2 * 1024 * 1024 - offset) return 5;
-      const auto dll = GetModuleHandleW(L"swanstation_libretro.dll");
+      const auto dll = GetModuleHandleW(primary_core_path.c_str());
       if (!dll) return 5;
       const auto* ram = static_cast<const uint8_t*>(Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data")(2));
       if (!ram) return 5;
