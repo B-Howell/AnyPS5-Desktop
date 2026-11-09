@@ -12,34 +12,45 @@ enum Ps1NetplayMediaProblem { disc, bios, core }
 
 enum Ps1NetplayExecution {
   standard('CachedInterpreter'),
-  ordinaryHandoff('Recompiler');
+  ordinaryHandoff('Recompiler'),
+  rollbackPreview('CachedInterpreter');
 
   const Ps1NetplayExecution(this.cpu);
   final String cpu;
 
-  String get digest => sha256
-      .convert(utf8.encode('Software;1x;$cpu;block-linking=0;gpu-thread=0;fast-boot=0;two-digital-pads;delay=2'))
-      .toString();
+  String get digest {
+    final rollback = this == rollbackPreview ? ';rollback=16;presentation-core=1' : '';
+    return sha256
+        .convert(
+          utf8.encode('Software;1x;$cpu;block-linking=0;gpu-thread=0;fast-boot=0;two-digital-pads;delay=2$rollback'),
+        )
+        .toString();
+  }
 
   Set<String> get coreDigests => switch (this) {
     standard => const {Ps1NetplayMedia.corePin, Ps1NetplayMedia.portableCorePin},
     ordinaryHandoff => const {Ps1NetplayMedia.ordinaryHandoffCorePin},
+    rollbackPreview => const {Ps1NetplayMedia.rollbackCorePin},
   };
 }
 
 enum Ps1NetplayRoomMode {
   fresh('1'),
   staged('2'),
-  ordinary('3');
+  ordinary('3'),
+  rollbackPreview('4');
 
   const Ps1NetplayRoomMode(this.version);
   final String version;
 
   static Ps1NetplayRoomMode? tryRead(String version) => values.where((mode) => mode.version == version).singleOrNull;
 
-  bool get needsCheckpoint => this != fresh;
-  Ps1NetplayExecution get execution =>
-      this == ordinary ? Ps1NetplayExecution.ordinaryHandoff : Ps1NetplayExecution.standard;
+  bool get needsCheckpoint => this == staged || this == ordinary;
+  Ps1NetplayExecution get execution => switch (this) {
+    fresh || staged => Ps1NetplayExecution.standard,
+    ordinary => Ps1NetplayExecution.ordinaryHandoff,
+    rollbackPreview => Ps1NetplayExecution.rollbackPreview,
+  };
 }
 
 /// Room routing uses the original disc's boot serial. Peers separately verify
@@ -70,6 +81,9 @@ final class Ps1NetplayMedia {
   static const corePin = '1aaa621dab9f53b130ac29d17e9a12ea4c0df975d4b02b53faec3b52c717fd12';
   static const portableCorePin = '5ef8eba64119146e405a90c5e9243a249c9d57c405fd75415fb4234d5b6080eb';
   static const ordinaryHandoffCorePin = 'd1619715fe11db0faa280890c741aff876fd5fd682f3cd00fbcafaa04732b7ac';
+  static const rollbackCorePin = '9e72d4ded35ed5308916e16448edc1c3c39651969c2f6fde68b4e3293eea6347';
+
+  static String presentationCorePath(String primary) => p.join(p.dirname(primary), 'Presentation', p.basename(primary));
 
   final String disc;
   final String bios;

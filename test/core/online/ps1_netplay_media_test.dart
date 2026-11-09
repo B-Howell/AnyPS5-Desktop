@@ -110,9 +110,17 @@ void main() {
       expect(game.retroSerial, serial);
       final profile = Ps1NetplayProfile.tryRead(serial)!;
       expect(Ps1NetplayRoomMode.values.map((mode) => profile.roomFor(mode).titleId).toSet(), {serial});
-      expect(Ps1NetplayRoomMode.values.map((mode) => profile.roomFor(mode).gameVersion).toSet(), {'1', '2', '3'});
+      expect(Ps1NetplayRoomMode.values.map((mode) => profile.roomFor(mode).gameVersion).toSet(), {'1', '2', '3', '4'});
     }
     expect(Ps1NetplayProfile.tryRead('Not a disc serial'), isNull);
+  });
+
+  test('rollback rooms boot from disc with a distinct core and execution identity', () {
+    final mode = Ps1NetplayRoomMode.tryRead('4')!;
+    expect(mode.needsCheckpoint, isFalse);
+    expect(mode.execution.cpu, Ps1NetplayExecution.standard.cpu);
+    expect(mode.execution.digest, isNot(Ps1NetplayExecution.standard.digest));
+    expect(mode.execution.coreDigests.intersection(Ps1NetplayExecution.standard.coreDigests), isEmpty);
   });
 
   test('fingerprints track bytes and layout independently of the local track name', () async {

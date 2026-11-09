@@ -63,6 +63,39 @@ class ProbeMessenger final : public flutter::BinaryMessenger {
   flutter::BinaryMessageHandler handler_;
 };
 
+void VerifyRollbackChannel(ProbeTexture& texture, char** argv) {
+  ProbeMessenger messenger;
+  RetroCoreHost host(&messenger, &texture);
+  Map match{{Value("core"), Value(std::string(argv[1]))}, {Value("disc"), Value(std::string(argv[2]))},
+            {Value("system"), Value("")}, {Value("saves"), Value("")}, {Value("ps1NetplaySeat"), Value(0)},
+            {Value("ps1NetplayBios"), Value(std::string(argv[3]))},
+            {Value("ps1PresentationCore"), Value(std::string(argv[6]))}};
+  auto invalid = match;
+  invalid.at(Value("ps1PresentationCore")) = invalid.at(Value("core"));
+  messenger.Call("start", Value(invalid), "argument");
+  const auto surface = IntegerValue(messenger.Call("start", Value(match)));
+  if (surface != 1 || texture.registered() != 1) throw std::runtime_error("Rollback should create one texture");
+  messenger.Wait("netplayReady");
+  if (!std::get<bool>(messenger.Call("netplayStart"))) throw std::runtime_error("Rollback failed to start");
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  int64_t frame = 0;
+  while (frame < 120 && std::chrono::steady_clock::now() < deadline) {
+    List remote;
+    for (auto tick = frame; tick < frame + 8; ++tick) {
+      remote.emplace_back(List{Value(tick), Value(0), Value(0), Value(0), Value(0), Value(0)});
+    }
+    const auto update = std::get<Map>(messenger.Call("netplaySync", Value(Map{
+        {Value("remote"), Value(std::move(remote))}, {Value("acknowledgedFrame"), Value(frame)}})));
+    frame = IntegerValue(update.at(Value("frame"))).value();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  if (frame < 120) throw std::runtime_error("Rollback did not advance with remote controller input");
+  messenger.Wait("presented");
+  messenger.Call("stop");
+  messenger.Wait("ended");
+  std::cout << "Rollback launcher channel rejected aliasing and ran on one surface." << std::endl;
+}
+
 int VerifyReplacement(ProbeTexture& texture, char** argv) {
   ProbeMessenger messenger;
   RetroCoreHost host(&messenger, &texture);
@@ -375,6 +408,15 @@ int main(int argc, char** argv) {
   if (argc < 5 || argc > 8) return 2;
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
   ProbeTexture texture;
+  if (argc == 7 && std::string_view(argv[5]) == "rollback-channel") {
+    try {
+      VerifyRollbackChannel(texture, argv);
+      return 0;
+    } catch (const std::exception& error) {
+      std::cerr << error.what() << std::endl;
+      return 11;
+    }
+  }
   if (argc == 7 && std::string_view(argv[5]) == "isolated-cores") {
     try {
       VerifyIsolatedCores(argv);

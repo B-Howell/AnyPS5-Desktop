@@ -263,6 +263,8 @@
   "gamePlayers": "%d/%d oyuncu",
   "gameInvited": "%@ davet edildi",
   "ps1OnlineInvite": "Oyun daveti gönder · %@",
+  "ps1OnlineRollbackInvite": "Oyun daveti gönder · %@ · Rollback Önizlemesi",
+  "ps1OnlineRollbackCore": "Doğrulanmış PS1 rollback önizleme çekirdeği paketi gerekli.",
   "ps1OnlineReady": "Çevrimiçi eşli oyuna hazır başlat",
   "ps1OnlineReadyDetail": "Ayrı bir bellek kartıyla yeni oturum başlat. Hızlı Menüden bir arkadaşını davet et.",
   "ps1OnlineCouch": "Çevrimiçi yerel eşli oyun",

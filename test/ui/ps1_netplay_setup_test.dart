@@ -490,6 +490,7 @@ void main() {
     final managed = ManagedRetro(home, packageDirectory: packageDirectory);
     final matchCore = switch (mode) {
       Ps1NetplayRoomMode.ordinary => await managed.ensurePs1NetplayCore(execution: mode.execution),
+      Ps1NetplayRoomMode.rollbackPreview => throw StateError('Rollback preview requires a fresh game.'),
       Ps1NetplayRoomMode.staged => p.join(home, 'PS1-Netplay', ManagedRetro.libraryName(RetroPlatform.ps1)),
       Ps1NetplayRoomMode.fresh => (await File(
         stockCore!,
@@ -947,66 +948,81 @@ void main() {
     );
   }
 
-  test('ordinary PS1 invite installs the right core and continues the original invite', () async {
-    final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
-    final server = await FakeTogether.start();
-    addTearDown(server.close);
-    const invite = GameInvite(
-      sessionId: '12345678-1234-4234-8234-123456789abc',
-      titleId: 'SCUS94426',
-      gameVersion: '3',
-      engineBuild: 'anyps5-ps1-netplay-v1',
-    );
-    final path = 'game-sessions/${invite.sessionId}';
-    server.answers['GET me/game-session'] = (200, {'session': null});
-    server.answers['GET $path'] = (
-      200,
-      {
-        'id': invite.sessionId,
-        'host': {'userId': '12345678-1234-4234-8234-123456789ab1'},
-        'kind': 'online',
-        'titleId': invite.titleId,
-        'gameVersion': invite.gameVersion,
-        'engineBuild': invite.engineBuild,
-        'capacity': 2,
-        'joinable': false,
-        'properties': {'protocol': invite.engineBuild, 'discSha256': await Ps1NetplayMedia.cueDigest(disc)},
-      },
-    );
-    server.answers['POST $path/join'] = (409, {'error': 'fixture refused admission'});
-    final fixture = makeFixture(
-      together: server.base,
-      system: HostSystem.windows,
-      environment: {'ANYPS5_PS1_NETPLAY': '1', 'ANYPS5_MANAGED_CORE_PACKAGES': packages},
-      pickFile: (_, _) async => bios,
-    );
-    final model = fixture.model;
-    addTearDown(() {
-      model.dispose();
-      fixture.dispose();
-    });
-    await signIn(model.together);
-    model.games.add(
-      Game(
-        folder: p.dirname(disc),
-        titleId: 'PS1-fixture',
-        name: 'CTR fixture',
-        names: const {},
-        defaultLanguage: 'en',
-        version: '',
-        executable: ExecutableKind.disc,
-        retro: (platform: RetroPlatform.ps1, path: disc),
-        retroSerial: invite.titleId,
-      ),
-    );
-    await model.together.joinPs1Netplay(invite);
-    final join = server.callsTo('$path/join').single;
-    expect(join.body, {'gameVersion': '3', 'engineBuild': invite.engineBuild});
-    final home = p.join(p.dirname(model.paths.toolkits), 'Emulators');
-    expect(File(p.join(home, 'PS1-Netplay-Ordinary', 'swanstation_libretro.dll')).existsSync(), isTrue);
-    expect(File(p.join(home, 'PS1-Netplay', 'swanstation_libretro.dll')).existsSync(), isFalse);
-    expect(model.running, isNull);
-  }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null);
+  final rollbackPackages = Platform.environment['ANYPS5_TEST_PS1_ROLLBACK_PACKAGES'];
+  for (final mode in [Ps1NetplayRoomMode.ordinary, Ps1NetplayRoomMode.rollbackPreview]) {
+    final rollback = mode == Ps1NetplayRoomMode.rollbackPreview;
+    test('${mode.name} PS1 invite installs the right core and continues the original invite', () async {
+      final [String packages, String disc, String bios] =
+          jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
+      final server = await FakeTogether.start();
+      addTearDown(server.close);
+      final invite = GameInvite(
+        sessionId: '12345678-1234-4234-8234-123456789abc',
+        titleId: 'SCUS94426',
+        gameVersion: mode.version,
+        engineBuild: 'anyps5-ps1-netplay-v1',
+      );
+      final path = 'game-sessions/${invite.sessionId}';
+      server.answers['GET me/game-session'] = (200, {'session': null});
+      server.answers['GET $path'] = (
+        200,
+        {
+          'id': invite.sessionId,
+          'host': {'userId': '12345678-1234-4234-8234-123456789ab1'},
+          'kind': 'online',
+          'titleId': invite.titleId,
+          'gameVersion': invite.gameVersion,
+          'engineBuild': invite.engineBuild,
+          'capacity': 2,
+          'joinable': false,
+          'properties': {'protocol': invite.engineBuild, 'discSha256': await Ps1NetplayMedia.cueDigest(disc)},
+        },
+      );
+      server.answers['POST $path/join'] = (409, {'error': 'fixture refused admission'});
+      final fixture = makeFixture(
+        together: server.base,
+        system: HostSystem.windows,
+        environment: {
+          'ANYPS5_PS1_NETPLAY': '1',
+          if (rollback) 'ANYPS5_PS1_ROLLBACK': '1',
+          'ANYPS5_MANAGED_CORE_PACKAGES': rollback ? rollbackPackages! : packages,
+        },
+        pickFile: (_, _) async => bios,
+      );
+      final model = fixture.model;
+      addTearDown(() {
+        model.dispose();
+        fixture.dispose();
+      });
+      await signIn(model.together);
+      model.games.add(
+        Game(
+          folder: p.dirname(disc),
+          titleId: 'PS1-fixture',
+          name: 'CTR fixture',
+          names: const {},
+          defaultLanguage: 'en',
+          version: '',
+          executable: ExecutableKind.disc,
+          retro: (platform: RetroPlatform.ps1, path: disc),
+          retroSerial: invite.titleId,
+        ),
+      );
+      await model.together.joinPs1Netplay(invite);
+      final join = server.callsTo('$path/join').single;
+      expect(join.body, {'gameVersion': mode.version, 'engineBuild': invite.engineBuild});
+      final home = p.join(p.dirname(model.paths.toolkits), 'Emulators');
+      final primary = p.join(
+        home,
+        rollback ? 'PS1-Netplay-Rollback' : 'PS1-Netplay-Ordinary',
+        'swanstation_libretro.dll',
+      );
+      expect(File(primary).existsSync(), isTrue);
+      if (rollback) expect(File(Ps1NetplayMedia.presentationCorePath(primary)).existsSync(), isTrue);
+      expect(File(p.join(home, 'PS1-Netplay', 'swanstation_libretro.dll')).existsSync(), isFalse);
+      expect(model.running, isNull);
+    }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null || (rollback && rollbackPackages == null));
+  }
 }
 
 class _FixtureMatch implements Ps1NetplayRunner {

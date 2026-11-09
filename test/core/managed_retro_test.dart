@@ -50,6 +50,30 @@ void main() {
     expect(Directory(p.join(root.path, 'PS1-Netplay-Ordinary')).existsSync(), isFalse);
   });
 
+  final rollbackPackages = Platform.environment['ANYPS5_TEST_PS1_ROLLBACK_PACKAGES'];
+  test('installs and repairs both verified rollback cores without touching the offline core', () async {
+    final root = await Directory.systemTemp.createTemp('anyps5-rollback-core-');
+    addTearDown(() => root.delete(recursive: true));
+    final name = ManagedRetro.libraryName(RetroPlatform.ps1);
+    final offline = File(p.join(root.path, name))..writeAsBytesSync([1]);
+    final managed = ManagedRetro(root.path, packageDirectory: rollbackPackages);
+    const execution = Ps1NetplayExecution.rollbackPreview;
+    final primary = await managed.ensurePs1NetplayCore(execution: execution);
+    expect(p.basename(p.dirname(primary)), 'PS1-Netplay-Rollback');
+    final spare = Ps1NetplayMedia.presentationCorePath(primary);
+    expect(spare, isNot(primary));
+    for (final path in [primary, spare]) {
+      expect(await AssetDownload.sha256Of(path), Ps1NetplayMedia.rollbackCorePin);
+    }
+    final installedOnly = ManagedRetro(root.path);
+    expect(await installedOnly.ensurePs1NetplayCore(execution: execution), primary);
+    await File(spare).writeAsBytes([2]);
+    await expectLater(installedOnly.ensurePs1NetplayCore(execution: execution), throwsFormatException);
+    expect(await managed.ensurePs1NetplayCore(execution: execution), primary);
+    expect(await AssetDownload.sha256Of(spare), Ps1NetplayMedia.rollbackCorePin);
+    expect(offline.readAsBytesSync(), [1]);
+  }, skip: rollbackPackages == null ? 'Requires the local qualified rollback package.' : false);
+
   final ordinaryFixture = Platform.environment['ANYPS5_TEST_PS1_ORDINARY_FIXTURE'];
   test('installs the ordinary handoff package separately and verifies its match identity', () async {
     final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;

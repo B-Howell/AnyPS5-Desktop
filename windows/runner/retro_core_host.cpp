@@ -737,8 +737,10 @@ class RetroCoreSession {
       worker_ = std::thread([this] { RunPackageInstall(); });
       return true;
     }
-    texture_id_ = registrar_->RegisterTexture(&texture_);
-    if (texture_id_ < 0) return false;
+    if (!presentation_target_) {
+      texture_id_ = registrar_->RegisterTexture(&texture_);
+      if (texture_id_ < 0) return false;
+    }
     if (presentation_core_ && !presentation_core_->Start()) return false;
     worker_ = std::thread([this] { Run(); });
     return true;
@@ -1263,7 +1265,8 @@ class RetroCoreSession {
   }
 
   void Publish(const void* data, unsigned width, unsigned height, size_t pitch) {
-    if (suppress_frame_ || !data || width == 0 || height == 0 || width > kMaxFrameSize || height > kMaxFrameSize)
+    if (suppress_frame_ || (presentation_target_ && !rendering_on_target_) ||
+        !data || width == 0 || height == 0 || width > kMaxFrameSize || height > kMaxFrameSize)
       return;
     if (data == reinterpret_cast<const void*>(UINTPTR_MAX)) {
       if (hardware_callbacks_.context_type == kD3D11) {
@@ -1896,6 +1899,15 @@ class RetroCoreSession {
     const auto memory_data = rollback_ ? Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data") : nullptr;
     if (rollback_ && (!state_size || state_size > kMaxPs1Checkpoint))
       throw std::runtime_error("The PS1 core cannot provide bounded rollback checkpoints.");
+    if (presentation_core_) {
+      const auto deadline = Clock::now() + std::chrono::seconds(20);
+      while (!presentation_core_->netplay_ready_ && !stop_) {
+        if (presentation_core_->ended_ || Clock::now() >= deadline)
+          throw std::runtime_error("The PS1 rollback presentation core did not start.");
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+      if (stop_) return;
+    }
     netplay_ready_ = true;
     auto next = Clock::now();
     auto last_advance = next;
@@ -2356,7 +2368,7 @@ class RetroCoreSession {
       AvInfo av{};
       av_info(&av);
       SetAspect(av.geometry.aspect);
-      const bool audio_open = audio_sink_ || audio_.Open(av.sample_rate);
+      const bool audio_open = !presentation_target_ && (audio_sink_ || audio_.Open(av.sample_rate));
       const double fps = std::isfinite(av.fps) && av.fps > 30 && av.fps <= 120 ? av.fps : 60.0;
       {
         std::lock_guard<std::mutex> lock(telemetry_mutex_);
@@ -2717,6 +2729,23 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
           return result->Error("argument", "The Recompiler profile requires an isolated PS1 match seat.");
         match_cpu = Ps1MatchCpu::kRecompiler;
       }
+      const std::string* presentation = nullptr;
+      if (const auto found = fields->find(Value("ps1PresentationCore")); found != fields->end()) {
+        presentation = std::get_if<std::string>(&found->second);
+        if (!netplay_seat || (local_staging && *local_staging) ||
+            match_cpu != Ps1MatchCpu::kCachedInterpreter || !presentation ||
+            presentation->find('\0') != std::string::npos) {
+          return result->Error("argument", "Rollback requires a separate PS1 presentation core and an isolated seat.");
+        }
+        const auto path = std::filesystem::u8path(*presentation);
+        const auto primary = std::filesystem::u8path(*core);
+        std::error_code error;
+        if (!path.is_absolute() || !primary.is_absolute() || path.filename() != primary.filename() ||
+            std::filesystem::equivalent(path, primary, error) || error ||
+            !std::filesystem::is_regular_file(path) || !std::filesystem::is_regular_file(primary)) {
+          return result->Error("argument", "Rollback requires two separate SwanStation libraries.");
+        }
+      }
       if (const auto lan = fields->find(Value("ps2LanMac")); lan != fields->end()) {
         const auto* bytes = std::get_if<CheckpointBytes>(&lan->second);
         Ps2VirtualLan::Mac mac{};
@@ -2792,11 +2821,24 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
                                                    resolution ? *resolution : "", std::move(graphics),
                                                    netplay_seat, netplay_bios ? *netplay_bios : "",
                                                    local_staging && *local_staging, lan_mac, std::move(online),
-                                                   std::vector<std::string>{}, match_cpu);
+                                                   std::vector<std::string>{}, match_cpu, nullptr,
+                                                   presentation != nullptr);
+      if (presentation) {
+        auto spare = std::make_unique<RetroCoreSession>(
+            textures_, *presentation, *disc, *system, *saves, std::string{},
+            std::map<std::string, std::string>{}, netplay_seat, *netplay_bios, false, std::nullopt, std::nullopt,
+            std::vector<std::string>{}, match_cpu, nullptr, true, RetroCoreSession::AudioSink{},
+            std::vector<uint16_t>{}, RetroCoreSession::CallbackSlot::kPresentation);
+        if (!session_->AttachPresentationCore(std::move(spare)))
+          throw std::runtime_error("Could not attach the PS1 rollback presentation core.");
+      }
       if (!session_->Start()) throw std::runtime_error("Could not register the game surface");
       result->Success(Value(session_->texture_id()));
     } catch (const std::exception& failure) {
-      if (session_) Release();
+      if (session_) {
+        session_->Stop();
+        Release();
+      }
       result->Error("start", failure.what());
     }
     return;

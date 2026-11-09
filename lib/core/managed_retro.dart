@@ -23,6 +23,7 @@ class ManagedRetro {
   static final _ps2LanChecks = <String, ({FileStat stat, String digest, bool valid})>{};
   static const _ps1NetplayArchive = '86ab673a1a1b4260dc73256955d600dd64a5ee57e78e17696ae3504791a6633e';
   static const _ps1OrdinaryHandoffArchive = 'df69b0ad16984b34240b875fa14bcb6a742daaaf9bbb5815e448510b810de036';
+  static const _ps1RollbackArchive = '7446d092547a9ec3ce2a47aff748511a83c3357989ff592dab406024c3d9d1da';
   // This package persists native SPU objects across launches. Keep the old
   // core out of the default pins so a launcher build with the matching ZIP
   // upgrades an already installed legacy core before booting a PS3 title.
@@ -97,30 +98,54 @@ class ManagedRetro {
 
   /// Checkpoint handoff has its own core. Never upgrade the offline PS1 DLL.
   Future<String> ensurePs1NetplayCore({Ps1NetplayExecution execution = Ps1NetplayExecution.standard}) async {
-    final ordinary = execution == Ps1NetplayExecution.ordinaryHandoff;
-    final (directory, archiveName, archivePin, corePin) = ordinary
-        ? (
-            'PS1-Netplay-Ordinary',
-            'swanstation-netplay-ordinary.zip',
-            _ps1OrdinaryHandoffArchive,
-            Ps1NetplayMedia.ordinaryHandoffCorePin,
-          )
-        : ('PS1-Netplay', 'swanstation-netplay.zip', _ps1NetplayArchive, Ps1NetplayMedia.portableCorePin);
+    final (directory, archiveName, archivePin, corePin) = switch (execution) {
+      Ps1NetplayExecution.standard => (
+        'PS1-Netplay',
+        'swanstation-netplay.zip',
+        _ps1NetplayArchive,
+        Ps1NetplayMedia.portableCorePin,
+      ),
+      Ps1NetplayExecution.ordinaryHandoff => (
+        'PS1-Netplay-Ordinary',
+        'swanstation-netplay-ordinary.zip',
+        _ps1OrdinaryHandoffArchive,
+        Ps1NetplayMedia.ordinaryHandoffCorePin,
+      ),
+      Ps1NetplayExecution.rollbackPreview => (
+        'PS1-Netplay-Rollback',
+        'swanstation-netplay-rollback.zip',
+        _ps1RollbackArchive,
+        Ps1NetplayMedia.rollbackCorePin,
+      ),
+    };
     final home = await Directory(root).create(recursive: true);
     final resolvedHome = await home.resolveSymbolicLinks();
     final target = Directory(p.join(resolvedHome, directory));
     final name = libraryName(RetroPlatform.ps1);
     final installed = File(p.join(target.path, name));
-    if (await target.exists() && !p.equals(await target.resolveSymbolicLinks(), target.path)) {
-      throw const FormatException('The PS1 netplay core directory redirects outside its assigned path.');
+    final destinations = [
+      installed,
+      if (execution == Ps1NetplayExecution.rollbackPreview) File(Ps1NetplayMedia.presentationCorePath(installed.path)),
+    ];
+    Future<void> checkDirectory(Directory directory) async {
+      if (await directory.exists() && !p.equals(await directory.resolveSymbolicLinks(), directory.path)) {
+        throw const FormatException('The PS1 netplay core directory redirects outside its assigned path.');
+      }
     }
+
     Future<bool> pinned(File file) async =>
         await file.exists() &&
         p.equals(await file.resolveSymbolicLinks(), file.path) &&
         await AssetDownload.sha256Of(file.path) == corePin;
-    if (await pinned(installed)) return installed.path;
+    await checkDirectory(target);
+    final missing = <File>[];
+    for (final file in destinations) {
+      await checkDirectory(file.parent);
+      if (!await pinned(file)) missing.add(file);
+    }
+    if (missing.isEmpty) return installed.path;
     final legacy = File(p.join(resolvedHome, name));
-    if (!ordinary && await pinned(legacy)) return legacy.path;
+    if (execution == Ps1NetplayExecution.standard && await pinned(legacy)) return legacy.path;
 
     final packages = packageDirectory;
     if (packages == null || !p.isAbsolute(packages)) {
@@ -139,17 +164,19 @@ class ManagedRetro {
         throw const FormatException('The PS1 netplay core package did not pass verification.');
       }
       await target.create();
-      if (!p.equals(await target.resolveSymbolicLinks(), target.path)) {
-        throw const FormatException('The PS1 netplay core directory redirects outside its assigned path.');
+      await checkDirectory(target);
+      for (final file in missing) {
+        await file.parent.create();
+        await checkDirectory(file.parent);
+        await _publishCore(
+          name,
+          archive.path,
+          destination: file.parent.path,
+          verify: (file) async {
+            if (!await pinned(file)) throw const FormatException('The PS1 netplay core did not pass verification.');
+          },
+        );
       }
-      await _publishCore(
-        name,
-        archive.path,
-        destination: target.path,
-        verify: (file) async {
-          if (!await pinned(file)) throw const FormatException('The PS1 netplay core did not pass verification.');
-        },
-      );
       return installed.path;
     } finally {
       await staging.delete(recursive: true);

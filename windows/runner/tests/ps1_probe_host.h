@@ -42,6 +42,7 @@ class ProbeTexture final : public flutter::TextureRegistrar {
   }
 
   bool UnregisterTexture(int64_t) override { return true; }
+  int64_t registered() const { return registered_; }
   uint64_t published() const { return published_; }
   std::pair<int64_t, uint64_t> presentation_gaps() {
     std::lock_guard<std::mutex> lock(presentation_mutex_);

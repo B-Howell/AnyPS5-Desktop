@@ -928,6 +928,46 @@ fewer interruptions for longer recovery pauses. The slowest primary
 iteration was 14.536 ms in this run. Continuous device playout
 remains unverified.
 
+### Windows launcher rollback preview
+
+The [Friends invite flow](../lib/ui/together_ps1_netplay.dart) offers a
+separate Rollback Preview invitation when both PS1 netplay and the rollback
+preview are enabled. Preview rooms use version `4` and a distinct
+[execution fingerprint](../lib/core/online/ps1_netplay_media.dart). Both
+players boot the matching disc from Home with isolated blank memory cards.
+Existing fresh, staged and in-game handoff invitations retain their current
+room versions and behavior. In-game handoff into rollback still requires
+checkpoint and recovery qualification.
+
+For a Windows test build, put the pinned `swanstation-netplay-rollback.zip`
+in the absolute directory configured by `ANYPS5_MANAGED_CORE_PACKAGES`.
+Set `ANYPS5_PS1_NETPLAY=1` and `ANYPS5_PS1_ROLLBACK=1` on both launchers.
+Use the existing PS1 BIOS setup and select the same game revision on both
+PCs. The [package tool](../tool/ps1_netplay/package_core.py) accepts the
+qualified DLL with `--profile rollback`. The ZIP pin is
+`7446d092547a9ec3ce2a47aff748511a83c3357989ff592dab406024c3d9d1da`.
+The [installer](../lib/core/managed_retro.dart) verifies the archive and
+both installed DLLs. It stores the preview pair separately from the
+offline core and repairs an invalid copy from the verified ZIP.
+
+The [embedded start call](../lib/ui/embedded_retro_game.dart) passes the
+presentation library path to the [Windows host](../windows/runner/retro_core_host.cpp).
+The host rejects aliased DLLs, waits for both cores, and uses one texture
+and one audio output for the session. The
+[channel probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) exercises
+the real start, input exchange, presentation and shutdown methods with a
+silent output and no launcher window. The
+[setup test](../test/ui/ps1_netplay_setup_test.dart) uses a fake service to
+verify that joining a version 4 room installs both libraries before admission.
+On Windows the channel probe advanced CTR for 120 frames with remote
+controller packets and verified a single texture registration. The separate
+720-frame native rollback probe corrected a late input, forwarded 12
+presentation frames, and matched six RAM fingerprints and 530,793 stereo
+sample pairs. The three focused Dart suites passed 31 tests with the local
+fixtures, including the existing room modes and the new package repair case.
+Production signaling, audible playout and the two-PC player experience
+remain release gates.
+
 The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
 [driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real
 embedded worker with a headless texture and audio sink. They check periodic

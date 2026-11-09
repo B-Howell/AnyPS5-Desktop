@@ -263,6 +263,8 @@
   "gamePlayers": "%d of %d players",
   "gameInvited": "%@ is invited",
   "ps1OnlineInvite": "Invite to %@",
+  "ps1OnlineRollbackInvite": "Invite to %@ · Rollback Preview",
+  "ps1OnlineRollbackCore": "The verified PS1 rollback preview core package is required.",
   "ps1OnlineReady": "Play with online co-op available",
   "ps1OnlineReadyDetail": "Start a separate session with its own memory card. Invite a friend from the Quick Menu.",
   "ps1OnlineCouch": "Online couch co-op",
