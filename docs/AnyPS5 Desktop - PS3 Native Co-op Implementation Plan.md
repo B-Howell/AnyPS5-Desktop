@@ -200,8 +200,21 @@ success, cancellation, separate initialization and package errors, and
 lease recovery. The [settings widget test](../test/ui/ps3_settings_test.dart)
 exercises the route, visible update chain and Back focus. The production
 Dart transaction also published all 11 real LittleBigPlanet GOTY packages
-with the pinned Linux RPCS3 core through an isolated test adapter. The real
-Windows RPCS3 package and the protected provider lobby remain unqualified.
+with the pinned Linux RPCS3 core through an isolated test adapter.
+
+On Windows x64, the headless reviewer harness installed the locally built
+core through ManagedRetro and ran the production dashboard transaction
+through the native install-only host. The native worker applied all 11
+packages to a scratch profile and confirmed exit and release. The
+transaction published LittleBigPlanet GOTY `BCUS98208` at `01.30` with the
+expected executable digest. The CLANG64 Clang/LLVM 23.1.5 build used the
+pinned RPCS3 source with the frontend SPU-cache patch and v1 network policy.
+The package SHA-256 was
+`d44cb27a45a58631c672031c97713ea9abfef34e31b83c58353f5afabe2ef82b`
+and its DLL SHA-256 was
+`d0aa98b5cd54216e39790905b5af9e24f582e5ce9081b66476b02099d052f0ba`.
+This run qualifies Windows update installation. Windows gameplay with
+the v2 policy, warm SPU reuse, and the protected provider lobby remain open.
 
 ## 2. Make the embedded profile honor the selected settings
 
@@ -294,8 +307,8 @@ selection after shutdown. A socket trace captured one loopback bind per
 run and zero non-loopback Internet socket connects or sends inside the
 isolated network namespace. The tested Linux core SHA-256 was
 `12f8905517226005767c03b663bab5ca2da9dbc8e0c452bdbd8bed6fda4d67c3`.
-The packaged Windows core, sequential offline and online storage
-isolation, and live provider sign-in remain open.
+Windows protected-boot runtime qualification, sequential offline and
+online storage isolation, and live provider sign-in remain open.
 
 This checkpoint has no approved release entries or launcher action that starts
 an online game. Before enabling a provider, verify its native connection uses
