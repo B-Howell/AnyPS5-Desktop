@@ -3996,19 +3996,30 @@ class AppModel extends ChangeNotifier {
 
   bool get managedPs3FirmwareDownloaded => _managedRetro.hasPs3FirmwarePackage;
 
-  Future<Ps1NetplayMedia> verifyPs1Netplay(Game game, Ps1NetplayProfile profile) async {
+  Future<Ps1NetplayMedia> verifyPs1Netplay(Game game, Ps1NetplayProfile profile, {bool requireHandoff = false}) async {
     final disc = game.retro;
     final bios = managedBiosPath(RetroPlatform.ps1);
     if (disc == null || disc.platform != RetroPlatform.ps1) {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
     }
     if (bios == null) throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.bios);
-    return Ps1NetplayMedia.verify(
-      profile: profile,
-      disc: disc.path,
-      bios: bios,
-      core: p.join(retroCoreOverride ?? _managedRetro.root, ManagedRetro.libraryName(RetroPlatform.ps1)),
-    );
+    final managed = _managedRetro;
+    final override = retroCoreOverride;
+    var core = p.join(override ?? managed.root, ManagedRetro.libraryName(RetroPlatform.ps1));
+    if (requireHandoff && override == null) {
+      try {
+        core = await managed.ensurePs1NetplayCore();
+      } on FormatException {
+        throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+      } on FileSystemException {
+        throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+      }
+    }
+    final media = await Ps1NetplayMedia.verify(profile: profile, disc: disc.path, bios: bios, core: core);
+    if (requireHandoff && !media.supportsHandoff) {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+    }
+    return media;
   }
 
   Future<EmbeddedRetroGame> preparePs1Netplay(

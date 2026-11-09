@@ -277,6 +277,7 @@
   "ps1OnlineDisc": "Add the supported CUE and track files for this game to your PS1 library.",
   "ps1OnlineBios": "Select the supported SCPH-1001 BIOS in PS1 Setup.",
   "ps1OnlineCore": "Install the supported SwanStation core in PS1 Setup.",
+  "ps1OnlineHandoffCore": "Online couch co-op needs this build's checkpoint-enabled SwanStation package.",
   "ps1OnlineVerifying": "Verifying your PS1 game for online play.",
   "ps1OnlineMismatch": "The players have different PS1 netplay files or settings.",
   "ps1OnlineDesync": "The two copies fell out of sync. The match ended.",

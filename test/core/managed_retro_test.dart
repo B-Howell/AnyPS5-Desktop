@@ -9,6 +9,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
+  test('PS1 checkpoint setup rejects a mismatched package and preserves the offline core', () async {
+    final root = Directory.systemTemp.createTempSync('anyps5-managed-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final offline = File(p.join(root.path, 'swanstation_libretro.dll'))..writeAsBytesSync([4, 3, 2, 1]);
+    final packages = Directory(p.join(root.path, 'packages'))..createSync();
+    File(p.join(packages.path, 'swanstation-netplay.zip')).writeAsBytesSync([1, 2, 3, 4]);
+    final managed = ManagedRetro(root.path, packageDirectory: packages.path);
+
+    await expectLater(managed.ensurePs1NetplayCore(), throwsFormatException);
+    expect(offline.readAsBytesSync(), [4, 3, 2, 1]);
+    expect(File(p.join(root.path, 'PS1-Netplay', 'swanstation_libretro.dll')).existsSync(), isFalse);
+  });
+
   test('PS2 LAN verifies the DEV9 export and installs separately from the offline core', () async {
     final root = Directory.systemTemp.createTempSync('anyps5-managed-');
     addTearDown(() => root.deleteSync(recursive: true));

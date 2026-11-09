@@ -30,11 +30,10 @@ extension TogetherPs1Netplay on TogetherModel {
     app.show(T.text('ps1OnlineVerifying'));
     app.refresh();
     try {
-      final media = await app.verifyPs1Netplay(game, profile);
-      if (!media.supportsHandoff) return app.show(T.text('ps1OnlineCore'));
+      final media = await app.verifyPs1Netplay(game, profile, requireHandoff: true);
       unawaited(app.playStagedPs1(game, media));
     } on Ps1NetplayMediaFailure catch (error) {
-      _showPs1MediaError(error);
+      _showPs1MediaError(error, handoff: true);
     } finally {
       _verifyingPs1 = false;
       app.refresh();
@@ -203,9 +202,9 @@ extension TogetherPs1Netplay on TogetherModel {
           ? (app.running!.$1, host.stagedNetplayMedia!)
           : selectedGame != null
           ? (selectedGame, await app.verifyPs1Netplay(selectedGame, profile))
-          : await _verifiedPs1(profile, candidates, invitedDigest);
+          : await _verifiedPs1(profile, candidates, invitedDigest, requireHandoff: handoff);
       if (account.user?.id != me || !hostAvailable()) return;
-      if (handoff && !media.supportsHandoff) return app.show(T.text('ps1OnlineCore'));
+      if (handoff && !media.supportsHandoff) return app.show(T.text('ps1OnlineHandoffCore'));
       late final Ps1NetplayMatch match;
       final owned = EmbeddedPs1NetplayRunner(
         (seat) => app.preparePs1Netplay(game, media, seat, canBoot: () => !match.closed && account.user?.id == me),
@@ -253,7 +252,7 @@ extension TogetherPs1Netplay on TogetherModel {
           break;
       }
     } on Ps1NetplayMediaFailure catch (error) {
-      _showPs1MediaError(error);
+      _showPs1MediaError(error, handoff: handoff);
     } on Object {
       app.show(T.text('ps1OnlineDisconnected'));
     } finally {
@@ -263,22 +262,23 @@ extension TogetherPs1Netplay on TogetherModel {
     }
   }
 
-  void _showPs1MediaError(Ps1NetplayMediaFailure error) => app.show(
+  void _showPs1MediaError(Ps1NetplayMediaFailure error, {required bool handoff}) => app.show(
     T.text(switch (error.problem) {
       Ps1NetplayMediaProblem.disc => 'ps1OnlineDisc',
       Ps1NetplayMediaProblem.bios => 'ps1OnlineBios',
-      Ps1NetplayMediaProblem.core => 'ps1OnlineCore',
+      Ps1NetplayMediaProblem.core => handoff ? 'ps1OnlineHandoffCore' : 'ps1OnlineCore',
     }),
   );
 
   Future<(Game, Ps1NetplayMedia)> _verifiedPs1(
     Ps1NetplayProfile profile,
     List<Game> candidates,
-    String? invitedDigest,
-  ) async {
+    String? invitedDigest, {
+    required bool requireHandoff,
+  }) async {
     for (final game in candidates) {
       try {
-        final media = await app.verifyPs1Netplay(game, profile);
+        final media = await app.verifyPs1Netplay(game, profile, requireHandoff: requireHandoff);
         if (invitedDigest == null || media.discDigest == invitedDigest) return (game, media);
       } on Ps1NetplayMediaFailure catch (error) {
         if (error.problem != Ps1NetplayMediaProblem.disc) rethrow;

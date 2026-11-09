@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import 'binary.dart';
 import 'game_library.dart';
+import 'online/ps1_netplay_media.dart';
 import 'toolkit_download.dart';
 
 class ManagedRetro {
@@ -20,6 +21,7 @@ class ManagedRetro {
   static const _patchedPs2Archive = '2df47bc025ff7dfdfce5594b709fa25884667acdff698334ed2d4942a8dc67f7';
   static const _patchedPs2Library = '801af1211407964a4851839c3f4e90607f18353671dd1e427f56e12201d712a4';
   static final _ps2LanChecks = <String, ({FileStat stat, String digest, bool valid})>{};
+  static const _ps1NetplayArchive = '86ab673a1a1b4260dc73256955d600dd64a5ee57e78e17696ae3504791a6633e';
   // This package persists native SPU objects across launches. Keep the old
   // core out of the default pins so a launcher build with the matching ZIP
   // upgrades an already installed legacy core before booting a PS3 title.
@@ -39,6 +41,58 @@ class ManagedRetro {
   };
 
   bool isInstalled(RetroPlatform platform) => _windowsX64Library(File(p.join(root, libraryName(platform))));
+
+  /// Checkpoint handoff has its own core. Never upgrade the offline PS1 DLL.
+  Future<String> ensurePs1NetplayCore() async {
+    final home = await Directory(root).create(recursive: true);
+    final resolvedHome = await home.resolveSymbolicLinks();
+    final target = Directory(p.join(resolvedHome, 'PS1-Netplay'));
+    final name = libraryName(RetroPlatform.ps1);
+    final installed = File(p.join(target.path, name));
+    if (await target.exists() && !p.equals(await target.resolveSymbolicLinks(), target.path)) {
+      throw const FormatException('The PS1 netplay core directory redirects outside its assigned path.');
+    }
+    Future<bool> pinned(File file) async =>
+        await file.exists() &&
+        p.equals(await file.resolveSymbolicLinks(), file.path) &&
+        await AssetDownload.sha256Of(file.path) == Ps1NetplayMedia.portableCorePin;
+    if (await pinned(installed)) return installed.path;
+    final legacy = File(p.join(resolvedHome, name));
+    if (await pinned(legacy)) return legacy.path;
+
+    final packages = packageDirectory;
+    if (packages == null || !p.isAbsolute(packages)) {
+      throw const FormatException('The PS1 netplay core package is missing.');
+    }
+    final source = File(p.join(packages, 'swanstation-netplay.zip'));
+    final info = await source.stat();
+    if (info.type != FileSystemEntityType.file || info.size <= 0 || info.size > 32 * 1024 * 1024) {
+      throw const FormatException('The PS1 netplay core package is missing or has an unexpected size.');
+    }
+    final staging = await home.createTemp('ps1-netplay-package-');
+    try {
+      final archive = File(p.join(staging.path, 'core.zip'));
+      await source.openRead(0, info.size).pipe(archive.openWrite());
+      if (await AssetDownload.sha256Of(archive.path) != _ps1NetplayArchive) {
+        throw const FormatException('The PS1 netplay core package did not pass verification.');
+      }
+      await target.create();
+      if (!p.equals(await target.resolveSymbolicLinks(), target.path)) {
+        throw const FormatException('The PS1 netplay core directory redirects outside its assigned path.');
+      }
+      await _publishCore(
+        name,
+        archive.path,
+        destination: target.path,
+        verify: (file) async {
+          if (!await pinned(file)) throw const FormatException('The PS1 netplay core did not pass verification.');
+        },
+      );
+      return installed.path;
+    } finally {
+      await staging.delete(recursive: true);
+    }
+  }
 
   /// Imports are enabled only for the explicitly configured reviewer package.
   Future<String?> verifiedPs3UpdateCore() async {

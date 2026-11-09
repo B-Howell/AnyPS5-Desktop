@@ -277,6 +277,7 @@
   "ps1OnlineDisc": "Bu oyunun desteklenen CUE ve parça dosyalarını PS1 kitaplığına ekle.",
   "ps1OnlineBios": "PS1 Kurulumu'nda desteklenen SCPH-1001 BIOS dosyasını seç.",
   "ps1OnlineCore": "PS1 Kurulumu'nda desteklenen SwanStation çekirdeğini yükle.",
+  "ps1OnlineHandoffCore": "Çevrimiçi yerel eşli oyun için bu sürümün kontrol noktası destekli SwanStation paketi gerekir.",
   "ps1OnlineVerifying": "PS1 oyunu çevrimiçi oyun için doğrulanıyor.",
   "ps1OnlineMismatch": "Oyuncuların PS1 çevrimiçi oyun dosyaları veya ayarları farklı.",
   "ps1OnlineDesync": "Oyun kopyalarının eşzamanı bozuldu. Oyun sona erdi.",

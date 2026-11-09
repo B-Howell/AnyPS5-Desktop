@@ -255,10 +255,14 @@ port one and neutral input on port two, and matched RAM at the first
 online fingerprint. The control probe confirmed 360 frames with both
 seats active, then verified an already-online host's replacement guest.
 
-On a Windows experimental build with `ANYPS5_PS1_NETPLAY=1` and the
-portable core, open a recognized PS1 CUE game's options and select **Play with
-online co-op available**. This starts the session-owned memory card
-without touching the regular game save. In the running game, choose
+On a Windows experimental build with `ANYPS5_PS1_NETPLAY=1`, open a
+recognized PS1 CUE game's options and select **Play with online co-op
+available**. Accepting an in-game handoff invite uses the same core setup.
+The [managed installer](../lib/core/managed_retro.dart) verifies the
+configured `swanstation-netplay.zip` and the enclosed Windows DLL, then
+installs it under `Emulators/PS1-Netplay`. A verified installation works
+without the ZIP on subsequent starts. The offline SwanStation core and
+regular game saves stay separate. In the running game, choose
 **Quick Menu → Online couch co-op** and pick an online friend. The
 [invite flow](../lib/ui/together_ps1_netplay.dart) uses a separate room
 version for checkpoint handoff. It continues the local game while the
@@ -270,6 +274,37 @@ cover cancellation during checkpoint capture and hold, and leaving during input 
 The native probe also verifies the host resumes local video after the
 online match. The guest owns its own temporary game and exits it when the
 match ends.
+
+### Package the Windows checkpoint core
+
+Run the [package builder](../tool/ps1_netplay/package_core.py) with the
+qualified DLL from the [determinism harness](<AnyPS5 Desktop - PS1 Determinism Harness.md>).
+Use an absolute package directory and pass it to the experimental launcher.
+
+```powershell
+python tool/ps1_netplay/package_core.py $coreDll $packages
+$env:ANYPS5_MANAGED_CORE_PACKAGES = $packages
+$env:ANYPS5_PS1_NETPLAY = '1'
+```
+
+The builder accepts the qualified DLL digest
+`5ef8eba64119146e405a90c5e9243a249c9d57c405fd75415fb4234d5b6080eb`.
+The resulting archive digest is
+`86ab673a1a1b4260dc73256955d600dd64a5ee57e78e17696ae3504791a6633e`.
+The package contains only the DLL. Each player still supplies their own
+matching BIOS and game. The ordinary PS1 invitation flow continues to use
+its existing core selection. An explicit `ANYPS5_LIBRETRO_HOME` still
+selects the reviewer core, which must pass the handoff pin check.
+
+An isolated Windows install reproduced the archive digest, installed the
+core, then reused the same DLL without a configured package directory.
+The offline core and card fixtures kept their original bytes. With the
+installed DLL, the [CTR checkpoint replay](../tool/ps1_netplay/late_join.py)
+restored the guest at frame 6,600 using a renamed copy of the same disc.
+All 62 checkpoints matched through frame 13,706 and both racers finished.
+The guest rejected a truncated checkpoint and a wrong disc digest.
+The local install and race receipts are under `ps1-netplay-package`.
+This verifies package setup and the native checkpoint path on one PC.
 
 ### Windows development checkpoint
 
