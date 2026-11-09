@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 import 'ps3_disc.dart';
+import 'ps3_update_import.dart';
 
 enum Ps3OnlineIssue implements Exception { unqualified, storage, core, update, patch, firmware, account }
 
@@ -58,6 +59,8 @@ final class Ps3OnlineRelease {
     required this.provider,
     required this.titleId,
     required this.updateVersion,
+    this.updateTreeDigest,
+    this.generatedUpdateFiles = const {},
     required this.coreSha256,
     required this.executableSha256,
     required this.protection,
@@ -74,6 +77,10 @@ final class Ps3OnlineRelease {
   final String provider;
   final String titleId;
   final String updateVersion;
+  final String? updateTreeDigest;
+
+  /// Exact paths created by the game after a verified launch, relative to the title directory.
+  final Set<String> generatedUpdateFiles;
   final String coreSha256;
   final String executableSha256;
   final Ps3OnlineProtection protection;
@@ -176,8 +183,10 @@ final class Ps3OnlineProfile {
     required String onlineRoot,
     required String offlineSystemRoot,
     Iterable<Ps3OnlineRelease> releases = Ps3OnlineRelease.catalog,
+    ({Ps3UpdateChain chain, String root})? preparedUpdate,
   }) async {
-    final title = _onlineDiscMetadata(disc)?['TITLE_ID'];
+    final discMetadata = _onlineDiscMetadata(disc);
+    final title = discMetadata?['TITLE_ID'];
     if (title == null) throw Ps3OnlineIssue.unqualified;
     final release = releases.where((entry) => entry.provider == provider && entry.titleId == title).firstOrNull;
     if (release == null) throw Ps3OnlineIssue.unqualified;
@@ -215,11 +224,29 @@ final class Ps3OnlineProfile {
     await _verifyHash(File(core), release.coreSha256, Ps3OnlineIssue.core);
     final hdd = p.join(rpcs3Root, 'dev_hdd0');
     final update = p.join(hdd, 'game', title);
-    final metadata = await _profileFile(profileRoot, p.join(update, 'PARAM.SFO'), Ps3OnlineIssue.update);
-    final fields = Ps3Disc.readSfo(metadata);
-    if (fields?['TITLE_ID'] != title || fields?['APP_VER'] != release.updateVersion) throw Ps3OnlineIssue.update;
-    final executable = await _profileFile(profileRoot, p.join(update, 'USRDIR', 'EBOOT.BIN'), Ps3OnlineIssue.update);
-    await _verifyHash(executable, release.executableSha256, Ps3OnlineIssue.update);
+    Future<void> verifyUpdate() async {
+      final metadata = await _profileFile(profileRoot, p.join(update, 'PARAM.SFO'), Ps3OnlineIssue.update);
+      final fields = Ps3Disc.readSfo(metadata);
+      if (fields?['TITLE_ID'] != title || fields?['APP_VER'] != release.updateVersion) throw Ps3OnlineIssue.update;
+      final executable = await _profileFile(profileRoot, p.join(update, 'USRDIR', 'EBOOT.BIN'), Ps3OnlineIssue.update);
+      await _verifyHash(executable, release.executableSha256, Ps3OnlineIssue.update);
+      if (release.updateTreeDigest case final digest?) {
+        try {
+          if (await ps3UpdateTreeDigest(Directory(update), generatedFiles: release.generatedUpdateFiles) != digest) {
+            throw Ps3OnlineIssue.update;
+          }
+        } on FormatException {
+          throw Ps3OnlineIssue.update;
+        } on FileSystemException {
+          throw Ps3OnlineIssue.update;
+        }
+      }
+    }
+
+    final prepare =
+        preparedUpdate != null &&
+        await FileSystemEntity.type(update, followLinks: false) == FileSystemEntityType.notFound;
+    if (!prepare) await verifyUpdate();
     Map<String, Object>? patchProtection;
     switch (release.protection) {
       case Ps3SprxProtection(:final name, :final sha256):
@@ -244,6 +271,25 @@ final class Ps3OnlineProfile {
     );
     final account = await _profileFile(profileRoot, p.join(configRoot, 'rpcn.yml'), Ps3OnlineIssue.account);
     await _verifyAccount(account, release.rpcnHost);
+    if (prepare) {
+      final (:chain, :root) = preparedUpdate;
+      final treeDigest = release.updateTreeDigest;
+      if (treeDigest == null ||
+          chain.titleId != title ||
+          chain.discVersion != discMetadata?['APP_VER'] ||
+          chain.version != release.updateVersion ||
+          chain.executableDigest != release.executableSha256) {
+        throw Ps3OnlineIssue.update;
+      }
+      try {
+        await chain.provision(root, rpcs3Root, treeDigest);
+      } on FormatException {
+        throw Ps3OnlineIssue.update;
+      } on FileSystemException {
+        throw Ps3OnlineIssue.update;
+      }
+      await verifyUpdate();
+    }
     return Ps3OnlineProfile._(
       release,
       p.absolute(disc),

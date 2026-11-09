@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:anyps5_desktop/core/controllers/pad_info.dart';
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/ps3_online_profile.dart';
+import 'package:anyps5_desktop/core/ps3_update_import.dart';
 import 'package:anyps5_desktop/ui/embedded_retro_game.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
@@ -16,6 +17,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory root;
   late Ps3OnlineRelease release;
+  String? updateTreeDigest;
   late String disc, core, online, offline;
   final accountConfig = Platform.isWindows ? 'online/system/rpcs3/config/rpcn.yml' : 'online/system/rpcs3/rpcn.yml';
   const account = 'Version: 2\nHost: rpcn.example.invalid\nNPID: fixture\nPassword: test-only\n';
@@ -23,6 +25,26 @@ void main() {
   File write(String name, List<int> bytes) => File(p.join(root.path, name))
     ..createSync(recursive: true)
     ..writeAsBytesSync(bytes);
+
+  void makeRelease() {
+    release = Ps3OnlineRelease(
+      provider: 'fixture',
+      titleId: 'ABCD12345',
+      updateVersion: '01.30',
+      updateTreeDigest: updateTreeDigest,
+      generatedUpdateFiles: const {'USRDIR/generated.dat'},
+      coreSha256: sha256.convert([1]).toString(),
+      executableSha256: sha256.convert([2]).toString(),
+      protection: Ps3SprxProtection('provider.sprx', sha256.convert([3]).toString()),
+      rpcnHost: 'rpcn.example.invalid',
+      providerFiles: {
+        'plugins/provider.conf': sha256.convert([4]).toString(),
+      },
+      xfloat: Ps3Xfloat.accurate,
+      dns: Ps3Dns.cloudflare,
+      upnp: true,
+    );
+  }
 
   setUp(() {
     root = Directory.systemTemp.createTempSync('ps3-online-test-');
@@ -41,32 +63,24 @@ void main() {
     write(accountConfig, account.codeUnits);
     write('online/system/rpcs3/dev_hdd0/plugins/provider.conf', [4]);
     write('online/system/rpcs3/dev_flash/vsh/module/vsh.self', [5]);
-    release = Ps3OnlineRelease(
-      provider: 'fixture',
-      titleId: 'ABCD12345',
-      updateVersion: '01.30',
-      coreSha256: sha256.convert([1]).toString(),
-      executableSha256: sha256.convert([2]).toString(),
-      protection: Ps3SprxProtection('provider.sprx', sha256.convert([3]).toString()),
-      rpcnHost: 'rpcn.example.invalid',
-      providerFiles: {
-        'plugins/provider.conf': sha256.convert([4]).toString(),
-      },
-      xfloat: Ps3Xfloat.accurate,
-      dns: Ps3Dns.cloudflare,
-      upnp: true,
-    );
+    updateTreeDigest = null;
+    makeRelease();
   });
 
   tearDown(() => root.deleteSync(recursive: true));
 
-  Future<Ps3OnlineProfile> verify({String? provider, String? onlineRoot}) => Ps3OnlineProfile.verify(
+  Future<Ps3OnlineProfile> verify({
+    String? provider,
+    String? onlineRoot,
+    ({Ps3UpdateChain chain, String root})? preparedUpdate,
+  }) => Ps3OnlineProfile.verify(
     provider: provider ?? release.provider,
     disc: disc,
     core: core,
     onlineRoot: onlineRoot ?? online,
     offlineSystemRoot: offline,
     releases: [release],
+    preparedUpdate: preparedUpdate,
   );
 
   test('validates a provider-independent release and exposes only typed launch values', () async {
@@ -77,6 +91,55 @@ void main() {
     expect(profile.saveRoot, p.join(canonical, 'saves'));
     expect(profile.disc, disc);
     expect(profile.core, core);
+  });
+
+  test('an explicit preparation copies the reviewed update only into the verified online profile', () async {
+    final update = Directory(p.join(online, 'system', 'rpcs3', 'dev_hdd0', 'game', release.titleId));
+    final source = p.join(root.path, 'prepared', release.titleId, release.updateVersion);
+    Directory(source).parent.createSync(recursive: true);
+    update.renameSync(source);
+    final manifest = File(p.join(source, 'PARAM.SFO'))
+      ..writeAsBytesSync(ps3FixtureSfo({'TITLE_ID': release.titleId, 'APP_VER': '01.30', 'CATEGORY': 'GD'}));
+    final sourceAsset = File(p.join(source, 'USRDIR', 'asset.dat'))..writeAsBytesSync([6, 7, 8]);
+    updateTreeDigest = await ps3UpdateTreeDigest(Directory(await Directory(source).resolveSymbolicLinks()));
+    makeRelease();
+    final prepared = (
+      root: p.join(root.path, 'prepared'),
+      chain: Ps3UpdateChain(
+        titleId: release.titleId,
+        discVersion: '01.00',
+        version: release.updateVersion,
+        executableDigest: release.executableSha256,
+        packages: const [],
+      ),
+    );
+
+    await expectLater(verify(), throwsA(Ps3OnlineIssue.update));
+    File(p.join(root.path, accountConfig)).deleteSync();
+    await expectLater(verify(preparedUpdate: prepared), throwsA(Ps3OnlineIssue.account));
+    expect(update.existsSync(), isFalse);
+    write(accountConfig, account.codeUnits);
+
+    sourceAsset.writeAsBytesSync([0]);
+    await expectLater(verify(preparedUpdate: prepared), throwsA(Ps3OnlineIssue.update));
+    expect(update.existsSync(), isFalse);
+    sourceAsset.writeAsBytesSync([6, 7, 8]);
+
+    final profile = await verify(preparedUpdate: prepared);
+    File(p.join(update.path, 'USRDIR', 'generated.dat')).writeAsBytesSync([1]);
+    await profile.revalidate();
+    expect(File(p.join(update.path, 'USRDIR', 'asset.dat')).readAsBytesSync(), [6, 7, 8]);
+    expect(sourceAsset.existsSync(), isTrue);
+    expect(manifest.existsSync(), isTrue);
+    expect(Directory(offline).listSync(), isEmpty);
+    final unreviewed = File(p.join(update.path, 'USRDIR', 'unreviewed.dat'))..writeAsBytesSync([1]);
+    await expectLater(profile.revalidate(), throwsA(Ps3OnlineIssue.update));
+    unreviewed.deleteSync();
+    File(p.join(update.path, 'USRDIR', 'asset.dat')).writeAsBytesSync([0]);
+    await expectLater(profile.revalidate(), throwsA(Ps3OnlineIssue.update));
+    final executable = File(p.join(update.path, 'USRDIR', 'EBOOT.BIN'))..writeAsBytesSync([9]);
+    await expectLater(verify(preparedUpdate: prepared), throwsA(Ps3OnlineIssue.update));
+    expect(executable.readAsBytesSync(), [9]);
   });
 
   test('verifies the reviewed per-title YAML and carries its required boot patches', () async {

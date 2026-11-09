@@ -193,6 +193,30 @@ when the user leaves the page. It releases the lease after confirmed exit.
 If exit cannot be confirmed, the staging directory stays in place for safety.
 No network download or provider sign-in is part of this workflow.
 
+The [profile verifier](../lib/core/ps3_online_profile.dart) can explicitly
+prepare an empty title slot using that stored update. It first checks the
+isolated paths, core, protection, firmware and account, then matches the
+prepared chain to the selected disc, target version and executable digest.
+The [handoff](../lib/core/ps3_update_import.dart) copies title assets into
+temporary storage on the profile's volume, rejects redirected entries,
+checks the copied SFO and EBOOT, and matches the complete sorted file
+tree against the release digest before publishing the directory in one
+rename. Existing title data is checked in place and preserved. Normal
+revalidation checks the same digest and may exclude only the release's
+exact game-generated file paths. It still rejects redirected entries and
+unknown additions. LittleBigPlanet GOTY preserved all 33 prepared files
+after the Windows boot tests and added seven files. Five matched disc
+assets byte for byte, and two were generated runtime data. The tested
+prepared tree digest was
+`b903631d139f167e66c4caae16ca03c8335508627b714130e8d9f2f813f38bcc`.
+The seven paths are evidence for a reviewed profile, pending qualification
+through a complete online session. The
+[profile regression](../test/core/ps3_online_profile_test.dart) covers the
+explicit handoff, account failure before copy, changed assets, allowed
+game output, unknown files and
+preservation of existing data. No dashboard launch supplies this input
+yet. The release catalog remains empty pending provider qualification.
+
 The [transaction tests](../test/core/ps3_update_import_test.dart) cover
 missing and changed packages, failed publication, cancellation and staging
 isolation. The [channel tests](../test/ui/ps3_update_worker_test.dart) cover

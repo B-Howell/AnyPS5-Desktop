@@ -1,3 +1,5 @@
+import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -6,6 +8,24 @@ import 'package:path/path.dart' as p;
 import 'ps3_disc.dart';
 
 typedef Ps3UpdatePackage = ({String version, int size, String digest});
+
+/// SHA-256 of the sorted relative file paths and their individual SHA-256 hashes.
+Future<String> ps3UpdateTreeDigest(Directory title, {Set<String> generatedFiles = const {}}) async {
+  final root = await title.resolveSymbolicLinks();
+  if (!p.equals(root, title.path)) throw const FormatException('The PS3 title directory is redirected.');
+  final entries = SplayTreeMap<String, String>();
+  await for (final entry in Directory(root).list(recursive: true, followLinks: false)) {
+    if (entry is Link || !p.equals(await entry.resolveSymbolicLinks(), entry.path)) {
+      throw const FormatException('The PS3 title contains a redirected entry.');
+    }
+    if (entry is File) {
+      final relative = p.split(p.relative(entry.path, from: root)).join('/');
+      if (generatedFiles.contains(relative)) continue;
+      entries[relative] = (await sha256.bind(entry.openRead()).first).toString();
+    }
+  }
+  return sha256.convert(utf8.encode(jsonEncode(entries))).toString();
+}
 
 Future<Directory> _updateHome(String root, {required bool create}) async {
   final directory = Directory(p.normalize(p.absolute(root)));
@@ -93,6 +113,69 @@ final class Ps3UpdateChain {
       return false;
     } on FormatException {
       return false;
+    }
+  }
+
+  /// Copies an already prepared update into the caller's isolated RPCS3 profile.
+  /// Existing title data is never replaced.
+  Future<void> provision(String store, String rpcs3Root, String treeDigest) async {
+    final home = await _updateHome(store, create: false);
+    final source = Directory(_destination(home.path));
+    if (!await isPrepared(home.path)) {
+      throw const FormatException('The prepared PS3 update did not pass verification.');
+    }
+    if (p.equals(home.path, rpcs3Root) || p.isWithin(home.path, rpcs3Root) || p.isWithin(rpcs3Root, home.path)) {
+      throw const FormatException('The prepared update and online profile must be separate.');
+    }
+
+    var game = Directory(rpcs3Root);
+    for (final name in ['dev_hdd0', 'game']) {
+      game = Directory(p.join(game.path, name));
+      if (await FileSystemEntity.type(game.path, followLinks: false) == FileSystemEntityType.notFound) {
+        await game.create();
+      }
+      if (!p.equals(await game.resolveSymbolicLinks(), game.path)) {
+        throw const FormatException('The online update destination is redirected.');
+      }
+    }
+    final destination = Directory(p.join(game.path, titleId));
+    Future<bool> matches(Directory title) async =>
+        await _validTitle(title) && await ps3UpdateTreeDigest(title) == treeDigest;
+    if (await FileSystemEntity.type(destination.path, followLinks: false) != FileSystemEntityType.notFound) {
+      if (await matches(destination)) return;
+      throw const FormatException('The online profile already contains different title data.');
+    }
+
+    final stage = await Directory(rpcs3Root).createTemp('.online-update-');
+    try {
+      await for (final entry in source.list(recursive: true, followLinks: false)) {
+        if (!p.equals(await entry.resolveSymbolicLinks(), entry.path)) {
+          throw const FormatException('The prepared PS3 update contains a redirected entry.');
+        }
+        final target = p.join(stage.path, p.relative(entry.path, from: source.path));
+        if (entry is Directory) {
+          await Directory(target).create(recursive: true);
+        } else if (entry is File) {
+          await Directory(p.dirname(target)).create(recursive: true);
+          await entry.copy(target);
+        } else {
+          throw const FormatException('The prepared PS3 update contains an unsupported entry.');
+        }
+      }
+      if (!await matches(stage) || !p.equals(await game.resolveSymbolicLinks(), game.path)) {
+        throw const FormatException('The copied PS3 update did not pass verification.');
+      }
+      try {
+        await stage.rename(destination.path);
+      } on FileSystemException {
+        if (!await matches(destination)) rethrow;
+      }
+    } finally {
+      try {
+        if (await stage.exists()) await stage.delete(recursive: true);
+      } on FileSystemException {
+        // An OS lock on the disposable copy must not mask the original result.
+      }
     }
   }
 
