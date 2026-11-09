@@ -535,6 +535,33 @@ UI are separate gates. The workers used preconfigured scratch cards. This
 run predates the persistent PS2 LAN profile and does not qualify the first
 in-game network setup on a blank card.
 
+### Full TimeSplitters round with a simulated outage
+
+At Desktop `69e80f7`, two real D3D11 TimeSplitters workers used the same
+local Windows WebRTC room with separate scratch cards. Paired captures
+confirmed both players were in Vietnam Deathmatch before the test
+reported a failed connection on the guest. The gateway fixture rejected
+the first restart request, offer and answer. The room used one new ICE
+offer on the original two links. The guest reported recovery after
+4,526 ms, and both adapter receive counters had advanced by 4,591 ms.
+
+In the next 1,800-frame checkpoint, entirely after recovery, the host
+adapter sent 567 frames and received 281. The guest sent 281 and received
+568. Both consoles reached Results and Scores. The host table showed A
+and B tied 0–0. The guest showed the same scores with some labels missing,
+as in the control run. The room and both native workers exited zero.
+Both fault logs were empty, the room released both seats, and neither
+adapter reported queue overflow. The source card seed retained its hash.
+
+The local receipt under `timesplitters-lan/native-recovery-69e80f7`
+contains the source and binary hashes, recovery timing, worker counters,
+scripted inputs and paired captures. The failure was injected at the
+connection-state callback while native WebRTC carried the game packets.
+This run qualifies game-level survival of that simulated outage on one
+PC. Physical network loss, hosted signaling, direct and relayed play
+across separate networks, and the installed launcher's UI still need
+qualification.
+
 ### Persistent card reopen on the native core
 
 Two sequential headless TimeSplitters launches used the Windows D3D11
