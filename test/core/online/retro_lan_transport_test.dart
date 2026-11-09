@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:anyps5_desktop/core/online/online_peer_mesh.dart';
+import 'package:anyps5_desktop/core/online/retro_lan_bridge.dart';
 import 'package:anyps5_desktop/core/online/retro_lan_transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -15,6 +18,23 @@ Uint8List _frame(int destination, int source, {int size = 60}) => Uint8List.from
   6,
   ...List.filled(size - 14, 0),
 ]);
+
+final class _GameChannel implements GameLink {
+  late void Function(Uint8List) deliver;
+  final sent = <Uint8List>[];
+
+  @override
+  set onMessage(void Function(Uint8List) handler) => deliver = handler;
+
+  @override
+  bool send(Uint8List data) {
+    sent.add(data);
+    return true;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   late RetroLanTransport host;
@@ -60,5 +80,66 @@ void main() {
     host.close();
     expect(host.inbound('guest', pending), isNull);
     expect(host.outbound(_frame(_guest, _host)), isNull);
+  });
+
+  test('exchanges authenticated game frames with the native queue in bounded batches', () async {
+    final guestLink = _GameChannel();
+    final thirdLink = _GameChannel();
+    final batches = <List<Uint8List>>[];
+    var ready = false;
+    final reply = _frame(_guest, _host);
+    final bridge = RetroLanBridge(
+      segment: host,
+      links: {'guest': guestLink, 'third': thirdLink},
+      exchange: (input) async {
+        batches.add(input);
+        return ready ? [reply] : null;
+      },
+    );
+    addTearDown(bridge.close);
+    final discovery = _frame(0xffffffffffff, _guest);
+    final packet = guest.outbound(discovery)!.packet;
+    thirdLink.deliver(packet);
+    await bridge.pump();
+    expect(batches.single, isEmpty, reason: 'A different connection cannot send as the guest');
+    for (var index = 0; index < 70; index++) {
+      guestLink.deliver(packet);
+    }
+    await bridge.pump();
+    expect(batches.last, hasLength(16));
+    expect(guestLink.sent, isEmpty);
+    ready = true;
+    for (var batch = 0; batch < 4; batch++) {
+      await bridge.pump();
+      expect(batches.last, hasLength(16));
+      expect(batches.last.every((frame) => frame.length == discovery.length), isTrue);
+    }
+    await bridge.pump();
+    expect(batches.last, isEmpty);
+    expect(guest.inbound('host', guestLink.sent.first), reply);
+    expect(thirdLink.sent, isEmpty);
+  });
+
+  test('one exchange runs at a time and late native frames are discarded after close', () async {
+    final guestLink = _GameChannel();
+    final pending = Completer<List<Uint8List>?>();
+    var calls = 0;
+    final bridge = RetroLanBridge(
+      segment: RetroLanTransport(epoch: 12, me: 'host', addresses: {'host': _host, 'guest': _guest}),
+      links: {'guest': guestLink},
+      exchange: (_) {
+        calls++;
+        return pending.future;
+      },
+    );
+    final first = bridge.pump();
+    final second = bridge.pump();
+    expect(calls, 1);
+    bridge.close();
+    pending.complete([_frame(_guest, _host)]);
+    await Future.wait([first, second]);
+    expect(guestLink.sent, isEmpty);
+    await bridge.pump();
+    expect(calls, 1);
   });
 }

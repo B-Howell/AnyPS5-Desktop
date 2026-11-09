@@ -263,8 +263,22 @@ of at most 16 frames and accepts caller-supplied LAN system and save
 paths for isolation. The [native queue test](../windows/runner/tests/ps2_virtual_lan_test.cpp)
 exercises the callback ABI, frame copying, bounded queues, routing checks,
 and teardown. The LAN launch preserves its network state by rejecting
-graphics changes that reopen the core. The room coordinator still needs to feed the frame batches
-through the [peer connection layer](../lib/core/online/online_peer_mesh.dart).
+graphics changes that reopen the core.
+
+The [LAN bridge](../lib/core/online/retro_lan_bridge.dart) connects the
+native frame exchange to each room-bound WebRTC game channel. It keeps
+at most 64 incoming frames, retries the head batch while the core is
+loading, and allows one exchange of up to 16 frames at a time. On
+teardown it detaches the incoming handlers and discards late native
+responses. The [transport suite](../test/core/online/retro_lan_transport_test.dart)
+covers the queue limit, source binding, unicast routing and cancellation.
+Set `ANYPS5_PS2_WEBRTC_LAN=1` on the existing
+[headless WebRTC probe](../tool/ps1_netplay/webrtc_loopback.dart) to run
+the [broadcast and unicast fixture](../tool/ps1_netplay/webrtc_lan_probe.dart)
+over real Windows data channels. The headless run matched both Ethernet
+frames byte for byte. The fixture supplies synthetic frames at the native
+queue boundary. A PS2 room coordinator still needs to own signaling,
+native launch and frame scheduling.
 
 The patched DEV9 object compiled with GCC in WSL at the pinned core
 revision. The object exports `retro_anyps5_dev9_bind_v1`. This is a

@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import 'webrtc_native_worker.dart';
+import 'webrtc_lan_probe.dart';
 import 'webrtc_room_fixture.dart';
 
 Future<void> main() async {
@@ -22,7 +23,15 @@ Future<void> main() async {
   const report = MethodChannel('anyps5/ps1_webrtc_probe');
   try {
     final config = Platform.environment['ANYPS5_PS1_WEBRTC_NATIVE'];
-    await report.invokeMethod<void>('pass', config == null ? await _exercise() : await _nativeExercise(config));
+    final lan = Platform.environment['ANYPS5_PS2_WEBRTC_LAN'] == '1';
+    await report.invokeMethod<void>(
+      'pass',
+      lan
+          ? await verifyWebRtcLanBridge()
+          : config == null
+          ? await _exercise()
+          : await _nativeExercise(config),
+    );
   } on Object catch (error, stack) {
     await report.invokeMethod<void>('fail', '$error\n$stack');
   }
