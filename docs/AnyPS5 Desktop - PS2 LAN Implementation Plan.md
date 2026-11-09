@@ -414,11 +414,43 @@ and received 1,897 room frames, while the guest had sent 1,897 and received
 4,468. Both processes exited cleanly with empty fault logs.
 
 This qualifies a full D3D11 round through the launcher DHCP and packet
-rules over one-PC loopback. The real WebRTC run still needs two embedded
-game peers. The launcher also needs a PS2 network configuration path
-that survives across sessions. Local evidence beside the Windows DLL
+rules over one-PC UDP loopback. Local evidence beside the Windows DLL
 package includes captured frames, logs, input steps and the diagnostic
 source under `timesplitters-lan/renderer-control`.
+
+### Full TimeSplitters round over Windows WebRTC
+
+At Desktop `d7f7911`, the same two native D3D11 workers ran the US disc
+with separate scratch cards. A local adapter connected each worker's DEV9
+frames to the production [room match](../lib/core/online/retro_lan_match.dart)
+and [Windows WebRTC game channels](../lib/ui/online_webrtc.dart). The
+[room gateway fixture](../tool/ps1_netplay/webrtc_room_fixture.dart) supplied
+signaling. The native game workers used loopback TCP only to exchange raw
+frames with their local Dart adapters. Traffic between the two Dart room
+peers used the real WebRTC data channels.
+
+The first run reached a shared lobby, then the [headless test runner's
+65-second watchdog](../windows/runner/tests/ps1_webrtc_loopback.cpp) closed
+both links. With a 600-second watchdog in the scratch build, the rerun paced
+network setup and gameplay at up to 60 guest ticks per second. Both consoles
+got one DHCP lease, joined the same lobby, entered Vietnam Deathmatch with
+separate first-person views and reached matching results and score tables.
+Both tables listed A and B tied at 0–0. The native workers and room host all
+exited zero. The room released both endpoints, the worker fault logs were
+empty, and no owned runner remained. The host adapter queued 4,420 outbound
+game frames and received 1,882. The guest queued 1,883 and received 4,419.
+Neither scratch adapter overflowed its queues. These counters measure the
+adapter boundaries and do not establish packet loss on the wire.
+
+Local evidence under `timesplitters-lan/webrtc-control` includes the pinned
+core and bundle hashes, runner source, scripted inputs, teardown receipt
+and paired captures of the lobby, gameplay, results and scores. This run
+qualifies the two real guest instances and Windows WebRTC transport on one
+PC. Hosted AnyTogether signaling, WAN or TURN, and the shipping launcher
+UI are separate gates. The workers used preconfigured scratch cards. The
+shipping [PS2 LAN launch](../lib/ui/app_model.dart) creates a temporary card
+environment for each room, so the next setup gate is to persist the user's
+PS2 network configuration while keeping live test cards isolated.
 
 TimeSplitters: Future Perfect is a second PS2 fixture. Its US NTSC disc
 reports `SLUS21148` and version `1.00` in `SYSTEM.CNF`. The [original manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)
