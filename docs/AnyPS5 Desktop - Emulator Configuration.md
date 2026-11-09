@@ -37,6 +37,12 @@ folders with PS3_DISC.SFB and PS3_GAME. Extract archives before scanning.
 
 An optional retro.json beside a PS1 or PS2 image can supply the platform,
 title ID, name and media. Paths are relative to that title's folder.
+For a nested multi-track PS1 dump, put the manifest and media beside the
+CUE so the launcher discovers one entry and keeps its tracks together.
+For the US Tekken 3 disc, use the boot serial `SLUS00402`. Its second
+disc track contains CD audio that can be exported as a stereo WAV loop
+for the `music` field. Keep original art and disc tracks separate from
+any resized or looped exports.
 
 ```json
 {
