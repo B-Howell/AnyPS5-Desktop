@@ -144,17 +144,44 @@ void main() {
     expect(start.isCompleted, isFalse);
 
     activate('ps3-online-play');
-    await waitFor(() => playStatus()?.contains('account') == true);
+    await waitFor(() => playStatus()?.contains('Import Provider Account') == true);
     expect(start.isCompleted, isFalse);
-    write(
-      p.join(rpcs3, 'config', 'rpcn.yml'),
-      utf8.encode('Version: 2\nHost: rpcn.example.invalid\nNPID: fixture\nPassword: test-only\n'),
+    const account = 'Version: 2\nHost: rpcn.example.invalid\nNPID: fixture\nPassword: test-only\nToken: fake-token\n';
+    final installedAccount = File(p.join(rpcs3, 'config', 'rpcn.yml'));
+    String? accountStatus() =>
+        model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-online-import-account').detail;
+    final wrongAccount = write(
+      p.join(fixture.temp.path, 'wrong-provider.yml'),
+      utf8.encode(account.replaceFirst('rpcn.example.invalid', 'different.example.invalid')),
     );
+    selectedPatch = wrongAccount.path;
+    activate('ps3-online-import-account');
+    await waitFor(() => accountStatus()?.contains('does not match') == true);
+    expect(installedAccount.existsSync(), isFalse);
+    selectedPatch = write(
+      p.join(fixture.temp.path, 'account-without-token.yml'),
+      utf8.encode(account.replaceFirst('Token: fake-token\n', '')),
+    ).path;
+    activate('ps3-online-import-account');
+    await waitFor(() => accountStatus() == 'Provider account imported.');
+    expect(jsonDecode(installedAccount.readAsStringSync()), containsPair('Token', ''));
+    selectedPatch = write(p.join(fixture.temp.path, 'account.yml'), utf8.encode('${account}Hosts: ignored\n')).path;
+    activate('ps3-online-import-account');
+    await waitFor(() => accountStatus() == 'Provider account imported.');
+    expect(installedAccount.readAsStringSync(), contains('fake-token'));
+    expect(installedAccount.readAsStringSync(), isNot(contains('ignored')));
+    selectedPatch = wrongAccount.path;
+    activate('ps3-online-import-account');
+    await waitFor(() => accountStatus()?.contains('does not match') == true);
+    expect(installedAccount.readAsStringSync(), contains('fake-token'));
+    expect(start.isCompleted, isFalse);
     activate('ps3-online-play');
     final launch = await start.future.timeout(const Duration(seconds: 5));
     expect(launch['system'], await Directory(p.join(profile, 'system')).resolveSymbolicLinks());
     expect(launch['saves'], await Directory(p.join(profile, 'saves')).resolveSymbolicLinks());
     expect(launch['ps3Online'], contains('patchProtection'));
+    expect(launch.toString(), isNot(contains('fake-token')));
+    expect(launch.toString(), isNot(contains('test-only')));
     expect(Directory(p.join(managed, 'system')).listSync(), isEmpty);
     await waitFor(() => model.embeddedGame?.presented == true);
     try {

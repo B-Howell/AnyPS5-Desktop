@@ -404,6 +404,20 @@ in a fresh profile. The tested Windows core also generates
 A release for that core needs this base pin so the verifier can reopen
 the profile after the first boot.
 
+**Import Provider Account** accepts an existing RPCN version 2
+configuration whose host matches the reviewed provider. The importer
+reads a bounded file and writes only the version, host, account ID,
+password and token to the isolated RPCS3 profile. It rejects embedded
+NULs in account fields because RPCN uses NUL-terminated fields. It
+writes an empty token when the selected configuration has none and drops the
+saved server list and unrelated settings. RPCS3 reads those credentials
+from its local configuration, and the launcher channel receives only
+the verified network policy and patch metadata. Invalid input leaves
+the existing configuration intact. The action imports a local account
+file. The YAML library from the pinned Windows RPCS3 build parsed the
+normalized output in a scratch probe with synthetic credentials. Account
+registration and provider sign-in remain separate.
+
 The [embedded session](../lib/ui/embedded_retro_game.dart) keeps RPCS3
 running under the Quick Menu and sends neutral input while the menu has
 focus. The protected session does not offer in-game graphics changes

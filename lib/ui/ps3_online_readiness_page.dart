@@ -2,6 +2,16 @@ part of 'app_model.dart';
 
 const _ps3OnlineRecheck = 'ps3-online-recheck';
 
+enum _Ps3ProfileFile {
+  patch('Patch', 'ps3OnlinePatchMismatch', 'ps3OnlinePatchInstalled'),
+  account('Account', 'ps3OnlineAccountMismatch', 'ps3OnlineAccountInstalled');
+
+  const _Ps3ProfileFile(this.key, this.invalidKey, this.installedKey);
+  final String key;
+  final String invalidKey;
+  final String installedKey;
+}
+
 String _ps3OnlineIssueText(Ps3OnlineIssue issue) => T.text(switch (issue) {
   Ps3OnlineIssue.unqualified => 'ps3OnlineNoProviderDetail',
   Ps3OnlineIssue.storage => 'ps3OnlineStorageRequired',
@@ -28,48 +38,46 @@ extension _Ps3OnlineReadinessPage on AppModel {
         Ps3OnlineReadiness.inspect(disc: disc.path, managedSystem: managed.systemPath, releases: releases);
     var report = inspect();
     var checking = false;
-    var importing = false;
+    _Ps3ProfileFile? importing;
     String? failure;
-    String? protectionDetail;
+    final importDetails = <_Ps3ProfileFile, String>{};
     late final PanelCategory Function() page;
     bool visible() => !_disposed && overlay == Layer.emulatorMenu && identical(_emulatorMenu._page, page);
     bool available() =>
         !_disposed && !_quitting && managedSetupConsole == null && starting == null && running == null && !stopping;
 
-    Future<void> importProtection(Ps3OnlineRelease release) async {
-      if (checking || importing || !visible() || !available()) return;
-      importing = true;
-      protectionDetail = null;
+    Future<void> importFile(Ps3OnlineRelease release, _Ps3ProfileFile kind) async {
+      if (checking || importing != null || !visible() || !available()) return;
+      importing = kind;
+      importDetails.remove(kind);
       refresh();
       try {
-        final path = await services.pickFile?.call(T.text('ps3OnlineImportPatch'), const ['yml', 'yaml']);
+        final path = await services.pickFile?.call(T.text('ps3OnlineImport${kind.key}'), const ['yml', 'yaml']);
         if (path == null || !visible() || !available()) return;
-        final installed = await Ps3OnlineProfile.importProtection(
-          managed.root,
-          release,
-          path,
-          canPublish: () => visible() && available(),
-        );
+        final publish = kind == _Ps3ProfileFile.patch
+            ? Ps3OnlineProfile.importProtection
+            : Ps3OnlineProfile.importAccount;
+        final installed = await publish(managed.root, release, path, canPublish: () => visible() && available());
         if (installed) {
           failure = null;
-          protectionDetail = T.text('ps3OnlinePatchInstalled');
+          importDetails[kind] = T.text(kind.installedKey);
         }
       } on Ps3OnlineIssue catch (issue) {
-        protectionDetail = issue == Ps3OnlineIssue.patch
-            ? T.text('ps3OnlinePatchMismatch')
+        importDetails[kind] = issue == Ps3OnlineIssue.patch || issue == Ps3OnlineIssue.account
+            ? T.text(kind.invalidKey)
             : _ps3OnlineIssueText(issue);
       } on FileSystemException {
-        protectionDetail = _ps3OnlineIssueText(Ps3OnlineIssue.storage);
+        importDetails[kind] = _ps3OnlineIssueText(Ps3OnlineIssue.storage);
       } on PlatformException {
-        protectionDetail = T.text('ps3OnlinePatchPickerFailed');
+        importDetails[kind] = T.text('ps3OnlinePatchPickerFailed');
       } finally {
-        importing = false;
+        importing = null;
         if (visible()) refresh();
       }
     }
 
     Future<void> playOnline(Ps3OnlineRelease release) async {
-      if (checking || importing || !visible() || !available()) return;
+      if (checking || importing != null || !visible() || !available()) return;
       checking = true;
       failure = null;
       refresh();
@@ -107,22 +115,24 @@ extension _Ps3OnlineReadinessPage on AppModel {
         report,
         _ps3UpdateRow(report),
         () {
-          if (checking || importing) return;
+          if (checking || importing != null) return;
           report = inspect();
           failure = null;
           panelRow = _emulatorMenu.categories.single.rows.indexWhere((row) => row.id == _ps3OnlineRecheck);
           refresh();
         },
-        protection: release == null || services.pickFile == null
-            ? null
-            : PanelRow(
-                id: 'ps3-online-import-patch',
-                title: T.text('ps3OnlineImportPatch'),
-                detail: importing
-                    ? T.text('ps3OnlinePatchImporting')
-                    : protectionDetail ?? T.text('ps3OnlineImportPatchDetail'),
-                kind: ActionRow(() => unawaited(importProtection(release))),
+        imports: [
+          if (release != null && services.pickFile != null)
+            for (final kind in _Ps3ProfileFile.values)
+              PanelRow(
+                id: 'ps3-online-import-${kind.name}',
+                title: T.text('ps3OnlineImport${kind.key}'),
+                detail: importing == kind
+                    ? T.text('ps3Online${kind.key}Importing')
+                    : importDetails[kind] ?? T.text('ps3OnlineImport${kind.key}Detail'),
+                kind: ActionRow(() => unawaited(importFile(release, kind))),
               ),
+        ],
         play: release == null
             ? null
             : PanelRow(
@@ -141,7 +151,7 @@ PanelCategory _ps3OnlineReadinessPanel(
   Ps3OnlineReadiness report,
   PanelRow? update,
   void Function() recheck, {
-  PanelRow? protection,
+  required List<PanelRow> imports,
   PanelRow? play,
 }) {
   final (status, explanation) = switch (report.state) {
@@ -169,7 +179,7 @@ PanelCategory _ps3OnlineReadinessPanel(
       ],
       PanelRow(id: _ps3OnlineRecheck, title: T.text('ps3OnlineRecheck'), kind: ActionRow(recheck)),
       ?update,
-      ?protection,
+      ...imports,
       ?play,
     ],
   );

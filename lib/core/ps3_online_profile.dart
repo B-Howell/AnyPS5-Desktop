@@ -181,21 +181,52 @@ final class Ps3OnlineProfile {
     final protection = release.protection;
     if (!release.hasManagedProfile || protection is! Ps3YamlProtection) throw Ps3OnlineIssue.unqualified;
     final bytes = await _readProtection(File(source), protection.sha256);
+    return _publishManagedFile(managedRoot, release, ['patches'], '${release.titleId}_patch.yml', bytes, canPublish);
+  }
+
+  static Future<bool> importAccount(
+    String managedRoot,
+    Ps3OnlineRelease release,
+    String source, {
+    required bool Function() canPublish,
+  }) async {
+    if (!release.hasManagedProfile) throw Ps3OnlineIssue.unqualified;
+    final account = await _readAccount(File(source), release.rpcnHost);
+    return _publishManagedFile(
+      managedRoot,
+      release,
+      [if (Platform.isWindows) 'config'],
+      'rpcn.yml',
+      utf8.encode(jsonEncode(account)),
+      canPublish,
+    );
+  }
+
+  static Future<bool> _publishManagedFile(
+    String managedRoot,
+    Ps3OnlineRelease release,
+    List<String> directories,
+    String name,
+    List<int> bytes,
+    bool Function() canPublish,
+  ) async {
     if (!canPublish()) return false;
     final profile = await managedProfileRoot(managedRoot, release, create: true);
-    final system = await _managedDirectory(profile, 'system', create: true);
-    final emulator = await _managedDirectory(system, 'rpcs3', create: true);
-    final patches = await _managedDirectory(emulator, 'patches', create: true);
-    final destination = p.join(patches, '${release.titleId}_patch.yml');
-    final stage = await Directory(patches).createTemp('.patch-import-');
+    var directory = profile;
+    for (final component in ['system', 'rpcs3', ...directories]) {
+      directory = await _managedDirectory(directory, component, create: true);
+    }
+    final destination = p.join(directory, name);
+    final stage = await Directory(directory).createTemp('.online-import-');
     try {
-      final file = await File(p.join(stage.path, 'patch.yml')).writeAsBytes(bytes, flush: true);
       final type = await FileSystemEntity.type(destination, followLinks: false);
       if (type != FileSystemEntityType.notFound &&
           (type != FileSystemEntityType.file ||
               !p.equals(await File(destination).resolveSymbolicLinks(), destination))) {
         throw Ps3OnlineIssue.storage;
       }
+      if (!canPublish()) return false;
+      final file = await File(p.join(stage.path, name)).writeAsBytes(bytes, flush: true);
       if (!canPublish()) return false;
       await file.rename(destination);
       return true;
@@ -221,19 +252,25 @@ final class Ps3OnlineProfile {
   }
 
   static Future<List<int>> _readProtection(File file, String digest) async {
+    final bytes = await _readBounded(file, 1024 * 1024, Ps3OnlineIssue.patch);
+    if (sha256.convert(bytes).toString() == digest) return bytes;
+    throw Ps3OnlineIssue.patch;
+  }
+
+  static Future<List<int>> _readBounded(File file, int limit, Ps3OnlineIssue issue) async {
     try {
       final opened = await file.open();
       final List<int> bytes;
       try {
-        bytes = await opened.read(1024 * 1024 + 1);
+        bytes = await opened.read(limit + 1);
       } finally {
         await opened.close();
       }
-      if (bytes.isNotEmpty && bytes.length <= 1024 * 1024 && sha256.convert(bytes).toString() == digest) return bytes;
+      if (bytes.isNotEmpty && bytes.length <= limit) return bytes;
     } on FileSystemException {
-      throw Ps3OnlineIssue.patch;
+      throw issue;
     }
-    throw Ps3OnlineIssue.patch;
+    throw issue;
   }
 
   Map<String, Object> get networkArguments => {
@@ -350,7 +387,7 @@ final class Ps3OnlineProfile {
       Ps3OnlineIssue.firmware,
     );
     final account = await _profileFile(profileRoot, p.join(configRoot, 'rpcn.yml'), Ps3OnlineIssue.account);
-    await _verifyAccount(account, release.rpcnHost);
+    await _readAccount(account, release.rpcnHost);
     if (prepare) {
       final (:chain, :root) = preparedUpdate;
       final treeDigest = release.updateTreeDigest;
@@ -545,26 +582,31 @@ final class Ps3OnlineProfile {
     throw issue;
   }
 
-  static Future<void> _verifyAccount(File file, String host) async {
+  static Future<Map<String, Object>> _readAccount(File file, String host) async {
     try {
-      if (await file.length() > 65536) throw Ps3OnlineIssue.account;
-      if (loadYaml(await file.readAsString()) case final YamlMap account
-          when account['Version'] == 2 &&
+      final bytes = await _readBounded(file, 65536, Ps3OnlineIssue.account);
+      if (loadYaml(utf8.decode(bytes)) case final YamlMap account
+          when _yamlScalarText(account.nodes['Version']) == '2' &&
               account['Host'] == host &&
               _nonempty(account['NPID']) &&
-              _nonempty(account['Password'])) {
-        return;
+              _nonempty(account['Password']) &&
+              (!account.containsKey('Token') || _accountString(account['Token']))) {
+        return {
+          'Version': 2,
+          'Host': host,
+          'NPID': account['NPID'] as String,
+          'Password': account['Password'] as String,
+          'Token': (account['Token'] as String?) ?? '',
+        };
       }
-    } on YamlException {
-      // Parser diagnostics may contain credential values.
-      throw Ps3OnlineIssue.account;
     } on FormatException {
-      throw Ps3OnlineIssue.account;
-    } on FileSystemException {
+      // Parser diagnostics may contain credential values.
       throw Ps3OnlineIssue.account;
     }
     throw Ps3OnlineIssue.account;
   }
 
-  static bool _nonempty(Object? value) => value is String && value.trim().isNotEmpty;
+  static bool _accountString(Object? value) => value is String && !value.contains('\u0000');
+
+  static bool _nonempty(Object? value) => _accountString(value) && (value as String).trim().isNotEmpty;
 }

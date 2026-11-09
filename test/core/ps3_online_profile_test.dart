@@ -329,6 +329,8 @@ $ppu:
     await expectLater(verify(), throwsA(Ps3OnlineIssue.account));
     write(accountConfig, [0xff]);
     await expectLater(verify(), throwsA(Ps3OnlineIssue.account));
+    write(accountConfig, account.replaceFirst('test-only', r'"bad\0value"').codeUnits);
+    await expectLater(verify(), throwsA(Ps3OnlineIssue.account));
     write(accountConfig, account.codeUnits);
     write('online/system/rpcs3/dev_hdd0/plugins/provider.conf', [6]);
     await expectLater(verify(), throwsA(Ps3OnlineIssue.patch));
