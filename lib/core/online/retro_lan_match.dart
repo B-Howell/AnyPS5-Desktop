@@ -25,6 +25,7 @@ final class RetroLanMatch {
     required this.links,
     required this.launch,
     this.onRecoveryChanged,
+    this.onPathChanged,
     this.recoveryWindow = const Duration(seconds: 8),
   }) {
     if (rooms.spec.mode != RetroOnlineMode.lan || rooms.spec.capacity != 2 || rooms.discDigest == null) {
@@ -36,6 +37,7 @@ final class RetroLanMatch {
   final GameLinks links;
   final Future<RetroLanGame> Function(Uint8List mac) launch;
   final void Function(bool recovering)? onRecoveryChanged;
+  final void Function()? onPathChanged;
   final Duration recoveryWindow;
   final _closing = Completer<void>();
   final _done = Completer<void>();
@@ -48,6 +50,8 @@ final class RetroLanMatch {
   OnlinePeerMesh? _mesh;
   RetroLanBridge? _bridge;
   Timer? _pump;
+  GamePathMonitor? _path;
+  bool _recovering = false;
   String? _pendingRoom;
   bool _closed = false;
   bool _gameContinues = false;
@@ -62,6 +66,8 @@ final class RetroLanMatch {
   Future<void> get ending => _closing.future;
   bool get closed => _closed;
   bool get gameContinues => _gameContinues;
+  bool get recovering => !_closed && _recovering;
+  GamePathStats? get connectionPath => _path?.sample;
 
   Future<void> host(String friend) => _open(() => rooms.host(cancelBeforeAdmission: _closing), friend: friend);
   Future<void> join(String id, {String? expectedHost}) => _open(
@@ -194,23 +200,29 @@ final class RetroLanMatch {
       },
     );
     unawaited(_untilClose(game.done).then((_) => leave(), onError: (Object error) => _failed(error)));
+    final path = _path = GamePathMonitor(() => mesh.readGamePath(peerAddress), onPathChanged);
     ({Stopwatch timer, int route})? outage;
-    var recoveryShown = false;
     // Allow transient disconnects to recover before restarting ICE. Retry
     // promptly because the native game can end the match during recovery.
     const routeGrace = Duration(seconds: 1);
     const routeRetryInterval = Duration(milliseconds: 750);
     var nextRouteAttempt = routeGrace;
+    var lastRoute = mesh.gameRoute(peerAddress);
     _pump = Timer.periodic(const Duration(milliseconds: 8), (_) {
-      if (!mesh.canSendGame(peerAddress)) {
-        final interruption = outage ??= (timer: Stopwatch()..start(), route: mesh.gameRoute(peerAddress));
+      final route = mesh.gameRoute(peerAddress);
+      final routeChanged = route != lastRoute;
+      lastRoute = route;
+      final connected = mesh.canSendGame(peerAddress);
+      if (routeChanged || (!connected && outage == null)) path.clear();
+      if (!connected) {
+        final interruption = outage ??= (timer: Stopwatch()..start(), route: route);
         final elapsed = interruption.timer.elapsed;
         if (elapsed >= recoveryWindow) {
           unawaited(_failed(StateError('The PS2 LAN game channel did not recover.'), preserveGame: true));
           return;
         }
-        if (!recoveryShown && elapsed >= const Duration(milliseconds: 750)) {
-          recoveryShown = true;
+        if (!_recovering && elapsed >= const Duration(milliseconds: 750)) {
+          _recovering = true;
           onRecoveryChanged?.call(true);
         }
         if (elapsed >= nextRouteAttempt) {
@@ -218,10 +230,11 @@ final class RetroLanMatch {
           unawaited(mesh.restartGameRoute(peerAddress, interruption.route));
         }
       } else {
+        if (outage != null || routeChanged) unawaited(path.refresh());
         outage = null;
         nextRouteAttempt = routeGrace;
-        if (recoveryShown) {
-          recoveryShown = false;
+        if (_recovering) {
+          _recovering = false;
           onRecoveryChanged?.call(false);
         }
       }
@@ -271,6 +284,7 @@ final class RetroLanMatch {
     _closing.complete();
     _early.clear();
     _pump?.cancel();
+    _path?.close();
     _bridge?.close();
     _mesh?.stop();
     await Future.wait([_releaseRoom().timeout(const Duration(seconds: 8), onTimeout: () {}), _finishGame()]);

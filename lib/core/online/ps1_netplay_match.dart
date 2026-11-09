@@ -42,14 +42,12 @@ final class Ps1NetplayMatch {
   RetroRoomMember? _member;
   Ps1NetplayPeer? _peer;
   bool _closed = false;
-  Timer? _pathTimer;
-  bool _readingPath = false;
-  GamePathStats? _connectionPath;
+  GamePathMonitor? _path;
 
   Future<void> get done => _done.future;
   Ps1NetplaySession? get session => _peer?.session;
   bool get hasMatchedPlayer => _member != null;
-  GamePathStats? get connectionPath => _closed ? null : _connectionPath;
+  GamePathStats? get connectionPath => _path?.sample;
   bool get closed => _closed;
 
   Future<void> host(String friendId) => _open(0, () => rooms.host(cancelBeforeAdmission: _closing), friendId: friendId);
@@ -119,7 +117,7 @@ final class Ps1NetplayMatch {
       catchupReplay: seat == 1 ? catchupReplay : null,
       onStatusChanged: onStatusChanged,
       onRunning: () {
-        if (link is GameLinkPath) _watchPath(link as GameLinkPath);
+        if (!_closed && link is GameLinkPath) _path = GamePathMonitor((link as GameLinkPath).readPath, onStatusChanged);
       },
       seat: seat,
       hostEpoch: seat == 0 ? Random.secure().nextInt(0x7fffffff) + 1 : null,
@@ -132,28 +130,6 @@ final class Ps1NetplayMatch {
     }
     _signals.clear();
     await Future.any([peer.open(), done]);
-  }
-
-  void _watchPath(GameLinkPath link) {
-    if (_closed) return;
-    _pathTimer = Timer.periodic(const Duration(seconds: 2), (_) => unawaited(_readPath(link)));
-    unawaited(_readPath(link));
-  }
-
-  Future<void> _readPath(GameLinkPath link) async {
-    if (_closed || _readingPath) return;
-    _readingPath = true;
-    GamePathStats? sample;
-    try {
-      sample = await link.readPath();
-    } on Object {
-      // Connection stats are optional and never gate gameplay.
-    } finally {
-      _readingPath = false;
-    }
-    if (_closed || sample == _connectionPath) return;
-    _connectionPath = sample;
-    onStatusChanged?.call();
   }
 
   void receive(String type, Map<String, dynamic> event) {
@@ -181,7 +157,7 @@ final class Ps1NetplayMatch {
   Future<void> leave() async {
     if (_closed) return done;
     _closed = true;
-    _pathTimer?.cancel();
+    _path?.close();
     _closing.complete();
     _signals.clear();
     try {

@@ -83,19 +83,25 @@ extension TogetherPs2Lan on TogetherModel {
     }
     final starting = _ps2LanStarting(attempt);
     final playing = attempt.playing && !starting;
+    final recovering = attempt.match?.recovering == true;
+    final path = playing && !recovering ? attempt.match?.connectionPath : null;
     return [
       PanelRow(
         id: 'ps2-lan-status',
         title: T.text(playing ? 'ps2LanLeave' : 'ps2LanCancel'),
-        detail: T.text(
-          playing
-              ? 'ps2LanUseGameMenu'
-              : starting
-              ? 'ps2LanStarting'
-              : attempt.match == null
-              ? 'ps2LanVerifying'
-              : 'ps2LanConnecting',
-        ),
+        detail: [
+          T.text(
+            playing
+                ? (recovering ? 'ps2LanReconnecting' : 'ps2LanUseGameMenu')
+                : starting
+                ? 'ps2LanStarting'
+                : attempt.match == null
+                ? 'ps2LanVerifying'
+                : 'ps2LanConnecting',
+          ),
+          if (path?.relayed case final relayed?) T.text(relayed ? 'sharePlayRelayed' : 'sharePlayDirect'),
+          if (path?.roundTripMs case final roundTrip?) T.format('sharePlayRoundTrip', [roundTrip]),
+        ].join(' · '),
         kind: ActionRow(() {
           if (!identical(_ps2Lan, attempt) || attempt.match?.closed == true || attempt.cancelled) return;
           attempt.cancel();
@@ -210,6 +216,7 @@ extension TogetherPs2Lan on TogetherModel {
         if (expected != null && digest != expected) continue;
 
         final match = attempt.match = RetroLanMatch(
+          onPathChanged: app.refresh,
           onRecoveryChanged: (recovering) {
             if (active() && app.running?.$1 == game) {
               app.show(T.text(recovering ? 'ps2LanReconnecting' : 'ps2LanReconnected'));

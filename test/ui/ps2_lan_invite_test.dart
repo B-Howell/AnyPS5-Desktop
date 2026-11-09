@@ -347,6 +347,7 @@ void main() {
       await starting.future.timeout(const Duration(seconds: 5));
       expect(model.starting?.titleId, 'PS2-TIMESPLITTERS');
       if (quickMenuDuringPlay) {
+        network.readPath = () async => (relayed: false, roundTripMs: 42);
         finishStart.complete();
         await until(() => model.embeddedGame?.presented == true && model.starting == null && exchanges > 0);
         inputRequests.clear();
@@ -358,6 +359,27 @@ void main() {
         expect(inputRequests, anyElement(equals([0, 0, 0, 0, 0])));
         expect(pauseRequests, isEmpty);
         expect(model.quickMenuPaused, isFalse);
+        await until(() => row('ps2-lan-status').detail?.endsWith(' · Direct · 42 ms') == true);
+        final readingOldPath = Completer<void>();
+        final oldPath = Completer<({bool? relayed, int? roundTripMs})?>();
+        addTearDown(() {
+          if (!oldPath.isCompleted) oldPath.complete(null);
+        });
+        network.readPath = () {
+          readingOldPath.complete();
+          return oldPath.future;
+        };
+        await readingOldPath.future.timeout(const Duration(seconds: 5));
+        final localLink = network.all.last;
+        localLink.reportState('disconnected');
+        await until(() => row('ps2-lan-status').detail == 'LAN connection interrupted. Reconnecting…');
+        network.readPath = () async => (relayed: true, roundTripMs: 65);
+        localLink.reportState('connected');
+        await until(() => row('ps2-lan-status').detail?.startsWith("Open the game's LAN mode") == true);
+        oldPath.complete((relayed: false, roundTripMs: 999));
+        await Future<void>.delayed(Duration.zero);
+        expect(row('ps2-lan-status').detail, isNot(contains('999 ms')));
+        await until(() => row('ps2-lan-status').detail?.endsWith(' · Through the relay · 65 ms') == true);
         model.padCommand(PadCommand.home);
         expect(model.overlay, isNull);
         expect(pauseRequests, isEmpty);

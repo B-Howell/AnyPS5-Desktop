@@ -387,8 +387,14 @@ opening after cancellation.
 During play, the Quick Menu takes local controller input and sends
 neutral input to the game. The online PS2 worker stays running and
 the LAN bridge continues exchanging frames. The Quick Menu reports
-the game as running. The local network-card setup can still pause
-while its Quick Menu is open.
+the game as running and shows the selected WebRTC route and measured
+round-trip time when available. The [peer mesh](../lib/core/online/online_peer_mesh.dart)
+samples those statistics separately from the LAN frame exchange. The
+[LAN match](../lib/core/online/retro_lan_match.dart) clears old statistics
+on a route interruption or ICE route change. After 750 ms without a route, the Quick Menu
+keeps Reconnecting visible until the connection returns, then displays
+fresh statistics as they arrive. The local network-card setup can still pause while
+its Quick Menu is open.
 The launcher verifies the ISO itself when joining. If the LAN core or
 BIOS is missing, the action opens the existing setup page. **Back**
 returns to the same friend or invite without creating, joining or

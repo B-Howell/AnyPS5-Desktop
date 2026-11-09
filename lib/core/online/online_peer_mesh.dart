@@ -58,6 +58,53 @@ abstract interface class GameLinkPath {
   Future<GamePathStats?> readPath();
 }
 
+/// Optional telemetry sampled independently of the game packet loop.
+final class GamePathMonitor {
+  GamePathMonitor(this.read, this.changed) {
+    _timer = Timer.periodic(const Duration(seconds: 2), (_) => unawaited(refresh()));
+    unawaited(refresh());
+  }
+
+  final Future<GamePathStats?> Function() read;
+  final void Function()? changed;
+  late final Timer _timer;
+  bool _reading = false;
+  int _revision = 0;
+  GamePathStats? _sample;
+  GamePathStats? get sample => _sample;
+
+  Future<void> refresh() async {
+    if (!_timer.isActive || _reading) return;
+    _reading = true;
+    final revision = _revision;
+    GamePathStats? next;
+    try {
+      next = await read();
+    } on Object {
+      // Optional statistics never gate the match.
+    } finally {
+      _reading = false;
+    }
+    if (_timer.isActive && revision == _revision) _update(next);
+  }
+
+  void clear() {
+    _revision++;
+    _update(null);
+  }
+
+  void _update(GamePathStats? next) {
+    if (next == _sample) return;
+    _sample = next;
+    changed?.call();
+  }
+
+  void close() {
+    _timer.cancel();
+    _sample = null;
+  }
+}
+
 enum PeerState { connecting, connected, failed, closed }
 
 class _Peer {
@@ -263,6 +310,21 @@ class OnlinePeerMesh implements OnlinePeerTransport {
   }
 
   int gameRoute(int address) => _byAddress[address]?.route ?? 0;
+
+  Future<GamePathStats?> readGamePath(int address) async {
+    final peer = _byAddress[address];
+    final link = peer?.link;
+    if (peer == null || link is! GameLinkPath || !canSendGame(address)) return null;
+    final revision = peer.connectionRevision;
+    final route = peer.route;
+    final path = await (link as GameLinkPath).readPath();
+    return identical(_byAddress[address], peer) &&
+            revision == peer.connectionRevision &&
+            route == peer.route &&
+            canSendGame(address)
+        ? path
+        : null;
+  }
 
   /// Start or replay negotiation for the route that was interrupted.
   Future<void> restartGameRoute(int address, int interruptedRoute) => _serial(() async {
