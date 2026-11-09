@@ -173,12 +173,13 @@ void main() {
       const host = '12345678-1234-4234-8234-123456789ab1';
       const roomId = '12345678-1234-4234-8234-123456789abc';
       const protocol = RetroOnlineMode.synchronized;
-      final invite = GameInvite(
-        sessionId: roomId,
-        titleId: 'SCUS94426',
-        gameVersion: version,
-        engineBuild: 'anyps5-ps1-netplay-v1',
-      );
+      final invite = GameInvite.fromJson({
+        'sessionId': roomId,
+        'titleId': 'SCUS94426',
+        'gameVersion': version,
+        'engineBuild': protocol.protocol,
+        'from': server.person(host, 'ana', 'Ana'),
+      });
       server.answers['GET game-sessions/$roomId'] = (
         200,
         {
@@ -196,6 +197,9 @@ void main() {
 
       var chosen = Completer<String?>();
       var picking = Completer<void>();
+      addTearDown(() {
+        if (!chosen.isCompleted) chosen.complete(null);
+      });
       final fixture = makeFixture(
         together: server.base,
         system: HostSystem.windows,
@@ -235,6 +239,19 @@ void main() {
 
       final roomPath = 'game-sessions/$roomId';
       final roomAnswer = server.answers.remove('GET $roomPath')!;
+      server.answers['GET $roomPath'] = (
+        200,
+        {
+          ...(roomAnswer.$2 as Map<String, dynamic>),
+          'host': {'userId': '12345678-1234-4234-8234-123456789abd'},
+        },
+      );
+      final refused = model.together.joinPs1Netplay(invite);
+      await Future.any([refused, picking.future]).timeout(const Duration(seconds: 5));
+      expect(picking.isCompleted, isFalse);
+      expect(model.toast, contains('host has changed'));
+      await refused;
+      server.answers.remove('GET $roomPath');
       final roomRequested = Completer<void>();
       final roomReply = Completer<void>();
       server.handlers.add((call) async {

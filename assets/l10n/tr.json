@@ -294,6 +294,7 @@
   "ps1OnlineDesync": "Oyun kopyalarının eşzamanı bozuldu. Oyun sona erdi.",
   "ps1OnlineDisconnected": "Çevrimiçi oyun bağlantısı kesildi.",
   "retroOnlineUnavailable": "Bu sürüm oyunun çevrimiçi modunu desteklemiyor.",
+  "retroInviteHostChanged": "Oda sahibi değişti. Arkadaşınızdan yeni bir davet göndermesini isteyin.",
   "ps2LanInvite": "LAN Oyununa Davet Et · %@",
   "ps2LanUnavailable": "PS2 LAN oyununu başlatmadan önce AnyTogether’a bağlanın.",
   "ps2LanInviteDetail": "Aynı disk sürümünü kullanın. İlk kez oynuyorsanız LAN hafıza kartını Emülatörler → PS2 → Kurulum bölümünde ayarlayın.",

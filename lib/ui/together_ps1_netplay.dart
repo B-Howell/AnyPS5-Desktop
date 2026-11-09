@@ -209,13 +209,14 @@ extension TogetherPs1Netplay on TogetherModel {
       await _unsupportedRetroInvite();
       return;
     }
-    await _startPs1Netplay(profile, roomId: invite.sessionId, mode: mode);
+    await _startPs1Netplay(profile, roomId: invite.sessionId, expectedHost: invite.from?.id, mode: mode);
   }
 
   Future<void> _startPs1Netplay(
     Ps1NetplayProfile profile, {
     String? friendId,
     String? roomId,
+    String? expectedHost,
     EmbeddedRetroGame? host,
     Game? selectedGame,
     Ps1NetplayRoomMode mode = Ps1NetplayRoomMode.fresh,
@@ -262,7 +263,7 @@ extension TogetherPs1Netplay on TogetherModel {
       final invitedDigest = roomId == null
           ? null
           : await Future.any<String?>([
-              rooms().invitedDiscDigest(roomId),
+              rooms().invitedDiscDigest(roomId, expectedHost: expectedHost),
               verification.canceled.future.then((_) => null),
             ]);
       if (!active()) return;
@@ -346,7 +347,7 @@ extension TogetherPs1Netplay on TogetherModel {
       }
       app.refresh();
       if (roomId != null) {
-        await match.join(roomId);
+        await match.join(roomId, expectedHost: expectedHost);
         unawaited(hub.games.refresh().catchError((Object _) {}));
       } else {
         await match.host(friendId!);
@@ -380,6 +381,8 @@ extension TogetherPs1Netplay on TogetherModel {
       }
     } on Ps1NetplayMediaFailure catch (error) {
       if (opened != null || active()) _showPs1MediaError(error, handoff: mode.needsCheckpoint);
+    } on RetroRoomHostMismatch {
+      if (opened != null || active()) app.show(T.text('retroInviteHostChanged'));
     } on Object {
       if (opened != null || active()) app.show(T.text('ps1OnlineDisconnected'));
     } finally {

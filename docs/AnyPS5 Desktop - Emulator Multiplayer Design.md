@@ -202,7 +202,14 @@ contract and block changing them during a race. Detect desync and end the
 match cleanly if recovery fails. Split-screen remains split-screen because
 that is the mode the original game supplies.
 
-## Canceling room admission
+## Room admission
+
+When an invitation identifies its sender, the launcher checks that
+the room is still owned by that account. For PS1 and PS2 it checks
+both the initial disc lookup and the read immediately before joining.
+PS3 checks before joining. If the host differs, the launcher asks
+the player to request a fresh invite. A legacy invite with no sender
+continues to use the validated room host.
 
 The [shared room admission checks](../lib/core/online/retro_online_rooms.dart)
 use the closing signal from the [PS1 match](../lib/core/online/ps1_netplay_match.dart),

@@ -49,8 +49,11 @@ final class Ps1NetplayMatch {
 
   Future<void> host(String friendId) => _open(0, () => rooms.host(cancelBeforeAdmission: _closing), friendId: friendId);
 
-  Future<void> join(String roomId) =>
-      _open(1, () => rooms.join(roomId, cancelBeforeAdmission: _closing), roomId: roomId);
+  Future<void> join(String roomId, {String? expectedHost}) => _open(
+    1,
+    () => rooms.join(roomId, expectedHost: expectedHost, cancelBeforeAdmission: _closing),
+    roomId: roomId,
+  );
 
   Future<void> _open(int seat, Future<RetroRoom> Function() enter, {String? friendId, String? roomId}) async {
     if (_closed || _entering != null) throw StateError('This PS1 match has already been opened or closed.');

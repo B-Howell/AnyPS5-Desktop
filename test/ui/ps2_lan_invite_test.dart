@@ -115,6 +115,7 @@ void main() {
     bool configureCard = false,
     bool cancelLookup = false,
     bool cancelAdmission = false,
+    bool hostChanged = false,
   }) async {
     final server = await FakeTogether.start();
     addTearDown(server.close);
@@ -259,6 +260,29 @@ void main() {
       expect(model.running, isNull);
       return;
     }
+    if (hostChanged) {
+      const path = 'game-sessions/$roomId';
+      final answer = server.answers.remove('GET $path')!;
+      var reads = 0;
+      server.handlers.add((call) {
+        if (call.method != 'GET' || call.path != path) return null;
+        if (++reads == 1) return answer;
+        return (
+          200,
+          {
+            ...(answer.$2 as Map<String, dynamic>),
+            'host': {'userId': '12345678-1234-4234-8234-123456789abd'},
+          },
+        );
+      });
+      press(continueId);
+      await until(() => reads == 2);
+      await until(() => !model.panelCategories().single.rows.any((row) => row.id == 'ps2-lan-status'));
+      expect(server.callsTo('$path/join'), isEmpty);
+      expect(model.toast, contains('host has changed'));
+      expect(model.running, isNull);
+      return;
+    }
     if (cancelLookup) {
       const roomPath = 'game-sessions/$roomId';
       final answer = server.answers.remove('GET $roomPath')!;
@@ -376,6 +400,11 @@ void main() {
   test(
     'PS2 LAN retry waits for a canceled admission and its room leave after local close times out',
     () => verifyBundledSetup(expired: false, cancelAdmission: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'PS2 LAN refuses a room that changes host after the disc lookup',
+    () => verifyBundledSetup(expired: false, hostChanged: true),
     skip: Abi.current() != Abi.windowsX64,
   );
 }

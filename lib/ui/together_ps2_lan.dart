@@ -105,10 +105,16 @@ extension TogetherPs2Lan on TogetherModel {
   Future<void> joinPs2Lan(GameInvite invite) async {
     if (!_ps2LanEnabled) return _unsupportedRetroInvite();
     final spec = _ps2LanInviteSpec(invite);
-    await _startPs2Lan(spec, _ps2LanCandidates(spec), roomId: invite.sessionId);
+    await _startPs2Lan(spec, _ps2LanCandidates(spec), roomId: invite.sessionId, expectedHost: invite.from?.id);
   }
 
-  Future<void> _startPs2Lan(RetroRoomSpec spec, Iterable<Game> candidates, {String? friendId, String? roomId}) async {
+  Future<void> _startPs2Lan(
+    RetroRoomSpec spec,
+    Iterable<Game> candidates, {
+    String? friendId,
+    String? roomId,
+    String? expectedHost,
+  }) async {
     final me = account.user?.id;
     if (me == null || hub.socket.status != SocketStatus.ready) return app.show(T.text('ps2LanUnavailable'));
     if (_ps2LanBusy || _ps1Match != null || _verifyingPs1 || !_ps2LaunchAvailable) {
@@ -125,6 +131,7 @@ extension TogetherPs2Lan on TogetherModel {
               !hub.games.invites.any(
                 (invite) =>
                     invite.sessionId == roomId &&
+                    (expectedHost == null || invite.from?.id == expectedHost) &&
                     invite.engineBuild == spec.mode.protocol &&
                     _ps2LanInviteSpec(invite) == spec,
               )) {
@@ -136,6 +143,7 @@ extension TogetherPs2Lan on TogetherModel {
               _ps2LanCandidates(spec).where((game) => gameIds.contains(game.id)),
               friendId: friendId,
               roomId: roomId,
+              expectedHost: expectedHost,
             ),
           );
         },
@@ -164,7 +172,7 @@ extension TogetherPs2Lan on TogetherModel {
       final expected = roomId == null
           ? null
           : await Future.any<String?>([
-              rooms().invitedDiscDigest(roomId).timeout(const Duration(seconds: 12)),
+              rooms().invitedDiscDigest(roomId, expectedHost: expectedHost).timeout(const Duration(seconds: 12)),
               attempt.cancellation.future.then((_) => null),
             ]);
       if (!active()) return;
@@ -220,7 +228,7 @@ extension TogetherPs2Lan on TogetherModel {
         if (roomId == null) {
           await match.host(friendId!);
         } else {
-          await match.join(roomId);
+          await match.join(roomId, expectedHost: expectedHost);
           unawaited(hub.games.refresh().catchError((Object _) {}));
         }
         await match.done;
@@ -236,6 +244,8 @@ extension TogetherPs2Lan on TogetherModel {
       if (active()) app.show(T.text('ps2LanDisc'));
     } on Ps2LanProfileInUse {
       if (active()) app.show(T.text('ps2LanProfileInUse'));
+    } on RetroRoomHostMismatch {
+      if (active()) app.show(T.text('retroInviteHostChanged'));
     } on Object {
       if (active()) app.show(T.text('ps2LanDisconnected'));
     } finally {

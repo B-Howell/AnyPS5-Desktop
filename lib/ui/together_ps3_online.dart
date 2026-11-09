@@ -142,6 +142,8 @@ extension TogetherPs3Online on TogetherModel {
       if (friendId != null) await rooms.invite(room, friendId);
       if (!active()) return;
       await Future.any<void>([app.playVerifiedPs3Online(game, profile, canBoot: active), attempt.cancelled.future]);
+    } on RetroRoomHostMismatch {
+      if (active()) app.show(T.text('retroInviteHostChanged'));
     } on Object {
       if (active()) app.show(T.text('ps3PartyFailed'));
     } finally {

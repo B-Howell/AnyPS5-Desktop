@@ -5,6 +5,10 @@ import 'online_peer.dart';
 typedef RetroRoomMember = ({String userId, String device});
 typedef RetroRoom = ({String id, String hostId});
 
+final class RetroRoomHostMismatch implements Exception {
+  const RetroRoomHostMismatch();
+}
+
 enum RetroOnlineMode {
   synchronized('anyps5-ps1-netplay-v1'),
   lan('anyps5-retro-lan-v1'),
@@ -85,20 +89,24 @@ final class RetroOnlineRooms {
     final path = _path(id);
     await _admissionRead(_requireIdle, cancelBeforeAdmission);
     final room = _room(await _admissionRead(() => call('GET', path), cancelBeforeAdmission), id: id);
-    if (room.hostId == me || (expectedHost != null && room.hostId != expectedHost)) {
-      throw StateError('This invite does not match the retro room host.');
-    }
+    _checkInviteHost(room, expectedHost);
     _checkAdmission(cancelBeforeAdmission);
     await call('POST', '$path/join', {'gameVersion': spec.gameVersion, 'engineBuild': protocol});
     return _publish(room);
   }
 
   /// Reads an invited host's disc fingerprint before choosing a local copy.
-  Future<String?> invitedDiscDigest(String id) async {
+  Future<String?> invitedDiscDigest(String id, {String? expectedHost}) async {
     final json = await call('GET', _path(id));
     final room = _room(json, id: id);
-    if (room.hostId == me) throw StateError('The retro room belongs to this account.');
+    _checkInviteHost(room, expectedHost);
     return (json['properties'] as Map)['discSha256'] as String?;
+  }
+
+  void _checkInviteHost(RetroRoom room, String? expectedHost) {
+    if (room.hostId == me || (expectedHost != null && room.hostId != expectedHost)) {
+      throw const RetroRoomHostMismatch();
+    }
   }
 
   Future<void> invite(RetroRoom room, String userId) async {
