@@ -37,7 +37,7 @@ abstract class GameLink {
   set onMessage(void Function(Uint8List data) handler);
 
   /// The connection's state as the W3C names it: new, connecting, connected, disconnected, failed,
-  /// closed.
+  /// closed. `game-closed` reports permanent closure of the unreliable data channel.
   set onState(void Function(String state) handler);
   Future<void> close();
 }
@@ -62,6 +62,7 @@ class _Peer {
   final queued = <Map<String, dynamic>>[];
   bool haveRemote = false;
   bool closed = false;
+  bool disconnected = false;
   PeerState state = PeerState.connecting;
 
   /// The offer or answer this side sent, the offer the other side sent (for an answerer), and
@@ -239,7 +240,7 @@ class OnlinePeerMesh implements OnlinePeerTransport {
 
   bool canSendGame(int peer) {
     final target = _byAddress[peer];
-    return target != null && !target.closed && target.link.gameOpen;
+    return target != null && !target.closed && !target.disconnected && target.link.gameOpen;
   }
 
   @override
@@ -377,13 +378,17 @@ class OnlinePeerMesh implements OnlinePeerTransport {
         if (peer.closed) return;
         switch (state) {
           case 'connected':
+            peer.disconnected = false;
             peer.state = PeerState.connected;
+          case 'disconnected':
+            peer.disconnected = true;
           case 'failed':
             peer.state = PeerState.failed;
           case 'closed':
             peer.state = PeerState.closed;
         }
-        if ((state == 'failed' || state == 'closed') && identical(_byAddress[peer.address], peer)) {
+        if ((state == 'failed' || state == 'closed' || (fixedPeers && state == 'game-closed')) &&
+            identical(_byAddress[peer.address], peer)) {
           context.peerGone?.call(peer.address);
         }
       }

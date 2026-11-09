@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:anyps5_desktop/core/online/online_peer_mesh.dart';
 import 'package:anyps5_desktop/core/online/retro_lan_match.dart';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:anyps5_desktop/ui/online_webrtc.dart';
@@ -8,7 +9,9 @@ import 'package:anyps5_desktop/ui/online_webrtc.dart';
 import 'webrtc_room_fixture.dart';
 
 Future<String> verifyWebRtcLanBridge() async {
-  final links = WebRtcGameLinks();
+  final links = _InterruptibleLinks();
+  final reconnecting = Completer<void>();
+  final reconnected = Completer<void>();
   final digest = 'a' * 64;
   final gateway = WebRtcRoomFixture((
     titleId: 'SLUS21148',
@@ -23,6 +26,9 @@ Future<String> verifyWebRtcLanBridge() async {
       rooms: gateway.client(user, expectedDigest: digest),
       links: links,
       launch: nic.launch,
+      onRecoveryChanged: (recovering) {
+        if (user == WebRtcRoomFixture.host) (recovering ? reconnecting : reconnected).complete();
+      },
     );
     gateway.events[user] = owner.receive;
     return owner;
@@ -39,6 +45,26 @@ Future<String> verifyWebRtcLanBridge() async {
     ]).timeout(const Duration(seconds: 5));
     await Future.wait([hosting, right.join(WebRtcRoomFixture.roomId)]).timeout(const Duration(seconds: 10));
     await Future.wait([host.received.future, guest.received.future]).timeout(const Duration(seconds: 8));
+    for (final link in links.opened) {
+      link.reportState('disconnected');
+    }
+    await reconnecting.future.timeout(const Duration(seconds: 4));
+    final before = guest.framesReceived;
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    if (guest.framesReceived != before || left.closed || right.closed) {
+      throw StateError('The interruption did not suspend forwarding while keeping the room open.');
+    }
+    for (final link in links.opened) {
+      link.reportState('connected');
+    }
+    await reconnected.future.timeout(const Duration(seconds: 4));
+    final resumed = Stopwatch()..start();
+    while (guest.framesReceived == before && resumed.elapsed < const Duration(seconds: 4)) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    if (guest.framesReceived == before || links.opened.length != 2) {
+      throw StateError('LAN traffic did not resume on the original WebRTC links.');
+    }
     gateway.hostReleaseGate = releaseHost.future;
     final guestLeaving = right.leave();
     await left.ending.timeout(const Duration(seconds: 5));
@@ -52,12 +78,65 @@ Future<String> verifyWebRtcLanBridge() async {
     if (!gateway.released || !left.gameContinues || host.done.isCompleted || !guest.done.isCompleted) {
       throw StateError('The PS2 LAN room did not close while keeping the host game open.');
     }
-    return 'Windows WebRTC PS2 LAN room passed with distinct DHCP leases, matching frames and the host game kept open.';
+    return 'Windows WebRTC PS2 LAN room passed with DHCP, frame recovery on the same links and the host game kept open.';
   } finally {
     if (!releaseHost.isCompleted) releaseHost.complete();
     await Future.wait([left.leave(), right.leave()]).timeout(const Duration(seconds: 4));
     if (!host.done.isCompleted) host.done.complete();
   }
+}
+
+// Injects only connection-state notifications. The data channels and frame
+// exchange still use the real Windows WebRTC plugin.
+final class _InterruptibleLinks implements GameLinks {
+  final _delegate = WebRtcGameLinks();
+  final opened = <_InterruptibleLink>[];
+
+  @override
+  Future<GameLink> link(List<Map<String, dynamic>> iceServers) async {
+    final link = _InterruptibleLink(await _delegate.link(iceServers));
+    opened.add(link);
+    return link;
+  }
+}
+
+final class _InterruptibleLink implements GameLink {
+  _InterruptibleLink(this._link);
+
+  final GameLink _link;
+  void Function(String)? _onState;
+  void reportState(String state) => _onState?.call(state);
+
+  @override
+  set onState(void Function(String) handler) => _link.onState = _onState = handler;
+  @override
+  set onCandidate(void Function(Map<String, dynamic>) handler) => _link.onCandidate = handler;
+  @override
+  set onMessage(void Function(Uint8List) handler) => _link.onMessage = handler;
+  @override
+  set onStreamMessage(void Function(Uint8List) handler) => _link.onStreamMessage = handler;
+  @override
+  Future<Map<String, dynamic>> createOffer() => _link.createOffer();
+  @override
+  Future<Map<String, dynamic>> createAnswer() => _link.createAnswer();
+  @override
+  Future<void> setLocal(Map<String, dynamic> description) => _link.setLocal(description);
+  @override
+  Future<void> setRemote(Map<String, dynamic> description) => _link.setRemote(description);
+  @override
+  Future<void> addCandidate(Map<String, dynamic> candidate) => _link.addCandidate(candidate);
+  @override
+  Future<void> openChannel() => _link.openChannel();
+  @override
+  bool get gameOpen => _link.gameOpen;
+  @override
+  bool get streamOpen => _link.streamOpen;
+  @override
+  bool send(Uint8List data) => _link.send(data);
+  @override
+  bool sendStream(Uint8List data) => _link.sendStream(data);
+  @override
+  Future<void> close() => _link.close();
 }
 
 final class _FixtureNic {
@@ -69,6 +148,7 @@ final class _FixtureNic {
   final bool broadcast;
   final received = Completer<void>();
   final done = Completer<void>();
+  int framesReceived = 0;
 
   Future<RetroLanGame> launch(Uint8List assigned) async {
     if (!_same(assigned, _address(mac))) throw StateError('The PS2 room supplied the wrong virtual MAC.');
@@ -90,7 +170,8 @@ final class _FixtureNic {
           offered = address;
         }
         if (!leased) return [_dhcpRequest(assigned, mac & 255, offered)];
-        if (!received.isCompleted && input.any((frame) => _same(frame, expected))) received.complete();
+        framesReceived += input.where((frame) => _same(frame, expected)).length;
+        if (!received.isCompleted && framesReceived > 0) received.complete();
         return broadcast || received.isCompleted ? [outbound] : <Uint8List>[];
       },
       close: () async => done.complete(),

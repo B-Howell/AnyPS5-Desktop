@@ -21,11 +21,16 @@ void main() {
     final attached = <String, Uint8List>{};
     final received = Completer<Uint8List>();
     final resumedTraffic = Completer<void>();
+    final trafficAfterReconnect = Completer<void>();
+    final reconnecting = Completer<void>();
+    final reconnected = Completer<void>();
     final release = Completer<void>();
     final exchangeStarted = Completer<void>();
     final exchangeFinished = Completer<List<Uint8List>?>();
     var afterRenegotiate = false;
     var holdExchange = false;
+    var expectRecovery = false;
+    var guestFrames = 0;
     final closed = <String>[];
     final exits = {
       for (final id in [WebRtcRoomFixture.host, WebRtcRoomFixture.guest]) id: Completer<void>(),
@@ -34,10 +39,18 @@ void main() {
       final owner = RetroLanMatch(
         rooms: gateway.client(id, expectedDigest: digest),
         links: network.links,
+        onRecoveryChanged: (recovering) {
+          if (id != WebRtcRoomFixture.host) return;
+          (recovering ? reconnecting : reconnected).complete();
+        },
         launch: (mac) async {
           attached[id] = mac;
           return (
             exchange: (List<Uint8List> input) async {
+              if (id == WebRtcRoomFixture.guest && input.isNotEmpty) {
+                guestFrames += input.length;
+                if (expectRecovery && !trafficAfterReconnect.isCompleted) trafficAfterReconnect.complete();
+              }
               if (id == WebRtcRoomFixture.guest && input.isNotEmpty && !received.isCompleted) {
                 received.complete(input.first);
               }
@@ -93,6 +106,7 @@ void main() {
     requestOffer();
     await Future<void>.delayed(Duration.zero);
     expect(network.all, hasLength(2));
+
     network.gameChannelReady = true;
     await Future.wait([opening, joining]).timeout(const Duration(seconds: 5));
     final frame = await received.future.timeout(const Duration(seconds: 2));
@@ -102,6 +116,25 @@ void main() {
     afterRenegotiate = true;
     await resumedTraffic.future.timeout(const Duration(seconds: 2));
     expect(host.closed, isFalse);
+    expect(network.all, hasLength(2));
+
+    for (final link in network.all) {
+      expect(link.gameOpen, isTrue);
+      link.reportState('disconnected');
+    }
+    // The delayed status also lets the last native batch finish.
+    await reconnecting.future.timeout(const Duration(seconds: 2));
+    final beforeRecovery = guestFrames;
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(guestFrames, beforeRecovery);
+    expect(host.closed || guest.closed, isFalse);
+    expect(attached, hasLength(2));
+    expectRecovery = true;
+    for (final link in network.all) {
+      link.reportState('connected');
+    }
+    await trafficAfterReconnect.future.timeout(const Duration(seconds: 2));
+    await reconnected.future.timeout(const Duration(seconds: 2));
     expect(network.all, hasLength(2));
 
     holdExchange = true;
@@ -126,46 +159,60 @@ void main() {
     expect(gateway.released, isTrue);
   });
 
-  test('losing the game channel ends the room and keeps both games open', () async {
-    final digest = 'c' * 64;
-    final gateway = WebRtcRoomFixture((
-      titleId: 'SLUS21148',
-      gameVersion: '1',
-      mode: RetroOnlineMode.lan,
-      capacity: 2,
-    ), digest);
-    final network = FakeGameNetwork();
-    final stopped = <Completer<void>>[];
-    RetroLanMatch match(String id) {
-      final done = Completer<void>();
-      stopped.add(done);
-      final match = RetroLanMatch(
-        rooms: gateway.client(id, expectedDigest: digest),
-        links: network.links,
-        launch: (_) async =>
-            (exchange: (_) async => <Uint8List>[], close: () async => done.complete(), done: done.future),
-      );
-      gateway.events[id] = match.receive;
-      addTearDown(match.leave);
-      addTearDown(() {
-        if (!done.isCompleted) done.complete();
-      });
-      return match;
-    }
+  for (final terminal in [false, true]) {
+    test(
+      terminal
+          ? 'a closed data channel ends the room immediately and keeps both games open'
+          : 'an expired recovery window ends the room and keeps both games open',
+      () async {
+        final digest = 'c' * 64;
+        final gateway = WebRtcRoomFixture((
+          titleId: 'SLUS21148',
+          gameVersion: '1',
+          mode: RetroOnlineMode.lan,
+          capacity: 2,
+        ), digest);
+        final network = FakeGameNetwork();
+        final stopped = <Completer<void>>[];
+        RetroLanMatch match(String id) {
+          final done = Completer<void>();
+          stopped.add(done);
+          final match = RetroLanMatch(
+            rooms: gateway.client(id, expectedDigest: digest),
+            links: network.links,
+            recoveryWindow: terminal ? const Duration(seconds: 5) : const Duration(milliseconds: 200),
+            launch: (_) async =>
+                (exchange: (_) async => <Uint8List>[], close: () async => done.complete(), done: done.future),
+          );
+          gateway.events[id] = match.receive;
+          addTearDown(match.leave);
+          addTearDown(() {
+            if (!done.isCompleted) done.complete();
+          });
+          return match;
+        }
 
-    final host = match(WebRtcRoomFixture.host);
-    final guest = match(WebRtcRoomFixture.guest);
-    final hosting = host.host(WebRtcRoomFixture.guest);
-    await gateway.invited.timeout(const Duration(seconds: 5));
-    await Future.wait([hosting, guest.join(WebRtcRoomFixture.roomId)]).timeout(const Duration(seconds: 5));
-    network.gameChannelReady = false;
-    await Future.wait([host.done, guest.done]).timeout(const Duration(seconds: 2));
+        final host = match(WebRtcRoomFixture.host);
+        final guest = match(WebRtcRoomFixture.guest);
+        final hosting = host.host(WebRtcRoomFixture.guest);
+        await gateway.invited.timeout(const Duration(seconds: 5));
+        await Future.wait([hosting, guest.join(WebRtcRoomFixture.roomId)]).timeout(const Duration(seconds: 5));
+        if (terminal) {
+          network.all.first.reportState('game-closed');
+        } else {
+          network.gameChannelReady = false;
+          await Future<void>.delayed(const Duration(milliseconds: 35));
+          expect(host.closed || guest.closed, isFalse);
+        }
+        await Future.wait([host.done, guest.done]).timeout(const Duration(seconds: 2));
 
-    expect(host.gameContinues, isTrue);
-    expect(guest.gameContinues, isTrue);
-    expect(stopped.any((game) => game.isCompleted), isFalse);
-    expect(gateway.released, isTrue);
-  });
+        expect(host.gameContinues, isTrue);
+        expect(guest.gameContinues, isTrue);
+        expect(stopped.any((game) => game.isCompleted), isFalse);
+        expect(gateway.released, isTrue);
+      },
+    );
+  }
 
   test('cancelling during emulator startup releases the room and closes the late game', () async {
     final digest = 'b' * 64;

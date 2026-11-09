@@ -271,8 +271,15 @@ device, and checks the disc fingerprint through the room API. Each
 player gets a distinct virtual MAC. The match waits for the unreliable
 WebRTC game channel before starting its embedded-game factory. Once
 the SDP exchange is established, repeated setup signals reuse it even
-if a channel-open event has yet to reach one of the players. The match
-ends if the game channel subsequently closes.
+if a channel-open event has yet to reach one of the players. After launch,
+a temporary WebRTC disconnect gets eight seconds to recover on the same
+connection. The launcher reports interruptions that last at least 750 ms
+and confirms recovery. While the link is unavailable, it drops peer
+traffic and continues to service the guest's local DHCP. AnyPS5 has no
+replay queue for missed Ethernet packets. A closed room, a closed game
+channel, a terminal connection state, or an expired recovery window ends
+the LAN session. The game decides
+whether its own multiplayer session survives the interruption.
 
 The [LAN bridge](../lib/core/online/retro_lan_bridge.dart) keeps at most
 64 incoming frames, retries the head batch while the core is loading,
@@ -289,16 +296,18 @@ keep the launcher in its closing state. The
 [transport suite](../test/core/online/retro_lan_transport_test.dart)
 covers frame routing and queue bounds. The
 [match tests](../test/core/online/retro_lan_match_test.dart) exercise
-authentication, repeated signaling, game-channel loss, and exit during
-an exchange or startup.
+authentication, repeated signaling, temporary disconnect and traffic
+resumption, recovery timeout, and exit during an exchange or startup.
 Set `ANYPS5_PS2_WEBRTC_LAN=1` on the existing
 [headless WebRTC probe](../tool/ps1_netplay/webrtc_loopback.dart) to run
 the [two-player room fixture](../tool/ps1_netplay/webrtc_lan_probe.dart)
 over real Windows data channels. The probe checks the assigned MACs,
 matches broadcast and unicast frames byte for byte, and checks that the
 guest can leave without closing the host game, even while the host's room
-release request is pending. It uses synthetic NICs and a simulated room
-gateway. A packaged-game disconnect and rematch across two networks remains
+release request is pending. It injects temporary connection-state changes
+and checks that frames resume on the same real Windows WebRTC channels.
+It uses synthetic NICs and a simulated room gateway. A packaged-game
+disconnect and rematch across two networks remains
 part of the release qualification below.
 
 The [private DHCP service](../lib/core/online/retro_lan_dhcp.dart) supplies

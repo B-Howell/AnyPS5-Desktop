@@ -264,6 +264,12 @@ class FakeGameLink implements GameLink {
   bool _wantsChannel = false;
   bool closed = false;
   String state = 'new';
+
+  void reportState(String next) {
+    state = next;
+    _onState?.call(next);
+  }
+
   final candidatesIn = <Map<String, dynamic>>[];
   void Function(Map<String, dynamic>)? _onCandidate;
   void Function(Uint8List)? _onMessage;

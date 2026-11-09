@@ -141,6 +141,11 @@ extension TogetherPs2Lan on TogetherModel {
         if (expected != null && digest != expected) continue;
 
         final match = attempt.match = RetroLanMatch(
+          onRecoveryChanged: (recovering) {
+            if (active() && app.running?.$1 == game) {
+              app.show(T.text(recovering ? 'ps2LanReconnecting' : 'ps2LanReconnected'));
+            }
+          },
           rooms: rooms(digest),
           links: app.services.gameLinks?.call() ?? WebRtcGameLinks(),
           launch: (mac) async {

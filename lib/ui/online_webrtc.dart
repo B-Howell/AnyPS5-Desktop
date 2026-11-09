@@ -68,7 +68,11 @@ class _GameLink implements GameLink {
   void _use(RTCDataChannel channel) {
     _channel = channel;
     _open = channel.state == RTCDataChannelState.RTCDataChannelOpen;
-    channel.onDataChannelState = (state) => _open = state == RTCDataChannelState.RTCDataChannelOpen;
+    channel.onDataChannelState = (state) {
+      if (!identical(_channel, channel)) return;
+      _open = state == RTCDataChannelState.RTCDataChannelOpen;
+      if (state == RTCDataChannelState.RTCDataChannelClosed) _onState?.call('game-closed');
+    };
     channel.onMessage = (message) {
       if (message.isBinary) _onMessage?.call(message.binary);
     };

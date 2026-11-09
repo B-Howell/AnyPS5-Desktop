@@ -20,7 +20,13 @@ typedef RetroLanGame = ({
 
 /// One private two-player PS2 room, its peer transport, and its embedded game.
 final class RetroLanMatch {
-  RetroLanMatch({required this.rooms, required this.links, required this.launch}) {
+  RetroLanMatch({
+    required this.rooms,
+    required this.links,
+    required this.launch,
+    this.onRecoveryChanged,
+    this.recoveryWindow = const Duration(seconds: 8),
+  }) {
     if (rooms.spec.mode != RetroOnlineMode.lan || rooms.spec.capacity != 2 || rooms.discDigest == null) {
       throw ArgumentError('A PS2 LAN room needs two seats and a verified disc fingerprint.');
     }
@@ -29,6 +35,8 @@ final class RetroLanMatch {
   final RetroOnlineRooms rooms;
   final GameLinks links;
   final Future<RetroLanGame> Function(Uint8List mac) launch;
+  final void Function(bool recovering)? onRecoveryChanged;
+  final Duration recoveryWindow;
   final _closing = Completer<void>();
   final _done = Completer<void>();
   final _early = <Map<String, dynamic>>[];
@@ -122,7 +130,8 @@ final class RetroLanMatch {
               datagram.peerPort == 0 &&
               datagram.localPort == 0 &&
               datagram.peerVport == 0 &&
-              datagram.localVport == 0) {
+              datagram.localVport == 0 &&
+              _mesh?.canSendGame(peerAddress) == true) {
             _bridge?.receive(peer.userId, datagram.data);
           }
         },
@@ -161,23 +170,41 @@ final class RetroLanMatch {
         addresses: {rooms.me: mac, peer.userId: peerMac},
       ),
       exchange: game.exchange,
-      send: (_, packet) => mesh.send(
-        WireDatagram(
-          peer: peerAddress,
-          peerPort: 0,
-          peerVport: 0,
-          localPort: 0,
-          localVport: 0,
-          kind: DatagramKind.p2p,
-          data: packet,
-        ),
-      ),
+      send: (_, packet) {
+        if (!mesh.canSendGame(peerAddress)) return;
+        mesh.send(
+          WireDatagram(
+            peer: peerAddress,
+            peerPort: 0,
+            peerVport: 0,
+            localPort: 0,
+            localVport: 0,
+            kind: DatagramKind.p2p,
+            data: packet,
+          ),
+        );
+      },
     );
     unawaited(_untilClose(game.done).then((_) => leave(), onError: (Object error) => _failed(error)));
+    Stopwatch? outage;
+    var recoveryShown = false;
     _pump = Timer.periodic(const Duration(milliseconds: 8), (_) {
       if (!mesh.canSendGame(peerAddress)) {
-        unawaited(_failed(StateError('The PS2 LAN game channel closed.'), preserveGame: true));
-        return;
+        final elapsed = (outage ??= Stopwatch()..start()).elapsed;
+        if (elapsed >= recoveryWindow) {
+          unawaited(_failed(StateError('The PS2 LAN game channel did not recover.'), preserveGame: true));
+          return;
+        }
+        if (!recoveryShown && elapsed >= const Duration(milliseconds: 750)) {
+          recoveryShown = true;
+          onRecoveryChanged?.call(true);
+        }
+      } else {
+        outage = null;
+        if (recoveryShown) {
+          recoveryShown = false;
+          onRecoveryChanged?.call(false);
+        }
       }
       unawaited(bridge.pump().catchError((Object error) => _failed(error)));
     });
