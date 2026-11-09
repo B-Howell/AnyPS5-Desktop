@@ -265,20 +265,34 @@ exercises the callback ABI, frame copying, bounded queues, routing checks,
 and teardown. The LAN launch preserves its network state by rejecting
 graphics changes that reopen the core.
 
-The [LAN bridge](../lib/core/online/retro_lan_bridge.dart) connects the
-native frame exchange to each room-bound WebRTC game channel. It keeps
-at most 64 incoming frames, retries the head batch while the core is
-loading, and allows one exchange of up to 16 frames at a time. On
-teardown it detaches the incoming handlers and discards late native
-responses. The [transport suite](../test/core/online/retro_lan_transport_test.dart)
-covers the queue limit, source binding, unicast routing and cancellation.
+The [PS2 LAN match](../lib/core/online/retro_lan_match.dart) owns a
+private two-player room, binds signaling to the invited account and
+device, and checks the disc fingerprint through the room API. Each
+player gets a distinct virtual MAC. The match waits for the unreliable
+WebRTC game channel before starting its embedded-game factory. Once
+the SDP exchange is established, repeated setup signals reuse it even
+if a channel-open event has yet to reach one of the players. The match
+ends if the game channel subsequently closes.
+
+The [LAN bridge](../lib/core/online/retro_lan_bridge.dart) keeps at most
+64 incoming frames, retries the head batch while the core is loading,
+and allows one exchange of up to 16 frames at a time. On exit, the
+match stops forwarding frames, drains the current exchange, and closes
+the game independently of the room release request. The match limits
+how long it waits for server cleanup so an unresponsive server cannot
+keep the launcher in its closing state. The
+[transport suite](../test/core/online/retro_lan_transport_test.dart)
+covers frame routing and queue bounds. The
+[match tests](../test/core/online/retro_lan_match_test.dart) exercise
+authentication, repeated signaling and exit during an exchange or startup.
 Set `ANYPS5_PS2_WEBRTC_LAN=1` on the existing
 [headless WebRTC probe](../tool/ps1_netplay/webrtc_loopback.dart) to run
-the [broadcast and unicast fixture](../tool/ps1_netplay/webrtc_lan_probe.dart)
-over real Windows data channels. The headless run matched both Ethernet
-frames byte for byte. The fixture supplies synthetic frames at the native
-queue boundary. A PS2 room coordinator still needs to own signaling,
-native launch and frame scheduling.
+the [two-player room fixture](../tool/ps1_netplay/webrtc_lan_probe.dart)
+over real Windows data channels. The probe checks the assigned MACs,
+matches broadcast and unicast frames byte for byte, and checks room and
+adapter teardown. It uses synthetic NICs and a simulated room gateway.
+The launcher still needs to supply its embedded-game factory and route
+PS2 invites into this match.
 
 The patched DEV9 object compiled with GCC in WSL at the pinned core
 revision. The object exports `retro_anyps5_dev9_bind_v1`. This is a

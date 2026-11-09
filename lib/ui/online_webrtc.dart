@@ -93,6 +93,9 @@ class _GameLink implements GameLink {
   bool get streamOpen => _streamOpen;
 
   @override
+  bool get gameOpen => _open;
+
+  @override
   bool sendStream(Uint8List data) {
     final channel = _streamChannel;
     if (channel == null || !_streamOpen) return false;

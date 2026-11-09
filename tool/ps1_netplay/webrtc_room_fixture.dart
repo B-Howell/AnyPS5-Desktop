@@ -9,7 +9,8 @@ final class WebRtcRoomFixture {
   static const roomId = '00000000-0000-0000-0000-000000000001';
   static const host = '00000000-0000-0000-0000-000000000002';
   static const guest = '00000000-0000-0000-0000-000000000003';
-  static const _devices = {host: '00000000-0000-0000-0000-000000000004', guest: '00000000-0000-0000-0000-000000000005'};
+  static const hostDevice = '00000000-0000-0000-0000-000000000004';
+  static const _devices = {host: hostDevice, guest: '00000000-0000-0000-0000-000000000005'};
   static const _path = 'game-sessions/$roomId';
 
   final RetroRoomSpec spec;
@@ -18,6 +19,7 @@ final class WebRtcRoomFixture {
   final _members = <String>{};
   final _published = <String>{};
   final events = <String, void Function(String, Map<String, dynamic>)>{};
+  Future<void>? hostReleaseGate;
   Map<String, dynamic>? _room;
   int signals = 0;
 
@@ -28,7 +30,10 @@ final class WebRtcRoomFixture {
     spec: spec,
     me: user,
     discDigest: expectedDigest,
-    call: (method, path, [body]) async => _call(user, method, path, body),
+    call: (method, path, [body]) async {
+      if (user == host && method == 'DELETE' && path == _path) await hostReleaseGate;
+      return _call(user, method, path, body);
+    },
     signal: (to, device, session, kind, data) {
       if (!_published.contains(user) ||
           !_published.contains(to) ||

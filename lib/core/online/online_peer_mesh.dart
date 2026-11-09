@@ -22,6 +22,9 @@ abstract class GameLink {
   /// Sends one message on the game channel; false while it is not open.
   bool send(Uint8List data);
 
+  /// Whether the unreliable game channel is open.
+  bool get gameOpen;
+
   /// Sends one message on the stream channel; false while it is not open.
   bool sendStream(Uint8List data);
 
@@ -86,8 +89,12 @@ class _Peer {
 /// `OnlineStreamRelay` messages.
 class OnlinePeerMesh implements OnlinePeerTransport {
   /// [iceServers] replaces asking AnyTogether for them (tests pass [] for host candidates only).
-  OnlinePeerMesh({required this.context, required this.links, List<Map<String, dynamic>>? iceServers})
-    : _fixedIceServers = iceServers;
+  OnlinePeerMesh({
+    required this.context,
+    required this.links,
+    List<Map<String, dynamic>>? iceServers,
+    this.fixedPeers = false,
+  }) : _fixedIceServers = iceServers;
 
   static const label = 'game';
   static const streamLabel = 'stream';
@@ -95,6 +102,9 @@ class OnlinePeerMesh implements OnlinePeerTransport {
 
   final OnlinePeerContext context;
   final GameLinks links;
+
+  /// A fixed match binds a live channel to its original participant and device.
+  final bool fixedPeers;
   final List<Map<String, dynamic>>? _fixedIceServers;
 
   OnlinePeerSession? _session;
@@ -227,6 +237,11 @@ class OnlinePeerMesh implements OnlinePeerTransport {
     return target != null && !target.closed && target.link.streamOpen;
   }
 
+  bool canSendGame(int peer) {
+    final target = _byAddress[peer];
+    return target != null && !target.closed && target.link.gameOpen;
+  }
+
   @override
   void receive(OnlinePeerSignal signal) {
     final session = _session;
@@ -252,9 +267,9 @@ class OnlinePeerMesh implements OnlinePeerTransport {
           // The same answer again (sent again after a crossed request) changes nothing. Another
           // one means the other side started its connection over (the Mac launcher does when an
           // offer comes twice): so does this side, with a new offer it will answer once.
-          if (sdp == peer.remoteAnswer) return;
+          if (fixedPeers || sdp == peer.remoteAnswer) return;
           _forget(peer);
-          _close(peer, sayBye: false);
+          _close(peer, sayBye: false, replacing: true);
           await _offer(peer.userId, peer.address, peer.device, session.id);
           return;
         }
@@ -288,7 +303,7 @@ class OnlinePeerMesh implements OnlinePeerTransport {
         // crossed it, and a second connection would take candidates meant for the first.
         if (!OnlineIdentity.before(session.me, signal.from)) return;
         final local = peer?.local;
-        if (peer != null && peer.device == signal.device && !peer.haveRemote && local != null) {
+        if (peer != null && peer.device == signal.device && local != null && (!peer.haveRemote || fixedPeers)) {
           _send(peer, 'offer', local);
           for (final candidate in peer.sentCandidates) {
             _send(peer, 'candidate', candidate);
@@ -297,7 +312,7 @@ class OnlinePeerMesh implements OnlinePeerTransport {
         }
         if (peer != null) {
           _forget(peer);
-          _close(peer, sayBye: false);
+          _close(peer, sayBye: false, replacing: true);
         }
         await _offer(signal.from, address, signal.device, session.id);
     }
@@ -410,6 +425,7 @@ class OnlinePeerMesh implements OnlinePeerTransport {
       _send(current, 'answer', answered);
       return;
     }
+    if (fixedPeers && current?.haveRemote == true) return;
     final peer = await _make(userId, address, device, offerer: false, sessionId: session.id);
     if (peer == null) return;
     if (_stopped || _session?.id != session.id) {
@@ -420,7 +436,7 @@ class OnlinePeerMesh implements OnlinePeerTransport {
     final old = _peers[userId];
     _peers[userId] = peer;
     _byAddress[address] = peer;
-    if (old != null) _close(old, sayBye: false);
+    if (old != null) _close(old, sayBye: false, replacing: true);
     peer
       ..queued.addAll(_early.remove('$userId $device') ?? const [])
       ..remoteOffer = sdp;
@@ -475,7 +491,7 @@ class OnlinePeerMesh implements OnlinePeerTransport {
     if (identical(_byAddress[peer.address], peer)) _byAddress.remove(peer.address);
   }
 
-  void _close(_Peer peer, {required bool sayBye, String? sessionId}) {
+  void _close(_Peer peer, {required bool sayBye, String? sessionId, bool replacing = false}) {
     if (peer.closed) return;
     final session = sessionId ?? _session?.id;
     if (sayBye && session != null) context.signal(peer.userId, peer.device, session, 'bye', null);
@@ -484,6 +500,6 @@ class OnlinePeerMesh implements OnlinePeerTransport {
       ..state = PeerState.closed;
     unawaited(peer.link.close().catchError((Object _) {}));
     // The game's streams with this player end with the connection.
-    context.peerGone?.call(peer.address);
+    if (!fixedPeers || !replacing) context.peerGone?.call(peer.address);
   }
 }

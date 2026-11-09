@@ -57,9 +57,12 @@ any resized or looped exports.
 }
 ```
 
-For PS3, cover.webp, cover.png or cover.jpg at the disc root takes
-precedence over PS3_GAME/ICON0.PNG. Per-title wallpapers and music come
-from local media. The [selection audio player](../lib/core/audio/theme_music.dart)
+PS3 disc folders are discovered automatically from their disc metadata.
+At the disc root, cover.webp, cover.png or cover.jpg takes precedence
+over PS3_GAME/ICON0.PNG. The launcher uses PS3_GAME/PIC1.PNG as the
+wallpaper when present. For PS1 and PS2, the manifest can point at a
+local WAV for looping selection music. The
+[selection audio player](../lib/core/audio/theme_music.dart)
 can also play one optional local WAV per console from ConsoleAudio in the
 launcher config folder, using ps1-startup.wav, ps2-startup.wav and
 ps3-startup.wav. Moving into the game row selects the game's usual music.

@@ -231,6 +231,7 @@ class FakeGameNetwork {
 
   /// Messages dropped on the way (as an unreliable channel may), per sender; tests set it.
   bool Function(Uint8List data)? lose;
+  bool gameChannelReady = true;
 
   GameLinks get links => _FakeLinks(this);
 
@@ -334,6 +335,9 @@ class FakeGameLink implements GameLink {
 
   @override
   bool get streamOpen => _channel && !closed;
+
+  @override
+  bool get gameOpen => _channel && !closed && network.gameChannelReady;
 
   @override
   bool sendStream(Uint8List data) {
