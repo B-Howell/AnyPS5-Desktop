@@ -17,6 +17,7 @@ import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/power.dart';
+import 'package:anyps5_desktop/core/ps3_online_profile.dart';
 import 'package:anyps5_desktop/core/release_signing.dart';
 import 'package:anyps5_desktop/core/replay_buffer.dart';
 import 'package:anyps5_desktop/core/trophies.dart';
@@ -163,6 +164,7 @@ Fixture makeFixture({
   Future<String?> Function(String suggestedName, String label, List<String> extensions)? saveFileAs,
   Future<String?> Function(String label, List<String> extensions)? pickFile,
   HostSystem system = HostSystem.linux,
+  List<Ps3OnlineRelease> ps3OnlineReleases = const [],
   GitHubReleases? launcherReleases,
   Future<void> Function(String executable, List<String> arguments)? startDetached,
   void Function(int code)? quit,
@@ -219,6 +221,7 @@ Fixture makeFixture({
     system: system,
     persist: false,
     services: LauncherServices(
+      ps3OnlineReleases: ps3OnlineReleases,
       computerName: 'Desk',
       pickFolder: pickFolder ?? (_) async => root,
       pickImage: pickImage,

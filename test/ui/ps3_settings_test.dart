@@ -1,14 +1,20 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi' show Abi;
 import 'dart:io';
 
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/host.dart';
+import 'package:anyps5_desktop/core/ps3_online_profile.dart';
+import 'package:anyps5_desktop/core/ps3_update_import.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/panels.dart';
 import 'package:anyps5_desktop/ui/ps3_settings_model.dart';
 import 'package:anyps5_desktop/ui/strings.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../support/fixtures.dart' show ps3FixtureSfo;
@@ -17,6 +23,139 @@ import '../support/ui_support.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(T.load);
+
+  test('Play Online verifies setup and launches only the isolated PS3 profile', () async {
+    const title = 'BCUS98208';
+    const ppu = 'PPU-545c1abbf1c562d60fca7435401f020beab76b53';
+    const patch =
+        'Version: 1.2\n$ppu:\n  Protection:\n    Games:\n      Fixture:\n'
+        '        $title: [01.30]\n    Patch:\n      - [be32, 0x10000, 0x60000000]\n';
+    final releases = <Ps3OnlineRelease>[];
+    final fixture = makeFixture(system: HostSystem.windows, ps3OnlineReleases: releases);
+    final model = fixture.model;
+    addTearDown(() {
+      model.dispose();
+      fixture.dispose();
+    });
+    File write(String path, List<int> bytes) => File(path)
+      ..createSync(recursive: true)
+      ..writeAsBytesSync(bytes);
+    final folder = p.join(fixture.temp.path, 'ps3-online-disc');
+    final disc = write(p.join(folder, 'PS3_DISC.SFB'), [0]).path;
+    write(p.join(folder, 'PS3_GAME', 'USRDIR', 'EBOOT.BIN'), [0]);
+    write(p.join(folder, 'PS3_GAME', 'PARAM.SFO'), ps3FixtureSfo({'TITLE_ID': title, 'APP_VER': '01.18'}));
+    final managed = p.join(p.dirname(model.paths.toolkits), 'Emulators');
+    write(p.join(managed, 'rpcs3_libretro.dll'), [1]);
+    Directory(p.join(managed, 'system')).createSync();
+    final profile = p.join(managed, 'OnlineProfiles', 'fixture', title);
+    final rpcs3 = p.join(profile, 'system', 'rpcs3');
+    final update = p.join(rpcs3, 'dev_hdd0', 'game', title);
+    write(p.join(update, 'PARAM.SFO'), ps3FixtureSfo({'TITLE_ID': title, 'APP_VER': '01.30', 'CATEGORY': 'GD'}));
+    write(p.join(update, 'USRDIR', 'EBOOT.BIN'), [2]);
+    write(p.join(rpcs3, 'dev_flash', 'vsh', 'module', 'vsh.self'), [3]);
+    write(p.join(rpcs3, 'patches', '${title}_patch.yml'), utf8.encode(patch));
+    Directory(p.join(rpcs3, 'config')).createSync();
+    releases.add(
+      Ps3OnlineRelease(
+        provider: 'fixture',
+        titleId: title,
+        updateVersion: '01.30',
+        updateTreeDigest: await ps3UpdateTreeDigest(Directory(await Directory(update).resolveSymbolicLinks())),
+        coreSha256: sha256.convert([1]).toString(),
+        executableSha256: sha256.convert([2]).toString(),
+        protection: Ps3YamlProtection(
+          sha256: sha256.convert(utf8.encode(patch)).toString(),
+          ppuHash: ppu,
+          patches: const {'Protection': 1},
+        ),
+        rpcnHost: 'rpcn.example.invalid',
+        providerFiles: const {},
+        xfloat: Ps3Xfloat.accurate,
+        dns: Ps3Dns.cloudflare,
+        upnp: false,
+      ),
+    );
+    final game = Game(
+      folder: folder,
+      titleId: title,
+      name: 'Online fixture',
+      names: const {},
+      defaultLanguage: 'en',
+      version: '01.18',
+      executable: ExecutableKind.disc,
+      retro: (platform: RetroPlatform.ps3, path: disc),
+    );
+    model.games = [game];
+    model.selected = 0;
+    model.open(Layer.gameSettings);
+    void activate(String id) {
+      final rows = model.panelCategories().single.rows;
+      final index = rows.indexWhere((row) => row.id == id);
+      expect(index, isNonNegative);
+      model.activateRow(index);
+    }
+
+    activate('ps3-online-readiness');
+    const channel = MethodChannel('anyps5/retro_core');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final start = Completer<Map<Object?, Object?>>();
+    final calls = <MethodCall>[];
+    var stopped = false;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      if (call.method == 'start') {
+        start.complete(call.arguments as Map<Object?, Object?>);
+        return 7;
+      }
+      if (call.method == 'stop') stopped = true;
+      return call.method == 'status' ? {'ended': stopped, 'presented': true} : null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    Future<void> waitFor(bool Function() settled) async {
+      await Future.doWhile(() async {
+        if (settled()) return false;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        return true;
+      }).timeout(const Duration(seconds: 5));
+    }
+
+    activate('ps3-online-play');
+    await waitFor(
+      () =>
+          model
+              .panelCategories()
+              .single
+              .rows
+              .singleWhere((row) => row.id == 'ps3-online-play')
+              .detail
+              ?.contains('account') ==
+          true,
+    );
+    expect(start.isCompleted, isFalse);
+    write(
+      p.join(rpcs3, 'config', 'rpcn.yml'),
+      utf8.encode('Version: 2\nHost: rpcn.example.invalid\nNPID: fixture\nPassword: test-only\n'),
+    );
+    activate('ps3-online-play');
+    final launch = await start.future.timeout(const Duration(seconds: 5));
+    expect(launch['system'], await Directory(p.join(profile, 'system')).resolveSymbolicLinks());
+    expect(launch['saves'], await Directory(p.join(profile, 'saves')).resolveSymbolicLinks());
+    expect(launch['ps3Online'], contains('patchProtection'));
+    expect(Directory(p.join(managed, 'system')).listSync(), isEmpty);
+    await waitFor(() => model.embeddedGame?.presented == true);
+    try {
+      model.open(Layer.quickMenu);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        model.panelCategories().expand((category) => category.rows).any((row) => row.id == 'retroGraphics'),
+        isFalse,
+      );
+      expect(calls.any((call) => call.method == 'pause'), isFalse);
+    } finally {
+      await model.stopRunningGame();
+      await waitFor(() => model.running == null && model.starting == null);
+    }
+  }, skip: Abi.current() != Abi.windowsX64);
 
   testWidgets('PS3 game settings show local online readiness and can recheck an installed update', (tester) async {
     final fixture = makeFixture(
@@ -61,6 +200,7 @@ void main() {
     expect(info('ps3-online-managed-update'), 'None detected');
     expect(row('ps3-online-status').title, 'No verified provider');
     expect(row('ps3-online-status').detail, contains('play offline'));
+    expect(model.panelCategories().single.rows.any((item) => item.id == 'ps3-online-play'), isFalse);
     expect(model.running, isNull);
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1600, 1000);

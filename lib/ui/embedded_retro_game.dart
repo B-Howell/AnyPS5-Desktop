@@ -69,6 +69,7 @@ class EmbeddedRetroGame extends RunningGame {
   Future<bool> get netplayReady => _netplayReady.future;
   bool get isNetplay => _netplay;
   bool get isPs2Lan => _ps2Lan;
+  bool get isPs3Online => _online;
   final bool localNetplayStaging;
   Ps1NetplayMedia? get stagedNetplayMedia => localNetplayStaging && _portableCheckpoint ? _netplayMedia : null;
   double? get displayAspect => switch (framing) {
@@ -284,7 +285,7 @@ class EmbeddedRetroGame extends RunningGame {
     if (_closing) return;
     if (_playing != playing) {
       _playing = playing;
-      if (!_netplay) unawaited(_channel.invokeMethod<void>('pause', !playing));
+      if (!_netplay && !_online) unawaited(_channel.invokeMethod<void>('pause', !playing));
     }
     final acceptsInput = playing && focused;
     if (_acceptsInput == acceptsInput) return;

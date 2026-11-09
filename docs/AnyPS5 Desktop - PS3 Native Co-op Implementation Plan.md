@@ -213,9 +213,10 @@ The seven paths are evidence for a reviewed profile, pending qualification
 through a complete online session. The
 [profile regression](../test/core/ps3_online_profile_test.dart) covers the
 explicit handoff, account failure before copy, changed assets, allowed
-game output, unknown files and
-preservation of existing data. No dashboard launch supplies this input
-yet. The release catalog remains empty pending provider qualification.
+game output, unknown files and preservation of existing data. The
+dashboard supplies the prepared chain when it recognizes the disc ID
+and disc version. The release catalog remains empty pending provider
+qualification.
 
 The [transaction tests](../test/core/ps3_update_import_test.dart) cover
 missing and changed packages, failed publication, cancellation and staging
@@ -360,8 +361,8 @@ isolated network namespace. The tested Linux core SHA-256 was
 Sequential offline and live online storage isolation and provider sign-in
 remain open.
 
-This checkpoint has no approved release entries or launcher action that starts
-an online game. Before enabling a provider, verify its native connection uses
+This checkpoint has no approved release entries. Before enabling a
+provider, verify its native connection uses
 the expected endpoint when RPCS3 reloads the config, and verify protected
 profile storage through a complete isolated launch. RPCS3 can record the
 RPCN account ID and display name in its detailed log after sign-in. Keep
@@ -370,18 +371,37 @@ Then qualify a real private level using the provider's approved client setup.
 
 ## 3. Reuse party invites and hand off to the game
 
-On Windows x64, **Game Settings → Online Readiness** opens a read-only
+On Windows x64, **Game Settings → Online Readiness** opens the
 [PS3 readiness page](../lib/ui/ps3_online_readiness_page.dart). It reads the
 disc ID and application version from the extracted disc and separately
 detects a same-title update with an executable in managed RPCS3 storage.
 **Check Again** refreshes those facts without restarting the launcher.
 The page distinguishes an unreadable disc, a title missing from the
 reviewed release catalog, and a listed title that still needs a verified
-online profile. Version detection does not authenticate the update. The
-page creates no profile and opens no network connection. The release
-catalog remains empty while the provider and live-game gates are open.
-The [game settings test](../test/ui/ps3_settings_test.dart) covers the
-entry, refreshed update, missing disc, and return to the same game.
+online profile. Version detection does not authenticate the update.
+For a title with one reviewed YAML release and a pinned update tree,
+**Play Online** verifies the preconfigured profile at
+`OnlineProfiles/<provider>/<title ID>` under managed emulator storage.
+It uses a matching prepared update when the title slot is empty, reports
+the first setup issue on the same action, and starts the existing embedded
+game view only after verification. Leaving the page during the check
+suppresses the launch. The [launch coordinator](../lib/ui/app_model.dart)
+uses the verified core and isolated storage, and skips the offline
+trophy watcher for this session. Joining the native room is an explicit
+step in the game's online menu.
+
+The [embedded session](../lib/ui/embedded_retro_game.dart) keeps RPCS3
+running under the Quick Menu and sends neutral input while the menu has
+focus. The protected session does not offer in-game graphics changes
+or [restart trials](../lib/ui/retro_restart_workflow.dart), which would
+otherwise restart with the ordinary offline launch path.
+
+The release catalog remains empty while the provider and live-game gates
+are open. The [game settings test](../test/ui/ps3_settings_test.dart)
+exercises the action with a synthetic release and a fake native channel.
+It checks that a missing account blocks launch, the corrected profile
+passes isolated paths and protection metadata, the Quick Menu sends no
+pause command, and an unlisted title has no Play Online action.
 
 1. Use the shared lifecycle in the [multiplayer design](<AnyPS5 Desktop - Emulator Multiplayer Design.md>). Advertise a verified `ps3-native` mode with title/update, provider profile version and compatibility policy. The party service handles admission to the AnyTogether session. The game and provider decide admission to the native lobby.
 2. **Host** opens an AnyTogether offer and launches the configured local title. **Join** checks the guest's setup and launches it into the same supported provider flow. In v1 guide both players through the game's join steps. Use a supported provider join token or launch interface only if confirmed. Keep credentials and private room keys outside the general party metadata.

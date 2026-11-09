@@ -1154,6 +1154,7 @@ class LauncherServices {
     this.pads,
     this.systemProbe,
     this.retroHardware,
+    this.ps3OnlineReleases = Ps3OnlineRelease.catalog,
     this.displays,
     this.moveToDisplay,
     this.gameWindowReady,
@@ -1179,6 +1180,8 @@ class LauncherServices {
     this.discord,
     this.discordGames,
   });
+
+  final List<Ps3OnlineRelease> ps3OnlineReleases;
 
   /// Discord's IPC for the "Playing …" status (discord_model.dart); the tests give a fake.
   final DiscordPresence Function()? discord;
@@ -4189,6 +4192,7 @@ class AppModel extends ChangeNotifier {
     ({Ps1NetplayMedia media, int seat})? netplay,
     bool localNetplayStaging = false,
     ({Uint8List mac, String system, String saves})? ps2Lan,
+    Ps3OnlineProfile? onlineProfile,
   }) async {
     if (managedSetupConsole != null || starting != null || running != null || canBoot?.call() == false) return;
     final allowed = together.family.beforePlay(game);
@@ -4202,11 +4206,20 @@ class AppModel extends ChangeNotifier {
     final ps3 = disc.platform == RetroPlatform.ps3;
     final override = ps3 ? null : retroCoreOverride;
     final program = retroSettings.program(disc.platform);
-    final standalone = netplay == null && ps2Lan == null && program != null && File(program).existsSync();
-    final managed = netplay == null && ps2Lan == null && override == null && !standalone && managedRetroAvailable
+    final standalone =
+        onlineProfile == null && netplay == null && ps2Lan == null && program != null && File(program).existsSync();
+    final managed =
+        onlineProfile == null &&
+            netplay == null &&
+            ps2Lan == null &&
+            override == null &&
+            !standalone &&
+            managedRetroAvailable
         ? _managedRetro
         : null;
-    final embeddedHome = ps2Lan != null
+    final embeddedHome = onlineProfile != null
+        ? p.dirname(onlineProfile.core)
+        : ps2Lan != null
         ? _ps2LanCoreHome
         : netplay != null
         ? p.dirname(netplay.media.core)
@@ -4334,6 +4347,7 @@ class AppModel extends ChangeNotifier {
           netplay: netplay,
           localNetplayStaging: localNetplayStaging,
           ps2Lan: ps2Lan,
+          onlineProfile: onlineProfile,
         );
       } else {
         retroSettings.applyQueuedGraphics(program!, disc.platform);
@@ -4354,7 +4368,7 @@ class AppModel extends ChangeNotifier {
         booted.complete(!cancelled && run is EmbeddedRetroGame ? run : null);
       }
       together.family.followGame();
-      if (ps3) _watchPs3Trophies(game);
+      if (ps3 && onlineProfile == null) _watchPs3Trophies(game);
       if (run is EmbeddedRetroGame) {
         _padLog?.call('retro: ${disc.platform.name} embedded texture ${run.textureId} started');
       } else {
@@ -4410,7 +4424,7 @@ class AppModel extends ChangeNotifier {
         booted.complete(window == _GameWindowState.ready && !stopping && run is EmbeddedRetroGame ? run : null);
       }
       final code = await run.exitCode;
-      if (ps3) {
+      if (ps3 && onlineProfile == null) {
         _trophyWatch?.cancel();
         _loadTrophies(game);
       }
@@ -4448,7 +4462,7 @@ class AppModel extends ChangeNotifier {
       _retroSetupDetail = null;
       _retroSetupPercent = null;
       if (running == null && overlay == Layer.quickMenu) overlay = null;
-      show('${T.text('startFailed')}: $error');
+      show(error is Ps3OnlineIssue ? _ps3OnlineIssueText(error) : '${T.text('startFailed')}: $error');
     } finally {
       if (booted != null && !booted.isCompleted) booted.complete(null);
       if (lanRun != null) {
@@ -6029,7 +6043,7 @@ class AppModel extends ChangeNotifier {
                   title: T.text('gameSettings'),
                   kind: ActionRow(() => open(Layer.gameSettings)),
                 ),
-              if (running?.$1.retro != null && embeddedGame?.isNetplay != true)
+              if (running?.$1.retro != null && embeddedGame?.isNetplay != true && embeddedGame?.isPs3Online != true)
                 PanelRow(
                   id: 'retroGraphics',
                   title: 'Graphics',

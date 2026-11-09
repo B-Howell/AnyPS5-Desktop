@@ -300,7 +300,9 @@ class _EmulatorMenu {
       resume: () {
         if (app.embeddedGame == session && app.spot?.category == 'emulator-tune-game') app.resumeGame();
       },
-      openRestartTrials: session.isPs2Lan ? null : () => _push(() => app._retroRestartTrials.page(game, session)),
+      openRestartTrials: session.isPs2Lan || session.isPs3Online
+          ? null
+          : () => _push(() => app._retroRestartTrials.page(game, session)),
     );
   }
 

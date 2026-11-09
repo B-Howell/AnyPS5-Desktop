@@ -281,7 +281,7 @@ class _RetroRestartTrials {
     bool current() => generation == _restartGeneration && !app._disposed && !app._quitting;
 
     final settled = app._retroSettled;
-    if (app.embeddedGame != previous || settled == null) return null;
+    if (previous.isPs3Online || app.embeddedGame != previous || settled == null) return null;
     unawaited(app.stopRunningGame());
     await settled.future.timeout(
       const Duration(seconds: 30),
