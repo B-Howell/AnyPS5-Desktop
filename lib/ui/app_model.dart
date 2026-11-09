@@ -3996,13 +3996,36 @@ class AppModel extends ChangeNotifier {
 
   bool get managedPs3FirmwareDownloaded => _managedRetro.hasPs3FirmwarePackage;
 
-  Future<Ps1NetplayMedia> verifyPs1Netplay(Game game, Ps1NetplayProfile profile, {bool requireHandoff = false}) async {
+  Future<String?> preparePs1NetplayBios({required bool Function() canContinue}) async {
+    final managed = _managedRetro;
+    try {
+      final existing = await managed.verifiedPs1NetplayBios(managedBiosPath(RetroPlatform.ps1));
+      if (_disposed || !canContinue()) return null;
+      if (existing != null) return existing;
+      final picker = services.pickFile;
+      if (picker == null) throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.bios);
+      final selected = await picker(T.text('ps1OnlineBiosPicker'), const ['bin', 'rom', 'rom0']);
+      if (selected == null || _disposed || !canContinue()) return null;
+      return await managed.importPs1NetplayBios(selected);
+    } on FormatException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.bios);
+    } on FileSystemException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.bios);
+    } on PlatformException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.bios);
+    }
+  }
+
+  Future<Ps1NetplayMedia> verifyPs1Netplay(
+    Game game,
+    Ps1NetplayProfile profile, {
+    required String bios,
+    bool requireHandoff = false,
+  }) async {
     final disc = game.retro;
-    final bios = managedBiosPath(RetroPlatform.ps1);
     if (disc == null || disc.platform != RetroPlatform.ps1) {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
     }
-    if (bios == null) throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.bios);
     final managed = _managedRetro;
     final override = retroCoreOverride;
     var core = p.join(override ?? managed.root, ManagedRetro.libraryName(RetroPlatform.ps1));

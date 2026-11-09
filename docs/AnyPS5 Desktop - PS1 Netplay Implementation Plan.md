@@ -292,7 +292,25 @@ The builder accepts the qualified DLL digest
 The resulting archive digest is
 `86ab673a1a1b4260dc73256955d600dd64a5ee57e78e17696ae3504791a6633e`.
 The package contains only the DLL. Each player still supplies their own
-matching BIOS and game. The ordinary PS1 invitation flow continues to use
+matching BIOS and game. The [co-op setup](../lib/ui/together_ps1_netplay.dart)
+reuses an already verified BIOS. If the configured offline BIOS is
+missing or incompatible, the [launcher preflight](../lib/ui/app_model.dart)
+opens a file picker from the same invite or co-op-ready launch. The
+[managed importer](../lib/core/managed_retro.dart) verifies the
+SCPH-1001 digest before copying it to `Emulators/PS1-Netplay/scph1001.bin`.
+The ordinary PS1 BIOS selection and saves stay separate. Cancelling the
+picker or changing accounts during the invite leaves the room unjoined.
+The [invite setup test](../test/ui/ps1_netplay_setup_test.dart) exercises
+invalid selection, cancellation and sign-out before a join.
+An isolated Windows probe reused a matching BIOS, then imported it into
+a fresh profile with an incompatible offline fixture. The fixture kept
+its original bytes and the imported BIOS passed CTR handoff media
+verification with the managed checkpoint core. A separate launcher
+fixture used the real CTR media and BIOS with a local fake AnyTogether
+service. After choosing the BIOS, the original invite reached the room
+join request. The fake service declined admission so no game started.
+
+The ordinary PS1 invitation flow continues to use
 its existing core selection. An explicit `ANYPS5_LIBRETRO_HOME` still
 selects the reviewer core, which must pass the handoff pin check.
 

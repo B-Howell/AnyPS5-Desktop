@@ -42,6 +42,58 @@ class ManagedRetro {
 
   bool isInstalled(RetroPlatform platform) => _windowsX64Library(File(p.join(root, libraryName(platform))));
 
+  Future<String?> verifiedPs1NetplayBios(String? offlinePath) async {
+    final home = Directory(root);
+    if (await home.exists()) {
+      final target = Directory(p.join(await home.resolveSymbolicLinks(), 'PS1-Netplay'));
+      final imported = File(p.join(target.path, 'scph1001.bin'));
+      if (await target.exists() &&
+          p.equals(await target.resolveSymbolicLinks(), target.path) &&
+          await imported.exists() &&
+          p.equals(await imported.resolveSymbolicLinks(), imported.path) &&
+          await _matchesPs1NetplayBios(imported)) {
+        return imported.path;
+      }
+    }
+    return offlinePath != null && await _matchesPs1NetplayBios(File(offlinePath)) ? offlinePath : null;
+  }
+
+  static Future<bool> _matchesPs1NetplayBios(File file) async {
+    try {
+      return await file.length() == 512 * 1024 && await AssetDownload.sha256Of(file.path) == Ps1NetplayMedia.biosPin;
+    } on FileSystemException {
+      return false;
+    }
+  }
+
+  Future<String> importPs1NetplayBios(String source) async {
+    const size = 512 * 1024;
+    final file = await File(source).open();
+    final Uint8List bytes;
+    try {
+      bytes = await file.read(size + 1);
+    } finally {
+      await file.close();
+    }
+    if (bytes.length != size || sha256.convert(bytes).toString() != Ps1NetplayMedia.biosPin) {
+      throw const FormatException('Select the matching SCPH-1001 BIOS dump for PS1 online play.');
+    }
+    final home = await Directory(root).create(recursive: true);
+    final target = await Directory(p.join(await home.resolveSymbolicLinks(), 'PS1-Netplay')).create();
+    if (!p.equals(await target.resolveSymbolicLinks(), target.path)) {
+      throw const FormatException('The PS1 netplay BIOS directory redirects outside its assigned path.');
+    }
+    final path = p.join(target.path, 'scph1001.bin');
+    final stage = await target.createTemp('bios-');
+    try {
+      final staged = await File(p.join(stage.path, 'scph1001.bin')).writeAsBytes(bytes, flush: true);
+      await staged.rename(path);
+    } finally {
+      await stage.delete(recursive: true);
+    }
+    return path;
+  }
+
   /// Checkpoint handoff has its own core. Never upgrade the offline PS1 DLL.
   Future<String> ensurePs1NetplayCore() async {
     final home = await Directory(root).create(recursive: true);

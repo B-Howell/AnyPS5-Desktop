@@ -9,6 +9,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
+  test('PS1 online BIOS validation leaves offline and previously imported files intact', () async {
+    final root = Directory.systemTemp.createTempSync('anyps5-managed-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final online = File(p.join(root.path, 'PS1-Netplay', 'scph1001.bin'))
+      ..createSync(recursive: true)
+      ..writeAsBytesSync([1]);
+    final offline = File(p.join(root.path, 'system', 'anyps5-imported.bin'))
+      ..createSync(recursive: true)
+      ..writeAsBytesSync([2]);
+    final invalid = File(p.join(root.path, 'wrong.bin'))..writeAsBytesSync(Uint8List(512 * 1024)..[0] = 3);
+    final managed = ManagedRetro(root.path);
+
+    expect(await managed.verifiedPs1NetplayBios(offline.path), isNull);
+    await expectLater(managed.importPs1NetplayBios(invalid.path), throwsFormatException);
+    expect(online.readAsBytesSync(), [1]);
+    expect(offline.readAsBytesSync(), [2]);
+  });
+
   test('PS1 checkpoint setup rejects a mismatched package and preserves the offline core', () async {
     final root = Directory.systemTemp.createTempSync('anyps5-managed-');
     addTearDown(() => root.deleteSync(recursive: true));

@@ -29,9 +29,12 @@ extension TogetherPs1Netplay on TogetherModel {
     _verifyingPs1 = true;
     app.show(T.text('ps1OnlineVerifying'));
     app.refresh();
+    bool idle() => app.running == null && app.starting == null && !app.stopping && app.managedSetupConsole == null;
     try {
-      final media = await app.verifyPs1Netplay(game, profile, requireHandoff: true);
-      unawaited(app.playStagedPs1(game, media));
+      final bios = await app.preparePs1NetplayBios(canContinue: idle);
+      if (bios == null || !idle()) return;
+      final media = await app.verifyPs1Netplay(game, profile, bios: bios, requireHandoff: true);
+      if (idle()) unawaited(app.playStagedPs1(game, media));
     } on Ps1NetplayMediaFailure catch (error) {
       _showPs1MediaError(error, handoff: true);
     } finally {
@@ -183,7 +186,10 @@ extension TogetherPs1Netplay on TogetherModel {
     app.show(T.text('ps1OnlineVerifying'));
     Ps1NetplayMatch? opened;
     RetroOnlineRooms rooms([String? discDigest]) => RetroOnlineRooms(
-      call: account.call,
+      call: (method, path, [body]) {
+        if (account.user?.id != me) throw StateError('The AnyTogether account changed.');
+        return account.call(method, path, body);
+      },
       me: me,
       spec: handoff ? profile.handoffRoom : profile.room,
       discDigest: discDigest,
@@ -197,13 +203,17 @@ extension TogetherPs1Netplay on TogetherModel {
     );
     try {
       final invitedDigest = roomId == null ? null : await rooms().invitedDiscDigest(roomId);
-      if (account.user?.id != me || !hostAvailable()) return;
+      bool active() => account.user?.id == me && hostAvailable();
+      if (!active()) return;
+      if (roomId != null && invitedDigest == null) return app.show(T.text('ps1OnlineDisc'));
+      final bios = host == null ? await app.preparePs1NetplayBios(canContinue: active) : null;
+      if (!active() || (host == null && bios == null)) return;
       final (game, media) = host != null
           ? (app.running!.$1, host.stagedNetplayMedia!)
           : selectedGame != null
-          ? (selectedGame, await app.verifyPs1Netplay(selectedGame, profile))
-          : await _verifiedPs1(profile, candidates, invitedDigest, requireHandoff: handoff);
-      if (account.user?.id != me || !hostAvailable()) return;
+          ? (selectedGame, await app.verifyPs1Netplay(selectedGame, profile, bios: bios!))
+          : await _verifiedPs1(profile, candidates, invitedDigest, bios: bios!, requireHandoff: handoff);
+      if (!active()) return;
       if (handoff && !media.supportsHandoff) return app.show(T.text('ps1OnlineHandoffCore'));
       late final Ps1NetplayMatch match;
       final owned = EmbeddedPs1NetplayRunner(
@@ -274,11 +284,12 @@ extension TogetherPs1Netplay on TogetherModel {
     Ps1NetplayProfile profile,
     List<Game> candidates,
     String? invitedDigest, {
+    required String bios,
     required bool requireHandoff,
   }) async {
     for (final game in candidates) {
       try {
-        final media = await app.verifyPs1Netplay(game, profile, requireHandoff: requireHandoff);
+        final media = await app.verifyPs1Netplay(game, profile, bios: bios, requireHandoff: requireHandoff);
         if (invitedDigest == null || media.discDigest == invitedDigest) return (game, media);
       } on Ps1NetplayMediaFailure catch (error) {
         if (error.problem != Ps1NetplayMediaProblem.disc) rethrow;
