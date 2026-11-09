@@ -303,7 +303,7 @@
   "ps2LanConnecting": "Waiting for the other player and connecting…",
   "ps2LanStarting": "Starting the PS2 LAN game…",
   "ps2LanCancel": "Cancel LAN Play",
-  "ps2LanLeave": "Leave LAN Play and Close Game",
+  "ps2LanLeave": "Leave LAN Play",
   "ps2LanClosing": "Closing the LAN session…",
   "ps2LanUseGameMenu": "Open the game's LAN mode and choose the network configuration on memory card slot 1. Use automatic IP (DHCP).",
   "ps2LanSetupTitle": "Set up LAN network",

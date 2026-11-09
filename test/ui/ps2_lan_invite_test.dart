@@ -325,6 +325,7 @@ void main() {
           if (row.kind case final ActionRow action) action.run();
         }
         if (!finishStart.isCompleted) finishStart.complete();
+        if (model.running != null) await model.stopRunningGame();
         await until(() => model.starting == null && model.running == null && model.together.ps2LanRows().isEmpty);
         messenger.setMockMethodCallHandler(channel, null);
       });
@@ -380,9 +381,23 @@ void main() {
         await Future<void>.delayed(Duration.zero);
         expect(row('ps2-lan-status').detail, isNot(contains('999 ms')));
         await until(() => row('ps2-lan-status').detail?.endsWith(' · Through the relay · 65 ms') == true);
+        final worker = model.embeddedGame;
+        expect(row('ps2-lan-status').title, 'Leave LAN Play');
+        press('ps2-lan-status');
+        await until(() => model.together.ps2LanRows().isEmpty);
+        expect(server.callsTo('$path/leave'), hasLength(1));
+        expect(model.embeddedGame, same(worker));
+        expect(stopped, isFalse);
+        expect(model.toast, contains('Your game is still open'));
+        final afterLeave = exchanges;
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        expect(exchanges, afterLeave);
         model.padCommand(PadCommand.home);
         expect(model.overlay, isNull);
         expect(pauseRequests, isEmpty);
+        await model.stopRunningGame();
+        await until(() => stopped && model.running == null);
+        expect(server.callsTo('$path/leave'), hasLength(1));
         return;
       }
       model.padCommand(PadCommand.home);

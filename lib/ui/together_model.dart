@@ -1657,7 +1657,10 @@ class TogetherModel {
   void dispose() {
     _cancelPs1InviteVerification();
     unawaited(_ps1Match?.leave());
-    _ps2Lan?.cancel();
+    if (_ps2Lan case final attempt?) {
+      attempt.disposed = true;
+      attempt.cancel();
+    }
     if (_ps3Party case final attempt?) {
       attempt.disposed = true;
       attempt.cancel();

@@ -303,7 +303,7 @@
   "ps2LanConnecting": "Diğer oyuncu bekleniyor ve bağlantı kuruluyor…",
   "ps2LanStarting": "PS2 LAN oyunu başlatılıyor…",
   "ps2LanCancel": "LAN Oyununu İptal Et",
-  "ps2LanLeave": "LAN Oyunundan Ayrıl ve Oyunu Kapat",
+  "ps2LanLeave": "LAN Oyunundan Ayrıl",
   "ps2LanClosing": "LAN oturumu kapatılıyor…",
   "ps2LanUseGameMenu": "Oyunun LAN modunu açıp 1. yuvadaki hafıza kartından ağ yapılandırmasını seçin. Otomatik IP (DHCP) kullanın.",
   "ps2LanSetupTitle": "LAN ağını kur",

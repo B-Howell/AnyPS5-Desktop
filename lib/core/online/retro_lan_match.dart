@@ -66,6 +66,7 @@ final class RetroLanMatch {
   Future<void> get ending => _closing.future;
   bool get closed => _closed;
   bool get gameContinues => _gameContinues;
+  bool get attached => !_closed && _bridge != null;
   bool get recovering => !_closed && _recovering;
   GamePathStats? get connectionPath => _path?.sample;
 
@@ -275,7 +276,7 @@ final class RetroLanMatch {
     }
   }
 
-  Future<void> leave() => _end();
+  Future<void> leave({bool keepGame = false}) => _end(preserveGame: keepGame);
 
   Future<void> _end({bool preserveGame = false}) async {
     if (_closed) return done;

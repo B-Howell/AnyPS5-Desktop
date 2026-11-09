@@ -4,15 +4,15 @@ final class _Ps2LanAttempt {
   final cancellation = Completer<void>();
   RetroLanMatch? match;
   Game? launchGame;
-  bool playing = false;
+  bool disposed = false;
 
   bool get cancelled => cancellation.isCompleted;
   bool get closing => cancelled || match?.closed == true;
 
-  void cancel() {
+  void cancel({bool keepGame = false}) {
     if (cancelled) return;
     cancellation.complete();
-    unawaited(match?.leave());
+    unawaited(match?.leave(keepGame: keepGame));
   }
 }
 
@@ -82,7 +82,7 @@ extension TogetherPs2Lan on TogetherModel {
       return [PanelRow(id: 'ps2-lan-status', title: T.text('ps2LanClosing'), kind: const InfoRow(''))];
     }
     final starting = _ps2LanStarting(attempt);
-    final playing = attempt.playing && !starting;
+    final playing = attempt.match?.attached == true && !starting;
     final recovering = attempt.match?.recovering == true;
     final path = playing && !recovering ? attempt.match?.connectionPath : null;
     return [
@@ -104,7 +104,7 @@ extension TogetherPs2Lan on TogetherModel {
         ].join(' · '),
         kind: ActionRow(() {
           if (!identical(_ps2Lan, attempt) || attempt.match?.closed == true || attempt.cancelled) return;
-          attempt.cancel();
+          attempt.cancel(keepGame: playing);
           app.refresh();
         }, destructive: true),
       ),
@@ -170,7 +170,8 @@ extension TogetherPs2Lan on TogetherModel {
     if (friendId != null) app.open(Layer.friends);
 
     final attempt = _ps2Lan = _Ps2LanAttempt();
-    bool active() => identical(_ps2Lan, attempt) && !attempt.cancelled && account.user?.id == me;
+    bool owned() => !attempt.disposed && identical(_ps2Lan, attempt) && account.user?.id == me;
+    bool active() => owned() && !attempt.cancelled;
     RetroOnlineRooms rooms([String? digest]) => RetroOnlineRooms(
       call: (method, path, [body]) {
         if (account.user?.id != me) throw StateError('The AnyTogether account changed.');
@@ -216,7 +217,9 @@ extension TogetherPs2Lan on TogetherModel {
         if (expected != null && digest != expected) continue;
 
         final match = attempt.match = RetroLanMatch(
-          onPathChanged: app.refresh,
+          onPathChanged: () {
+            if (active()) app.refresh();
+          },
           onRecoveryChanged: (recovering) {
             if (active() && app.running?.$1 == game) {
               app.show(T.text(recovering ? 'ps2LanReconnecting' : 'ps2LanReconnected'));
@@ -228,18 +231,12 @@ extension TogetherPs2Lan on TogetherModel {
             if (!unchanged(await file.stat())) throw StateError('The verified PS2 disc changed before launch.');
             if (!_ps2LaunchAvailable) throw StateError('Another game started before PS2 LAN.');
             attempt.launchGame = game;
-            final run = await app.preparePs2Lan(game, mac, canBoot: () => active() && attempt.match?.closed == false);
-            if (active()) {
-              attempt.playing = true;
-              app.show(T.text('ps2LanUseGameMenu'));
-              app.refresh();
-            }
-            return run;
+            return app.preparePs2Lan(game, mac, canBoot: () => active() && attempt.match?.closed == false);
           },
         );
         unawaited(
           match.ending.then((_) {
-            if (!active()) return;
+            if (!owned()) return;
             if (match.gameContinues && app.running?.$1 == game) app.show(T.text('ps2LanGameContinues'));
             app.refresh();
           }),
@@ -249,8 +246,9 @@ extension TogetherPs2Lan on TogetherModel {
           await match.host(friendId!);
         } else {
           await match.join(roomId, expectedHost: expectedHost);
-          unawaited(hub.games.refresh().catchError((Object _) {}));
+          if (owned()) unawaited(hub.games.refresh().catchError((Object _) {}));
         }
+        if (active() && match.attached) app.show(T.text('ps2LanUseGameMenu'));
         await match.done;
         if (active() && !match.gameContinues) {
           if (match.failure != null) {
@@ -271,7 +269,7 @@ extension TogetherPs2Lan on TogetherModel {
     } finally {
       if (attempt.match case final match? when match.closed) await match.roomCleanupDone;
       if (identical(_ps2Lan, attempt)) _ps2Lan = null;
-      app.refresh();
+      if (!attempt.disposed) app.refresh();
     }
   }
 }

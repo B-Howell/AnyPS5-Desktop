@@ -296,14 +296,13 @@ The [LAN bridge](../lib/core/online/retro_lan_bridge.dart) keeps at most
 64 incoming frames, retries the head batch while the core is loading,
 and allows one exchange of up to 16 frames at a time. On exit, the
 match stops forwarding frames and drains the current exchange. A peer
-departure or lost game channel releases the room while keeping an
+departure, lost game channel, or **Leave LAN Play** releases the room while keeping an
 already started game open. The launcher explains that the player can
 return to the game and must close it before opening a new LAN room.
-Explicitly leaving closes the local game. An interrupted startup also
-closes a game that returns after cancellation. Local game cleanup runs
-independently of the room release request. The match limits
-how long it waits for server cleanup so an unresponsive server cannot
-keep the launcher in its closing state. The
+**Close Game** still shuts down the local game. Cancel during startup
+also closes a worker that returns after cancellation. Local worker
+cleanup runs independently of the room release request. Another LAN
+attempt waits for the old room cleanup to settle. The
 [transport suite](../test/core/online/retro_lan_transport_test.dart)
 covers frame routing and queue bounds. The
 [match tests](../test/core/online/retro_lan_match_test.dart) exercise
@@ -439,8 +438,9 @@ the game, then close it to release the card.
 
 After the room connects, open the game's LAN menu and choose the saved
 configuration from slot 1. The launcher does not declare the network ready
-just because a card file exists. **Leave LAN Play** in the Quick Menu closes
-the session, and restart trials are unavailable while it is active.
+just because a card file exists. **Leave LAN Play** in the Quick Menu
+closes the room and keeps the game open. Restart trials are unavailable
+while the LAN worker is active.
 
 The [library test](../test/core/retro_library_test.dart) verifies serial
 and revision extraction with a conflicting manifest. The
