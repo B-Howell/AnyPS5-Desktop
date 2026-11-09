@@ -874,6 +874,7 @@ enum Layer {
 
   /// PS in a game: the game paused under Resume, Game Settings and Close Game.
   quickMenu,
+  ps1OnlineFriends,
 
   /// A friend's share play watched full screen (share_play_model.dart): the controller is the
   /// game's, PS leaves.
@@ -4012,6 +4013,13 @@ class AppModel extends ChangeNotifier {
     return prepared;
   }
 
+  Future<void> playStagedPs1(Game game, Ps1NetplayMedia media) {
+    final disc = game.retro;
+    if (disc == null || !media.supportsHandoff) return Future.value();
+    closeOverlay();
+    return _playRetro(game, disc, netplay: (media: media, seat: 0), localNetplayStaging: true);
+  }
+
   Future<void> _playRetro(
     Game game,
     RetroDisc disc, {
@@ -4019,6 +4027,7 @@ class AppModel extends ChangeNotifier {
     Completer<EmbeddedRetroGame?>? booted,
     bool Function()? canBoot,
     ({Ps1NetplayMedia media, int seat})? netplay,
+    bool localNetplayStaging = false,
   }) async {
     if (managedSetupConsole != null || starting != null || running != null || canBoot?.call() == false) return;
     final allowed = together.family.beforePlay(game);
@@ -4155,6 +4164,7 @@ class AppModel extends ChangeNotifier {
           },
           changed: _changed,
           netplay: netplay,
+          localNetplayStaging: localNetplayStaging,
         );
       } else {
         retroSettings.applyQueuedGraphics(program!, disc.platform);
@@ -4247,6 +4257,7 @@ class AppModel extends ChangeNotifier {
       if (overlay == Layer.quickMenu ||
           overlay == Layer.closeGame ||
           overlay == Layer.retroGraphics ||
+          overlay == Layer.ps1OnlineFriends ||
           (overlay == Layer.emulatorMenu && _emulatorMenu.fromGraphics)) {
         overlay = null;
       }
@@ -4664,7 +4675,7 @@ class AppModel extends ChangeNotifier {
     final playing = running?.$1;
     if (playing == null) return false;
     return switch (overlay) {
-      Layer.quickMenu || Layer.closeGame || Layer.retroGraphics => true,
+      Layer.quickMenu || Layer.closeGame || Layer.retroGraphics || Layer.ps1OnlineFriends => true,
       Layer.emulatorMenu => _emulatorMenu.fromGraphics,
       Layer.gameSettings => playing.retro != null && selectedGame?.id == playing.id,
       _ => false,
@@ -4952,6 +4963,9 @@ class AppModel extends ChangeNotifier {
         // A question asked in place (together_ask.dart) is answered Cancel first.
         if (!together.cancelAsk()) open(Layer.friends, cue: Cue.back);
         return;
+      case Layer.ps1OnlineFriends when command == Command.back || command == Command.options:
+        open(Layer.quickMenu, cue: Cue.back);
+        return;
       case Layer.settings ||
           Layer.gameSettings ||
           Layer.retroGraphics ||
@@ -4966,6 +4980,7 @@ class AppModel extends ChangeNotifier {
           Layer.party ||
           Layer.family ||
           Layer.quickMenu ||
+          Layer.ps1OnlineFriends ||
           Layer.closeGame ||
           Layer.homeMenu ||
           Layer.confirmQuit ||
@@ -5794,6 +5809,17 @@ class AppModel extends ChangeNotifier {
             rows: updates.requiredRows(together.account.tooOld!),
           ),
         ];
+      case Layer.ps1OnlineFriends when running != null:
+        return [
+          PanelCategory(
+            id: 'ps1OnlineFriends',
+            title: T.text('ps1OnlineChooseFriend'),
+            rows: [
+              ...together.ps1InviteFriendRows(),
+              PanelRow(id: 'ps1-invite-back', title: T.text('back'), kind: ActionRow(() => open(Layer.quickMenu))),
+            ],
+          ),
+        ];
       case Layer.quickMenu when running != null:
         return [
           PanelCategory(
@@ -5824,6 +5850,7 @@ class AppModel extends ChangeNotifier {
                 ),
               if (embeddedGame == null) ...media.gameRows(),
               if (embeddedGame == null) ...sharePlay.rows(),
+              ...together.ps1QuickRows(),
               PanelRow(
                 id: 'closeGame',
                 title: T.text('quickCloseGame'),
@@ -6793,6 +6820,7 @@ class AppModel extends ChangeNotifier {
   List<PanelRow> _gameRows(Game game) {
     if (game.retro != null) {
       return [
+        ...together.ps1LocalLaunchRows(game),
         PanelRow(id: 'log', title: T.text('openLog'), kind: ActionRow(() => open(Layer.log))),
         PanelRow(
           id: 'folder',

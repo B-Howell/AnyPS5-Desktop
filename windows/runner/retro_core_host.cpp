@@ -560,7 +560,12 @@ class RetroCoreSession {
   bool ResumeLocalNetplay() {
     if (!CheckpointReady()) return false;
     std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
-    if (!StagingLocal() || !netplay_held_ || checkpoint_) return false;
+    if (!local_staging_ || !netplay_held_ || checkpoint_) return false;
+    if (netplay_started_) {
+      netplay_started_ = false;
+      local_frame_ = 0;
+      checkpoint_history_.clear();
+    }
     netplay_held_ = false;
     return true;
   }
@@ -1312,7 +1317,8 @@ class RetroCoreSession {
       }
       started_before = started;
       if (!advance) {
-        if (!staging &&
+        // The invitation owner releases a staged host on timeout or disconnect.
+        if (!local_staging_ &&
             Clock::now() - last_advance > (started ? std::chrono::seconds(15) : std::chrono::seconds(60)))
           throw std::runtime_error(started ? "PS1 netplay stopped waiting for the other player."
                                            : "PS1 netplay did not start in time.");

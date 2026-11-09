@@ -235,12 +235,10 @@ peers finished at frame 13,706 with 113 matching RAM fingerprints across
 the two input epochs. The control run finished at the same frame with
 114 matches in a single epoch.
 
-The Quick Menu still needs to bring an ordinary local game into the
-deterministic profile and exercise the handoff over WebRTC. Its adapter
-must drain the previous peer's native calls before resetting the timeline.
-The portable state includes memory card data, so the adapter also needs
-to keep checkpoint exchange scoped to game-specific or session-owned
-storage.
+The portable state includes memory card data, so checkpoint exchange
+uses session-owned storage. The deterministic profile is selected at
+boot for this experimental path. Converting a normal play session in
+place and verifying the handoff over real WebRTC remain open.
 
 An opt-in local staging mode now runs the deterministic worker before a
 peer connects. The [embedded bridge](../lib/ui/embedded_retro_game.dart)
@@ -256,9 +254,22 @@ The Windows CTR probe replayed 247 local frames, verified host input on
 port one and neutral input on port two, and matched RAM at the first
 online fingerprint. The control probe confirmed 360 frames with both
 seats active, then verified an already-online host's replacement guest.
-The invitation owner must let an outstanding hold finish before cancelling
-and resuming the local host. It also needs a way to release the match
-without closing the game it adopted.
+
+On a Windows experimental build with `ANYPS5_PS1_NETPLAY=1` and the
+portable core, open the qualified game's options and select **Play with
+online co-op available**. This starts the session-owned memory card
+without touching the regular game save. In the running game, choose
+**Quick Menu → Online couch co-op** and pick an online friend. The
+[invite flow](../lib/ui/together_ps1_netplay.dart) uses a separate room
+version for checkpoint handoff. It continues the local game while the
+guest connects and offers **Cancel online session** while waiting.
+The [handoff owner](../lib/core/online/ps1_local_handoff.dart) drains
+outstanding native checkpoint, hold, start and input calls before resuming local play.
+The [lifecycle tests](../test/core/online/ps1_local_handoff_test.dart)
+cover cancellation during checkpoint capture and hold, and leaving during input exchange.
+The native probe also verifies the host resumes local video after the
+online match. The guest owns its own temporary game and exits it when the
+match ends.
 
 ### Windows development checkpoint
 

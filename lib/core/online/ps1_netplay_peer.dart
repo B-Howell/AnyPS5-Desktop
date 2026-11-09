@@ -72,6 +72,7 @@ final class Ps1NetplayPeer {
     Future<void> Function(Ps1CheckpointSnapshot)? restoreCheckpoint,
     Ps1CatchupSource? catchupSource,
     Ps1CatchupReplay? catchupReplay,
+    void Function()? onRunning,
     int? hostEpoch,
     Duration timeout = const Duration(seconds: 30),
   }) : _link = link,
@@ -86,6 +87,7 @@ final class Ps1NetplayPeer {
          restoreCheckpoint: restoreCheckpoint,
          catchupSource: catchupSource,
          catchupReplay: catchupReplay,
+         onRunning: onRunning,
          sendControl: (bytes) {
            if (!link.sendStream(bytes)) throw StateError('The PS1 control channel closed.');
          },

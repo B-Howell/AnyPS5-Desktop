@@ -46,6 +46,7 @@ final class Ps1NetplaySession {
     this.restoreCheckpoint,
     this.catchupSource,
     this.catchupReplay,
+    this.onRunning,
     int? hostEpoch,
     this.timeout = const Duration(seconds: 30),
   }) : _epoch = hostEpoch {
@@ -79,6 +80,7 @@ final class Ps1NetplaySession {
   final Future<void> Function(Ps1CheckpointSnapshot)? restoreCheckpoint;
   final Ps1CatchupSource? catchupSource;
   final Ps1CatchupReplay? catchupReplay;
+  final void Function()? onRunning;
   final Duration timeout;
 
   int? _epoch;
@@ -386,6 +388,7 @@ final class Ps1NetplaySession {
       _phase = Ps1NetplayPhase.running;
       _touch();
       if (seat == 1) _sendControl('started');
+      if (_phase == Ps1NetplayPhase.running) onRunning?.call();
     } on Object {
       _close(Ps1NetplayEnd.runner, notify: true);
     }

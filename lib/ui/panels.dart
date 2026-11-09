@@ -182,6 +182,7 @@ class PanelView extends StatelessWidget {
       Layer.copyWarning,
       Layer.gameFiles,
       Layer.quickMenu,
+      Layer.ps1OnlineFriends,
       Layer.homeMenu,
       Layer.launcherReport,
       Layer.profileMenu,
@@ -191,6 +192,7 @@ class PanelView extends StatelessWidget {
     // PS's menus: a heading that may be long (the game's name), and only as tall as their rows.
     final psMenu = const {
       Layer.quickMenu,
+      Layer.ps1OnlineFriends,
       Layer.homeMenu,
       Layer.launcherReport,
       Layer.profileMenu,
@@ -370,6 +372,7 @@ class PanelView extends StatelessWidget {
                         Layer.emulatorMenu,
                         Layer.friendOptions,
                         Layer.quickMenu,
+                        Layer.ps1OnlineFriends,
                       }.contains(model.overlay),
                     ),
                   ],

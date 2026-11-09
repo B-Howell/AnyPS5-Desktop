@@ -1,4 +1,6 @@
+import '../core/online/ps1_checkpoint_transfer.dart';
 import '../core/online/ps1_netplay_session.dart';
+import '../core/online/ps1_netplay_wire.dart';
 import 'embedded_retro_game.dart';
 
 /// Owns the lifetime of one match's embedded game, including cancellation during boot.
@@ -26,6 +28,10 @@ final class EmbeddedPs1NetplayRunner implements Ps1NetplayRunner {
   @override
   Future<Ps1NetplayTick> sync(List<Ps1NetplayFrame> remote, int? acknowledgedFrame) =>
       _activeGame.exchangeNetplayFrames(remote, acknowledgedFrame);
+
+  Future<void> restoreCheckpoint(Ps1CheckpointSnapshot snapshot) => _activeGame.restoreNetplayCheckpoint(snapshot);
+
+  Future<void> replayHistory(int first, List<Ps1FrameInputs> frames) => _activeGame.replayNetplayHistory(first, frames);
 
   EmbeddedRetroGame get _activeGame {
     final game = _game;

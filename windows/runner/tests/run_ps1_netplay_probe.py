@@ -245,6 +245,10 @@ def verify_local_handoff(args, cleanup):
     guest = replay_checkpoint(args, host, cleanup, checkpoint, local=True)
     assert host.send("resume-local") == "unavailable"
     verify_new_input_epoch(host, guest)
+    hold_host(host)
+    picture = int(host.send("published"))
+    assert host.send("resume-local") == "resumed"
+    wait_for_picture(host, picture + 30)
 
 
 def verify_new_input_epoch(host, guest):

@@ -19,9 +19,12 @@ final class Ps1NetplayProfile {
   final String discPin;
 
   RetroRoomSpec get room => (titleId: titleId, gameVersion: '1', mode: RetroOnlineMode.synchronized, capacity: 2);
+  RetroRoomSpec get handoffRoom =>
+      (titleId: titleId, gameVersion: '2', mode: RetroOnlineMode.synchronized, capacity: 2);
 
   bool hintsAt({required String serial, required String name}) =>
-      serial == titleId || name.toLowerCase().contains(title.toLowerCase());
+      serial.toUpperCase().replaceFirst('PS1-', '').replaceAll('-', '') == titleId ||
+      name.toLowerCase().contains(title.toLowerCase());
 
   static const qualified = [
     Ps1NetplayProfile(
@@ -50,6 +53,7 @@ final class Ps1NetplayMedia {
   final String bios;
   final String core;
   final Ps1NetplayIdentity identity;
+  bool get supportsHandoff => identity.toJson()['core'] == portableCorePin;
 
   static final _file = RegExp(r'^FILE\s+(?:"([^"]+)"|(\S+))\s+(\S+)\s*$', caseSensitive: false);
 

@@ -25,6 +25,7 @@ class EmbeddedRetroGame extends RunningGame {
     this._onResolutionSelected,
     this._onGraphicsSelected,
     this._netplayMedia,
+    this.localNetplayStaging,
   ) : super.embedded(_finished.future, DateTime.now());
 
   static const _channel = MethodChannel('anyps5/retro_core');
@@ -62,6 +63,8 @@ class EmbeddedRetroGame extends RunningGame {
   Future<bool> get ready => _ready.future;
   Future<bool> get netplayReady => _netplayReady.future;
   bool get isNetplay => _netplay;
+  final bool localNetplayStaging;
+  Ps1NetplayMedia? get stagedNetplayMedia => localNetplayStaging && _portableCheckpoint ? _netplayMedia : null;
   double? get displayAspect => switch (framing) {
     0 => aspect,
     1 => 4 / 3,
@@ -108,7 +111,14 @@ class EmbeddedRetroGame extends RunningGame {
       },
     });
     if (id == null || id < 0) throw StateError('The game surface could not start.');
-    final session = EmbeddedRetroGame._(id, Completer<int>(), onResolutionSelected, onGraphicsSelected, netplay?.media);
+    final session = EmbeddedRetroGame._(
+      id,
+      Completer<int>(),
+      onResolutionSelected,
+      onGraphicsSelected,
+      netplay?.media,
+      localNetplayStaging,
+    );
     session.tuning = RetroGameTuning(
       platform: disc.platform,
       options: session.options,

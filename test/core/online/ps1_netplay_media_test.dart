@@ -5,6 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
+  test('uses the disc serial for a renamed game and separates handoff rooms', () {
+    final profile = Ps1NetplayProfile.qualified.single;
+    expect(profile.hintsAt(serial: 'PS1-SCUS-94426', name: 'Custom display name'), isTrue);
+    expect(profile.handoffRoom.titleId, profile.room.titleId);
+    expect(profile.handoffRoom.gameVersion, isNot(profile.room.gameVersion));
+  });
+
   late Directory folder;
   late File cue;
 
