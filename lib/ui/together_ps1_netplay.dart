@@ -102,7 +102,7 @@ extension TogetherPs1Netplay on TogetherModel {
       unavailable: 'ps1OnlineUnavailable',
       invite: (friend) {
         app.resumeGame();
-        unawaited(_startPs1Netplay(profile, friendId: friend.person.id, host: host, mode: mode));
+        unawaited(_startPs1Netplay(profile, friendId: friend.person.id, localWorker: host, mode: mode));
       },
     );
   }
@@ -191,6 +191,24 @@ extension TogetherPs1Netplay on TogetherModel {
 
   Future<void> _unsupportedRetroInvite() async => app.show(T.text('retroOnlineUnavailable'));
 
+  EmbeddedRetroGame? _ps1GuestWorker(GameInvite invite) {
+    final game = app.running?.$1;
+    final worker = app.embeddedGame;
+    if (!_ps1NetplayEnabled ||
+        _verifyingPs1 ||
+        _ps1Match != null ||
+        _ps2LanBusy ||
+        app.stopping ||
+        app.starting != null ||
+        game?.retroSerial != invite.titleId ||
+        worker == null ||
+        Ps1NetplayRoomMode.tryRead(invite.gameVersion) != Ps1NetplayRoomMode.ordinary ||
+        _ps1HostMode(worker, game) != Ps1NetplayRoomMode.ordinary) {
+      return null;
+    }
+    return worker;
+  }
+
   Future<void> joinPs1Netplay(GameInvite invite) async {
     final profile = Ps1NetplayProfile.tryRead(invite.titleId);
     final mode = Ps1NetplayRoomMode.tryRead(invite.gameVersion);
@@ -198,7 +216,17 @@ extension TogetherPs1Netplay on TogetherModel {
       await _unsupportedRetroInvite();
       return;
     }
-    await _startPs1Netplay(profile, roomId: invite.sessionId, expectedHost: invite.from?.id, mode: mode);
+    final worker = _ps1GuestWorker(invite);
+    if (_ps1NetplayEnabled && worker == null && app.running != null && !_verifyingPs1 && _ps1Match == null) {
+      return app.show(T.text('closeGameFirst'));
+    }
+    await _startPs1Netplay(
+      profile,
+      roomId: invite.sessionId,
+      expectedHost: invite.from?.id,
+      localWorker: worker,
+      mode: mode,
+    );
   }
 
   Future<void> _startPs1Netplay(
@@ -206,7 +234,7 @@ extension TogetherPs1Netplay on TogetherModel {
     String? friendId,
     String? roomId,
     String? expectedHost,
-    EmbeddedRetroGame? host,
+    EmbeddedRetroGame? localWorker,
     Game? selectedGame,
     Ps1NetplayRoomMode mode = Ps1NetplayRoomMode.fresh,
   }) async {
@@ -216,17 +244,17 @@ extension TogetherPs1Netplay on TogetherModel {
       app.show(T.text('ps1OnlineUnavailable'));
       return;
     }
-    if (host == null && candidates.isEmpty) {
+    if (localWorker == null && candidates.isEmpty) {
       app.show(T.text('ps1OnlineDisc'));
       return;
     }
     bool hostAvailable() =>
         !app.stopping &&
         app.starting == null &&
-        (host == null ? app.running == null : identical(app.embeddedGame, host));
+        (localWorker == null ? app.running == null : identical(app.embeddedGame, localWorker));
     if (_verifyingPs1 || _ps1Match != null || _ps2LanBusy || !hostAvailable()) return;
     _verifyingPs1 = true;
-    final verification = _ps1InviteVerification = _Ps1InviteVerification(host);
+    final verification = _ps1InviteVerification = _Ps1InviteVerification(localWorker);
     bool active() => identical(_ps1InviteVerification, verification) && account.user?.id == me && hostAvailable();
     Ps1NetplayMatch? opened;
     var holdingTransition = false;
@@ -247,6 +275,7 @@ extension TogetherPs1Netplay on TogetherModel {
       },
     );
     try {
+      if (localWorker != null && roomId != null) app.resumeGame();
       app.refresh();
       if (!active()) return;
       final invitedDigest = roomId == null
@@ -257,62 +286,66 @@ extension TogetherPs1Netplay on TogetherModel {
             ]);
       if (!active()) return;
       if (roomId != null && invitedDigest == null) return app.show(T.text('ps1OnlineDisc'));
-      final ordinaryHost = mode == Ps1NetplayRoomMode.ordinary ? host : null;
-      final bios = ordinaryHost != null
-          ? await ordinaryHost.ordinaryMatchBios()
-          : host == null
+      final ordinaryWorker = mode == Ps1NetplayRoomMode.ordinary ? localWorker : null;
+      final bios = ordinaryWorker != null
+          ? await ordinaryWorker.ordinaryMatchBios()
+          : localWorker == null
           ? await app.preparePs1NetplayBios(canContinue: active)
           : null;
-      if (!active() || (host == null && bios == null)) return;
-      if (ordinaryHost != null && bios == null) return app.show(T.text('ps1OnlineBios'));
-      final (game, media) = ordinaryHost != null
+      if (!active() || (localWorker == null && bios == null)) return;
+      if (ordinaryWorker != null && bios == null) return app.show(T.text('ps1OnlineBios'));
+      final (game, media) = ordinaryWorker != null
           ? (
               app.running!.$1,
               await Ps1NetplayMedia.verify(
                 profile: profile,
                 disc: app.running!.$1.retro!.path,
                 bios: bios!,
-                core: ordinaryHost.corePath,
+                core: ordinaryWorker.corePath,
                 execution: mode.execution,
                 canContinue: active,
               ),
             )
-          : host != null
-          ? (app.running!.$1, host.stagedNetplayMedia!)
+          : localWorker != null
+          ? (app.running!.$1, localWorker.stagedNetplayMedia!)
           : selectedGame != null
           ? (selectedGame, await app.verifyPs1Netplay(selectedGame, profile, bios: bios!, canContinue: active))
           : await _verifiedPs1(profile, candidates, invitedDigest, bios: bios!, mode: mode, canContinue: active);
       if (!active()) return;
+      if (invitedDigest != null && media.discDigest != invitedDigest) {
+        return app.show(T.text('ps1OnlineMismatchDisc'));
+      }
       if (mode.needsCheckpoint && !media.supportsHandoff) return app.show(T.text('ps1OnlineHandoffCore'));
       late final Ps1NetplayMatch match;
       final owned = EmbeddedPs1NetplayRunner(
         (seat) => app.preparePs1Netplay(game, media, seat, canBoot: () => !match.closed && account.user?.id == me),
       );
-      final borrowed = host == null || ordinaryHost != null
+      final borrowed = localWorker == null || ordinaryWorker != null
           ? null
           : Ps1LocalHandoff(
-              ready: () => host.netplayReady,
-              capture: host.captureNetplayCheckpoint,
-              hold: host.holdNetplayForCutover,
-              read: host.readNetplayHistory,
-              resume: host.resumeLocalNetplay,
-              begin: host.startNetplayFrames,
-              exchange: host.exchangeNetplayFrames,
+              ready: () => localWorker.netplayReady,
+              capture: localWorker.captureNetplayCheckpoint,
+              hold: localWorker.holdNetplayForCutover,
+              read: localWorker.readNetplayHistory,
+              resume: localWorker.resumeLocalNetplay,
+              begin: localWorker.startNetplayFrames,
+              exchange: localWorker.exchangeNetplayFrames,
             );
-      final switching = ordinaryHost == null
+      final switching = ordinaryWorker == null
           ? null
           : OrdinaryPs1NetplayRunner(
               match: owned,
-              park: () => ordinaryHost.captureOrdinaryNetplayCheckpoint(media, park: true),
+              park: () => ordinaryWorker.captureOrdinaryNetplayCheckpoint(media, park: true),
               detach: () {
                 holdingTransition = true;
                 app.setOrdinaryPs1Transition(game);
-                return ordinaryHost.detachOrdinaryCheckpoint();
+                return ordinaryWorker.detachOrdinaryCheckpoint();
               },
-              unpark: ordinaryHost.resumeOrdinaryCheckpoint,
+              unpark: ordinaryWorker.resumeOrdinaryCheckpoint,
               drainWorker: app.waitForRetroWorkerExit,
               importMatch: owned.restoreCheckpoint,
-              recover: (ticket) => app.restoreOrdinaryPs1(game, ticket, ordinaryHost.corePath, ordinaryHost.sourceHome),
+              recover: (ticket) =>
+                  app.restoreOrdinaryPs1(game, ticket, ordinaryWorker.corePath, ordinaryWorker.sourceHome),
             );
       match = Ps1NetplayMatch(
         rooms: rooms(roomId == null ? media.discDigest : invitedDigest),
@@ -321,15 +354,15 @@ extension TogetherPs1Netplay on TogetherModel {
         runner: switching ?? borrowed ?? owned,
         captureCheckpoint: switching?.capture ?? borrowed?.capture,
         catchupSource: borrowed?.source,
-        restoreCheckpoint: mode.needsCheckpoint && host == null ? owned.restoreCheckpoint : null,
-        catchupReplay: mode == Ps1NetplayRoomMode.staged && host == null ? owned.replayHistory : null,
+        restoreCheckpoint: mode.needsCheckpoint && roomId != null ? owned.restoreCheckpoint : null,
+        catchupReplay: mode == Ps1NetplayRoomMode.staged && roomId != null ? owned.replayHistory : null,
         onStatusChanged: app.refresh,
       );
       _ps1Match = opened = match;
       _ps1InviteVerification = null;
-      if (host != null) {
+      if (localWorker != null) {
         unawaited(
-          host.exitCode.then((_) async {
+          localWorker.exitCode.then((_) async {
             if (switching?.detaching != true) await match.leave();
           }),
         );

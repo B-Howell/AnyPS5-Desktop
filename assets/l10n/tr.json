@@ -284,6 +284,7 @@
   "ps1OnlineCore": "PS1 Kurulumu'nda desteklenen SwanStation çekirdeğini yükle.",
   "ps1OnlineHandoffCore": "Çevrimiçi yerel eşli oyun için bu sürümün kontrol noktası destekli SwanStation paketi gerekir.",
   "ps1OnlineReturnFailed": "Asıl oyuna dönülemedi. Yeniden denemek için Oyna'yı seçin.",
+  "ps1OnlineJoinAndReturn": "Arkadaşınızın oyununa katılın. Ayrıldığınızda kendi oyununuza dönersiniz.",
   "ps1OnlineVerifying": "PS1 oyunu çevrimiçi oyun için doğrulanıyor.",
   "ps1OnlineMismatch": "Oyuncuların PS1 çevrimiçi oyun dosyaları veya ayarları farklı.",
   "ps1OnlineMismatchVersion": "Çevrimiçi PS1 oynamak için iki oyuncu da aynı AnyPS5 sürümünü kullanmalı.",

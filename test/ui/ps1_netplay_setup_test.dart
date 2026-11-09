@@ -424,7 +424,7 @@ void main() {
     expect(captures, 2);
   }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null);
 
-  test('Quick Menu starts an ordinary host match and returns to the original session', () async {
+  Future<void> verifyOrdinaryHandoff({required bool guestMode}) async {
     final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
     const hostId = '12345678-1234-4234-8234-123456789ab1';
     const friendId = '12345678-1234-4234-8234-123456789ab2';
@@ -437,8 +437,8 @@ void main() {
     final server = await FakeTogether.start();
     addTearDown(server.close);
     server
-      ..me = {'id': hostId, 'handle': 'host', 'displayName': 'Host'}
-      ..friend(friendId, 'guest', 'Guest', presence: {'state': 'online'});
+      ..me = {'id': guestMode ? friendId : hostId, 'handle': 'local', 'displayName': 'Local'}
+      ..friend(guestMode ? hostId : friendId, 'remote', 'Remote', presence: {'state': 'online'});
     final fixture = makeFixture(
       together: server.base,
       system: HostSystem.windows,
@@ -485,6 +485,7 @@ void main() {
     model.games.add(game);
     final native = <String>[];
     final bytes = Uint8List.fromList([1, 2, 3]);
+    final hostBytes = Uint8List.fromList([4, 5, 6]);
     var worker = 0;
     var ended = false;
     var recoveredPlaying = false;
@@ -506,7 +507,7 @@ void main() {
             native.add('local');
           } else {
             expect(worker, 2);
-            expect(arguments['ps1NetplaySeat'], 0);
+            expect(arguments['ps1NetplaySeat'], guestMode ? 1 : 0);
             expect(arguments['ps1NetplayCpu'], Ps1NetplayExecution.ordinaryHandoff.cpu);
             expect(arguments['saves'], Directory.systemTemp.path);
             expect(arguments['core'], core);
@@ -533,7 +534,7 @@ void main() {
           native.add('park');
           return 51;
         case 'ps1CheckpointImport':
-          expect(call.arguments['state'], bytes);
+          expect(call.arguments['state'], guestMode ? hostBytes : bytes);
           expect(call.arguments['frame'], 0);
           native.add('import');
           return 52;
@@ -599,11 +600,15 @@ void main() {
       'joinable': false,
       'properties': {'protocol': protocol.protocol, 'discSha256': media.discDigest},
       'members': [
-        {'userId': hostId},
+        {
+          'userId': hostId,
+          if (guestMode) 'device': device,
+          if (guestMode) 'properties': {'protocol': protocol.protocol},
+        },
         {
           'userId': friendId,
-          'device': device,
-          'properties': {'protocol': protocol.protocol},
+          if (!guestMode) 'device': device,
+          if (!guestMode) 'properties': {'protocol': protocol.protocol},
         },
       ],
     };
@@ -612,6 +617,8 @@ void main() {
       'POST game-sessions': (201, room),
       'PUT $path/members/me': (200, room),
       'POST $path/invites': (200, <String, Object>{}),
+      'POST $path/join': (204, null),
+      'POST $path/leave': (204, null),
       'GET $path': (200, room),
       'GET $path/ice-servers': (200, {'iceServers': []}),
       'DELETE $path': (200, <String, Object>{}),
@@ -619,6 +626,74 @@ void main() {
     PanelRow row(String id) =>
         model.panelCategories().expand((category) => category.rows).singleWhere((row) => row.id == id);
     void choose(String id) => (row(id).kind as ActionRow).run();
+
+    if (guestMode) {
+      server.gameInvites.add({
+        'sessionId': roomId,
+        'from': server.person(hostId, 'remote', 'Remote'),
+        'titleId': titleId,
+        'gameVersion': '3',
+        'engineBuild': protocol.protocol,
+      });
+      server.answers['GET me/game-session'] = (200, {'session': null, 'invites': server.gameInvites});
+      await model.together.hub.games.refresh();
+      server.answers['GET $path'] = (
+        200,
+        {
+          ...room,
+          'properties': {'protocol': protocol.protocol, 'discSha256': 'f' * 64},
+        },
+      );
+      await model.openQuickMenu();
+      choose('game-accept-$roomId');
+      expect(
+        await eventually(
+          () => model.toast == 'Your PS1 disc files differ. Both players need the same disc and revision.',
+          timeout: const Duration(seconds: 25),
+        ),
+        isTrue,
+      );
+      expect(server.callsTo('$path/join'), isEmpty);
+      expect(native, ['local']);
+      server.answers['GET $path'] = (200, room);
+      await model.openQuickMenu();
+      choose('game-accept-$roomId');
+      expect(
+        await eventually(() => server.callsTo('$path/join').isNotEmpty, timeout: const Duration(seconds: 25)),
+        isTrue,
+      );
+      final host = Ps1NetplayPeer(
+        link: await network.links.link([]),
+        identity: media.identity,
+        runner: _FixtureMatch([]),
+        seat: 0,
+        hostEpoch: 17,
+        captureCheckpoint: () async => (frame: 0, state: hostBytes),
+        sendSignal: (signal) async => server.push('game_session.signal', {
+          'sessionId': roomId,
+          'from': hostId,
+          'device': device,
+          'kind': 'message',
+          'data': signal.toJson(),
+        }),
+      );
+      addTearDown(host.leave);
+      finishPark.complete();
+      finishRecovery.complete();
+      await host.open();
+      final answer = await server.nextFrame('signal', test: (frame) => (frame['data'] as Map)['kind'] == 'answer');
+      host.receiveSignal(Ps1NetplaySignal.tryRead(answer['data'])!);
+      expect(await eventually(() => matchPumped), isTrue, reason: 'Guest did not start: $native');
+      expect(native, ['local', 'park', 'detach', 'match', 'import', 'start match']);
+      await model.openQuickMenu();
+      choose('ps1-netplay-leave');
+      expect(await eventually(() => model.together.ps1NetplayRows().isEmpty), isTrue);
+      expect(server.callsTo('$path/leave'), hasLength(1));
+      expect(model.embeddedGame?.textureId, 43);
+      expect(native.where((event) => event == 'accept'), hasLength(1));
+      expect(model.running?.$1, same(game));
+      return;
+    }
 
     await model.openQuickMenu();
     choose('ps1-invite-from-game');
@@ -766,7 +841,18 @@ void main() {
     await guest.done.timeout(const Duration(seconds: 5));
     expect(guest.session.phase, Ps1NetplayPhase.closed);
     expect(guest.session.ended, Ps1NetplayEnd.peerLeft);
-  }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null);
+  }
+
+  test(
+    'Quick Menu starts an ordinary host match and returns to the original session',
+    () => verifyOrdinaryHandoff(guestMode: false),
+    skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null,
+  );
+  test(
+    'Quick Menu joins an ordinary PS1 invite and returns to the original session',
+    () => verifyOrdinaryHandoff(guestMode: true),
+    skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null,
+  );
 
   test('ordinary PS1 invite installs the right core and continues the original invite', () async {
     final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;

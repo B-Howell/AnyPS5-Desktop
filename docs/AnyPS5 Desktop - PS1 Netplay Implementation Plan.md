@@ -438,7 +438,15 @@ reopens it at the invite point after the isolated worker has exited.
 The original save directory belongs to the local session. Match play
 uses isolated storage.
 
-### Holding and recovering the ordinary host
+An ordinary checkpoint invite for the running PS1 game also appears in
+the guest's Quick Menu. The launcher verifies the local disc against the
+room before parking the original game. Once the peer handshake succeeds,
+the guest opens the isolated match worker and imports the host's
+checkpoint. The guest's own recovery checkpoint stays local. Leaving or
+losing the room restores the guest's original game and memory card.
+Other PS1 invite modes still use the idle launch flow.
+
+### Holding and recovering the ordinary game
 
 `ps1LocalCheckpointPark` uses the same source token and texture checks as
 capture. The qualified core supplies both portable exporters and the

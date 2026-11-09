@@ -613,6 +613,7 @@ extension TogetherProfiles on TogetherModel {
     id: 'game-accept-${invite.sessionId}',
     title: T.format('gameJoin', [invite.from?.displayName ?? '', gameTitle ?? gameName(invite.titleId)]),
     detail: switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {
+      RetroOnlineMode.synchronized when _ps1GuestWorker(invite) != null => T.text('ps1OnlineJoinAndReturn'),
       RetroOnlineMode.lan => ps2LanInviteDetail(invite),
       RetroOnlineMode.nativeOnline => ps3PartyInviteDetail(invite),
       _ => T.text('gameInvitedDetail'),
@@ -622,6 +623,7 @@ extension TogetherProfiles on TogetherModel {
   );
 
   bool _canAcceptRunningInvite(GameInvite invite) => switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {
+    RetroOnlineMode.synchronized => _ps1GuestWorker(invite) != null,
     RetroOnlineMode.lan => _canJoinPs2FromGame(invite),
     RetroOnlineMode.nativeOnline => _ps3ReadyGame(invite: invite) != null,
     _ => false,

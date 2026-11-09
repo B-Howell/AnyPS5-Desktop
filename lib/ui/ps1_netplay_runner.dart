@@ -57,7 +57,7 @@ final class EmbeddedPs1NetplayRunner implements Ps1NetplayRunner {
   }
 }
 
-/// Owns the ordinary host from the moment it parks until local play returns.
+/// Owns the ordinary game from the moment it parks until local play returns.
 final class OrdinaryPs1NetplayRunner implements Ps1NetplayRunner {
   OrdinaryPs1NetplayRunner({
     required this._match,
@@ -81,27 +81,29 @@ final class OrdinaryPs1NetplayRunner implements Ps1NetplayRunner {
   Ps1CheckpointSnapshot? _checkpoint;
   int? _ticket;
   bool _cancelled = false;
+  bool _parked = false;
   bool detaching = false;
 
   @override
   Future<void> prepare(int seat) {
-    if (seat != 0 || _preparing != null || _cancelled) {
-      throw StateError('The ordinary PS1 host cannot prepare this match.');
+    if ((seat != 0 && seat != 1) || _preparing != null || _cancelled) {
+      throw StateError('The ordinary PS1 game cannot prepare this match.');
     }
-    return _preparing = _prepare();
+    return _preparing = _prepare(seat);
   }
 
-  Future<void> _prepare() async {
+  Future<void> _prepare(int seat) async {
     final source = await _park();
-    _checkpoint = (frame: 0, state: source.state);
+    _parked = true;
+    if (seat == 0) _checkpoint = (frame: 0, state: source.state);
     _checkOpen();
     detaching = true;
     _ticket = await _detach();
     await _drainWorker();
     _checkOpen();
-    await _match.prepare(0);
+    await _match.prepare(seat);
     _checkOpen();
-    await _importMatch(_checkpoint!);
+    if (seat == 0) await _importMatch(_checkpoint!);
   }
 
   Future<Ps1CheckpointSnapshot> capture() async {
@@ -140,7 +142,7 @@ final class OrdinaryPs1NetplayRunner implements Ps1NetplayRunner {
       if (_ticket case final ticket?) {
         await _drainWorker();
         await _recover(ticket);
-      } else if (_checkpoint != null) {
+      } else if (_parked) {
         await _unpark();
       }
     }
