@@ -180,11 +180,15 @@ objects were reused, and the game rendered and stopped cleanly. These runs
 used Clang and LLVM 22.1.8. The tested Linux core SHA-256 was
 `135671eb895f080c8cf09ca78b8d309e88717a4ea12cde47bd8c63ba79016be3`.
 
-Windows package qualification is still open. Run the same cold and warm
-separate-process checks on LittleBigPlanet GOTY and Skate 3 with a new
-profile. Capture object reuse, startup timing and frame times through the
-same gameplay section. Preserve the profile between launches and verify that
-changing an incompatible build or CPU setting falls back to compilation.
+The Windows reviewer package booted LittleBigPlanet GOTY 1.30 in a clean
+profile, then reopened the same profile in separate processes. One warm
+run loaded 96 cached PPU modules, compiled none, and logged 1,897 native
+SPU object loads. It produced Vulkan frames and non-silent audio and
+stopped cleanly within 11.39 seconds of process start. Warm launches
+still scan guest programs and link the cached objects. The
+[PS3 online plan](<AnyPS5 Desktop - PS3 Native Co-op Implementation Plan.md>)
+records the exact package and profile checks. Windows Skate 3, matched
+gameplay frame times and incompatible CPU or build fallback remain open.
 The frontend and optional network-policy patches apply together to the pinned
 RPCS3 source. On Windows x64, that source explicitly targets ELF for the SPU
 JIT, so the object-format check applies to both Linux and Windows packages.

@@ -213,8 +213,9 @@ The package SHA-256 was
 `d44cb27a45a58631c672031c97713ea9abfef34e31b83c58353f5afabe2ef82b`
 and its DLL SHA-256 was
 `d0aa98b5cd54216e39790905b5af9e24f582e5ce9081b66476b02099d052f0ba`.
-This run qualifies Windows update installation. Windows gameplay with
-the v2 policy, warm SPU reuse, and the protected provider lobby remain open.
+This run qualifies Windows update installation. The
+[launch-profile checkpoint](#unarmed-launch-profile-checkpoint) records
+the later Windows v2 boot tests.
 
 ## 2. Make the embedded profile honor the selected settings
 
@@ -300,6 +301,22 @@ and showed no non-loopback endpoints in the sampled process sockets.
 [Pinned patch loader](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/Utilities/bin_patch.cpp)
 [Pinned PPU loader](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/rpcs3/Emu/Cell/PPUModule.cpp)
 
+The same Windows package booted LittleBigPlanet GOTY `BCUS98208` 1.30
+with the reviewed YAML in disconnected v2 verification mode. RPCS3
+recorded all 26 operations and attested the patch before the game
+produced Vulkan frames and audio. After a clean exit, a new process
+reopened the same scratch profile, reattested the patch, and reached
+video and audio in an 11.53-second start-to-exit probe. A third process
+rejected a changed patch in that already verified profile and exited
+without producing gameplay frames. The successful boots showed
+only `127.0.0.1:3658` in sampled socket tables.
+The tested archive SHA-256 was
+`af51f1ec4b56405f7c9757a5404563e429414ebc4cfae416691c77f2d067f70c`
+and the DLL SHA-256 was
+`bfc408d6304fe3a43bd19a259cd9dc28f40496f30ce9729a8964919198a5b80c`.
+This verifies boot, patch rejection and repeat launch on Windows.
+Provider connection, lobby admission and co-op remain separate tests.
+
 The [profile tests](../test/core/ps3_online_profile_test.dart) use synthetic
 files to verify safe reopening, artifact hashes and the isolated online
 launch arguments. The [offline boot test](../test/ui/ps3_online_boot_test.dart)
@@ -316,8 +333,8 @@ selection after shutdown. A socket trace captured one loopback bind per
 run and zero non-loopback Internet socket connects or sends inside the
 isolated network namespace. The tested Linux core SHA-256 was
 `12f8905517226005767c03b663bab5ca2da9dbc8e0c452bdbd8bed6fda4d67c3`.
-Windows protected-boot runtime qualification, sequential offline and
-online storage isolation, and live provider sign-in remain open.
+Sequential offline and live online storage isolation and provider sign-in
+remain open.
 
 This checkpoint has no approved release entries or launcher action that starts
 an online game. Before enabling a provider, verify its native connection uses
