@@ -339,7 +339,7 @@ void main() {
     );
   }
 
-  test('cancelling during emulator startup releases the room and closes the late game', () async {
+  Future<void> cancelStartup({required bool fromNotification}) async {
     final digest = 'b' * 64;
     final gateway = WebRtcRoomFixture((
       titleId: 'SLUS21148',
@@ -353,9 +353,15 @@ void main() {
     final stopped = Completer<void>();
     RetroLanGame game(Completer<void> done) =>
         (exchange: (_) async => <Uint8List>[], close: () async => done.complete(), done: done.future);
-    final host = RetroLanMatch(
+    late final RetroLanMatch host;
+    host = RetroLanMatch(
       rooms: gateway.client(WebRtcRoomFixture.host, expectedDigest: digest),
       links: network.links,
+      onStartupChanged: () {
+        if (fromNotification && host.startupPhase == RetroLanStartupPhase.startingGame) {
+          unawaited(host.leave());
+        }
+      },
       launch: (_) {
         booting.complete();
         return pending.future;
@@ -372,6 +378,12 @@ void main() {
     try {
       await gateway.invited.timeout(const Duration(seconds: 2));
       final joining = guest.join(WebRtcRoomFixture.roomId);
+      if (fromNotification) {
+        await Future.wait([opening, joining, host.done, guest.done]).timeout(const Duration(seconds: 5));
+        expect(booting.isCompleted, isFalse);
+        expect(gateway.released, isTrue);
+        return;
+      }
       await booting.future.timeout(const Duration(seconds: 3));
       final leaving = host.leave();
       await guest.done.timeout(const Duration(seconds: 2));
@@ -384,5 +396,14 @@ void main() {
       if (!pending.isCompleted) pending.complete(game(stopped));
       await Future.wait([host.leave(), guest.leave()]);
     }
-  });
+  }
+
+  test(
+    'cancelling during emulator startup releases the room and closes the late game',
+    () => cancelStartup(fromNotification: false),
+  );
+  test(
+    'cancelling synchronously from the PS2 startup notification never launches the game',
+    () => cancelStartup(fromNotification: true),
+  );
 }

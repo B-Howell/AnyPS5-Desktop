@@ -18,6 +18,8 @@ typedef RetroLanGame = ({
   Future<void> done,
 });
 
+enum RetroLanStartupPhase { openingRoom, waitingForPlayer, connecting, startingGame }
+
 /// One private two-player PS2 room, its peer transport, and its embedded game.
 final class RetroLanMatch {
   RetroLanMatch({
@@ -25,6 +27,7 @@ final class RetroLanMatch {
     required this.links,
     required this.launch,
     this.ownsGame = true,
+    this.onStartupChanged,
     this.onRecoveryChanged,
     this.onPathChanged,
     this.recoveryWindow = const Duration(seconds: 8),
@@ -38,6 +41,7 @@ final class RetroLanMatch {
   final GameLinks links;
   final Future<RetroLanGame> Function(Uint8List mac) launch;
   final bool ownsGame;
+  final void Function()? onStartupChanged;
   final void Function(bool recovering)? onRecoveryChanged;
   final void Function()? onPathChanged;
   final Duration recoveryWindow;
@@ -59,6 +63,8 @@ final class RetroLanMatch {
   bool _gameContinues = false;
   bool remoteEnded = false;
   Object? failure;
+  RetroLanStartupPhase _startupPhase = RetroLanStartupPhase.openingRoom;
+  RetroLanStartupPhase get startupPhase => _startupPhase;
 
   Future<void> get done => _done.future;
 
@@ -80,6 +86,11 @@ final class RetroLanMatch {
 
   Future<T?> _untilClose<T>(Future<T> action) => Future.any<T?>([action, _closing.future.then((_) => null)]);
 
+  void _setStartupPhase(RetroLanStartupPhase phase) {
+    _startupPhase = phase;
+    onStartupChanged?.call();
+  }
+
   Future<void> _open(Future<RetroRoom> Function() enter, {String? friend, String? roomId}) async {
     if (_closed || _entering != null) throw StateError('This PS2 LAN match has already been opened or closed.');
     _pendingRoom = roomId;
@@ -89,8 +100,11 @@ final class RetroLanMatch {
       if (room == null || _closed) return;
       if (friend != null) await _untilClose(rooms.invite(room, friend));
       if (_closed) return;
+      _setStartupPhase(RetroLanStartupPhase.waitingForPlayer);
       final member = await _waitForMember(room, friend ?? room.hostId);
       if (member == null || _closed) return;
+      _setStartupPhase(RetroLanStartupPhase.connecting);
+      if (_closed) return;
       await _attach(room, member);
     } on Object catch (error) {
       if (_closed) return;
@@ -173,6 +187,8 @@ final class RetroLanMatch {
       if (timer.elapsed > const Duration(seconds: 30)) throw StateError('The PS2 peer did not connect.');
       await _untilClose(Future<void>.delayed(const Duration(milliseconds: 12)));
     }
+    if (_closed) return;
+    _setStartupPhase(RetroLanStartupPhase.startingGame);
     if (_closed) return;
     final launching = _launching = Future.microtask(
       () => launch(Uint8List.fromList([for (var shift = 40; shift >= 0; shift -= 8) (mac >> shift) & 255])),

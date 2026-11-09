@@ -742,6 +742,32 @@ party test for cancellation before game launch. Run
 `flutter test test/core/online/retro_lan_transport_test.dart test/core/online/online_peer_mesh_test.dart test/core/play_together_test.dart`
 once the new suite exists. Keep real title data in the private harness.
 
+### Invite progress and in-game handoff
+
+The [room match](../lib/core/online/retro_lan_match.dart) exposes the current
+startup step to the [launcher](../lib/ui/together_ps2_lan.dart). While the
+disc is being checked the player can cancel. The launcher then shows room
+opening, waiting for the friend or host, peer connection, and game startup
+as separate steps. If the game is closed, it stays closed until the peer
+connection is ready.
+The launcher distinguishes a refused room, a missing player, a failed peer
+connection and a game launch failure. A failed attempt uses the same room
+cleanup as Cancel.
+
+The private bridge can carry DHCP and game frames during boot. The
+in-game instructions appear when the first game picture is visible. The
+host sees the instruction to host in the game's LAN menu and the guest sees
+the instruction to join. LAN discovery and race entry still happen in the game. The
+[invite tests](../test/ui/ps2_lan_invite_test.dart) hold a friend outside
+the room, delay signaling, verify the host and guest instructions, and
+exercise separate room-admission, peer-connection and native boot failures.
+The [room tests](../test/core/online/retro_lan_match_test.dart) cancel from
+the startup notification and during an in-flight launch to check both
+cleanup paths.
+The focused Windows room, invite, setup and localization suites passed
+all 47 tests. The invite tests use a fake gateway and native method
+channel, so this result qualifies the launcher flow.
+
 ## 4. Qualify internet play before release
 
 Use two Windows PCs on separate networks. Complete full races on direct and approved relayed routes, then disconnect and rematch. Record delay and stalls against the local baseline and specify which title revision and backend passed. A one-PC pass cannot establish real NAT traversal, independent machine load or an acceptable WAN experience. Games without a supported LAN mode stay outside the title allowlist. Native PS2 games that rely on an online service need their own provider and title qualification.

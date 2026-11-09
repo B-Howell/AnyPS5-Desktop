@@ -13,9 +13,10 @@ final class _Ps2LanWorker {
 }
 
 final class _Ps2LanAttempt {
-  _Ps2LanAttempt(this.borrowed);
+  _Ps2LanAttempt(this.borrowed, {required this.host});
 
   final _Ps2LanWorker? borrowed;
+  final bool host;
   final cancellation = Completer<void>();
   RetroLanMatch? match;
   Game? launchGame;
@@ -122,20 +123,21 @@ extension TogetherPs2Lan on TogetherModel {
     final playing = attempt.match?.attached == true && !starting;
     final recovering = attempt.match?.recovering == true;
     final path = playing && !recovering ? attempt.match?.connectionPath : null;
+    final detail = playing
+        ? (recovering ? 'ps2LanReconnecting' : _ps2LanGameMenu(attempt.host))
+        : switch (attempt.match?.startupPhase) {
+            null => 'ps2LanVerifying',
+            RetroLanStartupPhase.openingRoom => 'ps2LanOpeningRoom',
+            RetroLanStartupPhase.waitingForPlayer => attempt.host ? 'ps2LanWaitingForFriend' : 'ps2LanWaitingForHost',
+            RetroLanStartupPhase.connecting => 'ps2LanConnecting',
+            RetroLanStartupPhase.startingGame => 'ps2LanStarting',
+          };
     return [
       PanelRow(
         id: 'ps2-lan-status',
         title: T.text(playing ? 'ps2LanLeave' : 'ps2LanCancel'),
         detail: [
-          T.text(
-            playing
-                ? (recovering ? 'ps2LanReconnecting' : 'ps2LanUseGameMenu')
-                : starting
-                ? 'ps2LanStarting'
-                : attempt.match == null
-                ? 'ps2LanVerifying'
-                : 'ps2LanConnecting',
-          ),
+          T.text(detail),
           if (path?.relayed case final relayed?) T.text(relayed ? 'sharePlayRelayed' : 'sharePlayDirect'),
           if (path?.roundTripMs case final roundTrip?) T.format('sharePlayRoundTrip', [roundTrip]),
         ].join(' · '),
@@ -147,6 +149,8 @@ extension TogetherPs2Lan on TogetherModel {
       ),
     ];
   }
+
+  String _ps2LanGameMenu(bool host) => host ? 'ps2LanHostGameMenu' : 'ps2LanJoinGameMenu';
 
   bool _ps2LanStarting(_Ps2LanAttempt attempt) => app.startingPs2Lan && identical(app.starting, attempt.launchGame);
 
@@ -243,7 +247,7 @@ extension TogetherPs2Lan on TogetherModel {
       app.open(Layer.friends);
     }
 
-    final attempt = _ps2Lan = _Ps2LanAttempt(reuse)..launchGame = reuse?.game;
+    final attempt = _ps2Lan = _Ps2LanAttempt(reuse, host: host)..launchGame = reuse?.game;
     bool owned() =>
         !attempt.disposed && identical(_ps2Lan, attempt) && account.user?.id == me && app.currentProfile?.id == profile;
     bool active() => owned() && !attempt.cancelled;
@@ -295,6 +299,9 @@ extension TogetherPs2Lan on TogetherModel {
 
         final match = attempt.match = RetroLanMatch(
           ownsGame: reuse == null,
+          onStartupChanged: () {
+            if (active()) app.refresh();
+          },
           onPathChanged: () {
             if (active()) app.refresh();
           },
@@ -346,18 +353,24 @@ extension TogetherPs2Lan on TogetherModel {
           await match.join(roomId, expectedHost: expectedHost);
           if (owned()) unawaited(hub.games.refresh().catchError((Object _) {}));
         }
-        if (active() && match.attached) {
+        var visible = false;
+        if (app.embeddedGame case final session? when active() && match.attached) {
+          visible = session.startupVisible || await Future.any([session.ready, match.ending.then((_) => false)]);
+        }
+        if (visible && active() && match.attached) {
           if (reuse != null && canLaunch() && app.overlay == (quickJoin ? Layer.quickMenu : Layer.friends)) {
             app.resumeGame();
           }
-          app.show(T.text('ps2LanUseGameMenu'));
+          app.show(T.text(_ps2LanGameMenu(host)));
         }
         await match.done;
         if (active() && !match.gameContinues) {
-          if (match.failure != null) {
-            app.show(T.text('ps2LanDisconnected'));
-          } else if (match.remoteEnded) {
+          if (match.remoteEnded) {
             app.show(T.text('ps2LanRemoteEnded'));
+          } else if (!visible && match.startupPhase == RetroLanStartupPhase.startingGame) {
+            app.show(T.text('ps2LanLaunchFailed'));
+          } else if (match.failure != null) {
+            app.show(T.text('ps2LanDisconnected'));
           }
         }
         return;
@@ -368,7 +381,16 @@ extension TogetherPs2Lan on TogetherModel {
     } on RetroRoomHostMismatch {
       if (active()) app.show(T.text('retroInviteHostChanged'));
     } on Object {
-      if (active()) app.show(T.text('ps2LanDisconnected'));
+      if (active()) {
+        app.show(
+          T.text(switch (attempt.match?.startupPhase) {
+            null || RetroLanStartupPhase.openingRoom => 'ps2LanRoomFailed',
+            RetroLanStartupPhase.waitingForPlayer => 'ps2LanPlayerUnavailable',
+            RetroLanStartupPhase.connecting => 'ps2LanConnectionFailed',
+            RetroLanStartupPhase.startingGame => 'ps2LanLaunchFailed',
+          }),
+        );
+      }
     } finally {
       if (attempt.match case final match? when match.closed) await match.roomCleanupDone;
       if (identical(_ps2Lan, attempt)) _ps2Lan = null;

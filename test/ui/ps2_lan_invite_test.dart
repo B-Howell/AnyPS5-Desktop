@@ -119,6 +119,8 @@ void main() {
     bool cancelLookup = false,
     bool cancelAdmission = false,
     bool hostChanged = false,
+    bool failIce = false,
+    bool failNativeBoot = false,
     bool quickBootCancel = false,
     bool quickMenuDuringPlay = false,
     bool hostRematch = false,
@@ -193,7 +195,7 @@ void main() {
     const local = '12345678-1234-4234-8234-123456789ab2';
     const hostDevice = '12345678-1234-4234-8234-123456789ab3';
     final liveMenu = quickMenuDuringPlay || hostRematch;
-    if (quickBootCancel || liveMenu) server.me['id'] = local;
+    if (quickBootCancel || liveMenu || failIce || failNativeBoot) server.me['id'] = local;
     if (hostRematch) server.friend(host, 'ana', 'Ana', presence: {'state': 'online'});
     final protocol = RetroOnlineMode.lan.protocol;
     final invite = {
@@ -280,7 +282,7 @@ void main() {
       expect(model.running, isNull);
       return;
     }
-    if (quickBootCancel || liveMenu) {
+    if (quickBootCancel || liveMenu || failIce || failNativeBoot) {
       const path = 'game-sessions/$roomId';
       final room = {
         ...(server.answers['GET $path']!.$2 as Map<String, dynamic>),
@@ -306,6 +308,18 @@ void main() {
           'DELETE $path': (204, null),
         },
       });
+      if (failIce) {
+        server.answers['GET $path/ice-servers'] = (500, {'code': 'no_route'});
+        press(continueId);
+        await until(
+          () => model.toast == 'The LAN room opened, but a connection to the other player could not be established.',
+          reason: 'Expected connection failure after the room opened. Status: ${model.toast}',
+        );
+        expect(server.callsTo('$path/leave'), hasLength(1));
+        expect(model.running, isNull);
+        expect(model.starting, isNull);
+        return;
+      }
       const channel = MethodChannel('anyps5/retro_core');
       final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       final starting = Completer<void>();
@@ -333,7 +347,7 @@ void main() {
           exchanges++;
           return <Uint8List>[];
         }
-        return call.method == 'status' ? {'presented': liveMenu, 'ended': stopped} : null;
+        return call.method == 'status' ? {'presented': liveMenu, 'ended': stopped || failNativeBoot} : null;
       });
       addTearDown(() async {
         for (final row in model.together.ps2LanRows()) {
@@ -350,12 +364,34 @@ void main() {
         await peer.openChannel();
         final offer = await peer.createOffer();
         await peer.setLocal(offer);
+        final waitForFriend = hostRematch && id == roomId;
+        if (waitForFriend) {
+          server.answers['GET $path'] = (
+            200,
+            {
+              ...room,
+              'members': [
+                {'userId': local},
+              ],
+            },
+          );
+        }
         admit();
         await until(
           () => server.callsTo('game-sessions/$id/${hostRematch ? 'invites' : 'join'}', method: 'POST').isNotEmpty,
           reason: 'Expected room admission for $id. Status: ${model.toast}',
         );
+        if (waitForFriend) {
+          await until(
+            () => model.together.ps2LanRows().singleOrNull?.detail == 'Waiting for your friend to accept…',
+            reason: 'The host should see that the invitation is still pending.',
+          );
+          expect(model.running, isNull);
+          expect(model.starting, isNull);
+          server.answers['GET $path'] = (200, room);
+        }
         await server.nextFrame('signal', test: (frame) => frame['kind'] == 'renegotiate');
+        expect(model.together.ps2LanRows().single.detail, 'Connecting to the other player…');
         server.push('game_session.signal', {
           'sessionId': id,
           'from': host,
@@ -380,6 +416,13 @@ void main() {
       });
       await starting.future.timeout(const Duration(seconds: 5));
       expect(model.starting?.titleId, 'PS2-TIMESPLITTERS');
+      if (failNativeBoot) {
+        finishStart.complete();
+        await until(() => model.toast == 'The LAN connection is ready, but the PS2 game could not start.');
+        expect(server.callsTo('$path/leave'), hasLength(1));
+        expect(model.running, isNull);
+        return;
+      }
       if (liveMenu) {
         network.readPath = () async => (relayed: false, roundTripMs: 42);
         finishStart.complete();
@@ -388,6 +431,7 @@ void main() {
         model.padCommand(PadCommand.home);
         expect(model.overlay, Layer.quickMenu);
         expect(row('ps2-lan-status').kind, isA<ActionRow>());
+        expect(row('ps2-lan-status').detail, contains(hostRematch ? 'host a game' : 'join the host'));
         final before = exchanges;
         await until(() => exchanges > before);
         expect(inputRequests, anyElement(equals([0, 0, 0, 0, 0])));
@@ -616,6 +660,7 @@ void main() {
     }
     press(continueId);
     await until(() => server.callsTo('game-sessions/$roomId/join', method: 'POST').isNotEmpty);
+    await until(() => model.toast == 'The LAN room could not be opened. Try the invitation again.');
     expect(model.overlay, Layer.friends);
     expect(model.running, isNull);
   }
@@ -648,6 +693,16 @@ void main() {
   test(
     'PS2 LAN refuses a room that changes host after the disc lookup',
     () => verifyBundledSetup(expired: false, hostChanged: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'PS2 LAN reports a peer connection failure before the game boots',
+    () => verifyBundledSetup(expired: false, failIce: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'PS2 LAN reports a native exit before the game becomes visible',
+    () => verifyBundledSetup(expired: false, failNativeBoot: true),
     skip: Abi.current() != Abi.windowsX64,
   );
   test(
