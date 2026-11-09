@@ -7,6 +7,15 @@ Every player launches a compatible local copy, renders locally, and plays
 through their own controller. The session exchanges game traffic or frame
 inputs. The streaming path is outside this design.
 
+Ordinary online-gaming connections are the target. Measure real
+round-trip delay, jitter and packet loss on direct and relayed routes
+before publishing connection requirements. PS1 couch co-op exchanges
+controller input during play. Its mid-game invitation also sends a
+one-time checkpoint, so the host's upload speed affects how long the
+guest takes to join. The [paced CTR harness](<AnyPS5 Desktop - PS1 Determinism Harness.md#prediction-worker-scheduling-proof>)
+uses a simulated 120 ms round trip with jitter and packet loss. It
+qualifies that harness run and leaves real internet play to the two-PC gate.
+
 The existing [Play Together flow](../lib/ui/together_play.dart) owns party
 offers, join checks and session teardown. Add a versioned compatibility
 descriptor for each supported multiplayer mode. It should identify the

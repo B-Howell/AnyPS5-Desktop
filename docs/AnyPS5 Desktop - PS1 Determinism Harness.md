@@ -270,6 +270,39 @@ under the match CPU profile and continue from that state, then repeat
 the test with the Windows hardware renderer and the normal controller
 and save configuration.
 
+Use `--host-cpu Recompiler --normalize-host` to capture the source at
+the export boundary and restore two fresh peers from the same checkpoint.
+The probe checks their initial RAM against the source and compares the
+rest of the race between the restored peers. It requires both peers to
+finish the race. Add `--match-cpu Recompiler` to preserve the source CPU
+mode. When the modes agree, it also compares all sampled checks through
+the finish against the original source after export. Add
+`--fixture-blank-card` to test a separate card image for the match. This
+option uses only an isolated test card. It seeds a private marker, substitutes
+the clean card bytes during export, restores the source bytes even if export
+fails, and checks that both peers replaced a different synthetic marker
+with the clean card. A production
+export needs a native card policy that handles all attached slots and
+active card transactions.
+
+The two Cached Interpreter peers matched the source's RAM at frame 6,600
+and matched one another at all 62 checkpoints through frame 13,706.
+Neither completed the expected race. The report is in the local
+`ps1-normalized-e76ade71` directory.
+The same mode change with the scratch card matched all 62 checks and
+again failed both finish checks (`ps1-blank-card-5cb1af70`). With the
+Recompiler preserved, the scratch-card run matched all 62 peer checks
+and both racers finished (`ps1-preserve-cpu-2967fef8`).
+The stronger rerun also matched the original source's sampled RAM and
+video through the finish, restored the blank card over a distinct
+marker on both destinations, and kept their markers intact when
+rejecting a truncated checkpoint or wrong disc hash. Both restored
+peers and the source finished in the same order. See
+`ps1-card-handoff-0584cea2/card-handoff.json` locally. This result
+supports retaining the source CPU mode for a matched pair. It leaves
+hardware graphics, the native card policy, preservation on cancel and
+disconnect, and real network pacing to the launcher qualification.
+
 The portable format strips disc paths but still serializes the memory
 card. An offscreen probe placed a synthetic marker at the end of a
 131,072-byte scratch card through `RETRO_MEMORY_SAVE_RAM`. The marker

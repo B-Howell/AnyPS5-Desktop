@@ -2,11 +2,28 @@ import struct
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 from determinism import compare, ctr_finish, cue_identity, normalize_trace
+from late_join import CARD_MARKER, export_portable
 
 
 class DeterminismTests(unittest.TestCase):
+    def test_blank_card_fixture_restores_source_when_export_raises(self):
+        card = bytearray(b"x" * (2 * len(CARD_MARKER)))
+        clean = bytes(len(card))
+
+        def fail_export(*_args):
+            self.assertEqual(card, clean)
+            raise OSError("Synthetic exporter error")
+
+        core = SimpleNamespace(
+            bind=lambda *_args: fail_export, state_size=64, read_ram=lambda: b"",
+        )
+        with self.assertRaisesRegex(OSError, "Synthetic exporter error"):
+            export_portable(core, bytes(32), card, clean)
+        self.assertEqual(card, b"x" * len(CARD_MARKER) + CARD_MARKER)
+
     def test_cue_identity_ignores_paths_but_covers_layout_and_bytes(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
