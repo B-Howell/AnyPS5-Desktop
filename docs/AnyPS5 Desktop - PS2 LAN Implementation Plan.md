@@ -784,3 +784,39 @@ The next comparison should inspect guest DEV9 receive and race-start
 behavior in two headless instances of the embedded Windows core, using
 copies of the distinct role cards and synchronized input receipts at the
 Driving Options confirmation. A full LAN race and results are still open.
+
+### Embedded Windows GT4 LAN race start (2026-11-09)
+
+Two headless Windows workers used the verified LRPS2 DEV9 DLL
+`801af1211407964a4851839c3f4e90607f18353671dd1e427f56e12201d712a4`,
+native-resolution D3D11 textures and copies of the two distinct scratch
+cards from the standalone run. The
+[LAN transport](../lib/core/online/retro_lan_transport.dart) and
+[DHCP service](../lib/core/online/retro_lan_dhcp.dart) ran over a local
+loopback adapter. Each core received one lease and displayed the same
+course selection after connecting. Both selected the same Fuji Speedway
+'90s and Toyota MR-S as the standalone run. The harness applied the same
+five-tick Circle press on both peers from the captured Driving Options
+screen. Both briefly rendered black, then showed the starting grid.
+
+The following captures showed separate driver views, two different grid
+positions and independent inputs. The positions swapped during driving.
+Both remained in the same two-lap race at the one-minute
+checkpoint. At that checkpoint the host had sent 10,075 and received
+9,606 UDP/5000 frames through the DEV9 callbacks. The guest had sent
+9,606 and received 10,072. These counters measure each worker boundary
+at the sample instant. The test stopped before the finish and does not
+qualify results, the installed launcher UI or WAN play.
+
+The successful start revealed that the earlier UDP/3658 comparison
+covered the setup phase only. Rechecking both standalone captures found
+seven UDP/5000 datagrams, all from the guest to the host, and zero in the
+reverse direction. The embedded run established sustained two-way race
+traffic without a title-specific transport change. The evidence does
+not isolate the cause of the standalone host's missing race traffic.
+
+Both embedded workers exited zero with empty fault logs. The two source
+card hashes matched after teardown and the loopback adapters closed.
+The paired input sequence, per-step counters and frame captures are in
+the local `gt4-embedded-4e5723` receipt. Next, finish a full embedded race
+on the same private LAN and capture the results from both consoles.
