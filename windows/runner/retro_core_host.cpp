@@ -40,13 +40,44 @@ using Map = flutter::EncodableMap;
 using List = flutter::EncodableList;
 
 struct Ps3NetworkPolicy {
+  struct Protection {
+    std::string title;
+    std::string version;
+    std::string sha256;
+    std::string ppu_hash;
+    std::vector<std::string> names;
+    std::vector<unsigned> writes;
+  };
   std::string xfloat;
   std::string dns;
   bool upnp;
+  std::optional<Protection> protection;
 };
 
 void SelectPs3NetworkPolicy(HMODULE dll, const std::optional<Ps3NetworkPolicy>& online,
                             bool require_export) {
+  if (online && online->protection) {
+    using SelectVerifiedPolicy = bool (*)(bool, const char*, const char*, bool, const char*,
+                                         const char*, const char*, const char*, unsigned,
+                                         const char* const*, const unsigned*);
+    const auto address = GetProcAddress(dll, "retro_anyps5_ps3_network_policy_v2");
+    SelectVerifiedPolicy select = nullptr;
+    static_assert(sizeof(select) == sizeof(address));
+    std::memcpy(&select, &address, sizeof(select));
+    if (!select)
+      throw std::runtime_error("This RPCS3 core cannot verify PS3 online protection.");
+
+    const auto& patch = *online->protection;
+    std::vector<const char*> names;
+    names.reserve(patch.names.size());
+    for (const auto& name : patch.names) names.push_back(name.c_str());
+    if (!select(true, online->xfloat.c_str(), online->dns.c_str(), online->upnp,
+                patch.title.c_str(), patch.version.c_str(), patch.sha256.c_str(), patch.ppu_hash.c_str(),
+                static_cast<unsigned>(names.size()), names.data(), patch.writes.data()))
+      throw std::runtime_error("RPCS3 rejected the required online protection.");
+    return;
+  }
+
   using SelectPolicy = bool (*)(unsigned, const char*, const char*, bool);
   const auto address = GetProcAddress(dll, "retro_anyps5_ps3_network_policy_v1");
   SelectPolicy select = nullptr;
@@ -1878,11 +1909,40 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
         const auto* xfloat = policy ? StringField(*policy, "xfloat") : nullptr;
         const auto* dns = policy ? StringField(*policy, "dns") : nullptr;
         const auto upnp = policy ? policy->find(Value("upnp")) : Map::const_iterator{};
-        if (!policy || policy->size() != 3 || !xfloat || !dns || upnp == policy->end() ||
+        if (!policy || !xfloat || !dns || upnp == policy->end() ||
             !std::holds_alternative<bool>(upnp->second) ||
             std::filesystem::u8path(*core).filename() != L"rpcs3_libretro.dll")
           throw std::runtime_error("Invalid PS3 online profile.");
-        online = Ps3NetworkPolicy{*xfloat, *dns, std::get<bool>(upnp->second)};
+        const auto protection = policy->find(Value("patchProtection"));
+        if (policy->size() != (protection == policy->end() ? 3u : 4u))
+          throw std::runtime_error("Invalid PS3 online profile.");
+        online = Ps3NetworkPolicy{*xfloat, *dns, std::get<bool>(upnp->second), std::nullopt};
+        if (protection != policy->end()) {
+          const auto* patch = std::get_if<Map>(&protection->second);
+          const auto* title = patch ? StringField(*patch, "titleId") : nullptr;
+          const auto* version = patch ? StringField(*patch, "updateVersion") : nullptr;
+          const auto* digest = patch ? StringField(*patch, "sha256") : nullptr;
+          const auto* ppu_hash = patch ? StringField(*patch, "ppuHash") : nullptr;
+          const auto required = patch ? patch->find(Value("patches")) : Map::const_iterator{};
+          const auto* entries = patch && required != patch->end() ? std::get_if<List>(&required->second) : nullptr;
+          if (!patch || patch->size() != 5 || !title || !version || !digest || !ppu_hash ||
+              !entries || entries->empty() || entries->size() > 8)
+            throw std::runtime_error("Invalid PS3 online protection.");
+
+          auto& parsed = online->protection.emplace(Ps3NetworkPolicy::Protection{
+              *title, *version, *digest, *ppu_hash, {}, {}});
+          for (const auto& entry : *entries) {
+            const auto* item = std::get_if<Map>(&entry);
+            const auto* name = item ? StringField(*item, "name") : nullptr;
+            const auto writes = item ? item->find(Value("writes")) : Map::const_iterator{};
+            const auto count = item && writes != item->end() ? IntegerValue(writes->second) : std::nullopt;
+            if (!item || item->size() != 3 || !name || !StringField(*item, "option") ||
+                !count || *count < 1 || *count > 4096)
+              throw std::runtime_error("Invalid PS3 online protection.");
+            parsed.names.push_back(*name);
+            parsed.writes.push_back(static_cast<unsigned>(*count));
+          }
+        }
       }
       std::map<std::string, std::string> graphics;
       const auto values = fields->find(Value("graphics"));

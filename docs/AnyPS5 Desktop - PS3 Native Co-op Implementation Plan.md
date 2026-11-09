@@ -239,9 +239,9 @@ bridge revalidates the profile before sending its arguments to the host.
 profile separately from graphics preferences. The
 [Windows core host](../windows/runner/retro_core_host.cpp) rejects an online
 launch before core initialization if the DLL lacks the versioned policy
-export. It also rejects the additional YAML protection field before
-creating a game session. The release catalog is empty while the native
-verification gate and provider qualification remain open. The
+export. For YAML protection it requires the version 2 export and never
+falls back to version 1. The release catalog remains empty while package
+and provider qualification are open. The
 [network policy patch](../tool/patches/rpcs3-libretro-network-policy.patch)
 applies the mode before boot and again after RPCS3 overlays global, title or
 database settings. Online policy disables RPCS3's `/host_root` mount. A
@@ -250,17 +250,31 @@ older package still follows its existing offline launch path.
 The [package builder](../tool/build-rpcs3-preview.sh) accepts
 `--network-policy` for this variant.
 
-For the versioned YAML policy, the native gate should start disconnected
-and resolve the reviewed title patch in its isolated profile. RPCS3's
-`patch_engine::load` accepts in-memory content. Hash one bounded read and
-parse those same bytes into a fresh patch map for this policy, so the
-base and imported maps cannot substitute an effective patch. Count
-successful operations by patch description on the main executable's
-patch application and check the running title, version and PPU hash.
-The gate can then activate the selected network policy before
+The [native YAML gate](../tool/patches/rpcs3-libretro-patch-attestation.patch)
+starts disconnected and resolves the reviewed title patch in its
+isolated profile. It hashes one bounded read and parses those same bytes
+into a fresh patch map. It enables only the reviewed title and version,
+without merging the base or imported maps or inheriting mutable patch
+settings. It checks the running title, version and PPU hash, then
+compares successful operations by description on the main executable.
+Only then can it activate the selected network policy before
 `init_fxo_for_exec` initializes the NP handler. A failed check aborts
-boot, and every reset or executable reload requires a new attestation.
-Ordinary offline launches retain the original patch discovery.
+the protected PPU boot. Protected launches reject savestate and directory
+scan boot paths, and virtual PPU scans skip the reviewed patch. Each new
+load clears the prior attestation, and a Libretro boot cannot report
+success without it. Ordinary offline launches retain the original patch
+discovery. The v2
+export also accepts a disconnected verification mode for headless tests.
+The [native contract fixture](../tool/ps3_patch_attestation_test.cpp)
+checks identity, exact per-patch counts and malformed input. Compile it
+with `clang++ -std=c++20 -I <patched RPCS3 source> tool/ps3_patch_attestation_test.cpp -o attestation-test`.
+Package qualification must still boot the exact release and reject a
+modified file or count using the real core with networking disabled. The
+fixture exercises the input contract in isolation and does not run RPCS3.
+The Windows host passed the MSVC `/W4 /WX` build, and all four affected
+RPCS3 translation units passed CLANG64 syntax checks using the pinned
+build's include paths and defines. These checks do not qualify the
+linked version 2 package.
 [Pinned patch loader](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/Utilities/bin_patch.cpp)
 [Pinned PPU loader](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/rpcs3/Emu/Cell/PPUModule.cpp)
 
