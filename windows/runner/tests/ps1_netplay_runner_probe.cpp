@@ -179,10 +179,121 @@ int VerifyReplacement(ProbeTexture& texture, char** argv) {
   return 0;
 }
 
+void VerifyIsolatedCores(char** argv) {
+  using Slot = RetroCoreSession::CallbackSlot;
+  constexpr uint32_t kSplit = 240;
+  constexpr uint32_t kFinish = 480;
+  ProbeTexture primary_texture, presentation_texture, rejected_texture;
+  std::atomic<size_t> audio_frames[2]{};
+  const auto make = [&](ProbeTexture& texture, const char* core, Slot slot, uint16_t mask) {
+    std::vector<uint16_t> trace(kFinish, mask);
+    trace[0] = trace[1] = 0;
+    return std::make_unique<RetroCoreSession>(
+        &texture, core, argv[2], "", "", "", std::map<std::string, std::string>{}, 0u,
+        argv[3], false, std::nullopt, std::nullopt, std::vector<std::string>{},
+        Ps1MatchCpu::kCachedInterpreter, nullptr, true,
+        [&, slot](const int16_t*, size_t frames) { audio_frames[static_cast<size_t>(slot)] += frames; },
+        std::move(trace), slot);
+  };
+  const auto ready = [](RetroCoreSession& worker) {
+    if (!worker.Start()) throw std::runtime_error("Could not start the isolated core");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    while (std::chrono::steady_clock::now() < deadline) {
+      const auto status = worker.Status();
+      if (std::get<bool>(status.at(Value("ended"))))
+        throw std::runtime_error(std::get<std::string>(status.at(Value("error"))));
+      if (std::get<bool>(status.at(Value("netplayReady")))) return;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    throw std::runtime_error("Timed out opening the isolated core");
+  };
+  auto primary = make(primary_texture, argv[1], Slot::kPrimary, 8);
+  ready(*primary);
+  const auto expect_rejected = [&](const char* core, Slot slot, std::string_view expected) {
+    auto rejected = make(rejected_texture, core, slot, 256);
+    try {
+      ready(*rejected);
+    } catch (const std::runtime_error& error) {
+      if (error.what() == expected) return;
+      throw;
+    }
+    throw std::runtime_error("The callback ownership conflict was not rejected");
+  };
+  expect_rejected(argv[1], Slot::kPresentation, "The emulator DLL instance already has a callback owner.");
+  expect_rejected(argv[6], Slot::kPrimary, "The emulator callback slot is already in use.");
+  auto presentation = make(presentation_texture, argv[6], Slot::kPresentation, 256);
+  ready(*presentation);
+
+  uint32_t sent[2]{};
+  auto pump = [&](RetroCoreSession& worker, unsigned index, uint32_t target, uint16_t mask) {
+    const auto status = worker.SyncNetplay({}, std::nullopt);
+    if (!status) throw std::runtime_error("The isolated core stopped");
+    std::optional<uint32_t> ack;
+    for (const auto& row : std::get<List>(status->at(Value("local")))) {
+      const auto& input = std::get<List>(row);
+      ack = static_cast<uint32_t>(*IntegerValue(input[0]));
+      if (*IntegerValue(input[1]) != (*ack >= 2 && *ack < kFinish ? mask : 0))
+        throw std::runtime_error("An isolated core captured the other worker's input");
+    }
+    const auto frame = static_cast<uint32_t>(*IntegerValue(status->at(Value("frame"))));
+    std::vector<ps1_netplay::FrameInput> inputs;
+    while (sent[index] < std::min(target, frame + 12))
+      inputs.push_back({sent[index]++, {}});
+    const auto update = worker.SyncNetplay(inputs, ack);
+    if (!update) throw std::runtime_error("The isolated core rejected its inputs");
+    return IntegerValue(update->at(Value("confirmedFrame"))).value_or(-1);
+  };
+  if (!primary->StartNetplay()) throw std::runtime_error("Could not start the primary timeline");
+  const auto idle_video = presentation_texture.published();
+  const auto primary_video = primary_texture.published();
+  const auto idle_audio = audio_frames[1].load();
+  const auto wait = [&](const auto& complete) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    while (!complete()) {
+      if (std::chrono::steady_clock::now() >= deadline)
+        throw std::runtime_error("The isolated timelines did not advance");
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  };
+  wait([&] { return pump(*primary, 0, kSplit, 8) == kSplit - 1; });
+  if (primary_texture.published() <= primary_video || presentation_texture.published() != idle_video ||
+      audio_frames[0] == 0 || audio_frames[1] != idle_audio)
+    throw std::runtime_error("The primary did not publish audio and video independently of the idle core");
+  if (!presentation->StartNetplay()) throw std::runtime_error("Could not start the presentation timeline");
+  wait([&] {
+    const auto first = pump(*primary, 0, kFinish, 8);
+    const auto second = pump(*presentation, 1, kSplit, 256);
+    return first == kFinish - 1 && second == kSplit - 1;
+  });
+  primary.reset();
+  const auto continued_video = presentation_texture.published();
+  const auto continued_audio = audio_frames[1].load();
+  wait([&] {
+    return pump(*presentation, 1, kFinish, 256) == kFinish - 1 &&
+           presentation->rollback_audio_drained() == kFinish - 1;
+  });
+  presentation->Stop();
+  presentation->Join();
+  if (presentation_texture.published() <= continued_video || audio_frames[1] <= continued_audio ||
+      !std::get<std::string>(presentation->Status().at(Value("error"))).empty())
+    throw std::runtime_error("The presentation core lost its texture or callback owner");
+  std::cout << "Two isolated PS1 cores each confirmed " << kFinish
+            << " frames in one process with separate video and audio callbacks." << std::endl;
+}
+
 int main(int argc, char** argv) {
   if (argc < 5 || argc > 7) return 2;
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
   ProbeTexture texture;
+  if (argc == 7 && std::string_view(argv[5]) == "isolated-cores") {
+    try {
+      VerifyIsolatedCores(argv);
+      return 0;
+    } catch (const std::exception& error) {
+      std::cerr << error.what() << std::endl;
+      return 9;
+    }
+  }
   if (argc == 7 && std::string_view(argv[5]) == "replace") {
     try {
       return VerifyReplacement(texture, argv);

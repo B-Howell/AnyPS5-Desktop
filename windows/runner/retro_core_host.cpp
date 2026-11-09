@@ -557,6 +557,7 @@ struct Ps1OrdinaryRecovery {
 
 class RetroCoreSession {
  public:
+  enum class CallbackSlot : size_t { kPrimary, kPresentation };
   using AudioSink = std::function<void(const int16_t*, size_t)>;
   int64_t rollback_audio_drained() const { return rollback_audio_drained_; }
   int64_t trace_max_work_us() const { return trace_max_work_us_; }
@@ -574,7 +575,8 @@ class RetroCoreSession {
                    Ps1MatchCpu match_cpu = Ps1MatchCpu::kCachedInterpreter,
                    std::shared_ptr<const Ps1OrdinaryRecovery> returning = {},
                    bool rollback = false, AudioSink audio_sink = {},
-                   std::vector<uint16_t> input_trace = {})
+                   std::vector<uint16_t> input_trace = {},
+                   CallbackSlot callback_slot = CallbackSlot::kPrimary)
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
         netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(
                                    *netplay_seat, rollback ? ps1_netplay::Timeline::kMaxPrediction : 0)
@@ -582,6 +584,7 @@ class RetroCoreSession {
         rollback_(rollback),
         audio_sink_(std::move(audio_sink)),
         input_trace_(std::move(input_trace)),
+        callback_slot_(callback_slot),
         match_storage_(netplay_ ? std::make_unique<Ps1MatchStorage>(netplay_bios) : nullptr),
         lan_(lan_mac ? std::make_unique<Ps2VirtualLan>(*lan_mac) : nullptr),
         system_(match_storage_ ? match_storage_->system() : std::move(system)),
@@ -604,6 +607,8 @@ class RetroCoreSession {
       throw std::invalid_argument("PS1 rollback requires an isolated Cached Interpreter match.");
     if (!input_trace_.empty() && !rollback_)
       throw std::invalid_argument("PS1 input traces require the headless rollback worker.");
+    if (callback_slot_ == CallbackSlot::kPresentation && (!rollback_ || installing_packages()))
+      throw std::invalid_argument("The presentation callback slot requires an isolated PS1 rollback worker.");
     if (returning_) paused_ = true;
   }
 
@@ -1777,16 +1782,81 @@ class RetroCoreSession {
     }
   }
 
+  // Libretro callbacks carry no user pointer. Each independently loaded DLL
+  // receives functions specialized for its slot, including on core threads.
+  class CallbackLease {
+   public:
+    explicit CallbackLease(CallbackSlot slot) : slot_(static_cast<size_t>(slot)) {}
+    ~CallbackLease() { Release(); }
+
+    void Acquire(RetroCoreSession* session) {
+      RetroCoreSession* vacant = nullptr;
+      if (!active_[slot_].compare_exchange_strong(vacant, session))
+        throw std::runtime_error("The emulator callback slot is already in use.");
+      owns_ = true;
+    }
+
+    void Attach(HMODULE dll) {
+      std::lock_guard<std::mutex> lock(module_mutex_);
+      if (std::find(modules_.begin(), modules_.end(), dll) != modules_.end())
+        throw std::runtime_error("The emulator DLL instance already has a callback owner.");
+      modules_[slot_] = dll;
+    }
+
+    // Release after unload/deinit so their callbacks can still find the owner.
+    void Release() {
+      if (!owns_) return;
+      {
+        std::lock_guard<std::mutex> lock(module_mutex_);
+        modules_[slot_] = nullptr;
+      }
+      active_[slot_] = nullptr;
+      owns_ = false;
+    }
+
+   private:
+    const size_t slot_;
+    bool owns_ = false;
+  };
+
+  template <size_t Slot>
+  void BindGameplayCallbacks(HMODULE dll) {
+    Symbol<void (*)(bool (*)(unsigned, void*))>(dll, "retro_set_environment")(
+        [](unsigned command, void* data) { return active_[Slot].load()->Environment(command, data); });
+    Symbol<void (*)(void (*)(const void*, unsigned, unsigned, size_t))>(dll, "retro_set_video_refresh")(
+        [](const void* data, unsigned width, unsigned height, size_t pitch) {
+          active_[Slot].load()->Publish(data, width, height, pitch);
+        });
+    Symbol<void (*)(void (*)(int16_t, int16_t))>(dll, "retro_set_audio_sample")(
+        [](int16_t left, int16_t right) {
+          const int16_t stereo[]{left, right};
+          active_[Slot].load()->OnAudio(stereo, 1);
+        });
+    Symbol<void (*)(size_t (*)(const int16_t*, size_t))>(dll, "retro_set_audio_sample_batch")(
+        [](const int16_t* samples, size_t frames) {
+          active_[Slot].load()->OnAudio(samples, frames);
+          return frames;
+        });
+    Symbol<void (*)(void (*)())>(dll, "retro_set_input_poll")([] {});
+    Symbol<void (*)(int16_t (*)(unsigned, unsigned, unsigned, unsigned))>(dll, "retro_set_input_state")(
+        [](unsigned port, unsigned device, unsigned index, unsigned id) {
+          return active_[Slot].load()->Input(port, device, index, id);
+        });
+  }
+
   void RunPackageInstall() {
     using VoidFunction = void (*)();
     HMODULE dll = nullptr;
     VoidFunction deinit = nullptr;
     bool initialized = false;
-    active_ = this;
+    CallbackLease callbacks(callback_slot_);
     try {
+      callbacks.Acquire(this);
       const auto path = std::filesystem::u8path(core_);
       dll = LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-      if (!dll || Symbol<unsigned (*)()>(dll, "retro_api_version")() != 1)
+      if (!dll) throw std::runtime_error("Could not load the RPCS3 package installer.");
+      callbacks.Attach(dll);
+      if (Symbol<unsigned (*)()>(dll, "retro_api_version")() != 1)
         throw std::runtime_error("Could not load the RPCS3 package installer.");
       SelectPs3NetworkPolicy(dll, std::nullopt, true);
       const auto init = Symbol<VoidFunction>(dll, "retro_init");
@@ -1794,7 +1864,7 @@ class RetroCoreSession {
       const auto load = Symbol<bool (*)(const GameInfo*)>(dll, "retro_load_game");
       const auto unload = Symbol<VoidFunction>(dll, "retro_unload_game");
       Symbol<void (*)(bool (*)(unsigned, void*))>(dll, "retro_set_environment")(
-          [](unsigned command, void* data) { return active_.load()->Environment(command, data); });
+          [](unsigned command, void* data) { return active_[0].load()->Environment(command, data); });
       Symbol<void (*)(void (*)(const void*, unsigned, unsigned, size_t))>(dll, "retro_set_video_refresh")(
           [](const void*, unsigned, unsigned, size_t) {});
       Symbol<void (*)(void (*)(int16_t, int16_t))>(dll, "retro_set_audio_sample")(
@@ -1824,7 +1894,7 @@ class RetroCoreSession {
     }
     if (initialized) deinit();
     if (dll) FreeLibrary(dll);
-    active_ = nullptr;
+    callbacks.Release();
     ended_ = true;
   }
 
@@ -1836,14 +1906,16 @@ class RetroCoreSession {
     VoidFunction unload = nullptr;
     bool initialized = false;
     bool loaded = false;
-    active_ = this;
+    CallbackLease callbacks(callback_slot_);
     try {
+      callbacks.Acquire(this);
       hardware_available_ = !netplay_ && (ps3_ ? vulkan_.Load() : hardware_.Open());
       if (ps3_ && !hardware_available_)
         throw std::runtime_error("PS3 requires a working Vulkan driver.");
       const auto path = std::filesystem::u8path(core_);
       dll = LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
       if (!dll) throw std::runtime_error("Could not load the configured emulator core");
+      callbacks.Attach(dll);
       if (Symbol<unsigned (*)()>(dll, "retro_api_version")() != 1)
         throw std::runtime_error("Unsupported emulator core API");
       if (match_cpu_ == Ps1MatchCpu::kRecompiler &&
@@ -1868,27 +1940,11 @@ class RetroCoreSession {
           ? reinterpret_cast<Ps2VirtualLan::Bind>(GetProcAddress(dll, "retro_anyps5_dev9_bind_v1"))
           : nullptr;
       if (lan_ && !bind_lan) throw std::runtime_error("This PS2 core does not support the private LAN adapter.");
-      Symbol<void (*)(bool (*)(unsigned, void*))>(dll, "retro_set_environment")(
-          [](unsigned command, void* data) { return active_.load()->Environment(command, data); });
-      Symbol<void (*)(void (*)(const void*, unsigned, unsigned, size_t))>(dll, "retro_set_video_refresh")(
-          [](const void* data, unsigned width, unsigned height, size_t pitch) {
-            active_.load()->Publish(data, width, height, pitch);
-          });
-      Symbol<void (*)(void (*)(int16_t, int16_t))>(dll, "retro_set_audio_sample")(
-          [](int16_t left, int16_t right) {
-            const int16_t stereo[]{left, right};
-            active_.load()->OnAudio(stereo, 1);
-          });
-      Symbol<void (*)(size_t (*)(const int16_t*, size_t))>(dll, "retro_set_audio_sample_batch")(
-          [](const int16_t* samples, size_t frames) {
-            active_.load()->OnAudio(samples, frames);
-            return frames;
-          });
-      Symbol<void (*)(void (*)())>(dll, "retro_set_input_poll")([] {});
-      Symbol<void (*)(int16_t (*)(unsigned, unsigned, unsigned, unsigned))>(dll, "retro_set_input_state")(
-          [](unsigned port, unsigned device, unsigned index, unsigned id) {
-            return active_.load()->Input(port, device, index, id);
-          });
+      if (callback_slot_ == CallbackSlot::kPresentation) {
+        BindGameplayCallbacks<1>(dll);
+      } else {
+        BindGameplayCallbacks<0>(dll);
+      }
       const GameInfo game{disc_.c_str(), nullptr, 0, nullptr};
       const auto reopen = [&] {
         lan_ready_ = false;
@@ -2055,17 +2111,20 @@ class RetroCoreSession {
     }
     audio_.Close();
     if (dll) FreeLibrary(dll);
-    active_ = nullptr;
+    callbacks.Release();
     ended_ = true;
   }
 
-  static std::atomic<RetroCoreSession*> active_;
+  static inline std::array<std::atomic<RetroCoreSession*>, 2> active_{nullptr, nullptr};
+  static inline std::mutex module_mutex_;
+  static inline std::array<HMODULE, 2> modules_{};
   flutter::TextureRegistrar* registrar_;
   const std::string core_, disc_;
   const std::unique_ptr<ps1_netplay::Timeline> netplay_;
   const bool rollback_;
   const AudioSink audio_sink_;
   const std::vector<uint16_t> input_trace_;
+  const CallbackSlot callback_slot_;
   std::atomic<int64_t> rollback_audio_drained_{-1};
   std::atomic<int64_t> trace_max_work_us_{0};
   std::atomic<int64_t> trace_work_overruns_{0};
@@ -2150,8 +2209,6 @@ class RetroCoreSession {
   int32_t progress_percent_ = -1;
   std::string error_, resolution_error_;
 };
-
-std::atomic<RetroCoreSession*> RetroCoreSession::active_{nullptr};
 
 RetroCoreHost::RetroCoreHost(flutter::BinaryMessenger* messenger, flutter::TextureRegistrar* textures)
     : textures_(textures), channel_(messenger, "anyps5/retro_core", &flutter::StandardMethodCodec::GetInstance()) {

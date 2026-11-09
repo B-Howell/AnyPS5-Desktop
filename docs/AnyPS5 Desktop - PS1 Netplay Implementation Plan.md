@@ -795,6 +795,18 @@ delivery gaps were 349.207/262.254 ms. The baseline passes the race
 integrity check and fails the pacing gate. The [two-core harness](<AnyPS5 Desktop - PS1 Determinism Harness.md>)
 provides the comparison for keeping presentation active during replay.
 
+The Windows worker now has distinct primary and presentation callback
+slots. Each slot binds its own Libretro functions and owns a separate
+loaded DLL instance until shutdown. The headless `isolated-cores` mode in
+the [native runner probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp)
+accepts a second private copy of the same pinned DLL as its final
+argument. It checks duplicate-slot and shared-module rejection, distinct
+audio and texture output, and continued presentation after the primary
+worker unloads. Both cores confirmed 480 frames in one process. This
+isolates the workers for a future same-binary checkpoint handoff. The
+launcher still creates a single primary worker, and this test does not
+drive the second core from rollback corrections.
+
 The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
 [driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real
 embedded worker with a headless texture and audio sink. They check periodic
