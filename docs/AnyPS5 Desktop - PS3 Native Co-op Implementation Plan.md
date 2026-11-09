@@ -85,6 +85,38 @@ the GOTY title ID and its own update data. Enable online only after verifying
 that the provider-approved protection loads for that title ID and the
 isolated native lobby test passes.
 
+### Patchwork protection checkpoint
+
+The [Refresher 2.3.4 release](https://github.com/LittleBigRefresh/Refresher/releases/tag/v2.3.4)
+bundles the [Patchwork 1.3 RPCS3 module](https://github.com/HugeSpaceship/Patchwork/releases/tag/1.3).
+The extracted assembly resource matches the module's published SHA-256
+`c849af910568ccfcb613917ff86371096b990c39ad5dcc51325aee3d4671440d`.
+The released LBP patch steps successfully generated a wrapped GOTY
+executable in scratch storage. This path is insufficient for qualification:
+1.3 uses a shared lobby key to restrict joins, and its source lists blocking
+P2P scripts and verifying invites as future work.
+[Patchwork 1.3 source notes](https://github.com/HugeSpaceship/Patchwork/blob/6b61f8c9aa7b6ae98955a37e10ae37d068fef7e6/README.md#current-fixes)
+
+[Patchwork 2.0 RC1](https://github.com/HugeSpaceship/Patchwork/releases/tag/2.0-rc1)
+adds P2P script blocking and forged-join protection. Its RPCS3 route uses
+patch YAML against the unmodified executable. The published YAML SHA-256
+was `91272f665002417949de1cef825f5690834711cb110290c9156ffc542c6c3316`.
+On the pinned Linux core in two offline, network-isolated boots, the
+original YAML exposed no protection option for GOTY. A scratch fixture
+limited to the Combined Patch mapped that same executable hash and
+version to the GOTY title ID. It preserved all 26 upstream patch
+instructions and included no server redirect. The core requested
+`rpcs3_zpatch_0bc541a4`, applied all 26 instructions, and shut down
+cleanly. Both boots used the same stock 1.30 executable and offline
+network policy. This tests patch application, without testing sign-in,
+invite enforcement or gameplay with another peer.
+
+The pinned core rebuilds `patch_config.yml` from its frontend options
+before boot. A future verified YAML profile must therefore pin the approved
+YAML and request the expected protection and provider options at startup.
+The existing SPRX-only release verifier cannot qualify this route.
+[Core patch-manager source](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/rpcs3/libretro/libretro_patch_manager.cpp)
+
 ### Embedded update installation checkpoint
 
 On the pinned Linux x64 network-policy core, an install-only Libretro probe
