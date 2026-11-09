@@ -551,7 +551,11 @@ class _LauncherShellState extends State<LauncherShell> {
                                           RingingCard(model: model),
                                         if (model.pairing != null) PairingCard(model: model),
                                         _Toast(
-                                          message: model.toast,
+                                          message:
+                                              model.toast ??
+                                              (model.overlay == null && model.together.ps1ProgressStalled
+                                                  ? T.text('ps1OnlineSyncing')
+                                                  : null),
                                           level: model.toastLevel,
                                           icon: model.toastIcon,
                                           onTap: model.toastTap,

@@ -272,6 +272,7 @@
   "ps1OnlineLeave": "Çevrimiçi oyundan ayrıl",
   "ps1OnlineCancel": "Çevrimiçi oturumu iptal et",
   "ps1OnlinePlaying": "Oyun devam ediyor",
+  "ps1OnlineSyncing": "Oyunların eşzamanlanması bekleniyor",
   "ps1OnlineWaiting": "Diğer oyuncu bekleniyor",
   "ps1OnlinePreparing": "İki oyuncunun oyunu hazırlanıyor",
   "ps1OnlineEnding": "Çevrimiçi oyun sonlandırılıyor",

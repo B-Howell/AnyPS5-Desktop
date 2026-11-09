@@ -116,12 +116,13 @@ Future<String> verifyOrdinaryWebRtc(String config) async {
       recompiler: true,
     );
     await guestCore.setPad(256);
+    final guestInputs = _MeasuredRunner(guestCore);
     Object? restoreFailure;
     final guestRoom = receiver = Ps1NetplayMatch(
       rooms: gateway.client(WebRtcRoomFixture.guest, expectedDigest: advertised),
       links: links,
       identity: media.identity,
-      runner: guestCore,
+      runner: guestInputs,
       restoreCheckpoint: (snapshot) async {
         try {
           await guestCore.restore(snapshot, discDigest: media.discDigest);
@@ -136,15 +137,34 @@ Future<String> verifyOrdinaryWebRtc(String config) async {
     final card = p.join(work.path, 'saves', 'ps1', '${p.basenameWithoutExtension(media.disc)}.srm');
     await _waitUntil(() async => matchGame != null);
     final cardHash = await AssetDownload.sha256Of(card);
-    await _waitUntil(() async {
+    bool confirmedThrough(int frame) {
       if (hostRoom.closed || guestRoom.closed) {
         throw StateError(
           'Match ended early: ${hostRoom.session?.ended}, ${guestRoom.session?.ended}. '
           'Guest restore: ${restoreFailure ?? 'no error'}.',
         );
       }
-      return (hostRoom.session?.confirmedFrame ?? -1) >= 359 && (guestRoom.session?.confirmedFrame ?? -1) >= 359;
-    });
+      return (hostRoom.session?.confirmedFrame ?? -1) >= frame && (guestRoom.session?.confirmedFrame ?? -1) >= frame;
+    }
+
+    await _waitUntil(() async => confirmedThrough(119));
+    final inputGap = Completer<void>();
+    guestInputs.holdSync = inputGap.future;
+    try {
+      await _waitUntil(
+        () async =>
+            confirmedThrough(119) &&
+            hostRoom.session?.progressStalled == true &&
+            guestRoom.session?.progressStalled == true,
+      );
+    } finally {
+      guestInputs.holdSync = null;
+      inputGap.complete();
+    }
+    await _waitUntil(() async => confirmedThrough(359));
+    if (hostRoom.session?.progressStalled != false || guestRoom.session?.progressStalled != false) {
+      throw StateError('The match did not clear the sync status after inputs resumed.');
+    }
     for (final frame in [119, 239, 359]) {
       if (measured.fingerprints[frame] == null || measured.fingerprints[frame] != guestCore.fingerprints[frame]) {
         throw StateError('Native RAM fingerprints differ at frame $frame.');
@@ -170,7 +190,7 @@ Future<String> verifyOrdinaryWebRtc(String config) async {
     final resumedAt = await pictures();
     await _waitUntil(() async => await pictures() >= resumedAt + 15);
     return 'Ordinary PS1 WebRTC passed for ${profile.titleId}: 360 confirmed frames, three matching RAM fingerprints, '
-        'both pads, an unchanged local card during the match, and hardware playback after room release.';
+        'both pads, recovery from an input gap, an unchanged local card, and hardware playback after room release.';
   } finally {
     try {
       await Future.wait([if (receiver != null) receiver.leave(), if (sender != null) sender.leave()])
@@ -203,6 +223,7 @@ final class _MeasuredRunner implements Ps1NetplayRunner {
   final Ps1NetplayRunner delegate;
   final fingerprints = <int, String>{};
   final sentButtons = <int>{};
+  Future<void>? holdSync;
 
   @override
   Future<void> prepare(int seat) => delegate.prepare(seat);
@@ -215,6 +236,7 @@ final class _MeasuredRunner implements Ps1NetplayRunner {
 
   @override
   Future<Ps1NetplayTick> sync(List<Ps1NetplayFrame> remote, int? acknowledgedFrame) async {
+    if (holdSync case final gate?) await gate;
     final tick = await delegate.sync(remote, acknowledgedFrame);
     fingerprints.addAll(tick.fingerprints);
     sentButtons.addAll(tick.local.map((sample) => sample.input.buttons));

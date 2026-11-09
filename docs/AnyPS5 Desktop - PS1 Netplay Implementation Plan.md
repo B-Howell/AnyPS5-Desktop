@@ -563,6 +563,19 @@ also verifies that both real data-channel peers receive the disc refusal
 before either runner prepares. This uses synthetic identities and local
 signaling. It does not qualify delivery through the production service.
 
+During a running match, 750 ms without a newly confirmed frame shows
+**Waiting for the games to sync** in the Quick Menu and over gameplay.
+The hint clears on the next confirmed frame or when the match closes.
+The existing timeout still ends a match whose progress does not resume.
+The [native WebRTC probe](../tool/ps1_netplay/webrtc_ordinary_probe.dart)
+can hold the guest input exchange mid-match and check that both peers
+show the stall, continue the same epoch, and agree on subsequent RAM
+fingerprints. This exercises an input gap on an open WebRTC route.
+The offscreen CTR and Tekken 3 runs each resumed to 360 confirmed
+frames, matched three RAM fingerprints, preserved the local card
+during the match, and returned to hardware playback. The focused
+Windows suite passed 67 tests, including the Quick Menu status change.
+
 ### Windows development checkpoint
 
 Set `ANYPS5_PS1_NETPLAY=1` on an experimental Windows x64 build to invite

@@ -10,6 +10,8 @@ final class _Ps1InviteVerification {
 extension TogetherPs1Netplay on TogetherModel {
   bool get _ps1NetplayEnabled => environment['ANYPS5_PS1_NETPLAY'] == '1' && app.managedRetroAvailable;
 
+  bool get ps1ProgressStalled => _ps1Match?.session?.progressStalled == true;
+
   void _cancelPs1InviteVerification() {
     final verification = _ps1InviteVerification;
     _ps1InviteVerification = null;
@@ -160,7 +162,7 @@ extension TogetherPs1Netplay on TogetherModel {
             title: T.text(playing ? 'ps1OnlineLeave' : 'ps1OnlineCancel'),
             detail: T.text(
               playing
-                  ? 'ps1OnlinePlaying'
+                  ? (ps1ProgressStalled ? 'ps1OnlineSyncing' : 'ps1OnlinePlaying')
                   : session?.preparingGame == true
                   ? 'ps1OnlinePreparing'
                   : 'ps1OnlineWaiting',

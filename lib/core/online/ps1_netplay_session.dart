@@ -69,6 +69,7 @@ final class Ps1NetplaySession {
   static const _nativeBatch = 32;
   static const _nativeHistory = 64; // Timeline::kHistory in the Windows runner.
   static const _fingerprintInterval = 120;
+  static const _stallDelay = Duration(milliseconds: 750);
   static const _maxFingerprints = 16;
   static final _fingerprintHash = RegExp(r'^[0-9a-f]{16}$');
 
@@ -91,6 +92,7 @@ final class Ps1NetplaySession {
   Ps1NetplayMismatch? _mismatch;
   int? _desyncFrame;
   Timer? _watchdog;
+  Timer? _stallTimer;
   final _done = Completer<void>();
   bool _peerIdentified = false;
   bool _preparing = false;
@@ -101,6 +103,7 @@ final class Ps1NetplaySession {
   bool _starting = false;
   bool _syncing = false;
   bool _waiting = false;
+  bool _progressStalled = false;
   int _frame = 0;
   int? _confirmed;
   int? _received;
@@ -136,6 +139,7 @@ final class Ps1NetplaySession {
   Ps1NetplayMismatch? get mismatch => _mismatch;
   int? get desyncFrame => _desyncFrame;
   bool get waiting => _waiting;
+  bool get progressStalled => _progressStalled;
   int? get confirmedFrame => _confirmed;
 
   /// Checkpoint cursor shared by both peers. The new input epoch starts at zero.
@@ -453,7 +457,7 @@ final class Ps1NetplaySession {
       }
       _frame = tick.frame;
       // Repeated packets cannot keep a stalled emulation alive.
-      if (tick.confirmedFrame != _confirmed) _touch();
+      final advanced = tick.confirmedFrame != _confirmed;
       _confirmed = tick.confirmedFrame;
       _received = tick.receivedFrame;
       _waiting = tick.waiting;
@@ -461,6 +465,8 @@ final class Ps1NetplaySession {
         _pending.remove(sample.frame);
       }
       _remoteHistory.removeWhere((frame, _) => frame < _oldestRetained);
+      if (advanced) _touch();
+      if (_phase == Ps1NetplayPhase.closed) return;
       _publishFingerprints(tick.fingerprints, tick.confirmedFrame);
       if (_phase == Ps1NetplayPhase.closed || tick.local.isEmpty) return;
       final firstFrame = tick.local.first.frame;
@@ -501,6 +507,17 @@ final class Ps1NetplaySession {
   void _touch() {
     _watchdog?.cancel();
     _watchdog = Timer(timeout, () => _close(Ps1NetplayEnd.timedOut, notify: true));
+    _stallTimer?.cancel();
+    if (_phase == Ps1NetplayPhase.running && timeout > _stallDelay) {
+      _stallTimer = Timer(_stallDelay, () => _setProgressStalled(true));
+    }
+    _setProgressStalled(false);
+  }
+
+  void _setProgressStalled(bool stalled) {
+    if (_progressStalled == stalled) return;
+    _progressStalled = stalled;
+    onStatusChanged?.call();
   }
 
   void _sendControl(String kind, [Object? data]) {
@@ -533,7 +550,9 @@ final class Ps1NetplaySession {
     _catchup = null;
     _phase = Ps1NetplayPhase.closed;
     _waiting = false;
+    _progressStalled = false;
     _watchdog?.cancel();
+    _stallTimer?.cancel();
     _pending.clear();
     _remoteHistory.clear();
     _seen.clear();

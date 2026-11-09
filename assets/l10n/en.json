@@ -272,6 +272,7 @@
   "ps1OnlineLeave": "Leave online game",
   "ps1OnlineCancel": "Cancel online session",
   "ps1OnlinePlaying": "Match in progress",
+  "ps1OnlineSyncing": "Waiting for the games to sync",
   "ps1OnlineWaiting": "Waiting for the other player",
   "ps1OnlinePreparing": "Preparing both games",
   "ps1OnlineEnding": "Ending online play",

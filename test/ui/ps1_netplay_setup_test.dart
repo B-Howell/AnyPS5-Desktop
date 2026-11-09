@@ -453,6 +453,7 @@ void main() {
     var ended = false;
     var recoveredPlaying = false;
     var matchPumped = false;
+    var confirmMatchFrame = false;
     final finishPark = Completer<void>();
     final finishRecovery = Completer<void>();
     late String core;
@@ -511,7 +512,13 @@ void main() {
           return true;
         case 'netplaySync':
           matchPumped = true;
-          return {'frame': 0, 'waiting': true, 'local': [], 'fingerprints': []};
+          return {
+            'frame': confirmMatchFrame ? 1 : 0,
+            if (confirmMatchFrame) 'confirmedFrame': 0,
+            'waiting': !confirmMatchFrame,
+            'local': [],
+            'fingerprints': [],
+          };
         case 'ps1LocalCheckpointReopen':
           expect(call.arguments, 17);
           worker = 3;
@@ -671,6 +678,11 @@ void main() {
     expect(await eventually(() => matchPumped), isTrue);
     expect(native, ['local', 'park', 'detach', 'match', 'import', 'start match']);
     await model.openQuickMenu();
+    expect(await eventually(() => row('ps1-netplay-leave').detail == 'Waiting for the games to sync'), isTrue);
+    expect(model.together.ps1ProgressStalled, isTrue);
+    confirmMatchFrame = true;
+    expect(await eventually(() => row('ps1-netplay-leave').detail == 'Match in progress'), isTrue);
+    expect(model.together.ps1ProgressStalled, isFalse);
     choose('ps1-netplay-leave');
     expect(await eventually(() => native.contains('reopen')), isTrue);
     expect(model.starting, same(game));
