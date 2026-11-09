@@ -19,6 +19,7 @@ import '../core/online/ps1_netplay_session.dart';
 import '../core/online/ps2_lan_profile.dart';
 import '../core/online/retro_lan_match.dart';
 import '../core/online/retro_online_rooms.dart';
+import '../core/ps3_online_profile.dart';
 import '../core/profiles/profiles.dart' show ProfileAccount, ProfileMode;
 import '../core/remote/remote_protocol.dart';
 import '../core/capture/clip_tools.dart';
@@ -80,6 +81,7 @@ part 'together_party_chat.dart';
 part 'together_play.dart';
 part 'together_ps1_netplay.dart';
 part 'together_ps2_lan.dart';
+part 'together_ps3_online.dart';
 part 'together_profile.dart';
 part 'together_find.dart';
 part 'together_social.dart';
@@ -97,6 +99,7 @@ class TogetherModel {
   Ps1NetplayMatch? _ps1Match;
   bool _verifyingPs1 = false;
   _Ps2LanAttempt? _ps2Lan;
+  _Ps3PartyAttempt? _ps3Party;
 
   TogetherModel(this.app) : environment = app.services.environment ?? Platform.environment {
     // The session of the profile playing; another profile's goes in when it plays.
@@ -427,6 +430,7 @@ class TogetherModel {
   void signedInChanged() {
     unawaited(_ps1Match?.leave());
     _ps2Lan?.cancel();
+    _ps3Party?.cancel();
     app.remote?.togetherServer = account.base.toString();
     // Another account (or none): what was typed for the last one's profile goes, and so do a
     // call ringing and the Captures read for it.
@@ -734,7 +738,15 @@ class TogetherModel {
   }
 
   Future<void> signOut() async {
+    await cancelPs3PartyAndWait();
     await account.signOut();
+  }
+
+  Future<void> cancelPs3PartyAndWait() async {
+    if (_ps3Party case final attempt?) {
+      attempt.cancel();
+      await attempt.done.future.timeout(const Duration(seconds: 3), onTimeout: () {});
+    }
   }
 
   /// A phone's side of a hand-off: it asks to be signed in as us, or answers ours.
@@ -858,6 +870,7 @@ class TogetherModel {
   String gameName(String titleId) =>
       app.games.where((game) => game.titleId == titleId).firstOrNull?.nameFor([T.language.code]) ??
       app.games.where((game) => game.retroSerial == titleId).firstOrNull?.nameFor([T.language.code]) ??
+      app.games.where((game) => game.titleId == 'PS3-$titleId').firstOrNull?.nameFor([T.language.code]) ??
       titleId;
 
   /// "Playing Neon Alley · 25 min", "Online", "Idle", "Do Not Disturb", "Offline", with the
@@ -1062,6 +1075,7 @@ class TogetherModel {
       ),
       ...ps1NetplayInvites(friend),
       ...ps2LanInvites(friend),
+      ...ps3PartyInvites(friend),
       PanelRow(id: 'friend-back', title: T.text('back'), kind: ActionRow(() => app.open(Layer.friends))),
     ];
   }
@@ -1359,6 +1373,14 @@ class TogetherModel {
   void _event(TogetherEvent event) {
     _ps1Match?.receive(event.type, event.json);
     _ps2Lan?.match?.receive(event.type, event.json);
+    if (_ps3Party case final attempt?
+        when event.type == 'game_session.ended' &&
+            attempt.roomId != null &&
+            attempt.roomId == event.json['sessionId']) {
+      attempt.roomEnded = true;
+      attempt.cancel();
+      app.refresh();
+    }
     // Online play follows the same game session: players joining, leaving, signalling.
     online.handle(event);
     // Share play: the one hosted, the one watched, the invites.
@@ -1632,6 +1654,10 @@ class TogetherModel {
   void dispose() {
     unawaited(_ps1Match?.leave());
     _ps2Lan?.cancel();
+    if (_ps3Party case final attempt?) {
+      attempt.disposed = true;
+      attempt.cancel();
+    }
     stopRinging();
     calls.noAnswer?.cancel();
     unawaited(online.stop());

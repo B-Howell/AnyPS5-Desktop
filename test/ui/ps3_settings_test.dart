@@ -5,12 +5,14 @@ import 'dart:io';
 
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/host.dart';
+import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:anyps5_desktop/core/ps3_online_profile.dart';
 import 'package:anyps5_desktop/core/ps3_update_import.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/panels.dart';
 import 'package:anyps5_desktop/ui/ps3_settings_model.dart';
 import 'package:anyps5_desktop/ui/strings.dart';
+import 'package:anyps5_desktop/ui/together_model.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,22 +20,28 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../support/fixtures.dart' show ps3FixtureSfo;
+import '../support/fake_together.dart';
 import '../support/ui_support.dart';
+
+class _LoopbackHttpOverrides extends HttpOverrides {}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(T.load);
 
-  test('Play Online verifies setup and launches only the isolated PS3 profile', () async {
+  Future<void> verifySetup(String mode) async {
     const title = 'BCUS98208';
     const ppu = 'PPU-545c1abbf1c562d60fca7435401f020beab76b53';
     const patch =
         'Version: 1.2\n$ppu:\n  Protection:\n    Games:\n      Fixture:\n'
         '        $title: [01.30]\n    Patch:\n      - [be32, 0x10000, 0x60000000]\n';
     final releases = <Ps3OnlineRelease>[];
+    final server = mode == 'solo' ? null : await FakeTogether.start();
+    if (server != null) addTearDown(server.close);
     String? selectedPatch;
     final fixture = makeFixture(
       system: HostSystem.windows,
+      together: server?.base,
       ps3OnlineReleases: releases,
       pickFile: (_, _) async => selectedPatch,
     );
@@ -86,7 +94,7 @@ void main() {
     );
     final game = Game(
       folder: folder,
-      titleId: title,
+      titleId: 'PS3-$title',
       name: 'Online fixture',
       names: const {},
       defaultLanguage: 'en',
@@ -125,7 +133,13 @@ void main() {
         if (settled()) return false;
         await Future<void>.delayed(const Duration(milliseconds: 10));
         return true;
-      }).timeout(const Duration(seconds: 5));
+      }).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw StateError(
+          '$mode did not settle: ${model.toast}, socket ${model.together.hub.socket.status.name}, '
+          '${server?.calls.map((call) => call.path).toList()}',
+        ),
+      );
     }
 
     String? patchStatus() =>
@@ -184,8 +198,75 @@ void main() {
     await waitFor(() => accountStatus()?.contains('does not match') == true);
     expect(installedAccount.readAsStringSync(), contains('fake-token'));
     expect(start.isCompleted, isFalse);
+
+    const roomId = '12345678-1234-4234-8234-123456789abc';
+    const localId = '12345678-1234-4234-8234-123456789ab1';
+    const friendId = '12345678-1234-4234-8234-123456789ab2';
+    final protocol = RetroOnlineMode.nativeOnline.protocol;
+    if (server != null) {
+      server.me['id'] = localId;
+      server.friend(friendId, 'ana', 'Ana', presence: {'state': 'online'});
+      model.together.email = 'fixture@example.invalid';
+      await model.together.sendCode();
+      model.together.code = '123456';
+      await model.together.verify();
+      await waitFor(() => model.together.hub.friends.loaded && model.together.hub.socket.status.name == 'ready');
+      final friend = model.together.hub.friends.friends.single;
+      final room = {
+        'id': roomId,
+        'host': {'userId': mode == 'host' ? localId : friendId},
+        'kind': 'online',
+        'titleId': title,
+        'gameVersion': '01.30',
+        'engineBuild': protocol,
+        'capacity': 2,
+        'joinable': false,
+        'properties': {'protocol': protocol, 'profileSha256': releases.single.partyFingerprint},
+      };
+      server.answers.addAll({
+        'POST game-sessions': (201, room),
+        'GET game-sessions/$roomId': (200, room),
+        'PUT game-sessions/$roomId/members/me': (200, room),
+        'POST game-sessions/$roomId/invites': (204, null),
+        'POST game-sessions/$roomId/join': (204, null),
+        'POST game-sessions/$roomId/leave': (204, null),
+        'DELETE game-sessions/$roomId': (204, null),
+      });
+      if (mode == 'host') {
+        model.together.openFriend(friend);
+        activate('ps3-party-invite');
+        expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
+      } else {
+        final invite = {
+          'sessionId': roomId,
+          'from': server.person(friendId, 'ana', 'Ana'),
+          'titleId': title,
+          'gameVersion': '01.30',
+          'engineBuild': protocol,
+        };
+        server.gameInvites.add(invite);
+        await model.together.hub.games.refresh();
+        model.open(Layer.friends);
+        activate('game-accept-$roomId');
+        expect(server.callsTo('game-sessions/$roomId/join'), isEmpty);
+        final properties = room['properties'] as Map<String, String>;
+        properties['profileSha256'] = '0' * 64;
+        activate('ps3-online-play');
+        await waitFor(() => server.callsTo('game-sessions/$roomId', method: 'GET').isNotEmpty);
+        await waitFor(() => model.together.ps3PartyRows().isEmpty);
+        expect(server.callsTo('game-sessions/$roomId/join'), isEmpty);
+        expect(start.isCompleted, isFalse);
+        properties['profileSha256'] = releases.single.partyFingerprint;
+        model.open(Layer.friends);
+        activate('game-accept-$roomId');
+      }
+    }
     activate('ps3-online-play');
-    final launch = await start.future.timeout(const Duration(seconds: 5));
+    final launch = await start.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () =>
+          throw StateError('$mode launch timed out: ${model.toast}, ${server?.calls.map((call) => call.path)}'),
+    );
     expect(launch['system'], await Directory(p.join(profile, 'system')).resolveSymbolicLinks());
     expect(launch['saves'], await Directory(p.join(profile, 'saves')).resolveSymbolicLinks());
     expect(launch['ps3Online'], contains('patchProtection'));
@@ -195,6 +276,15 @@ void main() {
     });
     expect(launch.toString(), isNot(contains('fake-token')));
     expect(launch.toString(), isNot(contains('test-only')));
+    if (server != null) {
+      final action = mode == 'host' ? 'invites' : 'join';
+      expect(server.callsTo('game-sessions/$roomId/$action', method: 'POST'), hasLength(1));
+      if (mode == 'host') {
+        final sent = server.callsTo('game-sessions', method: 'POST').single.body;
+        expect(sent['properties'], {'protocol': protocol, 'profileSha256': releases.single.partyFingerprint});
+        expect(sent.toString(), isNot(contains('fake-token')));
+      }
+    }
     expect(Directory(p.join(managed, 'system')).listSync(), isEmpty);
     await waitFor(() => model.embeddedGame?.presented == true);
     try {
@@ -205,11 +295,40 @@ void main() {
         isFalse,
       );
       expect(calls.any((call) => call.method == 'pause'), isFalse);
+      if (mode.startsWith('guest')) {
+        if (mode == 'guest-ended') {
+          server!.push('game_session.ended', {'sessionId': roomId});
+          await waitFor(() => model.together.ps3PartyRows().isEmpty);
+          expect(server.callsTo('game-sessions/$roomId/leave'), isEmpty);
+        } else {
+          final leave = model
+              .panelCategories()
+              .expand((category) => category.rows)
+              .singleWhere((row) => row.id == 'ps3-party-leave');
+          (leave.kind as ActionRow).run();
+          await waitFor(() => server!.callsTo('game-sessions/$roomId/leave').isNotEmpty);
+        }
+        expect(model.together.ps3PartyRows(), isEmpty);
+        expect(model.embeddedGame?.isPs3Online, isTrue);
+      }
     } finally {
-      await model.stopRunningGame();
+      if (mode == 'host') {
+        expect(await model.prepareToQuit(), isTrue);
+        expect(server!.callsTo('game-sessions/$roomId', method: 'DELETE'), hasLength(1));
+      } else {
+        await model.stopRunningGame();
+      }
       await waitFor(() => model.running == null && model.starting == null);
     }
-  }, skip: Abi.current() != Abi.windowsX64);
+  }
+
+  for (final mode in ['solo', 'host', 'guest', 'guest-ended']) {
+    test(
+      'PS3 $mode verifies setup and launches only the isolated profile',
+      () => HttpOverrides.runWithHttpOverrides(() => verifySetup(mode), _LoopbackHttpOverrides()),
+      skip: Abi.current() != Abi.windowsX64,
+    );
+  }
 
   testWidgets('PS3 game settings show local online readiness and can recheck an installed update', (tester) async {
     final fixture = makeFixture(

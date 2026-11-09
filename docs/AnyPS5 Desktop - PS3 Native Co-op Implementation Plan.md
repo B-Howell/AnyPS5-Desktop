@@ -528,19 +528,33 @@ It checks that a missing account blocks launch, the corrected profile
 passes isolated paths and protection metadata, the Quick Menu sends no
 pause command, and an unlisted title has no Play Online action.
 
-1. Use the shared lifecycle in the [multiplayer design](<AnyPS5 Desktop - Emulator Multiplayer Design.md>). Advertise a verified `ps3-native` mode with title/update, provider profile version and compatibility policy. The party service handles admission to the AnyTogether session. The game and provider decide admission to the native lobby.
-2. **Host** opens an AnyTogether offer and launches the configured local title. **Join** checks the guest's setup and launches it into the same supported provider flow. In v1 guide both players through the game's join steps. Use a supported provider join token or launch interface only if confirmed. Keep credentials and private room keys outside the general party metadata.
-3. Keep launcher progress distinct from game state. Report local preflight and launch readiness from observed facts. A player joining the AnyTogether party is not proof they joined the game. Verify native room membership through supported evidence or a player confirmation. Test unavailable provider, sign-in refusal, mismatched patch, stale invite, cancellation and host exit with fakes. Verify PS5 still follows the [existing Play Together path](../lib/ui/together_play.dart).
+The [PS3 Friends handoff](../lib/ui/together_ps3_online.dart) opens the
+[existing readiness page](../lib/ui/ps3_online_readiness_page.dart) for
+both the sender and the recipient. It verifies the local game and isolated
+profile before making room calls. The
+[room protocol](../lib/core/online/retro_online_rooms.dart) checks title
+ID, update version and a [public profile fingerprint](../lib/core/ps3_online_profile.dart).
+The fingerprint covers the reviewed core, update, provider identity,
+patch policy and network configuration. Room metadata excludes credentials,
+paths and room keys. The recipient checks the inviter when the invite
+includes their identity.
 
-**Exit gate:** The one-PC fake-service tests cover compatibility, invitation, launch and cleanup. The UI distinguishes party join, native game join and a game that merely launched.
+The launcher uses a private two-seat AnyTogether room. RPCS3 and the
+provider handle gameplay traffic and admission to the native lobby.
+Both players use the game's online menu to meet. Leaving the AnyTogether
+room or receiving its end event cancels a pending launch and leaves an
+already-running game open. Stopping the host's game closes the room.
+Signing out or closing the launcher gives the handoff time to release
+the room while the account is still available.
+The [existing PS5 flow](../lib/ui/together_play.dart) remains separate.
 
-**Planned regression test:** `test/ui/ps3_online_profile_test.dart` should
-assert that a wrong patch or missing update blocks the online launch while
-offline launch remains available. Add a private harness receipt for the
-effective core options and a test confirming native join is never inferred
-from process start. Run
-`flutter test test/ui/ps3_online_profile_test.dart test/ui/ps3_settings_test.dart test/core/managed_retro_test.dart`
-once the new suite exists. Use fake account values in fixtures.
+The [PS3 settings integration tests](../test/ui/ps3_settings_test.dart)
+exercise host invite, guest acceptance, profile mismatch, isolated
+emulator arguments, room cleanup and the native game's continued
+execution after leaving. They use local fake AnyTogether responses and
+a fake native channel. Hosted room behavior and native lobby entry
+remain live qualification gates. The release catalog remains empty
+until a provider profile is approved and qualified.
 
 ## 4. Separate the one-PC pilot from WAN qualification
 

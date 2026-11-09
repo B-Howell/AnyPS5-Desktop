@@ -29,6 +29,7 @@ final class RetroOnlineRooms {
     required this.me,
     required this.spec,
     this.discDigest,
+    this.profileDigest,
   });
 
   String get protocol => spec.mode.protocol;
@@ -40,6 +41,7 @@ final class RetroOnlineRooms {
   final String me;
   final RetroRoomSpec spec;
   final String? discDigest;
+  final String? profileDigest;
 
   Future<RetroRoom> host() async {
     await _requireIdle();
@@ -51,7 +53,11 @@ final class RetroOnlineRooms {
       'versionRule': 'exact',
       'capacity': spec.capacity,
       'joinable': false,
-      'properties': {'protocol': protocol, if (discDigest != null) 'discSha256': discDigest},
+      'properties': {
+        'protocol': protocol,
+        if (discDigest != null) 'discSha256': discDigest,
+        if (profileDigest != null) 'profileSha256': profileDigest,
+      },
     });
     final RetroRoom room;
     try {
@@ -72,11 +78,13 @@ final class RetroOnlineRooms {
     return _publish(room);
   }
 
-  Future<RetroRoom> join(String id) async {
+  Future<RetroRoom> join(String id, {String? expectedHost}) async {
     final path = _path(id);
     await _requireIdle();
     final room = _room(await call('GET', path), id: id);
-    if (room.hostId == me) throw StateError('The retro room belongs to this account.');
+    if (room.hostId == me || (expectedHost != null && room.hostId != expectedHost)) {
+      throw StateError('This invite does not match the retro room host.');
+    }
     await call('POST', '$path/join', {'gameVersion': spec.gameVersion, 'engineBuild': protocol});
     return _publish(room);
   }
@@ -206,7 +214,11 @@ final class RetroOnlineRooms {
         properties['protocol'] != protocol ||
         (properties.containsKey('discSha256') &&
             (properties['discSha256'] is! String || !_digest.hasMatch(properties['discSha256'] as String))) ||
-        (discDigest != null && properties['discSha256'] != discDigest)) {
+        (discDigest != null && properties['discSha256'] != discDigest) ||
+        (spec.mode == RetroOnlineMode.nativeOnline &&
+            (profileDigest == null ||
+                !_digest.hasMatch(profileDigest!) ||
+                properties['profileSha256'] != profileDigest))) {
       throw StateError('This invite is not for a compatible retro room.');
     }
     return (id: actual, hostId: hostId);

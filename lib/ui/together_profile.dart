@@ -610,19 +610,22 @@ extension TogetherProfiles on TogetherModel {
       ...togetherOfferRows(),
       ...ps1NetplayRows(),
       ...ps2LanRows(),
+      ...ps3PartyRows(),
       for (final invite in games.invites) ...[
         PanelRow(
           id: 'game-accept-${invite.sessionId}',
           title: T.format('gameJoin', [invite.from?.displayName ?? '', gameName(invite.titleId)]),
-          detail: invite.engineBuild == RetroOnlineMode.lan.protocol
-              ? ps2LanInviteDetail(invite)
-              : T.text('gameInvitedDetail'),
+          detail: switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {
+            RetroOnlineMode.lan => ps2LanInviteDetail(invite),
+            RetroOnlineMode.nativeOnline => ps3PartyInviteDetail(invite),
+            _ => T.text('gameInvitedDetail'),
+          },
           person: invite.from == null ? null : TogetherModel.card(invite.from!, status: PersonStatus.playing),
           kind: ActionRow(
             () => unawaited(switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {
               RetroOnlineMode.synchronized => joinPs1Netplay(invite),
               RetroOnlineMode.lan => joinPs2Lan(invite),
-              RetroOnlineMode.nativeOnline => _unsupportedRetroInvite(),
+              RetroOnlineMode.nativeOnline => joinPs3Party(invite),
               null when RetroOnlineMode.isRetroProtocol(invite.engineBuild) => _unsupportedRetroInvite(),
               null => joinFriendGame(invite.sessionId, titleId: invite.titleId, host: invite.from?.displayName ?? ''),
             }),

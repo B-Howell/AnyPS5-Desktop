@@ -5439,7 +5439,10 @@ class AppModel extends ChangeNotifier {
       return false;
     }
     final playing = running;
-    if (playing == null || playing.$1.retro == null) return true;
+    if (playing == null || playing.$1.retro == null) {
+      await together.cancelPs3PartyAndWait();
+      return true;
+    }
     final run = playing.$2;
     unawaited(stopRunningGame());
     try {
@@ -5461,6 +5464,7 @@ class AppModel extends ChangeNotifier {
       show(run.error);
       return false;
     }
+    await together.cancelPs3PartyAndWait();
     return true;
   }
 
@@ -6061,6 +6065,7 @@ class AppModel extends ChangeNotifier {
               if (embeddedGame == null) ...sharePlay.rows(),
               ...together.ps1QuickRows(),
               ...together.ps2LanQuickRows(),
+              if (embeddedGame?.isPs3Online == true) ...together.ps3PartyRows(),
               PanelRow(
                 id: 'closeGame',
                 title: T.text('quickCloseGame'),

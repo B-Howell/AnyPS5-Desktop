@@ -164,8 +164,9 @@ before enabling a public option.
 
 First verify native sign-in, join and play through a private level on two
 Windows PCs. Record the exact game update, patch, core and relevant settings.
-Then add an AnyTogether invitation that launches the configured title and
-guides players to the same session. Automate room joining only if the game
+The [AnyTogether invitation handoff](<AnyPS5 Desktop - PS3 Native Co-op Implementation Plan.md#3-reuse-party-invites-and-hand-off-to-the-game>)
+opens the configured title after profile verification and directs both players
+to its native online menu. Automate native room joining only if the game
 or provider exposes a supported way to do it. The [RPCS3 Libretro feature table](https://docs.libretro.com/library/rpcs3/#features)
 does not support frontend save states or netplay, so PS3 is outside the
 synchronized-emulation path.

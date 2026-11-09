@@ -90,8 +90,10 @@ void main() {
   for (final mode in [RetroOnlineMode.lan, RetroOnlineMode.nativeOnline]) {
     test('uses the supplied title and version for ${mode.name} rooms', () async {
       final spec = (titleId: 'SLUS00001', gameVersion: '1.30', mode: mode, capacity: 4);
+      final profile = mode == RetroOnlineMode.nativeOnline ? 'b' * 64 : null;
       final rooms = RetroOnlineRooms(
         spec: spec,
+        profileDigest: profile,
         me: _host,
         call: (method, path, [body]) async {
           if (path == 'me/game-session') return {'session': null};
@@ -107,7 +109,7 @@ void main() {
             'gameVersion': spec.gameVersion,
             'engineBuild': mode.protocol,
             'capacity': spec.capacity,
-            'properties': {'protocol': mode.protocol},
+            'properties': {'protocol': mode.protocol, 'profileSha256': ?profile},
           };
         },
         signal: (_, _, _, _, _) {},

@@ -17,7 +17,7 @@ extension TogetherPs2Lan on TogetherModel {
   bool get _ps2LaunchAvailable =>
       app.running == null && app.starting == null && !app.stopping && app.managedSetupConsole == null;
 
-  bool get _ps2LanBusy => _ps2Lan != null || app.ps2LanSetupActive;
+  bool get _ps2LanBusy => _ps2Lan != null || _ps3Party != null || app.ps2LanSetupActive;
 
   bool get ps2LanSetupEnabled => _ps2LanEnabled;
 

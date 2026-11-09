@@ -22,18 +22,25 @@ String _ps3OnlineIssueText(Ps3OnlineIssue issue) => T.text(switch (issue) {
   Ps3OnlineIssue.account => 'ps3OnlineAccountRequired',
 });
 
-extension _Ps3OnlineReadinessPage on AppModel {
+extension Ps3OnlineReadinessPage on AppModel {
   PanelRow _ps3OnlineReadinessRow(Game game) => PanelRow(
     id: 'ps3-online-readiness',
     title: T.text('ps3OnlineReadiness'),
     detail: T.text('ps3OnlineReadinessDetail'),
-    kind: ActionRow(() => _openPs3OnlineReadiness(game)),
+    kind: ActionRow(() => openPs3OnlineReadiness(game)),
   );
 
-  void _openPs3OnlineReadiness(Game game) {
+  void openPs3OnlineReadiness(
+    Game game, {
+    Ps3OnlineRelease? partyRelease,
+    String? partyAction,
+    Future<void> Function(Ps3OnlineProfile)? onPartyReady,
+  }) {
     final disc = game.retro!;
     final managed = _managedRetro;
-    final releases = services.ps3OnlineReleases.where((release) => release.hasManagedProfile).toList();
+    final releases = services.ps3OnlineReleases
+        .where((release) => release.hasManagedProfile && (partyRelease == null || release == partyRelease))
+        .toList();
     Ps3OnlineReadiness inspect() =>
         Ps3OnlineReadiness.inspect(disc: disc.path, managedSystem: managed.systemPath, releases: releases);
     var report = inspect();
@@ -142,7 +149,11 @@ extension _Ps3OnlineReadinessPage on AppModel {
       }
       if (profile == null || !visible() || !available()) return;
       _dismissOverlay();
-      await _playRetro(game, disc, onlineProfile: profile, canBoot: () => !_disposed && !_quitting);
+      if (onPartyReady != null) {
+        await onPartyReady(profile);
+      } else {
+        await playVerifiedPs3Online(game, profile, canBoot: () => true);
+      }
     }
 
     page = () {
@@ -181,7 +192,7 @@ extension _Ps3OnlineReadinessPage on AppModel {
             ? null
             : PanelRow(
                 id: 'ps3-online-play',
-                title: T.text('ps3OnlinePlay'),
+                title: T.text(partyAction ?? 'ps3OnlinePlay'),
                 detail: checking ? T.text('ps3OnlineChecking') : failure ?? T.text('ps3OnlinePlayDetail'),
                 kind: ActionRow(() => unawaited(playOnline(release))),
               ),
@@ -189,6 +200,9 @@ extension _Ps3OnlineReadinessPage on AppModel {
     };
     _emulatorMenu.openPage(page);
   }
+
+  Future<void> playVerifiedPs3Online(Game game, Ps3OnlineProfile profile, {required bool Function() canBoot}) =>
+      _playRetro(game, game.retro!, onlineProfile: profile, canBoot: () => !_disposed && !_quitting && canBoot());
 }
 
 PanelCategory _ps3OnlineReadinessPanel(

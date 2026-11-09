@@ -97,6 +97,36 @@ final class Ps3OnlineRelease {
   final Ps3Dns dns;
   final bool upnp;
 
+  /// Public compatibility identity. Account and local filesystem data are excluded.
+  String get partyFingerprint => sha256
+      .convert(
+        utf8.encode(
+          jsonEncode([
+            provider,
+            titleId,
+            updateVersion,
+            updateTreeDigest,
+            generatedUpdateFiles.toList()..sort(),
+            coreSha256,
+            executableSha256,
+            protection.sha256,
+            if (protection case Ps3YamlProtection(:final ppuHash, :final patches, :final basePatchSha256))
+              [
+                ppuHash,
+                basePatchSha256,
+                for (final key in (patches.keys.toList()..sort())) [key, patches[key]],
+              ],
+            rpcnHost,
+            rpcnCertificateSha256,
+            xfloat.name,
+            dns.address,
+            upnp,
+            for (final key in (providerFiles.keys.toList()..sort())) [key, providerFiles[key]],
+          ]),
+        ),
+      )
+      .toString();
+
   bool get hasManagedProfile =>
       updateTreeDigest != null &&
       RegExp(r'^[a-f0-9]{64}$').hasMatch(rpcnCertificateSha256 ?? '') &&
