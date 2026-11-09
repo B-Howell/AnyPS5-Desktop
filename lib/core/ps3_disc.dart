@@ -12,6 +12,10 @@ abstract final class Ps3Disc {
         !file.existsSync()) {
       return null;
     }
+    return readSfo(file);
+  }
+
+  static Map<String, String>? readSfo(File file) {
     try {
       if (file.lengthSync() > 1024 * 1024) return null;
       final bytes = file.readAsBytesSync();

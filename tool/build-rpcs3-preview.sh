@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ ${MSYSTEM:-} != CLANG64 || $# != 1 ]]; then
-  echo 'Usage in a disposable MSYS2 CLANG64 install: bash tool/build-rpcs3-preview.sh NEW_OUTPUT_DIRECTORY' >&2
+if [[ ${MSYSTEM:-} != CLANG64 || $# -lt 1 || $# -gt 2 || ( $# == 2 && $2 != --network-policy ) ]]; then
+  echo 'Usage in a disposable MSYS2 CLANG64 install: bash tool/build-rpcs3-preview.sh NEW_OUTPUT_DIRECTORY [--network-policy]' >&2
   exit 2
 fi
 
@@ -31,6 +31,11 @@ cd "$output/rpcs3"
 sed 's/\r$//' "$patch_dir/rpcs3-libretro-frontend.patch" > "$output/frontend.patch"
 git apply --check "$output/frontend.patch"
 git apply "$output/frontend.patch"
+if [[ ${2:-} == --network-policy ]]; then
+  sed 's/\r$//' "$patch_dir/rpcs3-libretro-network-policy.patch" > "$output/network-policy.patch"
+  git apply --check "$output/network-policy.patch"
+  git apply "$output/network-policy.patch"
+fi
 
 sed \
   -e "s/git config --global --add safe.directory '\*'/git config --local core.longpaths true/" \

@@ -36,6 +36,51 @@ The [RPCS3 Libretro feature table](https://docs.libretro.com/library/rpcs3/#feat
 
 **Exit gate:** A one-PC profile probe proves option precedence, offline isolation, redacted errors and clean teardown. A single isolated embedded launch can test provider sign-in and lobby access later with an approved account. Those checks alone do not prove co-op.
 
+### Unarmed launch-profile checkpoint
+
+[Profile verification](../lib/core/ps3_online_profile.dart) accepts only a
+cataloged provider and disc serial. It checks the updated executable, core,
+provider module and public provider configuration by SHA-256. It checks that
+firmware is present and that the locally stored RPCN config names the reviewed
+host and supplies an account. It returns only the selected DNS, UPnP and XFloat
+settings to the launcher. A separate system and save root is required. The
+verifier rejects links in that root and VFS overrides, which can redirect
+RPCS3 to another profile.
+
+[The launch bridge](../lib/ui/embedded_retro_game.dart) passes the verified
+profile separately from graphics preferences. The
+[Windows core host](../windows/runner/retro_core_host.cpp) rejects an online
+launch before core initialization if the DLL lacks the versioned policy
+export. The [network policy patch](../tool/patches/rpcs3-libretro-network-policy.patch)
+applies the mode before boot and again after RPCS3 overlays global, title or
+database settings. A normal launch asks a patched core to disable internet,
+RPCN and UPnP. An older package still follows its existing offline launch path.
+The [package builder](../tool/build-rpcs3-preview.sh) accepts
+`--network-policy` for this variant.
+
+The [profile tests](../test/core/ps3_online_profile_test.dart) use synthetic
+files. The [mock-channel boot test](../test/ui/ps3_online_boot_test.dart)
+checks that a normal launch uses its original system and saves and sends
+no online profile. Run both with
+`flutter test test/core/ps3_online_profile_test.dart test/ui/ps3_online_boot_test.dart`.
+These checks do not observe a game process or its sockets. The patched
+RPCS3 translation units were syntax-checked against the pinned build flags.
+A packaged runtime test still needs to prove effective options, rejected
+redirected storage and no public network connection during offline play.
+RPCS3 permits local traffic in its disconnected mode.
+
+This checkpoint has no approved release entries or launcher action that starts
+an online game. Before enabling a provider, verify its native connection uses
+the expected endpoint when RPCS3 reloads the config, and verify protected
+profile storage through a complete isolated launch. Then qualify a real
+private level using the provider's approved client setup.
+
+The LittleBigPlanet GOTY fixture is `BCUS98208`, with disc application
+version `01.18`. Its installed game-data directory had no update executable
+or application version. Patchwork's [current LBP1 definition](https://github.com/HugeSpaceship/Patchwork/blob/HEAD/lbpdefs/lbp1.yaml)
+targets `01.30` and omits `BCUS98208`. This fixture needs a provider-approved
+update and matching executable before online qualification.
+
 ## 3. Reuse party invites and hand off to the game
 
 1. Use the shared lifecycle in the [multiplayer design](<AnyPS5 Desktop - Emulator Multiplayer Design.md>). Advertise a verified `ps3-native` mode with title/update, provider profile version and compatibility policy. The party service handles admission to the AnyTogether session. The game and provider decide admission to the native lobby.

@@ -33,6 +33,12 @@ using Value = flutter::EncodableValue;
 using Map = flutter::EncodableMap;
 using List = flutter::EncodableList;
 
+struct Ps3NetworkPolicy {
+  std::string xfloat;
+  std::string dns;
+  bool upnp;
+};
+
 // Layouts and command values from the libretro v1 C ABI.
 struct GameInfo {
   const char* path;
@@ -387,12 +393,14 @@ class RetroCoreSession {
   RetroCoreSession(flutter::TextureRegistrar* registrar, std::string core,
                    std::string disc, std::string system, std::string saves,
                    std::string initial_resolution = {},
-                   std::map<std::string, std::string> initial_graphics = {})
+                   std::map<std::string, std::string> initial_graphics = {},
+                   std::optional<Ps3NetworkPolicy> online = std::nullopt)
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
         system_(std::move(system)), saves_(std::move(saves)),
         content_(std::filesystem::u8path(disc_).parent_path().u8string()),
         initial_resolution_(std::move(initial_resolution)),
         initial_graphics_(std::move(initial_graphics)),
+        online_(std::move(online)),
         ps3_(std::filesystem::u8path(core_).filename() == L"rpcs3_libretro.dll"),
         texture_(flutter::PixelBufferTexture([this](size_t, size_t) { return CopyFrame(); })) {}
 
@@ -466,6 +474,7 @@ class RetroCoreSession {
   }
 
   bool SetOption(const std::string& key, const std::string& value) {
+    if (online_) return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
     const auto option = options_.find(key);
     if (option == options_.end() ||
@@ -489,7 +498,7 @@ class RetroCoreSession {
   }
 
   bool SetTuningOptions(const Map& expected, const Map& values) {
-    if (!presented_ || !hardware_frame_ || values.empty() || expected.size() != values.size())
+    if (online_ || !presented_ || !hardware_frame_ || values.empty() || expected.size() != values.size())
       return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
     if (graphics_applying_ || graphics_queued_) return false;
@@ -946,6 +955,18 @@ class RetroCoreSession {
       if (!dll) throw std::runtime_error("Could not load the configured emulator core");
       if (Symbol<unsigned (*)()>(dll, "retro_api_version")() != 1)
         throw std::runtime_error("Unsupported emulator core API");
+      if (ps3_) {
+        using SelectPolicy = bool (*)(unsigned, const char*, const char*, bool);
+        const auto address = GetProcAddress(dll, "retro_anyps5_ps3_network_policy_v1");
+        SelectPolicy select = nullptr;
+        static_assert(sizeof(select) == sizeof(address));
+        std::memcpy(&select, &address, sizeof(select));
+        if (online_ && !select)
+          throw std::runtime_error("This RPCS3 core does not support verified online profiles.");
+        if (select && !select(online_ ? 1u : 0u, online_ ? online_->xfloat.c_str() : nullptr,
+                              online_ ? online_->dns.c_str() : nullptr, online_ && online_->upnp))
+          throw std::runtime_error("RPCS3 rejected the network policy.");
+      }
       const auto init = Symbol<VoidFunction>(dll, "retro_init");
       deinit = Symbol<VoidFunction>(dll, "retro_deinit");
       unload = Symbol<VoidFunction>(dll, "retro_unload_game");
@@ -1091,6 +1112,7 @@ class RetroCoreSession {
   const std::string core_, disc_, system_, saves_, content_;
   const std::string initial_resolution_;
   const std::map<std::string, std::string> initial_graphics_;
+  const std::optional<Ps3NetworkPolicy> online_;
   const bool ps3_;
   flutter::TextureVariant texture_;
   int64_t texture_id_ = -1;
@@ -1172,6 +1194,18 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
       return;
     }
     try {
+      std::optional<Ps3NetworkPolicy> online;
+      if (const auto found = fields->find(Value("ps3Online")); found != fields->end()) {
+        const auto* policy = std::get_if<Map>(&found->second);
+        const auto* xfloat = policy ? StringField(*policy, "xfloat") : nullptr;
+        const auto* dns = policy ? StringField(*policy, "dns") : nullptr;
+        const auto upnp = policy ? policy->find(Value("upnp")) : Map::const_iterator{};
+        if (!policy || policy->size() != 3 || !xfloat || !dns || upnp == policy->end() ||
+            !std::holds_alternative<bool>(upnp->second) ||
+            std::filesystem::u8path(*core).filename() != L"rpcs3_libretro.dll")
+          throw std::runtime_error("Invalid PS3 online profile.");
+        online = Ps3NetworkPolicy{*xfloat, *dns, std::get<bool>(upnp->second)};
+      }
       std::map<std::string, std::string> graphics;
       const auto values = fields->find(Value("graphics"));
       if (values != fields->end()) {
@@ -1184,7 +1218,7 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
         }
       }
       session_ = std::make_shared<RetroCoreSession>(textures_, *core, *disc, *system, *saves,
-                                                   resolution ? *resolution : "", std::move(graphics));
+                                                   resolution ? *resolution : "", std::move(graphics), std::move(online));
       if (!session_->Start()) throw std::runtime_error("Could not register the game surface");
       result->Success(Value(session_->texture_id()));
     } catch (const std::exception& failure) {

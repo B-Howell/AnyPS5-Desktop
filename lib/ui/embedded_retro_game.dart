@@ -8,6 +8,7 @@ import '../core/controllers/pad_info.dart';
 import '../core/game_library.dart';
 import '../core/game_process.dart';
 import '../core/managed_retro.dart';
+import '../core/ps3_online_profile.dart';
 import '../core/gamepad/pad_navigation.dart';
 
 import 'retro_game_tuning.dart';
@@ -15,13 +16,19 @@ import 'retro_game_tuning.dart';
 export 'retro_game_tuning.dart' show EmbeddedOption, RetroTuningPersist;
 
 class EmbeddedRetroGame extends RunningGame {
-  EmbeddedRetroGame._(this.textureId, this._finished, this._onResolutionSelected, this._onGraphicsSelected)
-    : super.embedded(_finished.future, DateTime.now());
+  EmbeddedRetroGame._(
+    this.textureId,
+    this._finished,
+    this._onResolutionSelected,
+    this._onGraphicsSelected,
+    this._online,
+  ) : super.embedded(_finished.future, DateTime.now());
 
   static const _channel = MethodChannel('anyps5/retro_core');
   static const ps3Resolution = 'rpcs3_resolution_scale';
   final int textureId;
   final Completer<int> _finished;
+  final bool _online;
   final void Function(String) _onResolutionSelected;
   final void Function(String, String) _onGraphicsSelected;
   final _ready = Completer<bool>();
@@ -64,26 +71,41 @@ class EmbeddedRetroGame extends RunningGame {
     RetroTuningPersist? onTuningApplied,
     required PadState Function() readPad,
     required void Function() changed,
+    Ps3OnlineProfile? onlineProfile,
   }) async {
     final core = p.join(folder, ManagedRetro.libraryName(disc.platform));
+    if (onlineProfile != null &&
+        (disc.platform != RetroPlatform.ps3 ||
+            !p.equals(p.absolute(core), onlineProfile.core) ||
+            !p.equals(p.absolute(disc.path), onlineProfile.disc))) {
+      throw Ps3OnlineIssue.unqualified;
+    }
     if (!File(core).existsSync()) throw FileSystemException('The embedded emulator core is missing', core);
-    final saveRoot = Directory(p.join(folder, 'saves', disc.platform.name))..createSync(recursive: true);
+    final saveRoot = Directory(onlineProfile?.saveRoot ?? p.join(folder, 'saves', disc.platform.name))
+      ..createSync(recursive: true);
     final id = await _channel.invokeMethod<int>('start', {
       'core': core,
-      'disc': disc.path,
-      'system': p.join(folder, 'system'),
+      'disc': onlineProfile?.disc ?? disc.path,
+      'system': onlineProfile?.systemRoot ?? p.join(folder, 'system'),
       'saves': saveRoot.path,
       'internalResolution': ?internalResolution,
       if (graphics.isNotEmpty) 'graphics': graphics,
+      if (onlineProfile != null) 'ps3Online': onlineProfile.networkArguments,
     });
     if (id == null || id < 0) throw StateError('The game surface could not start.');
-    final session = EmbeddedRetroGame._(id, Completer<int>(), onResolutionSelected, onGraphicsSelected);
+    final session = EmbeddedRetroGame._(
+      id,
+      Completer<int>(),
+      onResolutionSelected,
+      onGraphicsSelected,
+      onlineProfile != null,
+    );
     session.tuning = RetroGameTuning(
       platform: disc.platform,
       options: session.options,
-      ready: () => session.presented && session.hardwareRendering && !session._closing,
+      ready: () => onlineProfile == null && session.presented && session.hardwareRendering && !session._closing,
       writeOptions: (expected, values) async {
-        if (session._closing) return false;
+        if (onlineProfile != null || session._closing) return false;
         final accepted = await _channel.invokeMethod<bool>('tuningOptions', {'expected': expected, 'values': values});
         return accepted == true &&
             (!values.keys.any(_usesGraphicsCheckpoint) || await session._waitForGraphics(values));
@@ -220,6 +242,7 @@ class EmbeddedRetroGame extends RunningGame {
   }
 
   Future<void> setOption(String key, String value) async {
+    if (_online) return;
     if (_closing || tuning.updating) return;
     if (tuning.canCancel) await tuning.cancel();
     if (_closing || tuning.updating) return;
