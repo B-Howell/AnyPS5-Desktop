@@ -1,6 +1,7 @@
 #include "retro_core_host.h"
 #include "ps1_netplay_timeline.h"
 #include "ps2_virtual_lan.h"
+#include "ps3_package_batch.h"
 #include "retro_vulkan_video.h"
 
 #include <windows.h>
@@ -20,6 +21,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -42,6 +44,20 @@ struct Ps3NetworkPolicy {
   std::string dns;
   bool upnp;
 };
+
+void SelectPs3NetworkPolicy(HMODULE dll, const std::optional<Ps3NetworkPolicy>& online,
+                            bool require_export) {
+  using SelectPolicy = bool (*)(unsigned, const char*, const char*, bool);
+  const auto address = GetProcAddress(dll, "retro_anyps5_ps3_network_policy_v1");
+  SelectPolicy select = nullptr;
+  static_assert(sizeof(select) == sizeof(address));
+  std::memcpy(&select, &address, sizeof(select));
+  if (require_export && !select)
+    throw std::runtime_error("This RPCS3 core does not support isolated PS3 profiles.");
+  if (select && !select(online ? 1u : 0u, online ? online->xfloat.c_str() : nullptr,
+                        online ? online->dns.c_str() : nullptr, online && online->upnp))
+    throw std::runtime_error("RPCS3 rejected the network policy.");
+}
 
 // Layouts and command values from the libretro v1 C ABI.
 struct GameInfo {
@@ -485,7 +501,8 @@ class RetroCoreSession {
                    std::optional<unsigned> netplay_seat = std::nullopt,
                    const std::string& netplay_bios = {}, bool local_staging = false,
                    std::optional<Ps2VirtualLan::Mac> lan_mac = std::nullopt,
-                   std::optional<Ps3NetworkPolicy> online = std::nullopt)
+                   std::optional<Ps3NetworkPolicy> online = std::nullopt,
+                   std::vector<std::string> packages = {})
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
         netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(*netplay_seat) : nullptr),
         match_storage_(netplay_ ? std::make_unique<Ps1MatchStorage>(netplay_bios) : nullptr),
@@ -497,6 +514,7 @@ class RetroCoreSession {
         initial_resolution_(std::move(initial_resolution)),
         initial_graphics_(std::move(initial_graphics)),
         online_(std::move(online)),
+        packages_(std::move(packages)),
         ps3_(std::filesystem::u8path(core_).filename() == L"rpcs3_libretro.dll"),
         local_staging_(local_staging),
         texture_(flutter::PixelBufferTexture([this](size_t, size_t) { return CopyFrame(); })) {
@@ -507,6 +525,10 @@ class RetroCoreSession {
   ~RetroCoreSession() { Stop(); Join(); }
 
   bool Start() {
+    if (installing_packages()) {
+      worker_ = std::thread([this] { RunPackageInstall(); });
+      return true;
+    }
     texture_id_ = registrar_->RegisterTexture(&texture_);
     if (texture_id_ < 0) return false;
     worker_ = std::thread([this] { Run(); });
@@ -515,6 +537,17 @@ class RetroCoreSession {
 
   int64_t texture_id() const { return texture_id_; }
   bool ended() const { return ended_; }
+  bool installing_packages() const { return !packages_.empty(); }
+
+  Map PackageStatus() {
+    std::lock_guard<std::mutex> lock(settings_mutex_);
+    const bool ended = ended_.load();
+    return {
+        {Value("ended"), Value(ended)},
+        {Value("error"), Value(ended ? error_ : std::string())},
+        {Value("completed"), Value(package_completed_.load())},
+    };
+  }
   void Stop() {
     stop_ = true;
     if (lan_) lan_->Close();
@@ -1145,6 +1178,7 @@ class RetroCoreSession {
         *static_cast<const char**>(data) = core_.c_str();
         return true;
       case kContentDirectory:
+        if (installing_packages()) return false;
         *static_cast<const char**>(data) = content_.c_str();
         return true;
       case kSaveDirectory:
@@ -1394,6 +1428,55 @@ class RetroCoreSession {
     }
   }
 
+  void RunPackageInstall() {
+    using VoidFunction = void (*)();
+    HMODULE dll = nullptr;
+    VoidFunction deinit = nullptr;
+    bool initialized = false;
+    active_ = this;
+    try {
+      const auto path = std::filesystem::u8path(core_);
+      dll = LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+      if (!dll || Symbol<unsigned (*)()>(dll, "retro_api_version")() != 1)
+        throw std::runtime_error("Could not load the RPCS3 package installer.");
+      SelectPs3NetworkPolicy(dll, std::nullopt, true);
+      const auto init = Symbol<VoidFunction>(dll, "retro_init");
+      deinit = Symbol<VoidFunction>(dll, "retro_deinit");
+      const auto load = Symbol<bool (*)(const GameInfo*)>(dll, "retro_load_game");
+      const auto unload = Symbol<VoidFunction>(dll, "retro_unload_game");
+      Symbol<void (*)(bool (*)(unsigned, void*))>(dll, "retro_set_environment")(
+          [](unsigned command, void* data) { return active_.load()->Environment(command, data); });
+      Symbol<void (*)(void (*)(const void*, unsigned, unsigned, size_t))>(dll, "retro_set_video_refresh")(
+          [](const void*, unsigned, unsigned, size_t) {});
+      Symbol<void (*)(void (*)(int16_t, int16_t))>(dll, "retro_set_audio_sample")(
+          [](int16_t, int16_t) {});
+      Symbol<void (*)(size_t (*)(const int16_t*, size_t))>(dll, "retro_set_audio_sample_batch")(
+          [](const int16_t*, size_t frames) { return frames; });
+      Symbol<void (*)(void (*)())>(dll, "retro_set_input_poll")([] {});
+      Symbol<void (*)(int16_t (*)(unsigned, unsigned, unsigned, unsigned))>(dll, "retro_set_input_state")(
+          [](unsigned, unsigned, unsigned, unsigned) -> int16_t { return 0; });
+      init();
+      initialized = true;
+      const bool installed = InstallPs3PackageBatch(
+          packages_, [&](const std::string& package) {
+            const GameInfo info{package.c_str(), nullptr, 0, nullptr};
+            return load(&info);
+          }, unload, [&] { return stop_.load(); }, [&](size_t count) {
+            package_completed_ = static_cast<int32_t>(count);
+          });
+      if (!installed)
+        throw std::runtime_error(stop_ ? "PS3 update installation was cancelled."
+                                       : "RPCS3 rejected a package in the update chain.");
+    } catch (const std::exception& failure) {
+      std::lock_guard<std::mutex> lock(settings_mutex_);
+      error_ = failure.what();
+    }
+    if (initialized) deinit();
+    if (dll) FreeLibrary(dll);
+    active_ = nullptr;
+    ended_ = true;
+  }
+
   void Run() {
     using Clock = std::chrono::steady_clock;
     using VoidFunction = void (*)();
@@ -1412,18 +1495,7 @@ class RetroCoreSession {
       if (!dll) throw std::runtime_error("Could not load the configured emulator core");
       if (Symbol<unsigned (*)()>(dll, "retro_api_version")() != 1)
         throw std::runtime_error("Unsupported emulator core API");
-      if (ps3_) {
-        using SelectPolicy = bool (*)(unsigned, const char*, const char*, bool);
-        const auto address = GetProcAddress(dll, "retro_anyps5_ps3_network_policy_v1");
-        SelectPolicy select = nullptr;
-        static_assert(sizeof(select) == sizeof(address));
-        std::memcpy(&select, &address, sizeof(select));
-        if (online_ && !select)
-          throw std::runtime_error("This RPCS3 core does not support verified online profiles.");
-        if (select && !select(online_ ? 1u : 0u, online_ ? online_->xfloat.c_str() : nullptr,
-                              online_ ? online_->dns.c_str() : nullptr, online_ && online_->upnp))
-          throw std::runtime_error("RPCS3 rejected the network policy.");
-      }
+      if (ps3_) SelectPs3NetworkPolicy(dll, online_, online_.has_value());
       const auto init = Symbol<VoidFunction>(dll, "retro_init");
       deinit = Symbol<VoidFunction>(dll, "retro_deinit");
       unload = Symbol<VoidFunction>(dll, "retro_unload_game");
@@ -1601,6 +1673,8 @@ class RetroCoreSession {
   const std::string initial_resolution_;
   const std::map<std::string, std::string> initial_graphics_;
   const std::optional<Ps3NetworkPolicy> online_;
+  const std::vector<std::string> packages_;
+  std::atomic<int32_t> package_completed_{0};
   const bool ps3_;
   const bool local_staging_;
   flutter::TextureVariant texture_;
@@ -1680,6 +1754,71 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
                            std::unique_ptr<flutter::MethodResult<Value>> result) {
   const auto& method = call.method_name();
   const auto* arguments = call.arguments();
+  if (method == "installPs3Packages") {
+    if (session_)
+      return result->Error("busy", "An emulator operation is already running.");
+    const auto* fields = std::get_if<Map>(arguments);
+    const auto* core = fields ? StringField(*fields, "core") : nullptr;
+    const auto* stage = fields ? StringField(*fields, "stage") : nullptr;
+    const auto count_field = fields ? fields->find(Value("count")) : Map::const_iterator{};
+    const auto count = fields && count_field != fields->end() ? IntegerValue(count_field->second) : std::nullopt;
+    if (!core || !stage || core->find('\0') != std::string::npos ||
+        stage->find('\0') != std::string::npos || !count || *count < 1 || *count > 64)
+      return result->Error("argument", "An RPCS3 core, staging profile and update chain are required.");
+    try {
+      const auto core_path = std::filesystem::u8path(*core);
+      const auto root = std::filesystem::u8path(*stage);
+      const auto system = root / L"system";
+      const auto saves = root / L"saves";
+      const auto input = root / L"packages";
+      const auto ordinary = [](const std::filesystem::path& path) {
+        const auto attributes = GetFileAttributesW(path.c_str());
+        return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+      };
+      if (!core_path.is_absolute() || core_path.filename() != L"rpcs3_libretro.dll" ||
+          !root.is_absolute() || !ordinary(root) || !ordinary(input) || !std::filesystem::is_directory(input) ||
+          !ordinary(system) || !ordinary(saves) ||
+          !std::filesystem::is_directory(system) || !std::filesystem::is_empty(system) ||
+          !std::filesystem::is_directory(saves) || !std::filesystem::is_empty(saves))
+        return result->Error("argument", "PS3 updates require a fresh staging profile.");
+      std::vector<std::string> paths;
+      for (int64_t index = 0; index < *count; ++index) {
+        const auto path = input / (std::to_wstring(index) + L".pkg");
+        if (!ordinary(path) || !std::filesystem::is_regular_file(path) ||
+            std::filesystem::hard_link_count(path) != 1)
+          return result->Error("argument", "A staged update package is missing or is a link.");
+        paths.push_back(path.u8string());
+      }
+      const auto files = std::distance(std::filesystem::directory_iterator(input),
+                                       std::filesystem::directory_iterator());
+      if (files != *count)
+        return result->Error("argument", "The staged update chain contains extra files.");
+      session_ = std::make_shared<RetroCoreSession>(
+          textures_, *core, "", system.u8string(), saves.u8string(), "",
+          std::map<std::string, std::string>{}, std::nullopt, "", false, std::nullopt,
+          std::nullopt, std::move(paths));
+      session_->Start();
+      result->Success(Value(true));
+    } catch (const std::exception&) {
+      if (session_) Release();
+      result->Error("install", "Could not start PS3 update installation.");
+    }
+    return;
+  }
+  if (session_ && session_->installing_packages()) {
+    if (method == "ps3PackageStatus") {
+      result->Success(Value(session_->PackageStatus()));
+    } else if (method == "stop") {
+      session_->Stop();
+      result->Success();
+    } else if (method == "release" && session_->ended()) {
+      Release();
+      result->Success();
+    } else {
+      result->Error("busy", "PS3 update installation is using the emulator.");
+    }
+    return;
+  }
   if (method == "start") {
     if (session_ && session_->ended()) Release();
     if (session_) {

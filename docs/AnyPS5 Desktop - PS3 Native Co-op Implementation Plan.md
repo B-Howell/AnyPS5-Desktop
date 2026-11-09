@@ -112,13 +112,44 @@ loopback. The installed profile and original disc were untouched.
 The probe used core SHA-256
 `12f8905517226005767c03b663bab5ca2da9dbc8e0c452bdbd8bed6fda4d67c3`.
 
+The same 11-package chain also succeeded in one RPCS3 initialization,
+calling `retro_load_game` and `retro_unload_game` for each package. The
+[Windows host](../windows/runner/retro_core_host.cpp) now exposes a separate
+`installPs3Packages` operation on its existing emulator channel. Before
+calling it, the dashboard must verify the DLL digest and copy the reviewed
+packages to its own staging directory. The method takes the verified core
+path, the fresh staging root and the package count.
+The host requires empty `system` and `saves` directories and exactly the
+numbered files `packages/0.pkg` onward. It rejects linked packages and
+extra files, including license sidecars. It selects offline network policy
+before core initialization and reserves the embedded emulator until release.
+The operation registers no texture and calls no gameplay frame function.
+`ps3PackageStatus` reports how many packages finished. Stop takes effect
+between packages, and a rejected package leaves the count at the preceding
+successful package. The [batch test](../windows/runner/tests/ps3_package_batch_test.cpp)
+checks order, failure and cancellation through the
+[batch loop](../windows/runner/ps3_package_batch.h).
+The production batch loop also installed all 11 packages through the pinned
+Linux core with zero video and audio callbacks and the expected final
+executable digest.
+The Windows host compiled with MSVC `/W4 /WX`. A headless method-channel
+probe loaded a fixture DLL with no `retro_run` export, verified success,
+mid-chain rejection and cancellation, and confirmed that another game
+cannot start until the installer releases the core. It also verified
+rejection of linked packages, extra files, embedded NULs and an occupied
+staging system directory. The actual RPCS3 Windows package remains an
+acceptance gate.
+
 The dashboard importer should resolve the complete reviewed update chain
 before offering Install, then run the package operation without a gameplay
 surface. Install into a fresh staging profile, confirm the installed title,
 version and executable fingerprint, and only then make it available to
 online setup. If a package fails, report its required version and keep the
 previous profile usable. Qualify this flow with the Windows core before
-exposing it in Game Settings.
+exposing it in Game Settings. The host count identifies the failed package
+in the reviewed chain. The caller is responsible for validating package
+digests, presenting the dependency information and promoting the staged
+title data after success.
 
 ## 2. Make the embedded profile honor the selected settings
 
