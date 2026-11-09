@@ -26,6 +26,7 @@ class EmbeddedRetroGame extends RunningGame {
     this._onGraphicsSelected,
     this._netplayMedia,
     this.localNetplayStaging,
+    this._ps2Lan,
   ) : super.embedded(_finished.future, DateTime.now());
 
   static const _channel = MethodChannel('anyps5/retro_core');
@@ -37,6 +38,7 @@ class EmbeddedRetroGame extends RunningGame {
   final _ready = Completer<bool>();
   final _netplayReady = Completer<bool>();
   final Ps1NetplayMedia? _netplayMedia;
+  final bool _ps2Lan;
   bool get _netplay => _netplayMedia != null;
   late final Timer _watch;
   late final Timer _input;
@@ -84,7 +86,11 @@ class EmbeddedRetroGame extends RunningGame {
     required void Function() changed,
     ({Ps1NetplayMedia media, int seat})? netplay,
     bool localNetplayStaging = false,
+    ({Uint8List mac, String system, String saves})? ps2Lan,
   }) async {
+    if (ps2Lan != null && (disc.platform != RetroPlatform.ps2 || ps2Lan.mac.length != 6 || netplay != null)) {
+      throw ArgumentError('A private PS2 LAN session needs a PS2 game and a six-byte MAC.');
+    }
     if (localNetplayStaging && netplay?.seat != 0) {
       throw ArgumentError('Local PS1 hosting requires verified host media.');
     }
@@ -93,14 +99,17 @@ class EmbeddedRetroGame extends RunningGame {
     }
     final core = netplay?.media.core ?? p.join(folder, ManagedRetro.libraryName(disc.platform));
     if (!File(core).existsSync()) throw FileSystemException('The embedded emulator core is missing', core);
-    final saveRoot = netplay == null
-        ? (Directory(p.join(folder, 'saves', disc.platform.name))..createSync(recursive: true)).path
-        : Directory.systemTemp.path;
+    final saveRoot =
+        ps2Lan?.saves ??
+        (netplay == null
+            ? (Directory(p.join(folder, 'saves', disc.platform.name))..createSync(recursive: true)).path
+            : Directory.systemTemp.path);
     final id = await _channel.invokeMethod<int>('start', {
       'core': core,
       'disc': netplay?.media.disc ?? disc.path,
-      'system': p.join(folder, 'system'),
+      'system': ps2Lan?.system ?? p.join(folder, 'system'),
       'saves': saveRoot,
+      if (ps2Lan != null) 'ps2LanMac': ps2Lan.mac,
       if (netplay == null) ...{
         'internalResolution': ?internalResolution,
         if (graphics.isNotEmpty) 'graphics': graphics,
@@ -118,11 +127,13 @@ class EmbeddedRetroGame extends RunningGame {
       onGraphicsSelected,
       netplay?.media,
       localNetplayStaging,
+      ps2Lan != null,
     );
     session.tuning = RetroGameTuning(
       platform: disc.platform,
       options: session.options,
-      ready: () => !session._netplay && session.presented && session.hardwareRendering && !session._closing,
+      ready: () =>
+          !session._netplay && !session._ps2Lan && session.presented && session.hardwareRendering && !session._closing,
       writeOptions: (expected, values) async {
         if (session._closing) return false;
         final accepted = await _channel.invokeMethod<bool>('tuningOptions', {'expected': expected, 'values': values});
@@ -294,6 +305,12 @@ class EmbeddedRetroGame extends RunningGame {
     if (!_netplay || _closing || await _channel.invokeMethod<bool>('netplayStart') != true) {
       throw StateError('The PS1 netplay runner could not start.');
     }
+  }
+
+  /// Returns null until the core has loaded and the private queues are available.
+  Future<List<Uint8List>?> exchangePs2LanFrames(List<Uint8List> input) async {
+    if (!_ps2Lan || _closing || _finished.isCompleted) return null;
+    return _channel.invokeListMethod<Uint8List>('ps2LanExchange', {'texture': textureId, 'frames': input});
   }
 
   /// Captures the state immediately before the returned emulation frame.

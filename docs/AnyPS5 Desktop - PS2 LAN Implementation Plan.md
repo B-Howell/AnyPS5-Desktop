@@ -251,14 +251,31 @@ and drops stale epochs, spoofed sources and traffic to other segments. The
 those rules with synthetic frames. The [DEV9 adapter source patch](../tool/patches/parallel-ps2-virtual-lan.patch)
 adds a versioned binding for frontend-owned Ethernet queues. It uses frames
 without a frame check sequence and leaves the original adapter selection in
-place when no frontend transport is bound. The frontend still needs to
-connect this binding to the [peer connection layer](../lib/core/online/online_peer_mesh.dart).
+place when no frontend transport is bound.
+
+The [Windows queue](../windows/runner/ps2_virtual_lan.h) copies frames
+into fixed 64-frame buffers in each direction. The [embedded runner](../windows/runner/retro_core_host.cpp)
+requires the DEV9 binding for an explicitly configured PS2 LAN launch,
+enables the core's Ethernet option for that session, and detaches after
+unloading the game. It refuses a core without the binding before boot.
+The [Dart bridge](../lib/ui/embedded_retro_game.dart) exchanges batches
+of at most 16 frames and accepts caller-supplied LAN system and save
+paths for isolation. The [native queue test](../windows/runner/tests/ps2_virtual_lan_test.cpp)
+exercises the callback ABI, frame copying, bounded queues, routing checks,
+and teardown. The LAN launch preserves its network state by rejecting
+graphics changes that reopen the core. The room coordinator still needs to feed the frame batches
+through the [peer connection layer](../lib/core/online/online_peer_mesh.dart).
 
 The patched DEV9 object compiled with GCC in WSL at the pinned core
 revision. The object exports `retro_anyps5_dev9_bind_v1`. This is a
 source and object check. The complete core package, private guest IP
-assignment, frontend queue integration and a game run over the patched
-adapter still need verification.
+assignment and a game run over the patched adapter still need verification.
+
+TimeSplitters: Future Perfect is a second PS2 fixture. Its US NTSC disc
+reports `SLUS21148` and version `1.00` in `SYSTEM.CNF`. The [original manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)
+documents separate Online Game and LAN Game modes. The latter can exercise
+the private segment with a different game protocol from GT4. Online Game
+requires a compatible service, which is a separate qualification.
 
 At [the pinned DEV9 source revision](https://github.com/libretro/parallel-ps2/blob/da5b07ebebc18016e1ca5b401188a283971a0e8d/pcsx2/DEV9/net.cpp),
 `tx_put` can pass a stack-backed packet, so an asynchronous adapter must

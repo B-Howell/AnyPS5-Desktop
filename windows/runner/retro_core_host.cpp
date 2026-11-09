@@ -1,5 +1,6 @@
 #include "retro_core_host.h"
 #include "ps1_netplay_timeline.h"
+#include "ps2_virtual_lan.h"
 #include "retro_vulkan_video.h"
 
 #include <windows.h>
@@ -476,10 +477,12 @@ class RetroCoreSession {
                    std::string initial_resolution = {},
                    std::map<std::string, std::string> initial_graphics = {},
                    std::optional<unsigned> netplay_seat = std::nullopt,
-                   const std::string& netplay_bios = {}, bool local_staging = false)
+                   const std::string& netplay_bios = {}, bool local_staging = false,
+                   std::optional<Ps2VirtualLan::Mac> lan_mac = std::nullopt)
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
         netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(*netplay_seat) : nullptr),
         match_storage_(netplay_ ? std::make_unique<Ps1MatchStorage>(netplay_bios) : nullptr),
+        lan_(lan_mac ? std::make_unique<Ps2VirtualLan>(*lan_mac) : nullptr),
         system_(match_storage_ ? match_storage_->system() : std::move(system)),
         saves_(match_storage_ ? match_storage_->saves() : std::move(saves)),
         content_(match_storage_ ? match_storage_->content()
@@ -504,11 +507,35 @@ class RetroCoreSession {
 
   int64_t texture_id() const { return texture_id_; }
   bool ended() const { return ended_; }
-  void Stop() { stop_ = true; }
+  void Stop() {
+    stop_ = true;
+    if (lan_) lan_->Close();
+  }
   void Join() { if (worker_.joinable()) worker_.join(); }
 
+  std::optional<List> ExchangeLan(const List& input) {
+    if (!lan_ || !lan_ready_ || stop_ || ended_ || input.size() > Ps2VirtualLan::kBatchSize)
+      return std::nullopt;
+    for (const auto& item : input) {
+      const auto* frame = std::get_if<CheckpointBytes>(&item);
+      if (!frame || !lan_->Accepts(frame->data(), frame->size())) return std::nullopt;
+    }
+    for (const auto& item : input) {
+      const auto& frame = std::get<CheckpointBytes>(item);
+      lan_->Inject(frame.data(), frame.size());
+    }
+    List output;
+    std::array<uint8_t, Ps2VirtualLan::kMaxFrame> frame{};
+    while (output.size() < Ps2VirtualLan::kBatchSize) {
+      const auto size = lan_->Drain(frame.data(), frame.size());
+      if (!size) break;
+      output.emplace_back(CheckpointBytes(frame.data(), frame.data() + size));
+    }
+    return output;
+  }
+
   void Pause(bool pause) {
-    if (netplay_) {
+    if (netplay_ || lan_) {
       if (pause) SetInput(0, {});
       return;
     }
@@ -699,7 +726,7 @@ class RetroCoreSession {
   }
 
   bool SetOption(const std::string& key, const std::string& value) {
-    if (netplay_) return false;
+    if (netplay_ || (lan_ && key == kPs2Resolution)) return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
     const auto option = options_.find(key);
     if (option == options_.end() ||
@@ -734,6 +761,7 @@ class RetroCoreSession {
       const auto* value = std::get_if<std::string>(&entry.second);
       if (!key || !value || !TrialOption(*key)) return false;
       checkpoint |= Ps1GraphicsOption(*key) || *key == kPs2Resolution;
+      if (lan_ && checkpoint) return false;
       const auto* current = StringField(expected, key->c_str());
       const auto option = options_.find(*key);
       if (!current || option == options_.end()) return false;
@@ -1123,6 +1151,10 @@ class RetroCoreSession {
       case kGetVariable: {
         std::lock_guard<std::mutex> lock(settings_mutex_);
         auto& variable = *static_cast<Variable*>(data);
+        if (lan_ && variable.key && std::strcmp(variable.key, "pcsx2_dev9_eth") == 0) {
+          variable.value = "enabled";
+          return true;
+        }
         const auto found = variable.key ? options_.find(variable.key) : options_.end();
         variable.value = found == options_.end() ? nullptr :
             found->second.values[found->second.selected].c_str();
@@ -1378,6 +1410,10 @@ class RetroCoreSession {
       const auto load = Symbol<bool (*)(const GameInfo*)>(dll, "retro_load_game");
       const auto step = Symbol<VoidFunction>(dll, "retro_run");
       const auto av_info = Symbol<void (*)(AvInfo*)>(dll, "retro_get_system_av_info");
+      const auto bind_lan = lan_
+          ? reinterpret_cast<Ps2VirtualLan::Bind>(GetProcAddress(dll, "retro_anyps5_dev9_bind_v1"))
+          : nullptr;
+      if (lan_ && !bind_lan) throw std::runtime_error("This PS2 core does not support the private LAN adapter.");
       Symbol<void (*)(bool (*)(unsigned, void*))>(dll, "retro_set_environment")(
           [](unsigned command, void* data) { return active_.load()->Environment(command, data); });
       Symbol<void (*)(void (*)(const void*, unsigned, unsigned, size_t))>(dll, "retro_set_video_refresh")(
@@ -1409,9 +1445,11 @@ class RetroCoreSession {
           });
       const GameInfo game{disc_.c_str(), nullptr, 0, nullptr};
       const auto reopen = [&] {
+        lan_ready_ = false;
         if (loaded) unload();
-        if (initialized) deinit();
         loaded = false;
+        if (lan_ && !lan_->Detach()) throw std::runtime_error("Could not detach the private PS2 network.");
+        if (initialized) deinit();
         hardware_.Clear();
         hardware_callbacks_ = {};
         init();
@@ -1423,7 +1461,9 @@ class RetroCoreSession {
           controller(0, 1);
           for (unsigned port = 1; port < 7; ++port) controller(port, 0);
         }
+        if (lan_ && !lan_->Attach(bind_lan)) throw std::runtime_error("Could not attach the private PS2 network.");
         loaded = load(&game);
+        lan_ready_ = lan_ && loaded;
         if (loaded && netplay_) {
           const auto controller = Symbol<void (*)(unsigned, unsigned)>(dll, "retro_set_controller_port_device");
           for (unsigned port = 0; port < 2; ++port) controller(port, 1);
@@ -1513,10 +1553,17 @@ class RetroCoreSession {
       std::lock_guard<std::mutex> lock(settings_mutex_);
       error_ = failure.what();
     }
+    lan_ready_ = false;
+    if (lan_) lan_->Close();
     if (loaded) unload();
+    const bool lan_detached = !lan_ || lan_->Detach();
     if (ps3_ && vulkan_.negotiated() && hardware_callbacks_.destroy) hardware_callbacks_.destroy();
     if (ps3_) vulkan_.Close();
     if (initialized) deinit();
+    if (!lan_detached && !lan_->Detach()) {
+      std::lock_guard<std::mutex> lock(settings_mutex_);
+      if (error_.empty()) error_ = "The PS2 core did not release the private LAN adapter.";
+    }
     audio_.Close();
     if (dll) FreeLibrary(dll);
     active_ = nullptr;
@@ -1528,6 +1575,8 @@ class RetroCoreSession {
   const std::string core_, disc_;
   const std::unique_ptr<ps1_netplay::Timeline> netplay_;
   const std::unique_ptr<Ps1MatchStorage> match_storage_;
+  const std::unique_ptr<Ps2VirtualLan> lan_;
+  std::atomic<bool> lan_ready_{false};
   const std::string system_, saves_, content_;
   const std::string initial_resolution_;
   const std::map<std::string, std::string> initial_graphics_;
@@ -1628,6 +1677,7 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
     }
     try {
       std::optional<unsigned> netplay_seat;
+      std::optional<Ps2VirtualLan::Mac> lan_mac;
       const auto seat = fields->find(Value("ps1NetplaySeat"));
       const auto* netplay_bios = StringField(*fields, "ps1NetplayBios");
       const auto local = fields->find(Value("ps1LocalStaging"));
@@ -1646,6 +1696,18 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
         }
         netplay_seat = static_cast<unsigned>(*number);
       }
+      if (const auto lan = fields->find(Value("ps2LanMac")); lan != fields->end()) {
+        const auto* bytes = std::get_if<CheckpointBytes>(&lan->second);
+        Ps2VirtualLan::Mac mac{};
+        if (!bytes || bytes->size() != mac.size() || netplay_seat ||
+            std::filesystem::u8path(*core).filename() != L"pcsx2_libretro.dll") {
+          return result->Error("argument", "A PS2 LAN session requires LRPS2 and a six-byte virtual MAC.");
+        }
+        std::copy(bytes->begin(), bytes->end(), mac.begin());
+        if (!Ps2VirtualLan::ValidMac(mac))
+          return result->Error("argument", "The PS2 virtual MAC must be a nonzero unicast address.");
+        lan_mac = mac;
+      }
       std::map<std::string, std::string> graphics;
       const auto values = fields->find(Value("graphics"));
       if (values != fields->end()) {
@@ -1660,7 +1722,7 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
       session_ = std::make_shared<RetroCoreSession>(textures_, *core, *disc, *system, *saves,
                                                    resolution ? *resolution : "", std::move(graphics),
                                                    netplay_seat, netplay_bios ? *netplay_bios : "",
-                                                   local_staging && *local_staging);
+                                                   local_staging && *local_staging, lan_mac);
       if (!session_->Start()) throw std::runtime_error("Could not register the game surface");
       result->Success(Value(session_->texture_id()));
     } catch (const std::exception& failure) {
@@ -1675,6 +1737,17 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
   }
   if (method == "status") {
     result->Success(Value(session_->Status()));
+  } else if (method == "ps2LanExchange") {
+    const auto* fields = std::get_if<Map>(arguments);
+    if (!fields) return result->Error("argument", "Expected a PS2 LAN frame batch.");
+    const auto token = fields->find(Value("texture"));
+    const auto texture = token == fields->end() ? std::nullopt : IntegerValue(token->second);
+    if (texture != session_->texture_id()) return result->Success();
+    const auto input = fields->find(Value("frames"));
+    const auto* frames = input == fields->end() ? nullptr : std::get_if<List>(&input->second);
+    if (!frames) return result->Error("argument", "Expected a PS2 LAN frame list.");
+    auto output = session_->ExchangeLan(*frames);
+    result->Success(output ? Value(std::move(*output)) : Value());
   } else if (method == "netplayStart") {
     result->Success(Value(session_->StartNetplay()));
   } else if (method == "ps1CheckpointHold") {

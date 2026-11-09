@@ -33,7 +33,8 @@ sheets with their tracks, M3U playlists, PBP images and CHDs. It recognizes
 PS2 DVD dumps with a PS2 boot marker and PS2 CHDs. Use a console-named
 root to disambiguate CHDs or supply a manifest. The
 [PS3 disc reader](../lib/core/ps3_disc.dart) recognizes extracted disc
-folders with PS3_DISC.SFB and PS3_GAME. Extract archives before scanning.
+folders with PS3_DISC.SFB and PS3_GAME at the top level. Extract a decrypted
+PS3 disc ISO to that folder layout before scanning it in AnyPS5.
 
 An optional retro.json beside a PS1 or PS2 image can supply the platform,
 title ID, name and media. Paths are relative to that title's folder.
