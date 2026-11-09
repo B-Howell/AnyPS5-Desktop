@@ -76,6 +76,8 @@ import '../core/together/token_store.dart';
 import '../core/online/online_peer_mesh.dart';
 import '../core/online/ps1_netplay_media.dart';
 import '../core/online/ps2_lan_profile.dart';
+import '../core/online/retro_lan_bridge.dart';
+import '../core/online/retro_lan_dhcp.dart';
 import '../core/online/retro_lan_match.dart';
 import '../core/together/voice_mesh.dart';
 import '../core/themes/theme_design.dart';
@@ -4058,6 +4060,82 @@ class AppModel extends ChangeNotifier {
   }
 
   bool get ps2LanCoreInstalled => ManagedRetro(retroCoreOverride ?? _managedRetro.root).supportsPs2Lan;
+
+  bool _ps2LanSetupActive = false;
+  bool get ps2LanSetupActive => _ps2LanSetupActive;
+  static const _ps2SetupDisc = (serial: 'SCUS97328', revision: '2.00');
+
+  Game? get _ps2LanSetupTitle => games
+      .where(
+        (game) =>
+            game.retro?.platform == RetroPlatform.ps2 &&
+            (serial: game.retroSerial, revision: game.version) == _ps2SetupDisc,
+      )
+      .firstOrNull;
+
+  Future<void> _configurePs2Lan(Game game) async {
+    if (!together.ps2LanSetupAvailable) return show(T.text('ps2LanBusy'));
+    if (!ps2LanCoreInstalled) return show(T.text('ps2LanCore'));
+    if (ps2LanBiosPath == null) return show(T.text('ps2LanBios'));
+    final disc = File(game.retro!.path);
+    final before = disc.statSync();
+    if (before.type != FileSystemEntityType.file || GameLibrary.ps2DiscIdentity(disc.path) != _ps2SetupDisc) {
+      return show(T.text('ps2LanSetupMediaChanged'));
+    }
+    final owner = currentProfile?.id;
+    _ps2LanSetupActive = true;
+    try {
+      final run = await preparePs2Lan(
+        game,
+        Uint8List.fromList([2, 0, 0, 0, 0, 1]),
+        canBoot: () {
+          if (_disposed || currentProfile?.id != owner) return false;
+          final current = disc.statSync();
+          return current.type == FileSystemEntityType.file &&
+              current.size == before.size &&
+              current.modified == before.modified;
+        },
+      );
+      final bridge = RetroLanBridge.local(
+        dhcp: const RetroLanDhcp(mac: 0x020000000001, address: 0x0ae70065),
+        exchange: run.exchange,
+      );
+      final interrupted = Completer<void>();
+      final pump = Timer.periodic(const Duration(milliseconds: 8), (_) {
+        if (interrupted.isCompleted) return;
+        if (_disposed) {
+          interrupted.complete();
+          return;
+        }
+        unawaited(
+          bridge.pump().catchError((Object error, StackTrace stack) {
+            if (!interrupted.isCompleted) interrupted.completeError(error, stack);
+          }),
+        );
+      });
+      try {
+        show(T.text('ps2LanSetupInstructions'));
+        await Future.any([run.done, interrupted.future]);
+      } finally {
+        pump.cancel();
+        bridge.close();
+        await bridge.drained;
+        try {
+          await run.close();
+        } finally {
+          await run.done;
+        }
+      }
+    } on Ps2LanProfileInUse {
+      if (!_disposed) show(T.text('ps2LanProfileInUse'));
+    } on Object catch (error) {
+      _padLog?.call('retro: PS2 LAN setup ended: $error');
+      if (!_disposed) show(T.text('ps2LanSetupFailed'));
+    } finally {
+      _ps2LanSetupActive = false;
+      if (!_disposed) _changed();
+    }
+  }
 
   String? get ps2LanBiosPath =>
       _managedRetro.biosPath(RetroPlatform.ps2) ??

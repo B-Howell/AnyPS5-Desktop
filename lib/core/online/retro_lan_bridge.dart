@@ -8,16 +8,24 @@ import 'retro_lan_transport.dart';
 /// Moves frames between one embedded NIC and its room-bound game channels.
 /// The match owns signaling, peer lifecycle and pump scheduling.
 final class RetroLanBridge {
-  RetroLanBridge({required this._segment, required this._send, required this._exchange, this._dhcp});
+  RetroLanBridge({
+    required RetroLanTransport this._segment,
+    required void Function(String recipient, Uint8List packet) this._send,
+    required this._exchange,
+    this._dhcp,
+  });
+
+  /// Runs the guest's local network setup without a room or peer transport.
+  RetroLanBridge.local({required this._exchange, required RetroLanDhcp this._dhcp}) : _segment = null, _send = null;
 
   // Same bounds as the Windows DEV9 exchange. Drop excess traffic as a NIC
   // would rather than growing an unbounded queue while the core is booting.
   static const _queueSize = 64;
   static const _batchSize = 16;
 
-  final RetroLanTransport _segment;
+  final RetroLanTransport? _segment;
   final RetroLanDhcp? _dhcp;
-  final void Function(String recipient, Uint8List packet) _send;
+  final void Function(String recipient, Uint8List packet)? _send;
   final Future<List<Uint8List>?> Function(List<Uint8List> frames) _exchange;
   final _incoming = Queue<Uint8List>();
   bool _closed = false;
@@ -27,7 +35,7 @@ final class RetroLanBridge {
 
   void receive(String user, Uint8List packet) {
     if (_closed || _incoming.length >= _queueSize) return;
-    final frame = _segment.inbound(user, packet);
+    final frame = _segment?.inbound(user, packet);
     if (frame != null && (_dhcp == null || !RetroLanDhcp.isLocalService(frame))) _incoming.addLast(frame);
   }
 
@@ -51,10 +59,10 @@ final class RetroLanBridge {
           }
           continue;
         }
-        final routed = _segment.outbound(frame);
+        final routed = _segment?.outbound(frame);
         if (routed == null) continue;
         for (final recipient in routed.recipients) {
-          _send(recipient, routed.packet);
+          _send?.call(recipient, routed.packet);
         }
       }
     } finally {
@@ -67,6 +75,6 @@ final class RetroLanBridge {
     if (_closed) return;
     _closed = true;
     _incoming.clear();
-    _segment.close();
+    _segment?.close();
   }
 }

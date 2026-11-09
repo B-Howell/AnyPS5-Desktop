@@ -333,10 +333,19 @@ Offline cards and saves remain separate. A Windows file lock prevents
 another instance from opening the same LAN profile until the game exits.
 Closing the game releases the lock and retains the card.
 
-After the room connects, open the game's LAN menu. If the game prompts
-for network setup, choose automatic IP (DHCP) and save the configuration
-to its memory card. The host and guest each do this once per compatible
-network configuration. The launcher does not declare the network ready
+Before inviting a peer, open **Settings → Emulators → PS2 → Setup → Set up
+LAN network**. The [setup page](../lib/ui/emulator_menu.dart) offers the
+verified Gran Turismo 4 USA v2.00 disc from the local library, identified by
+serial and revision. It explains when the disc, DEV9-capable core or BIOS
+is missing. [Setup launch](../lib/ui/app_model.dart) rereads the disc metadata
+before opening the writable profile. It uses the same locked LAN card as a
+room and runs the [bridge](../lib/core/online/retro_lan_bridge.dart) with local
+DHCP only. It requires no sign-in and sends no frames to peers. PS1 and PS2
+online actions wait while setup owns the profile. Save the configuration in
+the game, then close it to release the card.
+
+After the room connects, open the game's LAN menu and choose the saved
+configuration from slot 1. The launcher does not declare the network ready
 just because a card file exists. **Leave LAN Play** in the Quick Menu closes
 the session, and restart trials are unavailable while it is active.
 
@@ -349,6 +358,11 @@ It also interrupts a launch after native startup and verifies that the
 profile stays locked until the core reports exit.
 The [profile tests](../test/core/online/ps2_lan_profile_test.dart) cover
 exclusive access, separate owners and lease release after a BIOS copy failure.
+The [settings test](../test/ui/retro_settings_setup_test.dart) opens the
+setup page, rejects a replacement disc and checks its local launch and
+frame exchange with a mocked native runner. It also checks the PS1 setup
+guard before the emulator starts. The [DHCP test](../test/core/online/retro_lan_dhcp_test.dart)
+exercises Discover, Offer, Request and ACK on the setup bridge without a room.
 The [managed core test](../test/core/managed_retro_test.dart) verifies the
 export check, and the [invite routing test](../test/ui/together_test.dart)
 checks that PS2 invites cannot join a PS5 session on a build with LAN off.
@@ -502,11 +516,20 @@ existing TimeSplitters player profile was still present.
 This verifies creation through a real PS2 title and reuse by another
 title with the persistent profile. All three boots were headless with one
 core at a time. The scratch profile contained no pre-seeded memory card.
-The next launcher gate is to let players run this setup before inviting
-a peer, using the same card as online LAN play. That setup session should
-serve local DHCP without opening a room, and offer compatible user-owned
-setup media. Evidence is stored beside the core under
+This evidence predates the Settings action and does not exercise a built
+launcher's new setup screen. Evidence is stored beside the core under
 `timesplitters-lan/blank-card-setup`.
+
+The setup action's local bridge was also exercised with two sequential
+headless TimeSplitters boots, one as host and one as guest. The harness
+passed native DEV9 frames to `RetroLanBridge.local` over process pipes.
+Each boot got one lease. The host opened a one-player lobby and the guest
+opened an empty LAN browser, consistent with the absence of a peer or
+room. Both game and profile processes exited zero. The second boot reused
+the first boot's scratch card. The recordings and logs are stored under
+`timesplitters-lan/setup-local-bridge`. This verifies the bridge against
+the native core. The Settings action itself is covered by the mocked
+launcher test and still needs a pass in a packaged app.
 
 TimeSplitters: Future Perfect is a second PS2 fixture. Its US NTSC disc
 reports `SLUS21148` and version `1.00` in `SYSTEM.CNF`. The [original manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)

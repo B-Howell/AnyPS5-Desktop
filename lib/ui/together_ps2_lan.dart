@@ -14,7 +14,15 @@ final class _Ps2LanAttempt {
 extension TogetherPs2Lan on TogetherModel {
   bool get _ps2LanEnabled => environment['ANYPS5_PS2_LAN'] == '1' && app.managedRetroAvailable;
 
-  bool get _ps2LaunchAvailable => app.running == null && app.starting == null && !app.stopping;
+  bool get _ps2LaunchAvailable =>
+      app.running == null && app.starting == null && !app.stopping && app.managedSetupConsole == null;
+
+  bool get _ps2LanBusy => _ps2Lan != null || app.ps2LanSetupActive;
+
+  bool get ps2LanSetupEnabled => _ps2LanEnabled;
+
+  bool get ps2LanSetupAvailable =>
+      _ps2LanEnabled && _ps2LaunchAvailable && !_ps2LanBusy && _ps1Match == null && !_verifyingPs1;
 
   RetroRoomSpec? _ps2LanSpec(Game game) {
     final serial = game.retroSerial;
@@ -27,7 +35,7 @@ extension TogetherPs2Lan on TogetherModel {
     final spec = game == null ? null : _ps2LanSpec(game);
     if (!_ps2LanEnabled ||
         !_ps2LaunchAvailable ||
-        _ps2Lan != null ||
+        _ps2LanBusy ||
         _ps1Match != null ||
         _verifyingPs1 ||
         !friend.presence.online ||
@@ -84,7 +92,7 @@ extension TogetherPs2Lan on TogetherModel {
   Future<void> _startPs2Lan(RetroRoomSpec spec, Iterable<Game> candidates, {String? friendId, String? roomId}) async {
     final me = account.user?.id;
     if (me == null || hub.socket.status != SocketStatus.ready) return app.show(T.text('ps2LanUnavailable'));
-    if (_ps2Lan != null || _ps1Match != null || _verifyingPs1 || !_ps2LaunchAvailable) {
+    if (_ps2LanBusy || _ps1Match != null || _verifyingPs1 || !_ps2LaunchAvailable) {
       return app.show(T.text('ps2LanBusy'));
     }
     if (candidates.isEmpty) return app.show(T.text('ps2LanDisc'));

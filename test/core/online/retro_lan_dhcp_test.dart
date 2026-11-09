@@ -139,4 +139,31 @@ void main() {
     expect(batches.first, isEmpty);
     expect(batches.last.single[284], 2);
   });
+
+  test('setup bridge offers and acknowledges DHCP without a room', () async {
+    final batches = <List<Uint8List>>[];
+    final bridge = RetroLanBridge.local(
+      dhcp: const RetroLanDhcp(mac: _host, address: _hostIp),
+      exchange: (frames) async {
+        batches.add(frames);
+        return switch (batches.length) {
+          1 => [_request(_host, 1), Uint8List(60)],
+          2 => [_request(_host, 3, requested: _hostIp, server: _serverIp)],
+          _ => [],
+        };
+      },
+    );
+    addTearDown(bridge.close);
+    await bridge.pump();
+    await bridge.pump();
+    await bridge.pump();
+    expect(batches.map((frames) => frames.map((frame) => frame[284]).toList()), [
+      [],
+      [2],
+      [5],
+    ]);
+    bridge.close();
+    await bridge.pump();
+    expect(batches.length, 3);
+  });
 }

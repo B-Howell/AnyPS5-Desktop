@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
@@ -7,6 +8,27 @@ import 'package:path/path.dart' as p;
 Directory temporaryFolder(String prefix) {
   final folder = Directory.systemTemp.createTempSync('anyps5_$prefix');
   return folder;
+}
+
+/// Writes the ISO sectors needed to read a PS2 disc's boot serial and revision.
+void writePs2IdentityIso(File iso, {required String bootSerial, required String revision}) {
+  const sector = 2048;
+  final bytes = Uint8List(sector * 22);
+  final words = ByteData.sublistView(bytes);
+  const descriptor = 16 * sector;
+  const directory = 20 * sector;
+  const config = 21 * sector;
+  final text = ascii.encode('BOOT2 = cdrom0:\\$bootSerial;1\r\nVER = $revision\r\nVMODE = NTSC\r\n');
+  bytes.setAll(descriptor, [1, ...ascii.encode('CD001'), 1]);
+  words.setUint32(descriptor + 158, 20, Endian.little);
+  words.setUint32(descriptor + 166, sector, Endian.little);
+  bytes[directory] = 46;
+  words.setUint32(directory + 2, 21, Endian.little);
+  words.setUint32(directory + 10, text.length, Endian.little);
+  bytes[directory + 32] = 12;
+  bytes.setAll(directory + 33, ascii.encode('SYSTEM.CNF;1'));
+  bytes.setAll(config, text);
+  iso.writeAsBytesSync(bytes);
 }
 
 const elfHead = [0x7F, 0x45, 0x4C, 0x46, 2, 1, 1, 0];

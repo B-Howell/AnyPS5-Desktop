@@ -169,7 +169,16 @@ class _EmulatorMenu {
     final groups = <_EmulatorGroup, List<PanelCategory>>{};
     for (final section in app.retroSettings.categories(platform, game: game)) {
       if (section.id == prefix) {
-        final setup = section.rows.where((row) => row.id != '$prefix-add').toList();
+        final setup = [
+          ...section.rows.where((row) => row.id != '$prefix-add'),
+          if (platform == RetroPlatform.ps2 && game == null && app.together.ps2LanSetupEnabled)
+            PanelRow(
+              id: 'ps2-lan-setup',
+              title: T.text('ps2LanSetupTitle'),
+              detail: T.text('ps2LanSetupDetail'),
+              kind: ActionRow(() => _push(_ps2LanSetupPage)),
+            ),
+        ];
         final custom = section.rows.where((row) => row.id == '$prefix-add').toList();
         if (setup.isNotEmpty) {
           (groups[_EmulatorGroup.setup] ??= []).add(PanelCategory(id: section.id, title: 'Setup', rows: setup));
@@ -185,6 +194,37 @@ class _EmulatorMenu {
       (groups[_EmulatorGroup.forSection(source)] ??= []).add(section);
     }
     return groups;
+  }
+
+  PanelCategory _ps2LanSetupPage() {
+    final game = app._ps2LanSetupTitle;
+    final blocker = !app.together.ps2LanSetupAvailable
+        ? 'ps2LanBusy'
+        : !app.ps2LanCoreInstalled
+        ? 'ps2LanCore'
+        : app.ps2LanBiosPath == null
+        ? 'ps2LanBios'
+        : null;
+    return PanelCategory(
+      id: 'ps2-lan-network-setup',
+      title: T.text('ps2LanSetupTitle'),
+      rows: [
+        if (game == null)
+          PanelRow(
+            id: 'ps2-lan-setup-media',
+            title: T.text('ps2LanSetupMediaTitle'),
+            detail: T.text('ps2LanSetupMedia'),
+            kind: const InfoRow(''),
+          )
+        else
+          PanelRow(
+            id: 'ps2-lan-setup-launch',
+            title: T.format('ps2LanSetupOpen', [game.name]),
+            detail: T.text('ps2LanSetupInstructions'),
+            kind: blocker == null ? ActionRow(() => unawaited(app._configurePs2Lan(game))) : InfoRow(T.text(blocker)),
+          ),
+      ],
+    );
   }
 
   String _consoleTitle(RetroPlatform platform, Game? game) {

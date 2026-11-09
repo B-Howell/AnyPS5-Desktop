@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:path/path.dart' as p;
@@ -12,23 +11,7 @@ void main() {
   test('PS2 disc identity comes from SYSTEM.CNF even when the manifest names another title', () {
     final root = temporaryFolder('ps2-disc-identity');
     addTearDown(() => root.deleteSync(recursive: true));
-    const sector = 2048;
-    final bytes = Uint8List(sector * 22);
-    final words = ByteData.sublistView(bytes);
-    const descriptor = 16 * sector;
-    const directory = 20 * sector;
-    const config = 21 * sector;
-    final text = ascii.encode('BOOT2 = cdrom0:\\SLUS_211.48;1\r\nVER = 1.00\r\nVMODE = NTSC\r\n');
-    bytes.setAll(descriptor, [1, ...ascii.encode('CD001'), 1]);
-    words.setUint32(descriptor + 158, 20, Endian.little);
-    words.setUint32(descriptor + 166, sector, Endian.little);
-    bytes[directory] = 46;
-    words.setUint32(directory + 2, 21, Endian.little);
-    words.setUint32(directory + 10, text.length, Endian.little);
-    bytes[directory + 32] = 12;
-    bytes.setAll(directory + 33, ascii.encode('SYSTEM.CNF;1'));
-    bytes.setAll(config, text);
-    File(p.join(root.path, 'Renamed disc.iso')).writeAsBytesSync(bytes);
+    writePs2IdentityIso(File(p.join(root.path, 'Renamed disc.iso')), bootSerial: 'SLUS_211.48', revision: '1.00');
 
     final detected = GameLibrary.scan(root.path).single;
     expect((detected.retroSerial, detected.version), ('SLUS21148', '1.00'));
