@@ -14,13 +14,16 @@ from time import monotonic, sleep
 
 
 class Peer:
-    def __init__(self, executable, core, disc, bios, seat, *, local=False, saves=None, recompiler=False):
+    def __init__(self, executable, core, disc, bios, seat, *, local=False, saves=None, recompiler=False,
+                 rollback=False):
         self.lines = Queue()
         arguments = [executable, core, disc, bios, str(seat)]
         if local:
             arguments.append("local")
         if recompiler:
             arguments.append("recompiler")
+        if rollback:
+            arguments.append("rollback")
         if saves is not None:
             arguments.extend(("ordinary", saves))
         self.process = Popen(
@@ -76,6 +79,8 @@ def main():
     for path in ("probe", "core", "disc", "bios"):
         parser.add_argument("--" + path, type=Path, required=True)
     parser.add_argument("--frames", type=int, default=650)
+    parser.add_argument("--rollback", action="store_true",
+                        help="Compare a native prediction worker to a confirmed-input control")
     parser.add_argument("--trace", type=Path, help="Drive the exact two-player CTR fixture and require the race finish")
     parser.add_argument("--checkpoint-guest", type=Path, help="Verify a held peer can import with a renamed CUE")
     parser.add_argument("--cutover", action="store_true", help="Replace the second player and verify the new input epoch")
@@ -94,6 +99,8 @@ def main():
     args = parser.parse_args()
     if args.frames < 120:
         parser.error("at least 120 frames are required to compare a fingerprint")
+    if args.rollback and (args.trace or args.checkpoint_guest or args.ordinary_checkpoint or args.local_handoff):
+        parser.error("--rollback runs independently of the trace and checkpoint transfer probes")
     if args.cutover and not args.checkpoint_guest:
         parser.error("--cutover requires --checkpoint-guest")
     if args.cutover_frame is not None and not (args.cutover and args.trace):
@@ -114,6 +121,9 @@ def main():
         parser.error("--ordinary-replace requires --ordinary-checkpoint and --ordinary-control-core")
 
     with ExitStack() as cleanup:
+        if args.rollback:
+            verify_native_rollback(args, cleanup)
+            return
         if args.ordinary_checkpoint:
             verify_ordinary_checkpoint(args, cleanup)
             return
@@ -438,6 +448,55 @@ def verify_new_input_epoch(host, guest, *, input_masks=None):
     assert fingerprints[0][119] == fingerprints[1][119], "PS1 RAM diverged after cutover"
     assert not input_masks or all(seen), "Each seat must supply its own controller input"
     print("The held host and replacement guest matched the first RAM fingerprint in the new input epoch.")
+
+
+def verify_native_rollback(args, cleanup):
+    peers = []
+    for prediction in (False, True):
+        peer = Peer(args.probe.resolve(), args.core.resolve(), args.disc.resolve(), args.bios.resolve(),
+                    0, rollback=prediction)
+        cleanup.callback(peer.close)
+        peers.append(peer)
+    assert all(peer.receive() == "ready" for peer in peers)
+    assert all(peer.send("start") == "started" for peer in peers)
+    states = [peer.sync() for peer in peers]
+    sent = [set(), set()]
+    fingerprints = [{}, {}]
+    gap = 119
+
+    def pump(seat, hold_gap):
+        frame, _, local, _ = states[seat]
+        inputs = [(index, 256 if gap <= index < gap + 8 else 0)
+                  for index in range(frame + 12) if index not in sent[seat] and (index != gap or not hold_gap)]
+        states[seat] = peers[seat].sync(local[-1][0], inputs)
+        assert states[seat][0] >= frame, "Published progress moved backward during replay"
+        sent[seat].update(index for index, _ in inputs)
+        for index, fingerprint in states[seat][3].items():
+            assert fingerprints[seat].setdefault(index, fingerprint) == fingerprint, (
+                f"Worker {seat} changed a published fingerprint at frame {index}")
+
+    deadline = monotonic() + 35
+    while states[1][0] < gap + 3:
+        if monotonic() > deadline:
+            raise TimeoutError(f"Native worker did not predict through the gap: {states}")
+        for seat in range(2):
+            pump(seat, True)
+        sleep(0.002)
+    assert states[0][0] <= gap
+    assert gap not in fingerprints[1], "A speculative fingerprint was published before correction"
+    target = max(args.frames, 240)
+    deadline = monotonic() + target / 25 + 15
+    last_fingerprint = target // 120 * 120 - 1
+    while min(state[0] for state in states) < target or any(last_fingerprint not in hashes for hashes in fingerprints):
+        if monotonic() > deadline:
+            raise TimeoutError(f"Native workers did not complete confirmed replay: {states}")
+        for seat in range(2):
+            pump(seat, False)
+        sleep(0.002)
+    for frame in range(gap, target, 120):
+        assert fingerprints[0][frame] == fingerprints[1][frame], f"Corrected RAM diverged at frame {frame}"
+    print(f"Native rollback corrected frame {gap}, drove {target} frames and matched "
+          f"{target // 120} confirmed RAM fingerprints.")
 
 
 def read_trace(trace):

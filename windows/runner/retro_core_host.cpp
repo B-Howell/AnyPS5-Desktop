@@ -181,6 +181,7 @@ enum EnvironmentCommand {
   kMessageVersion = 59, kExtendedMessage = 60,
   kFrontendCompileProgress = 0x20000 | 0x4150,
   kGetInputBitmasks = 51 | 0x10000,
+  kSavestateContext = 72 | 0x10000,
 };
 
 constexpr std::pair<std::string_view, std::string_view> kPs1NetplayOptions[] = {
@@ -564,9 +565,13 @@ class RetroCoreSession {
                    std::optional<Ps3NetworkPolicy> online = std::nullopt,
                    std::vector<std::string> packages = {},
                    Ps1MatchCpu match_cpu = Ps1MatchCpu::kCachedInterpreter,
-                   std::shared_ptr<const Ps1OrdinaryRecovery> returning = {})
+                   std::shared_ptr<const Ps1OrdinaryRecovery> returning = {},
+                   bool rollback = false)
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
-        netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(*netplay_seat) : nullptr),
+        netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(
+                                   *netplay_seat, rollback ? ps1_netplay::Timeline::kMaxPrediction : 0)
+                              : nullptr),
+        rollback_(rollback),
         match_storage_(netplay_ ? std::make_unique<Ps1MatchStorage>(netplay_bios) : nullptr),
         lan_(lan_mac ? std::make_unique<Ps2VirtualLan>(*lan_mac) : nullptr),
         system_(match_storage_ ? match_storage_->system() : std::move(system)),
@@ -585,6 +590,8 @@ class RetroCoreSession {
         texture_(flutter::PixelBufferTexture([this](size_t, size_t) { return CopyFrame(); })) {
     if (local_staging_ && netplay_seat != 0u)
       throw std::invalid_argument("Only the PS1 host can start in local play.");
+    if (rollback_ && (!netplay_ || local_staging_ || match_cpu_ != Ps1MatchCpu::kCachedInterpreter))
+      throw std::invalid_argument("PS1 rollback requires an isolated Cached Interpreter match.");
     if (returning_) paused_ = true;
   }
 
@@ -677,6 +684,7 @@ class RetroCoreSession {
       netplay_->Reset();
       checkpoint_history_.clear();
       netplay_fingerprints_.clear();
+      netplay_pending_fingerprint_.reset();
       netplay_held_ = false;
       netplay_epoch_reset_ = true;
     }
@@ -822,6 +830,7 @@ class RetroCoreSession {
     if (!netplay_ || stop_ || ended_) return std::nullopt;
     std::lock_guard<std::mutex> lock(netplay_mutex_);
     if (StagingLocal() || !netplay_->Receive(remote, acknowledged)) return std::nullopt;
+    PublishConfirmedFingerprint();
     List local;
     for (const auto& sample : netplay_->LocalPacket()) {
       List input{Value(static_cast<int64_t>(sample.frame)), Value(static_cast<int32_t>(sample.input.buttons))};
@@ -1247,6 +1256,14 @@ class RetroCoreSession {
   }
 
   bool Environment(unsigned command, void* data) {
+    if (command == kSavestateContext) {
+      if (!rollback_checkpoint_active_) return false;
+      if (data) {
+        *static_cast<int*>(data) = 1;  // RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_INSTANCE
+        rollback_context_queried_ = true;
+      }
+      return true;
+    }
     if (command == kShutdown) {
       stop_ = true;
       return true;
@@ -1527,21 +1544,68 @@ class RetroCoreSession {
     return work->action == CheckpointAction::kResumeOrdinary;
   }
 
+  // Caller holds netplay_mutex_. At most one fingerprint can be pending
+  // because the sampling interval exceeds the prediction window.
+  void PublishConfirmedFingerprint() {
+    if (!netplay_pending_fingerprint_ ||
+        netplay_->confirmed() < netplay_pending_fingerprint_->first) return;
+    if (netplay_fingerprints_.size() == 16) netplay_fingerprints_.erase(netplay_fingerprints_.begin());
+    netplay_fingerprints_.push_back(std::move(*netplay_pending_fingerprint_));
+    netplay_pending_fingerprint_.reset();
+  }
+
   void RunNetplay(HMODULE dll, void (*step)(), std::chrono::steady_clock::duration frame_time,
                   const uint8_t* memory, size_t memory_size) {
     using Clock = std::chrono::steady_clock;
     const auto save = reinterpret_cast<SavePortable>(GetProcAddress(dll, "retro_anyps5_export_checkpoint_v1"));
     const auto load = reinterpret_cast<LoadPortable>(GetProcAddress(dll, "retro_anyps5_import_checkpoint_v1"));
     const size_t maximum = save && load ? Symbol<size_t (*)()>(dll, "retro_serialize_size")() : 0;
-    checkpoint_supported_ = maximum && maximum <= kMaxPs1Checkpoint - kPs1CheckpointPrefix;
+    checkpoint_supported_ = !rollback_ && maximum && maximum <= kMaxPs1Checkpoint - kPs1CheckpointPrefix;
     if (local_staging_ && !checkpoint_supported_)
       throw std::runtime_error("Local PS1 hosting requires the portable checkpoint core.");
+    struct RollbackState {
+      std::optional<uint32_t> frame;
+      CheckpointBytes bytes;
+    };
+    std::array<RollbackState, ps1_netplay::Timeline::kMaxPrediction> checkpoints;
+    const auto serialize = rollback_ ? Symbol<bool (*)(void*, size_t)>(dll, "retro_serialize") : nullptr;
+    const auto unserialize = rollback_ ? Symbol<bool (*)(const void*, size_t)>(dll, "retro_unserialize") : nullptr;
+    const auto state_size = rollback_ ? Symbol<size_t (*)()>(dll, "retro_serialize_size")() : 0;
+    const auto memory_data = rollback_ ? Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data") : nullptr;
+    if (rollback_ && (!state_size || state_size > kMaxPs1Checkpoint))
+      throw std::runtime_error("The PS1 core cannot provide bounded rollback checkpoints.");
     netplay_ready_ = true;
     auto next = Clock::now();
     auto last_advance = next;
     bool started_before = false;
     while (!stop_) {
       if (checkpoint_supported_) ServiceCheckpoint(save, load, maximum + kPs1CheckpointPrefix, step);
+      while (rollback_ && !stop_) {
+        std::optional<uint32_t> correction;
+        {
+          std::lock_guard<std::mutex> lock(netplay_mutex_);
+          correction = netplay_->correction();
+        }
+        if (!correction) break;
+        const auto& checkpoint = checkpoints[*correction % checkpoints.size()];
+        if (checkpoint.frame != correction)
+          throw std::runtime_error("The PS1 rollback checkpoint is unavailable.");
+        suppress_frame_ = true;
+        rollback_context_queried_ = false;
+        rollback_checkpoint_active_ = true;
+        const bool restored = unserialize(checkpoint.bytes.data(), checkpoint.bytes.size());
+        rollback_checkpoint_active_ = false;
+        suppress_frame_ = false;
+        if (!restored || !rollback_context_queried_)
+          throw std::runtime_error("The PS1 core rejected the in-memory rollback checkpoint.");
+        memory = static_cast<const uint8_t*>(memory_data(2));
+        if (!memory) throw std::runtime_error("The PS1 core lost main RAM during rollback.");
+        std::lock_guard<std::mutex> lock(netplay_mutex_);
+        if (netplay_->Rewind(*correction) && netplay_pending_fingerprint_ &&
+            netplay_pending_fingerprint_->first >= *correction)
+          netplay_pending_fingerprint_.reset();
+      }
+      if (stop_) break;
       ps1_netplay::PadInput local;
       {
         std::lock_guard<std::mutex> lock(input_mutex_);
@@ -1551,19 +1615,23 @@ class RetroCoreSession {
       bool staging;
       bool epoch_reset;
       bool advance;
+      bool checkpoint_needed = false;
+      bool replaying = false;
       uint32_t frame;
       {
         std::lock_guard<std::mutex> lock(netplay_mutex_);
         started = netplay_started_ && !netplay_held_;
         staging = StagingLocal();
         epoch_reset = std::exchange(netplay_epoch_reset_, false);
-        frame = staging ? local_frame_ : netplay_->frame();
+        frame = staging ? local_frame_ : netplay_->cursor();
         if (staging) {
           advance = !netplay_held_ && frame < ps1_netplay::Timeline::kMaxFrame;
           local_prepared_ = advance;
           if (advance) netplay_ports_ = {local, {}};
         } else {
           advance = netplay_->Prepare(local, netplay_ports_);
+          checkpoint_needed = netplay_->needs_checkpoint();
+          replaying = frame < netplay_->frame();
         }
       }
       if (started && (!started_before || epoch_reset)) {
@@ -1580,7 +1648,18 @@ class RetroCoreSession {
         next = Clock::now();
         continue;
       }
+      if (checkpoint_needed) {
+        auto& checkpoint = checkpoints[frame % checkpoints.size()];
+        checkpoint.bytes.resize(state_size);
+        rollback_checkpoint_active_ = true;
+        const bool saved = serialize(checkpoint.bytes.data(), checkpoint.bytes.size());
+        rollback_checkpoint_active_ = false;
+        if (!saved) throw std::runtime_error("The PS1 core could not save a rollback checkpoint.");
+        checkpoint.frame = frame;
+      }
+      suppress_frame_ = replaying;
       step();
+      suppress_frame_ = false;
       ++steps_;
       std::string fingerprint;
       if (!staging && (frame + 1) % 120 == 0) fingerprint = NetplayFingerprint(memory, memory_size);
@@ -1596,10 +1675,8 @@ class RetroCoreSession {
           if (checkpoint_history_.size() == kPs1CatchupHistory) checkpoint_history_.pop_front();
           checkpoint_history_.push_back(netplay_ports_);
         }
-        if (!fingerprint.empty()) {
-          if (netplay_fingerprints_.size() == 16) netplay_fingerprints_.erase(netplay_fingerprints_.begin());
-          netplay_fingerprints_.emplace_back(frame, std::move(fingerprint));
-        }
+        if (!fingerprint.empty()) netplay_pending_fingerprint_.emplace(frame, std::move(fingerprint));
+        PublishConfirmedFingerprint();
       }
       last_advance = Clock::now();
       next += frame_time;
@@ -1902,6 +1979,7 @@ class RetroCoreSession {
   flutter::TextureRegistrar* registrar_;
   const std::string core_, disc_;
   const std::unique_ptr<ps1_netplay::Timeline> netplay_;
+  const bool rollback_;
   const std::unique_ptr<Ps1MatchStorage> match_storage_;
   const std::unique_ptr<Ps2VirtualLan> lan_;
   std::atomic<bool> lan_ready_{false};
@@ -1966,6 +2044,9 @@ class RetroCoreSession {
   uint32_t local_frame_ = 0;
   std::array<ps1_netplay::PadInput, 2> netplay_ports_{};
   std::vector<std::pair<uint32_t, std::string>> netplay_fingerprints_;
+  std::optional<std::pair<uint32_t, std::string>> netplay_pending_fingerprint_;
+  std::atomic<bool> rollback_checkpoint_active_{false};
+  std::atomic<bool> rollback_context_queried_{false};
   std::shared_ptr<Frame> frame_;
   uint16_t buttons_ = 0;
   std::array<int16_t, 4> axes_{};
