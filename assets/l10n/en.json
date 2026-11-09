@@ -274,6 +274,7 @@
   "ps1OnlinePlaying": "Match in progress",
   "ps1OnlineSyncing": "Waiting for the games to sync",
   "ps1OnlineWaiting": "Waiting for the other player",
+  "ps1OnlineConnecting": "Connecting to the other player",
   "ps1OnlinePreparing": "Preparing both games",
   "ps1OnlineEnding": "Ending online play",
   "ps1OnlineUnavailable": "PS1 online play needs an enabled Windows build and an AnyTogether connection.",

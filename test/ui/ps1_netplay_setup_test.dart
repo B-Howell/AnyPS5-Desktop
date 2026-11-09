@@ -615,6 +615,15 @@ void main() {
     expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
     expect(native, ['local']);
     expect(model.overlay, Layer.quickMenu);
+    server.answers['GET $path'] = (
+      200,
+      {
+        ...room,
+        'members': [
+          {'userId': hostId},
+        ],
+      },
+    );
     choose('ps1-invite-from-game');
     choose('ps1-invite-$friendId');
     expect(
@@ -623,12 +632,14 @@ void main() {
     );
     expect(server.callsTo('game-sessions', method: 'POST').single.body['gameVersion'], '3');
     expect(server.callsTo('$path/invites').single.body['userIds'], [friendId]);
+    await model.openQuickMenu();
+    expect(row('ps1-netplay-leave').detail, 'Waiting for the other player');
+    server.answers['GET $path'] = (200, room);
     Future<Map<String, dynamic>> nextOffer() =>
         server.nextFrame('signal', test: (frame) => (frame['data'] as Map)['kind'] == 'offer');
     final offer = await nextOffer();
     expect(native, ['local']);
-    await model.openQuickMenu();
-    expect(row('ps1-netplay-leave').detail, 'Waiting for the other player');
+    expect(row('ps1-netplay-leave').detail, 'Connecting to the other player');
     choose('resume');
     Future<Ps1NetplayPeer> connectGuest(
       Map<String, dynamic> offer,

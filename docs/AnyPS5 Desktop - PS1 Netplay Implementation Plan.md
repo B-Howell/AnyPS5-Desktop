@@ -529,9 +529,11 @@ attempt clears. The local game keeps running, and the same friend can
 be invited again when verification has stopped.
 The mocked native channel verifies the park, detach, isolated boot,
 frame-zero import, and running match. The online row shows **Waiting for
-the other player** until the compatible peer handshake completes and
-then **Preparing both games** until play begins. Cancel remains
-available during both stages. During teardown, **Ending online play**
+the other player** until the room binds the expected player and their
+device. **Connecting to the other player** covers transport negotiation
+and compatibility checks. **Preparing both games** covers the game
+handoff until play begins. Cancel remains available throughout startup.
+During teardown, **Ending online play**
 replaces the action with a status row until cleanup finishes. The
 Quick Menu also recognizes the loading card during a worker handoff,
 including the gap between the two workers. The integration test holds

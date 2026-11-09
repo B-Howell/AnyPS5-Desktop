@@ -45,6 +45,7 @@ final class Ps1NetplayMatch {
 
   Future<void> get done => _done.future;
   Ps1NetplaySession? get session => _peer?.session;
+  bool get hasMatchedPlayer => _member != null;
   bool get closed => _closed;
 
   Future<void> host(String friendId) => _open(0, () => rooms.host(cancelBeforeAdmission: _closing), friendId: friendId);
@@ -88,6 +89,7 @@ final class Ps1NetplayMatch {
     if (_closed) return;
     if (member == null) throw StateError('The other player did not join the PS1 room in time.');
     final bound = _member = member;
+    onStatusChanged?.call();
     final servers = await _untilClose(rooms.iceServers(room));
     if (servers == null || _closed) return;
     final link = await Future.any<GameLink?>([

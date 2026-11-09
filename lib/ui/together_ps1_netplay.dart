@@ -165,6 +165,8 @@ extension TogetherPs1Netplay on TogetherModel {
                   ? (ps1ProgressStalled ? 'ps1OnlineSyncing' : 'ps1OnlinePlaying')
                   : session?.preparingGame == true
                   ? 'ps1OnlinePreparing'
+                  : match.hasMatchedPlayer
+                  ? 'ps1OnlineConnecting'
                   : 'ps1OnlineWaiting',
             ),
             kind: ActionRow(() => unawaited(match.leave()), destructive: true),
