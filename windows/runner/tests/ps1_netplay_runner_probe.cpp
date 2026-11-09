@@ -427,6 +427,11 @@ int main(int argc, char** argv) {
                 << session.peak_prediction_depth() << std::endl;
       continue;
     }
+    if (rollback && command == "pacing") {
+      const auto [blocked, wait_us, late_wakes, wake_us] = session.trace_pacing();
+      std::cout << blocked << ' ' << wait_us << ' ' << late_wakes << ' ' << wake_us << std::endl;
+      continue;
+    }
     if ((rollback || audio_control) && command == "audio") {
       std::lock_guard<std::mutex> lock(audio_mutex);
       std::cout << audio_frames << ' ' << audio_hash << std::endl;

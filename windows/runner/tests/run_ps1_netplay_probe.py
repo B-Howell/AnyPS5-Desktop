@@ -91,6 +91,9 @@ def main():
     parser.add_argument("--presentation-core", type=Path,
                         help="Use a separate byte-identical DLL for video during native rollback")
     parser.add_argument("--trace", type=Path, help="Drive the exact two-player CTR fixture and require the race finish")
+    parser.add_argument("--network-profile", choices=("clean", "120ms-loss"), default="120ms-loss",
+                        help="Network model for a paced rollback trace")
+    parser.add_argument("--sample-frames", type=int, help="Measure a prefix of a paced rollback trace")
     parser.add_argument("--checkpoint-guest", type=Path, help="Verify a held peer can import with a renamed CUE")
     parser.add_argument("--cutover", action="store_true", help="Replace the second player and verify the new input epoch")
     parser.add_argument("--cutover-frame", type=int, help="Trace frame where the replacement guest takes over")
@@ -114,6 +117,10 @@ def main():
                 parser.error("The presentation DLL must match the primary DLL")
     if args.frames < 120:
         parser.error("at least 120 frames are required to compare a fingerprint")
+    if (args.sample_frames is not None or args.network_profile != "120ms-loss") and not (args.rollback and args.trace):
+        parser.error("Network diagnostics require --rollback and --trace")
+    if args.sample_frames is not None and args.sample_frames < 120:
+        parser.error("--sample-frames must include at least 120 frames")
     if args.rollback and (args.checkpoint_guest or args.ordinary_checkpoint or args.local_handoff):
         parser.error("--rollback runs independently of the checkpoint transfer probes")
     if args.cutover and not args.checkpoint_guest:
@@ -558,6 +565,10 @@ def read_trace(trace):
 def traced_rollback_race(args, cleanup):
     frames = read_trace(args.trace)
     from rollback import PacketLink, PROFILES, TICK_MS
+    if args.sample_frames is not None:
+        if args.sample_frames >= len(frames):
+            raise ValueError("--sample-frames must be shorter than the complete race trace")
+        frames = frames[:args.sample_frames]
 
     assert frames[:2] == [[0, 0]] * 2, "The native delay starts with neutral input"
     directory = Path(cleanup.enter_context(TemporaryDirectory(prefix="anyps5-rollback-input-")))
@@ -574,7 +585,7 @@ def traced_rollback_race(args, cleanup):
     assert all(peer.send("start") == "started" for peer in peers)
     states = [peer.sync() for peer in peers]
     histories = [{}, {}]
-    links = [PacketLink(PROFILES["120ms-loss"], 2401 + seat) for seat in range(2)]
+    links = [PacketLink(PROFILES[args.network_profile], 2401 + seat) for seat in range(2)]
     target = len(frames)
     next_report = 1800
     epoch = perf_counter()
@@ -613,14 +624,14 @@ def traced_rollback_race(args, cleanup):
 
     expected = set(range(119, target, 120))
     assert set(histories[0]) == expected and histories[0] == histories[1], "Confirmed RAM differs or is incomplete"
-    placements = race_placements(peers)
+    outcome = race_placements(peers) if args.sample_frames is None else "diagnostic prefix"
     deadline = monotonic() + 2
     while not all(int(peer.send("audio-drained")) == target - 1 for peer in peers):
         assert monotonic() < deadline, "Native workers did not drain audio through the last confirmed frame"
         sleep(0.002)
     pcm = [peer.send("audio").split() for peer in peers]
     assert pcm[0] == pcm[1] and int(pcm[0][0]) > 0, f"Confirmed PCM differs or is empty: {pcm}"
-    print(f"Finished {target} frames in {perf_counter() - epoch:.2f}s: {placements}; "
+    print(f"Finished {target} frames in {perf_counter() - epoch:.2f}s: {outcome}; "
           f"{len(expected)} matching RAM fingerprints and {pcm[0][0]} stereo pairs.")
     for seat, (peer, link) in enumerate(zip(peers, links), 1):
         published, video_gap, long_gaps, audio_gap, work, overruns = map(int, peer.send("presentation").split())
@@ -628,9 +639,13 @@ def traced_rollback_race(args, cleanup):
               f"{published} video updates, max gap {video_gap / 1000:.3f} ms, "
               f"{long_gaps} gaps over two ticks; max confirmed PCM gap {audio_gap / 1000:.3f} ms; "
               f"max native work {work / 1000:.3f} ms, {overruns} iterations over 16.667 ms.")
+        waits, wait_us, late_wakes, peak_wake_us = map(int, peer.send("pacing").split())
+        print(f"Seat {seat}: {waits} blocked polls totaling {wait_us / 1000:.3f} ms; "
+              f"{late_wakes} deadline wakes over 2 ms, peak {peak_wake_us / 1000:.3f} ms late.")
         if args.presentation_core:
             steps, video, depth = map(int, peer.send("presentation-steps").split())
-            assert steps > 0 and video > 0, "The spare core never published video during the race"
+            if args.network_profile != "clean" and args.sample_frames is None:
+                assert steps > 0 and video > 0, "The spare core never published video during the race"
             print(f"Seat {seat}: {video} speculative texture updates across {steps} presentation steps; "
                   f"peak primary prediction depth {depth} frames.")
 

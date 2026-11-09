@@ -156,11 +156,20 @@ class Timeline {
     Prune();
   }
 
-  std::vector<FrameInput> LocalPacket() const {
+  std::vector<FrameInput> LocalPacket() {
     const auto latest = local_.rbegin()->first;
     const auto unacknowledged = acknowledged_ ? *acknowledged_ + 1 : 0;
     const auto overlap = latest >= kMaxPacket - 1 ? latest - (kMaxPacket - 1) : 0;
-    const auto first = std::min(unacknowledged, overlap);
+    auto first = std::min(unacknowledged, overlap);
+    // A high RTT can leave more than one packet unacknowledged even without
+    // loss. Keep new inputs flowing while reserving every other packet for
+    // the oldest gap. Both packet types remain contiguous.
+    if (prediction_window_ && unacknowledged < overlap) {
+      if (send_fresh_next_) first = overlap;
+      send_fresh_next_ = !send_fresh_next_;
+    } else {
+      send_fresh_next_ = true;
+    }
     std::vector<FrameInput> samples;
     samples.reserve(kMaxPacket);
     for (auto it = local_.lower_bound(first); it != local_.end() && samples.size() < kMaxPacket; ++it)
@@ -208,6 +217,7 @@ class Timeline {
   uint32_t prediction_window_;
   bool started_ = false;
   bool prepared_ = false;
+  bool send_fresh_next_ = true;
   uint32_t frame_ = 0;
   uint32_t cursor_ = 0;
   std::optional<uint32_t> correction_;

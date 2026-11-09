@@ -569,6 +569,9 @@ class RetroCoreSession {
   int64_t rollback_audio_drained() const { return rollback_audio_drained_; }
   int64_t trace_max_work_us() const { return trace_max_work_us_; }
   int64_t trace_work_overruns() const { return trace_work_overruns_; }
+  std::array<int64_t, 4> trace_pacing() const {
+    return {trace_blocked_polls_, trace_blocked_us_, trace_late_wakes_, trace_peak_wake_us_};
+  }
   uint32_t presentation_steps() const { return presentation_steps_; }
   uint32_t presentation_frames() const { return presentation_frames_; }
   uint32_t peak_prediction_depth() const { return peak_prediction_depth_; }
@@ -1921,8 +1924,13 @@ class RetroCoreSession {
                                            : "PS1 netplay did not start in time.");
         record_trace_work();
         replay_slice = false;
+        const auto wait_started = Clock::now();
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
         next = Clock::now();
+        if (started && frame < input_trace_.size()) {
+          ++trace_blocked_polls_;
+          trace_blocked_us_ += std::chrono::duration_cast<std::chrono::microseconds>(next - wait_started).count();
+        }
         continue;
       }
       if (checkpoint_needed) {
@@ -1978,7 +1986,13 @@ class RetroCoreSession {
       next += frame_time;
       if (next < last_advance - frame_time) next = last_advance;
       record_trace_work();
+      const bool measure_wake = !input_trace_.empty() && next > Clock::now();
       std::this_thread::sleep_until(next);
+      if (measure_wake) {
+        const auto late = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - next).count();
+        trace_peak_wake_us_ = std::max(trace_peak_wake_us_.load(), late);
+        if (late > 2000) ++trace_late_wakes_;
+      }
     }
   }
 
@@ -2340,6 +2354,10 @@ class RetroCoreSession {
   std::atomic<int64_t> rollback_audio_drained_{-1};
   std::atomic<int64_t> trace_max_work_us_{0};
   std::atomic<int64_t> trace_work_overruns_{0};
+  std::atomic<int64_t> trace_blocked_polls_{0};
+  std::atomic<int64_t> trace_blocked_us_{0};
+  std::atomic<int64_t> trace_late_wakes_{0};
+  std::atomic<int64_t> trace_peak_wake_us_{0};
   static inline thread_local RollbackAudioFrame* rollback_audio_capture_ = nullptr;
   const std::unique_ptr<Ps1MatchStorage> match_storage_;
   const std::unique_ptr<Ps2VirtualLan> lan_;

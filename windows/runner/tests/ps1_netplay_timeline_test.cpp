@@ -217,6 +217,11 @@ int main() {
     burst.Commit();
   }
   assert(burst.waiting() && !burst.Prepare(host_pad, host_inputs));
+  const auto fresh = burst.LocalPacket();
+  const auto repair = burst.LocalPacket();
+  if (fresh.size() != 8 || fresh.front().frame != 11 || fresh.back().frame != 18 ||
+      repair.size() != 8 || repair.front().frame != 0 || repair.back().frame != 7)
+    return 1;
   assert(burst.Receive({{0, guest_pad}}, std::nullopt));
   assert(burst.correction() == 0u && burst.Rewind(0));
   assert(burst.Prepare({}, host_inputs) && host_inputs[1] == guest_pad);

@@ -869,6 +869,33 @@ ms and the largest PCM gap reached 349.324 ms. These observations
 support faster return to the primary after a correction. Presentation
 cadence and the strict frame budget remain open.
 
+The paced driver also accepts `--sample-frames 1800` with
+`--network-profile clean` or `120ms-loss`. Both prefixes check RAM
+and drained PCM. The native probe measures time in polls that could not
+advance and late wakes after a scheduled sleep. With the old sender the
+clean prefix took 30.08 seconds with zero blocked polls. The impaired
+prefix took 38.20 seconds and spent 7.51 to 7.64 seconds in blocked polls.
+Peak deadline wake lateness stayed under 2.5 ms in both controls.
+
+When the unacknowledged range exceeds eight inputs, the prediction
+timeline now alternates between its newest contiguous batch and its
+oldest unacknowledged batch. Both batches retain the existing eight-input
+wire limit. This lets recent inputs reach the other player during
+retransmission. Confirmed-input sessions retain their existing policy.
+With rotation enabled, the clean prefix took 30.09 seconds. The
+impaired prefix took 30.20 seconds with zero blocked polls, and its
+worst texture gap fell from 100.398 ms to 33.701 ms. Both versions
+matched all 15 prefix RAM fingerprints and 1,326,986 stereo pairs.
+
+The full impaired race finished in 233.95 seconds, down from 289.35
+seconds with the old sender. Both finishes, all 114 RAM fingerprints
+and 10,104,619 stereo pairs matched. The largest texture gap fell from
+419.268 ms to 99.312 ms. Blocked polls occupied 160.120 and 63.229 ms
+on the two seats. The largest PCM delivery gap was still 347.163 ms.
+Peak primary work reached 64.765 ms and 144 iterations across both
+seats exceeded 16.667 ms. Keeping the input stream current improves
+cadence, while the worker budget and audio delivery still need work.
+
 The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
 [driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real
 embedded worker with a headless texture and audio sink. They check periodic
