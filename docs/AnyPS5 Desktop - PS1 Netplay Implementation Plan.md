@@ -773,6 +773,28 @@ well as comparing confirmed RAM. This covers native checkpoint
 restoration and audio ordering. Full-race pacing, device underruns,
 and uninterrupted video presentation need separate verification.
 
+Run the same native driver with `--rollback --trace` and the
+[CTR race input fixture](../tool/ps1_netplay/fixtures/ctr_usa_coco_park_versus.json)
+to exchange the native workers' actual controller packets at 60 Hz.
+The driver uses the 120 ms RTT model with 25 ms jitter, 5% random loss,
+a ten-tick loss burst and seeds 2401 and 2402. The workers retain the
+two-frame input delay and eight-frame native prediction window. The
+driver requires both game-owned finishes, matching confirmed RAM
+fingerprints, and matching PCM drained through the final frame. It
+reports native worker time before pacing sleep, texture callback gaps,
+and confirmed PCM delivery gaps. The silent probe cannot measure
+sound device underruns or display timing on a player's monitor.
+
+The single-core native baseline finished all 13,706 frames in 309.65
+seconds. Both game instances reported the same finish and placements,
+all 114 RAM fingerprints matched, and the workers drained the same
+10,104,619 stereo sample pairs through the last frame. Seat 1/2 peak
+worker iterations were 266.663/244.619 ms, with 117/118 over 16.667 ms.
+Peak texture delivery gaps were 252.375/233.042 ms, and peak PCM
+delivery gaps were 349.207/262.254 ms. The baseline passes the race
+integrity check and fails the pacing gate. The [two-core harness](<AnyPS5 Desktop - PS1 Determinism Harness.md>)
+provides the comparison for keeping presentation active during replay.
+
 The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
 [driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real
 embedded worker with a headless texture and audio sink. They check periodic

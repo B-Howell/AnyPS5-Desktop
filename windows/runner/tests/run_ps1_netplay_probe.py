@@ -10,12 +10,12 @@ from subprocess import CREATE_NO_WINDOW, IDLE_PRIORITY_CLASS, PIPE, Popen, Timeo
 import sys
 from tempfile import TemporaryDirectory
 from threading import Thread
-from time import monotonic, sleep
+from time import monotonic, perf_counter, sleep
 
 
 class Peer:
     def __init__(self, executable, core, disc, bios, seat, *, local=False, saves=None, recompiler=False,
-                 rollback=False, audio_control=False):
+                 rollback=False, audio_control=False, input_trace=None):
         self.lines = Queue()
         arguments = [executable, core, disc, bios, str(seat)]
         if local:
@@ -24,6 +24,8 @@ class Peer:
             arguments.append("recompiler")
         if rollback:
             arguments.append("rollback")
+            if input_trace is not None:
+                arguments.append(input_trace)
         if audio_control:
             arguments.append("audio-control")
         if saves is not None:
@@ -101,8 +103,8 @@ def main():
     args = parser.parse_args()
     if args.frames < 120:
         parser.error("at least 120 frames are required to compare a fingerprint")
-    if args.rollback and (args.trace or args.checkpoint_guest or args.ordinary_checkpoint or args.local_handoff):
-        parser.error("--rollback runs independently of the trace and checkpoint transfer probes")
+    if args.rollback and (args.checkpoint_guest or args.ordinary_checkpoint or args.local_handoff):
+        parser.error("--rollback runs independently of the checkpoint transfer probes")
     if args.cutover and not args.checkpoint_guest:
         parser.error("--cutover requires --checkpoint-guest")
     if args.cutover_frame is not None and not (args.cutover and args.trace):
@@ -124,7 +126,10 @@ def main():
 
     with ExitStack() as cleanup:
         if args.rollback:
-            verify_native_rollback(args, cleanup)
+            if args.trace:
+                traced_rollback_race(args, cleanup)
+            else:
+                verify_native_rollback(args, cleanup)
             return
         if args.ordinary_checkpoint:
             verify_ordinary_checkpoint(args, cleanup)
@@ -500,6 +505,9 @@ def verify_native_rollback(args, cleanup):
         sleep(0.002)
     for frame in range(gap, target, 120):
         assert fingerprints[0][frame] == fingerprints[1][frame], f"Corrected RAM diverged at frame {frame}"
+    while int(peers[1].send("audio-drained")) != target - 1:
+        assert monotonic() < deadline, "Prediction worker did not drain audio through the last confirmed frame"
+        sleep(0.002)
     after = [peer.send("audio").split() for peer in peers]
     while after[0] != after[1] and monotonic() < deadline:
         sleep(0.002)
@@ -517,6 +525,80 @@ def read_trace(trace):
 
     spans = normalize_trace(json.loads(trace.read_text()))
     return [pads for count, *pads in spans for _ in range(count)]
+
+
+def traced_rollback_race(args, cleanup):
+    frames = read_trace(args.trace)
+    from rollback import PacketLink, PROFILES, TICK_MS
+
+    assert frames[:2] == [[0, 0]] * 2, "The native delay starts with neutral input"
+    directory = Path(cleanup.enter_context(TemporaryDirectory(prefix="anyps5-rollback-input-")))
+    peers = []
+    for seat in range(2):
+        trace = directory / f"seat-{seat}.txt"
+        trace.write_text("\n".join(str(pads[seat]) for pads in frames), encoding="ascii")
+        peer = Peer(args.probe.resolve(), args.core.resolve(), args.disc.resolve(), args.bios.resolve(),
+                    seat, rollback=True, input_trace=trace)
+        cleanup.callback(peer.close)
+        peers.append(peer)
+    assert all(peer.receive() == "ready" for peer in peers)
+    assert all(peer.send("start") == "started" for peer in peers)
+    states = [peer.sync() for peer in peers]
+    histories = [{}, {}]
+    links = [PacketLink(PROFILES["120ms-loss"], 2401 + seat) for seat in range(2)]
+    target = len(frames)
+    next_report = 1800
+    epoch = perf_counter()
+    for tick in range(target * 2 + 300):
+        delay = epoch + tick * TICK_MS / 1000 - perf_counter()
+        if delay > 0:
+            sleep(delay)
+        for seat, (frame, received, local, fingerprints) in enumerate(states):
+            for index, mask in local:
+                assert mask == (frames[index][seat] if index < target else 0), (
+                    f"Seat {seat + 1} supplied the wrong input at frame {index}")
+            for index, fingerprint in fingerprints.items():
+                assert histories[seat].setdefault(index, fingerprint) == fingerprint, (
+                    f"Seat {seat + 1} changed a published fingerprint at frame {index}")
+                other = histories[1 - seat].get(index)
+                assert other is None or other == fingerprint, f"PS1 RAM diverged at frame {index}"
+            links[1 - seat].send(tick, received, [(index, mask) for index, mask in local if index < target])
+        for seat, peer in enumerate(peers):
+            acknowledged = -1
+            arrived = {}
+            for ack, samples in links[seat].receive(tick):
+                acknowledged = max(acknowledged, ack)
+                for index, mask in samples:
+                    assert arrived.setdefault(index, mask) == mask
+            states[seat] = peer.sync(acknowledged, sorted(arrived.items()))
+        progress = min(state[0] for state in states)
+        if progress >= next_report:
+            print(f"Native rollback reached {progress}/{target} frames after {tick + 1} paced ticks", flush=True)
+            next_report += 1800
+        if progress == target and all(int(peer.send("confirmed")) == target - 1 for peer in peers):
+            for seat, state in enumerate(states):
+                histories[seat].update(state[3])
+            break
+    else:
+        raise TimeoutError(f"Both native peers did not finish: {[state[:2] for state in states]}")
+
+    expected = set(range(119, target, 120))
+    assert set(histories[0]) == expected and histories[0] == histories[1], "Confirmed RAM differs or is incomplete"
+    placements = race_placements(peers)
+    deadline = monotonic() + 2
+    while not all(int(peer.send("audio-drained")) == target - 1 for peer in peers):
+        assert monotonic() < deadline, "Native workers did not drain audio through the last confirmed frame"
+        sleep(0.002)
+    pcm = [peer.send("audio").split() for peer in peers]
+    assert pcm[0] == pcm[1] and int(pcm[0][0]) > 0, f"Confirmed PCM differs or is empty: {pcm}"
+    print(f"Finished {target} frames in {perf_counter() - epoch:.2f}s: {placements}; "
+          f"{len(expected)} matching RAM fingerprints and {pcm[0][0]} stereo pairs.")
+    for seat, (peer, link) in enumerate(zip(peers, links), 1):
+        published, video_gap, long_gaps, audio_gap, work, overruns = map(int, peer.send("presentation").split())
+        print(f"Seat {seat}: {link.dropped}/{link.sent} packets dropped, {link.reordered} reordered; "
+              f"{published} video updates, max gap {video_gap / 1000:.3f} ms, "
+              f"{long_gaps} gaps over two ticks; max confirmed PCM gap {audio_gap / 1000:.3f} ms; "
+              f"max native work {work / 1000:.3f} ms, {overruns} iterations over 16.667 ms.")
 
 
 def traced_race(peers, frames, args, cleanup):

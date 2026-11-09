@@ -558,6 +558,9 @@ struct Ps1OrdinaryRecovery {
 class RetroCoreSession {
  public:
   using AudioSink = std::function<void(const int16_t*, size_t)>;
+  int64_t rollback_audio_drained() const { return rollback_audio_drained_; }
+  int64_t trace_max_work_us() const { return trace_max_work_us_; }
+  int64_t trace_work_overruns() const { return trace_work_overruns_; }
 
   RetroCoreSession(flutter::TextureRegistrar* registrar, std::string core,
                    std::string disc, std::string system, std::string saves,
@@ -570,13 +573,15 @@ class RetroCoreSession {
                    std::vector<std::string> packages = {},
                    Ps1MatchCpu match_cpu = Ps1MatchCpu::kCachedInterpreter,
                    std::shared_ptr<const Ps1OrdinaryRecovery> returning = {},
-                   bool rollback = false, AudioSink audio_sink = {})
+                   bool rollback = false, AudioSink audio_sink = {},
+                   std::vector<uint16_t> input_trace = {})
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
         netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(
                                    *netplay_seat, rollback ? ps1_netplay::Timeline::kMaxPrediction : 0)
                               : nullptr),
         rollback_(rollback),
         audio_sink_(std::move(audio_sink)),
+        input_trace_(std::move(input_trace)),
         match_storage_(netplay_ ? std::make_unique<Ps1MatchStorage>(netplay_bios) : nullptr),
         lan_(lan_mac ? std::make_unique<Ps2VirtualLan>(*lan_mac) : nullptr),
         system_(match_storage_ ? match_storage_->system() : std::move(system)),
@@ -597,6 +602,8 @@ class RetroCoreSession {
       throw std::invalid_argument("Only the PS1 host can start in local play.");
     if (rollback_ && (!netplay_ || local_staging_ || match_cpu_ != Ps1MatchCpu::kCachedInterpreter))
       throw std::invalid_argument("PS1 rollback requires an isolated Cached Interpreter match.");
+    if (!input_trace_.empty() && !rollback_)
+      throw std::invalid_argument("PS1 input traces require the headless rollback worker.");
     if (returning_) paused_ = true;
   }
 
@@ -1622,6 +1629,7 @@ class RetroCoreSession {
         if (audio.frame != next_audio_frame)
           throw std::runtime_error("The PS1 rollback audio frame is unavailable.");
         EmitAudio(audio.pcm.data(), audio.samples / 2);
+        rollback_audio_drained_ = next_audio_frame;
         ++next_audio_frame;
       }
     };
@@ -1636,6 +1644,13 @@ class RetroCoreSession {
     auto last_advance = next;
     bool started_before = false;
     while (!stop_) {
+      const auto trace_work_start = input_trace_.empty() ? Clock::time_point{} : Clock::now();
+      const auto record_trace_work = [&] {
+        if (trace_work_start == Clock::time_point{}) return;
+        const auto work = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - trace_work_start);
+        trace_max_work_us_ = std::max(trace_max_work_us_.load(), work.count());
+        if (work.count() > 16667) ++trace_work_overruns_;
+      };
       release_audio();
       if (checkpoint_supported_) ServiceCheckpoint(save, load, maximum + kPs1CheckpointPrefix, step);
       while (rollback_ && !stop_) {
@@ -1686,10 +1701,16 @@ class RetroCoreSession {
           advance = !netplay_held_ && frame < ps1_netplay::Timeline::kMaxFrame;
           local_prepared_ = advance;
           if (advance) netplay_ports_ = {local, {}};
-        } else {
+        } else if (input_trace_.empty() || frame < input_trace_.size()) {
+          if (!input_trace_.empty()) {
+            const auto sample_frame = frame + ps1_netplay::Timeline::kDelay;
+            local = {sample_frame < input_trace_.size() ? input_trace_[sample_frame] : uint16_t{0}, {}};
+          }
           advance = netplay_->Prepare(local, netplay_ports_);
           checkpoint_needed = netplay_->needs_checkpoint();
           replaying = frame < netplay_->frame();
+        } else {
+          advance = false;
         }
       }
       if (started && (!started_before || epoch_reset)) {
@@ -1702,6 +1723,7 @@ class RetroCoreSession {
             Clock::now() - last_advance > (started ? std::chrono::seconds(15) : std::chrono::seconds(60)))
           throw std::runtime_error(started ? "PS1 netplay stopped waiting for the other player."
                                            : "PS1 netplay did not start in time.");
+        record_trace_work();
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
         next = Clock::now();
         continue;
@@ -1750,6 +1772,7 @@ class RetroCoreSession {
       last_advance = Clock::now();
       next += frame_time;
       if (next < last_advance - frame_time) next = last_advance;
+      record_trace_work();
       std::this_thread::sleep_until(next);
     }
   }
@@ -2042,6 +2065,10 @@ class RetroCoreSession {
   const std::unique_ptr<ps1_netplay::Timeline> netplay_;
   const bool rollback_;
   const AudioSink audio_sink_;
+  const std::vector<uint16_t> input_trace_;
+  std::atomic<int64_t> rollback_audio_drained_{-1};
+  std::atomic<int64_t> trace_max_work_us_{0};
+  std::atomic<int64_t> trace_work_overruns_{0};
   static inline thread_local RollbackAudioFrame* rollback_audio_capture_ = nullptr;
   const std::unique_ptr<Ps1MatchStorage> match_storage_;
   const std::unique_ptr<Ps2VirtualLan> lan_;
