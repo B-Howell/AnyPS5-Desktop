@@ -12,7 +12,7 @@ import time
 import zlib
 
 from determinism import CTR_USA_CUE, compare, ctr_finish, cue_identity, file_digest, normalize_trace, replay
-from headless_core import Core
+from headless_core import CPU_MODES, Core
 
 CTR_GAME_ID = "SCUS94426"
 PORTABLE_PREFIX_SIZE = 8 + 32
@@ -36,7 +36,8 @@ def worker(args, frames, scratch):
     disc = args.guest_disc if guest else args.disc
     local_identity = identity(args, disc)
     disc_hash = bytes.fromhex(local_identity["disc_sha256"])
-    core = Core(args.core, disc, args.bios, scratch / args.worker, "CachedInterpreter",
+    cpu = "CachedInterpreter" if guest else args.host_cpu
+    core = Core(args.core, disc, args.bios, scratch / args.worker, cpu,
                 memory_checkpoints=True, same_binary=True, block_linking=False, inline_gpu=True)
     try:
         state_path = scratch / "state"
@@ -103,7 +104,11 @@ def worker(args, frames, scratch):
         for boundary in boundaries:
             replay(core, frames[core.frame:boundary])
             signatures.append(core.signature())
-        return {"evidence": evidence, "signatures": signatures, "finish": ctr_finish(core.read_ram)}
+        try:
+            finish = ctr_finish(core.read_ram)
+        except ValueError as error:
+            return {"evidence": evidence, "signatures": signatures, "finish_error": str(error)}
+        return {"evidence": evidence, "signatures": signatures, "finish": finish}
     finally:
         core.close()
 
@@ -113,6 +118,8 @@ def main():
     for name in ("core", "bios", "disc", "guest-disc", "trace"):
         parser.add_argument(f"--{name}", type=lambda value: Path(value).resolve(strict=True), required=True)
     parser.add_argument("--join-frame", type=int, default=6600)
+    parser.add_argument("--host-cpu", choices=CPU_MODES, default="CachedInterpreter",
+                        help="Exercise handoff from a different host CPU mode")
     parser.add_argument("--checkpoint", choices=("portable", "legacy"), default="portable")
     parser.add_argument("--worker", choices=("host", "guest"), help=argparse.SUPPRESS)
     parser.add_argument("--scratch", type=Path, help=argparse.SUPPRESS)
@@ -140,9 +147,13 @@ def main():
         restore_error = guest.get("restore_error")
         mismatch = None if restore_error else compare(host["signatures"], guest["signatures"])
         path_leak = args.checkpoint == "portable" and host["evidence"]["found_exact_host_disc_path"]
+        finish_errors = {role: result["finish_error"] for role, result in zip(("host", "guest"), results)
+                         if "finish_error" in result}
         report = {
             **host_identity,
             "checkpoint_format": args.checkpoint,
+            "host_cpu": args.host_cpu,
+            "guest_cpu": "CachedInterpreter",
             "requested_join_frame": args.join_frame,
             "trace_frames": len(frames),
             "matched_checkpoints": len(host["signatures"]) if mismatch is None and not restore_error else None,
@@ -150,10 +161,12 @@ def main():
             "restore_error": restore_error,
             "host": host["evidence"],
             "guest": guest.get("evidence"),
+            "finish_errors": finish_errors,
             "finish": guest.get("finish"),
         }
         print(json.dumps(report, indent=2))
-        return int(path_leak or restore_error is not None or mismatch is not None or host["finish"] != guest["finish"])
+        return int(path_leak or restore_error is not None or mismatch is not None or bool(finish_errors)
+                   or host.get("finish") != guest.get("finish"))
 
 
 if __name__ == "__main__":

@@ -247,6 +247,42 @@ wrong hash and truncated input before restoring the valid state. The
 legacy control on the preceding build, whose ordinary state code was
 identical, matched the same 62 checks with matching filenames.
 
+#### Testing the ordinary Play CPU mode
+
+Run the same [probe](../tool/ps1_netplay/late_join.py) with
+`--host-cpu Recompiler` to compare the default offline CPU mode against
+the netplay guest's Cached Interpreter. Both sides use the pinned
+checkpoint DLL, software graphics, inline GPU and disabled block linking
+so this isolates the CPU mode in the harness. It reports the first
+sampled mismatch at the join, the following frame, a 120-frame interval
+or the end, even if one racer fails to finish. Omitting the option keeps
+the original same-mode control.
+That control matched all 62 checkpoints through frame 13,706 and both
+racers finished.
+
+With the Recompiler host, import succeeded and RAM matched at frame 6,600.
+At frame 6,601 the framebuffer still matched, but main RAM differed.
+The host finished the reference race and the guest failed its finish check.
+The cross-mode report is in the local
+`ps1-recompiler-diagnose-023fdcc9` directory. Before enabling ordinary
+Play handoff, test whether both peers can restore the same checkpoint
+under the match CPU profile and continue from that state, then repeat
+the test with the Windows hardware renderer and the normal controller
+and save configuration.
+
+The portable format strips disc paths but still serializes the memory
+card. An offscreen probe placed a synthetic marker at the end of a
+131,072-byte scratch card through `RETRO_MEMORY_SAVE_RAM`. The marker
+appeared in the exported checkpoint while it was absent from the
+checkpoint taken before the write and from main RAM before and after it.
+The serialization path is the core's `Pad::DoStateMemcard` and
+`MemoryCard::DoState`. The existing co-op-ready launch uses a fresh
+scratch card. Extending the Quick Menu action to ordinary Play requires
+a checkpoint that keeps personal card contents private and a transition
+that preserves the local save and can be undone on cancel or disconnect.
+The marker receipt and the same-mode race report are in the local
+`ps1-recompiler-handoff-326203de` directory.
+
 ### Patched full-race trials
 
 Each profile used the recompiler, `--delay 2 --window 8 --seed 2401`, and
