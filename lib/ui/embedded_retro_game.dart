@@ -9,8 +9,10 @@ import '../core/game_library.dart';
 import '../core/game_process.dart';
 import '../core/managed_retro.dart';
 import '../core/gamepad/pad_navigation.dart';
+import '../core/online/ps1_checkpoint_transfer.dart';
 import '../core/online/ps1_netplay_media.dart';
 import '../core/online/ps1_netplay_session.dart';
+import '../core/online/ps1_netplay_wire.dart';
 
 import 'retro_game_tuning.dart';
 
@@ -280,8 +282,8 @@ class EmbeddedRetroGame extends RunningGame {
   }
 
   /// Captures the state immediately before the returned emulation frame.
-  Future<({int frame, Uint8List state})> captureNetplayCheckpoint() async {
-    final result = await _exchangeCheckpoint('ps1CheckpointExport');
+  Future<Ps1CheckpointSnapshot> captureNetplayCheckpoint() async {
+    final result = await _exchangeCheckpoint('ps1CheckpointExport', {'discHash': _checkpointDiscHash()});
     if (result is Map && result['frame'] is int && result['state'] is Uint8List) {
       return (frame: result['frame'] as int, state: result['state'] as Uint8List);
     }
@@ -289,25 +291,69 @@ class EmbeddedRetroGame extends RunningGame {
   }
 
   /// Restores into the isolated guest before starting its input timeline.
-  Future<void> restoreNetplayCheckpoint(Uint8List state) async {
-    if (await _exchangeCheckpoint('ps1CheckpointImport', state) != true) {
+  Future<void> restoreNetplayCheckpoint(Ps1CheckpointSnapshot snapshot) async {
+    if (await _exchangeCheckpoint('ps1CheckpointImport', {
+          'discHash': _checkpointDiscHash(),
+          'frame': snapshot.frame,
+          'state': snapshot.state,
+        }) !=
+        true) {
       throw StateError('The emulator rejected the checkpoint.');
     }
   }
 
-  Future<Object> _exchangeCheckpoint(String method, [Uint8List? state]) async {
+  Future<({int nextFrame, List<Ps1FrameInputs> frames})> readNetplayHistory(int firstFrame) async {
+    _requirePortableCheckpoint();
+    final reply = await _channel.invokeMapMethod<String, Object?>('ps1CheckpointHistory', firstFrame);
+    if (reply == null) throw StateError('The emulator could not read confirmed inputs.');
+    return (
+      nextFrame: reply['nextFrame'] as int,
+      frames: [
+        for (final frame in (reply['frames'] as List<Object?>).cast<List<Object?>>())
+          (_decodePad(frame[0] as List<Object?>), _decodePad(frame[1] as List<Object?>)),
+      ],
+    );
+  }
+
+  Future<void> replayNetplayHistory(int firstFrame, List<Ps1FrameInputs> frames) async {
+    final result = await _exchangeCheckpoint('ps1CheckpointReplay', {
+      'frame': firstFrame,
+      'frames': [
+        for (final (first, second) in frames) [_encodePad(first), _encodePad(second)],
+      ],
+    });
+    if (result != true) throw StateError('The emulator rejected the catch-up batch.');
+  }
+
+  static Ps1PadInput _decodePad(List<Object?> values, [int offset = 0]) => (
+    buttons: values[offset] as int,
+    leftX: values[offset + 1] as int,
+    leftY: values[offset + 2] as int,
+    rightX: values[offset + 3] as int,
+    rightY: values[offset + 4] as int,
+  );
+
+  static List<int> _encodePad(Ps1PadInput pad) => [pad.buttons, pad.leftX, pad.leftY, pad.rightX, pad.rightY];
+
+  Ps1NetplayMedia _requirePortableCheckpoint() {
     final media = _netplayMedia;
     if (media == null || !_portableCheckpoint || _closing || _finished.isCompleted) {
       throw StateError('The emulator cannot exchange portable checkpoints.');
     }
-    final digest = media.identity.toJson()['disc'] as String;
-    final id = await _channel.invokeMethod<int>(method, {
-      'discHash': Uint8List.fromList([
-        for (var offset = 0; offset < digest.length; offset += 2)
-          int.parse(digest.substring(offset, offset + 2), radix: 16),
-      ]),
-      'state': ?state,
-    });
+    return media;
+  }
+
+  Uint8List _checkpointDiscHash() {
+    final digest = _requirePortableCheckpoint().identity.toJson()['disc'] as String;
+    return Uint8List.fromList([
+      for (var offset = 0; offset < digest.length; offset += 2)
+        int.parse(digest.substring(offset, offset + 2), radix: 16),
+    ]);
+  }
+
+  Future<Object> _exchangeCheckpoint(String method, Map<String, Object> arguments) async {
+    _requirePortableCheckpoint();
+    final id = await _channel.invokeMethod<int>(method, arguments);
     if (id == null) throw StateError('The emulator did not accept the checkpoint request.');
     final timer = Stopwatch()..start();
     var consumed = false;
@@ -330,15 +376,7 @@ class EmbeddedRetroGame extends RunningGame {
     if (!_netplay || _closing) throw StateError('The PS1 netplay runner is closed.');
     final reply = await _channel.invokeMapMethod<String, Object?>('netplaySync', {
       'remote': [
-        for (final sample in remote)
-          [
-            sample.frame,
-            sample.input.buttons,
-            sample.input.leftX,
-            sample.input.leftY,
-            sample.input.rightX,
-            sample.input.rightY,
-          ],
+        for (final sample in remote) [sample.frame, ..._encodePad(sample.input)],
       ],
       'acknowledgedFrame': acknowledgedFrame,
     });
@@ -354,16 +392,7 @@ class EmbeddedRetroGame extends RunningGame {
       },
       local: [
         for (final sample in (reply['local'] as List<Object?>).cast<List<Object?>>())
-          (
-            frame: sample[0] as int,
-            input: (
-              buttons: sample[1] as int,
-              leftX: sample[2] as int,
-              leftY: sample[3] as int,
-              rightX: sample[4] as int,
-              rightY: sample[5] as int,
-            ),
-          ),
+          (frame: sample[0] as int, input: _decodePad(sample, 1)),
       ],
     );
   }

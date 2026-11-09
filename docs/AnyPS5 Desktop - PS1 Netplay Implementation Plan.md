@@ -201,6 +201,20 @@ exercise multiple windows, delayed restore, corruption, mismatched startup
 modes and cancellation. The production Quick Menu still needs the host
 transition and input catch-up adapters to use this bootstrap.
 
+The Windows worker now keeps the last 1,024 confirmed controller pairs on
+the portable core. The [Flutter bridge](../lib/ui/embedded_retro_game.dart)
+can request contiguous history in batches of at most 120 frames. An
+isolated guest records the checkpoint frame on import and accepts replay
+only at that cursor while its input timeline is still held. Replay runs on
+the emulation thread, uses both recorded controllers, and suppresses its
+video and audio. Closing an active replay stops the isolated guest.
+The native catch-up probe combines the recorded race and `--checkpoint-guest`
+to capture at frame 6,600 and compare the held guest's replayed RAM after
+the host advances 180 frames. The Windows run matched at the catch-up
+boundary and both original racers finished after 13,706 frames with 114
+matching RAM fingerprints. The live session still needs to send that
+history and align both input timelines at the handoff.
+
 ### Windows development checkpoint
 
 Set `ANYPS5_PS1_NETPLAY=1` on an experimental Windows x64 build to expose

@@ -4,6 +4,7 @@ import 'online_wire.dart';
 
 /// Libretro's sixteen joypad buttons and signed left and right stick axes.
 typedef Ps1PadInput = ({int buttons, int leftX, int leftY, int rightX, int rightY});
+typedef Ps1FrameInputs = (Ps1PadInput, Ps1PadInput);
 
 class Ps1InputPacket {
   const Ps1InputPacket({

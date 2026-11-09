@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -106,8 +107,11 @@ constexpr int kD3D11 = 7;
 constexpr char kPs3Resolution[] = "rpcs3_resolution_scale";
 constexpr unsigned kMaxFrameSize = 4096;
 constexpr size_t kMaxPs1Checkpoint = 12 * 1024 * 1024;
+constexpr uint32_t kPs1CatchupHistory = 1024;
+constexpr uint32_t kPs1CatchupBatch = 120;
 using Ps1DiscHash = std::array<uint8_t, 32>;
 using CheckpointBytes = std::vector<uint8_t>;
+using Ps1Ports = std::array<ps1_netplay::PadInput, 2>;
 enum EnvironmentCommand {
   kCanDupe = 3, kShutdown = 7, kSystemDirectory = 9, kPixelFormat = 10,
   kInputDescriptors = 11, kGetVariable = 15, kSetVariables = 16,
@@ -528,16 +532,45 @@ class RetroCoreSession {
     return true;
   }
 
-  std::optional<int64_t> RequestCheckpoint(const Ps1DiscHash& digest, CheckpointBytes restore = {}) {
-    if (!checkpoint_supported_ || !netplay_ready_ || stop_ || ended_ || restore.size() > kMaxPs1Checkpoint)
+  std::optional<int64_t> RequestCheckpoint(const Ps1DiscHash& digest, CheckpointBytes restore = {},
+                                           std::optional<uint32_t> frame = std::nullopt) {
+    if (!CheckpointReady() || restore.size() > kMaxPs1Checkpoint ||
+        frame.has_value() != !restore.empty() || (frame && *frame > ps1_netplay::Timeline::kMaxFrame))
       return std::nullopt;
     std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
-    if (checkpoint_ || (!restore.empty() && netplay_started_)) return std::nullopt;
-    const bool importing = !restore.empty();
-    static std::atomic<int64_t> next_id{0};
-    const auto id = ++next_id;
-    checkpoint_ = CheckpointJob{id, digest, std::move(restore), importing, false, std::nullopt};
-    return id;
+    if (checkpoint_ || (frame && netplay_started_) || (!frame && replay_cursor_))
+      return std::nullopt;
+    return QueueCheckpoint(digest, std::move(restore), frame, {});
+  }
+
+  std::optional<int64_t> RequestCatchup(uint32_t first, std::vector<Ps1Ports> frames) {
+    if (!CheckpointReady() || frames.empty() || frames.size() > kPs1CatchupBatch ||
+        first > ps1_netplay::Timeline::kMaxFrame - frames.size())
+      return std::nullopt;
+    std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
+    if (checkpoint_ || netplay_started_ || replay_cursor_ != first) return std::nullopt;
+    return QueueCheckpoint({}, {}, first, std::move(frames));
+  }
+
+  std::optional<Map> CheckpointHistory(uint32_t first) {
+    if (!CheckpointReady()) return std::nullopt;
+    std::lock_guard<std::mutex> lock(netplay_mutex_);
+    const auto next = netplay_->frame();
+    const auto oldest = next - static_cast<uint32_t>(checkpoint_history_.size());
+    if (!netplay_started_ || first < oldest || first > next) return std::nullopt;
+    List frames;
+    const auto count = std::min(next - first, kPs1CatchupBatch);
+    for (uint32_t frame = first; frame < first + count; ++frame) {
+      List ports;
+      for (const auto& pad : checkpoint_history_[frame - oldest]) {
+        List values{Value(static_cast<int32_t>(pad.buttons))};
+        for (const auto axis : pad.axes) values.emplace_back(static_cast<int32_t>(axis));
+        ports.emplace_back(std::move(values));
+      }
+      frames.emplace_back(std::move(ports));
+    }
+    return Map{{Value("nextFrame"), Value(static_cast<int64_t>(next))},
+               {Value("frames"), Value(std::move(frames))}};
   }
 
   Value TakeCheckpoint(int64_t id) {
@@ -552,7 +585,7 @@ class RetroCoreSession {
   void CancelCheckpoint(int64_t id) {
     std::lock_guard<std::mutex> lock(checkpoint_mutex_);
     if (!checkpoint_ || checkpoint_->id != id) return;
-    if (checkpoint_->importing && checkpoint_->running) stop_ = true;
+    if (checkpoint_->frame && checkpoint_->running) stop_ = true;
     if (checkpoint_->running && !checkpoint_->result) {
       checkpoint_->cancelled = true;
     } else {
@@ -1095,7 +1128,6 @@ class RetroCoreSession {
   }
 
   int16_t Input(unsigned port, unsigned device, unsigned index, unsigned id) {
-    if (suppress_frame_) return 0;
     if (netplay_) {
       if (port >= netplay_ports_.size()) return 0;
       const auto& input = netplay_ports_[port];
@@ -1104,7 +1136,7 @@ class RetroCoreSession {
       if (device == 5 && index < 2 && id < 2) return input.axes[index * 2 + id];
       return 0;
     }
-    if (port != 0 || paused_) return 0;
+    if (suppress_frame_ || port != 0 || paused_) return 0;
     std::lock_guard<std::mutex> lock(input_mutex_);
     if (device == 1 && id < 16) return (buttons_ & (1u << id)) != 0;
     if (device == 5 && index < 2 && id < 2) return axes_[index * 2 + id];
@@ -1128,8 +1160,9 @@ class RetroCoreSession {
     int64_t id;
     Ps1DiscHash digest;
     CheckpointBytes restore;
-    bool importing;
-    bool running;
+    std::optional<uint32_t> frame;
+    std::vector<Ps1Ports> replay;
+    bool running = false;
     std::optional<Value> result;
     bool cancelled = false;
   };
@@ -1137,17 +1170,30 @@ class RetroCoreSession {
   using SavePortable = size_t (*)(void*, size_t, const uint8_t*);
   using LoadPortable = bool (*)(const void*, size_t, const uint8_t*);
 
-  void ServiceCheckpoint(SavePortable save, LoadPortable load, size_t capacity) {
+  bool CheckpointReady() const { return checkpoint_supported_ && netplay_ready_ && !stop_ && !ended_; }
+
+  // Both callers hold checkpoint_mutex_ and netplay_mutex_.
+  int64_t QueueCheckpoint(const Ps1DiscHash& digest, CheckpointBytes restore,
+                          std::optional<uint32_t> frame, std::vector<Ps1Ports> replay) {
+    static std::atomic<int64_t> next_id{0};
+    const auto id = ++next_id;
+    checkpoint_ = CheckpointJob{id, digest, std::move(restore), frame, std::move(replay), false, std::nullopt};
+    return id;
+  }
+
+  void ServiceCheckpoint(SavePortable save, LoadPortable load, size_t capacity, void (*step)()) {
     std::optional<CheckpointJob> work;
     {
       std::lock_guard<std::mutex> lock(checkpoint_mutex_);
       if (!checkpoint_ || checkpoint_->running) return;
-      work = CheckpointJob{checkpoint_->id, checkpoint_->digest, std::move(checkpoint_->restore),
-                           checkpoint_->importing, true, std::nullopt};
+      work = std::move(*checkpoint_);
+      // Keep the request identity and kind visible while the core call runs.
+      checkpoint_->frame = work->frame;
       checkpoint_->running = true;
     }
     Value result(false);
-    if (work->restore.empty()) {
+    std::optional<uint32_t> cursor;
+    if (!work->frame) {
       uint32_t frame;
       {
         std::lock_guard<std::mutex> lock(netplay_mutex_);
@@ -1160,13 +1206,27 @@ class RetroCoreSession {
         result = Value(Map{{Value("frame"), Value(static_cast<int64_t>(frame))},
                            {Value("state"), Value(std::move(bytes))}});
       }
+    } else if (!work->restore.empty()) {
+      const bool imported = load(work->restore.data(), work->restore.size(), work->digest.data());
+      if (imported) cursor = work->frame;
+      result = Value(imported);
     } else {
-      result = Value(load(work->restore.data(), work->restore.size(), work->digest.data()));
+      suppress_frame_ = true;
+      for (const auto& ports : work->replay) {
+        if (stop_) break;
+        netplay_ports_ = ports;
+        step();
+      }
+      suppress_frame_ = false;
+      netplay_ports_ = {};
+      if (!stop_) cursor = *work->frame + static_cast<uint32_t>(work->replay.size());
+      result = Value(cursor.has_value());
     }
     std::lock_guard<std::mutex> lock(checkpoint_mutex_);
     if (checkpoint_->cancelled) {
       checkpoint_.reset();
     } else {
+      if (cursor) replay_cursor_ = cursor;
       checkpoint_->result = std::move(result);
     }
   }
@@ -1184,7 +1244,7 @@ class RetroCoreSession {
     auto last_advance = next;
     bool started_before = false;
     while (!stop_) {
-      if (checkpoint_supported_) ServiceCheckpoint(save, load, maximum + prefix);
+      if (checkpoint_supported_) ServiceCheckpoint(save, load, maximum + prefix, step);
       ps1_netplay::PadInput local;
       {
         std::lock_guard<std::mutex> lock(input_mutex_);
@@ -1218,6 +1278,10 @@ class RetroCoreSession {
       {
         std::lock_guard<std::mutex> lock(netplay_mutex_);
         netplay_->Commit();
+        if (checkpoint_supported_) {
+          if (checkpoint_history_.size() == kPs1CatchupHistory) checkpoint_history_.pop_front();
+          checkpoint_history_.push_back(netplay_ports_);
+        }
         if (!fingerprint.empty()) {
           if (netplay_fingerprints_.size() == 16) netplay_fingerprints_.erase(netplay_fingerprints_.begin());
           netplay_fingerprints_.emplace_back(frame, std::move(fingerprint));
@@ -1435,6 +1499,8 @@ class RetroCoreSession {
   std::mutex checkpoint_mutex_;
   std::atomic<bool> checkpoint_supported_{false};
   std::optional<CheckpointJob> checkpoint_;
+  std::optional<uint32_t> replay_cursor_;
+  std::deque<Ps1Ports> checkpoint_history_;
   std::atomic<bool> netplay_ready_{false};
   bool netplay_started_ = false;
   std::array<ps1_netplay::PadInput, 2> netplay_ports_{};
@@ -1550,16 +1616,63 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
     Ps1DiscHash hash{};
     std::copy(digest->begin(), digest->end(), hash.begin());
     CheckpointBytes restore;
+    std::optional<uint32_t> frame;
     if (method == "ps1CheckpointImport") {
       const auto state_field = fields->find(Value("state"));
       const auto* state = state_field == fields->end() ? nullptr
                                                        : std::get_if<CheckpointBytes>(&state_field->second);
       if (!state || state->empty() || state->size() > kMaxPs1Checkpoint)
         return result->Error("checkpoint", "Invalid portable checkpoint size");
+      const auto frame_field = fields->find(Value("frame"));
+      const auto number = frame_field == fields->end() ? std::nullopt : IntegerValue(frame_field->second);
+      if (!number || *number < 0 || *number > ps1_netplay::Timeline::kMaxFrame)
+        return result->Error("checkpoint", "Invalid portable checkpoint frame");
+      frame = static_cast<uint32_t>(*number);
       restore = *state;
     }
-    const auto id = session_->RequestCheckpoint(hash, std::move(restore));
+    const auto id = session_->RequestCheckpoint(hash, std::move(restore), frame);
     if (!id) return result->Error("checkpoint", "This core cannot run that checkpoint operation now");
+    result->Success(Value(*id));
+  } else if (method == "ps1CheckpointHistory") {
+    const auto first = arguments ? IntegerValue(*arguments) : std::nullopt;
+    if (!first || *first < 0 || *first > ps1_netplay::Timeline::kMaxFrame)
+      return result->Error("checkpoint", "Invalid first history frame");
+    auto history = session_->CheckpointHistory(static_cast<uint32_t>(*first));
+    if (!history) return result->Error("checkpoint", "The requested input history is unavailable");
+    result->Success(Value(std::move(*history)));
+  } else if (method == "ps1CheckpointReplay") {
+    const auto reject = [&] { result->Error("checkpoint", "Invalid checkpoint replay inputs"); };
+    const auto* fields = std::get_if<Map>(arguments);
+    if (!fields) return reject();
+    const auto frame_field = fields->find(Value("frame"));
+    const auto first = frame_field == fields->end() ? std::nullopt : IntegerValue(frame_field->second);
+    const auto frames_field = fields->find(Value("frames"));
+    const auto* frames = frames_field == fields->end() ? nullptr : std::get_if<List>(&frames_field->second);
+    if (!first || *first < 0 || *first > ps1_netplay::Timeline::kMaxFrame ||
+        !frames || frames->empty() || frames->size() > kPs1CatchupBatch)
+      return reject();
+    std::vector<Ps1Ports> batch;
+    batch.reserve(frames->size());
+    for (const auto& frame : *frames) {
+      const auto* ports = std::get_if<List>(&frame);
+      if (!ports || ports->size() != 2) return reject();
+      Ps1Ports input{};
+      for (size_t seat = 0; seat < input.size(); ++seat) {
+        const auto* pad = std::get_if<List>(&(*ports)[seat]);
+        if (!pad || pad->size() != 5) return reject();
+        const auto buttons = IntegerValue(pad->front());
+        if (!buttons || *buttons < 0 || *buttons > UINT16_MAX) return reject();
+        input[seat].buttons = static_cast<uint16_t>(*buttons);
+        for (size_t axis = 0; axis < input[seat].axes.size(); ++axis) {
+          const auto value = IntegerValue((*pad)[axis + 1]);
+          if (!value || *value < INT16_MIN || *value > INT16_MAX) return reject();
+          input[seat].axes[axis] = static_cast<int16_t>(*value);
+        }
+      }
+      batch.push_back(input);
+    }
+    const auto id = session_->RequestCatchup(static_cast<uint32_t>(*first), std::move(batch));
+    if (!id) return result->Error("checkpoint", "The guest cannot replay from that frame");
     result->Success(Value(*id));
   } else if (method == "ps1CheckpointResult" || method == "ps1CheckpointCancel") {
     const auto id = arguments ? IntegerValue(*arguments) : std::nullopt;

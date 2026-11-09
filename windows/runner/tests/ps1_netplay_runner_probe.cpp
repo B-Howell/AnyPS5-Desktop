@@ -12,8 +12,8 @@ static MMRESULT WINAPI SilentWaveOutWrite(HWAVEOUT, LPWAVEHDR header, UINT) {
 #include "../retro_core_host.cpp"
 #undef waveOutWrite
 
-#include <iostream>
 #include <iomanip>
+#include <iostream>
 
 class ProbeTexture final : public flutter::TextureRegistrar {
  public:
@@ -26,6 +26,7 @@ class ProbeTexture final : public flutter::TextureRegistrar {
     const auto* frame = std::get<flutter::PixelBufferTexture>(*texture_).CopyPixelBuffer(0, 0);
     if (!frame) return false;
     frame->release_callback(frame->release_context);
+    ++published_;
     return true;
   }
 
@@ -34,9 +35,11 @@ class ProbeTexture final : public flutter::TextureRegistrar {
   }
 
   bool UnregisterTexture(int64_t) override { return true; }
+  uint64_t published() const { return published_; }
 
  private:
   flutter::TextureVariant* texture_ = nullptr;
+  std::atomic<uint64_t> published_{0};
 };
 
 int main(int argc, char** argv) {
@@ -60,6 +63,52 @@ int main(int argc, char** argv) {
   std::cout << "ready" << std::endl;
   std::string command;
   while (std::cin >> command && command != "quit") {
+    if (command == "published") {
+      std::cout << texture.published() << std::endl;
+      continue;
+    }
+    if (command == "history") {
+      uint32_t first;
+      if (!(std::cin >> first)) return 7;
+      const auto history = session.CheckpointHistory(first);
+      if (!history) return 7;
+      const auto& frames = std::get<List>(history->at(Value("frames")));
+      std::cout << frames.size();
+      for (const auto& frame : frames) {
+        const auto& ports = std::get<List>(frame);
+        for (const auto& pad : ports) std::cout << ' ' << std::get<int32_t>(std::get<List>(pad).front());
+      }
+      std::cout << std::endl;
+      continue;
+    }
+    if (command == "replay") {
+      uint32_t first, count;
+      if (!(std::cin >> first >> count) || count == 0 || count > 120) return 7;
+      std::vector<std::array<ps1_netplay::PadInput, 2>> frames(count);
+      for (auto& frame : frames) {
+        for (auto& pad : frame) {
+          unsigned buttons;
+          if (!(std::cin >> buttons) || buttons > UINT16_MAX) return 7;
+          pad.buttons = static_cast<uint16_t>(buttons);
+        }
+      }
+      const auto request = session.RequestCatchup(first, std::move(frames));
+      if (!request) {
+        std::cout << "unavailable" << std::endl;
+        continue;
+      }
+      const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+      while (std::chrono::steady_clock::now() < until) {
+        const auto value = session.TakeCheckpoint(*request);
+        if (const auto* applied = std::get_if<bool>(&value)) {
+          std::cout << (*applied ? "replayed" : "rejected") << std::endl;
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      if (std::chrono::steady_clock::now() >= until) return 7;
+      continue;
+    }
     if (command == "checkpoint" || command == "restore") {
       unsigned digest_byte;
       std::string path;
@@ -67,14 +116,18 @@ int main(int argc, char** argv) {
       std::array<uint8_t, 32> digest{};
       digest[0] = static_cast<uint8_t>(digest_byte);
       CheckpointBytes restore;
+      std::optional<uint32_t> first;
       if (command == "restore") {
+        uint32_t frame;
+        if (!(std::cin >> frame)) return 7;
+        first = frame;
         const auto size = std::filesystem::file_size(std::filesystem::u8path(path));
         if (!size || size > kMaxPs1Checkpoint) return 7;
         restore.resize(static_cast<size_t>(size));
         std::ifstream file(std::filesystem::u8path(path), std::ios::binary);
         if (!file.read(reinterpret_cast<char*>(restore.data()), static_cast<std::streamsize>(restore.size()))) return 7;
       }
-      const auto request = session.RequestCheckpoint(digest, std::move(restore));
+      const auto request = session.RequestCheckpoint(digest, std::move(restore), first);
       if (!request) {
         std::cout << "unavailable" << std::endl;
         continue;
