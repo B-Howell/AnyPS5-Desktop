@@ -403,6 +403,27 @@ provider connection is ready, and report a rejected login separately.
 A game lobby or co-op session still needs a separate observation from
 the game.
 
+The [provider status patch](../tool/patches/rpcs3-libretro-provider-status.patch)
+records the initial connection outcome at RPCS3's NP initialization
+boundary. A versioned read-only export carries a numeric state and no
+account data. The [Windows host](../windows/runner/retro_core_host.cpp)
+samples it on the core worker. [The embedded session](../lib/ui/embedded_retro_game.dart)
+interprets it independently of frame readiness and the
+[Quick Menu](../lib/ui/app_model.dart) shows it only for PS3 online play.
+If the export is missing, the menu reports that status is unavailable.
+The state describes initial connection only. A provider connection can
+drop after startup, and joining a game remains the responsibility of the
+title's own multiplayer menu.
+
+The Windows headless fixture ran three LittleBigPlanet GOTY 1.30 boots
+through the production native host. The accepted login with a signaling
+reply reached Ready, the rejected login reached Sign-in Rejected, and
+the accepted login with its signaling reply withheld reached Signaling
+Failed. Each session stopped cleanly. The test package ZIP SHA-256 was
+`e45e3595a178207a9fd2bb59f5b9672a4f73b1b3cc426121a948a8a585f214ed`.
+Its DLL SHA-256 was
+`5a0797e062bd798e3cad0de618c0aa2e715d1436f70cb0a8183286dfc3df2108`.
+
 The [profile tests](../test/core/ps3_online_profile_test.dart) use synthetic
 files to verify safe reopening, artifact hashes and the isolated online
 launch arguments. The [offline boot test](../test/ui/ps3_online_boot_test.dart)

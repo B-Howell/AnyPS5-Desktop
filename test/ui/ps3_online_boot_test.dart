@@ -37,6 +37,7 @@ void main() {
       readPad: () => PadState.idle,
       changed: () {},
     );
+    expect(game.ps3ProviderStatus, isNull);
     expect(await game.exitCode.timeout(const Duration(seconds: 2)), 0);
     final launch = calls.singleWhere((call) => call.method == 'start').arguments as Map;
     expect(launch, isNot(contains('ps3Online')));

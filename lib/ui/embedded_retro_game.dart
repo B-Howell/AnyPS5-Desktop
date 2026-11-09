@@ -19,6 +19,32 @@ import 'retro_game_tuning.dart';
 
 export 'retro_game_tuning.dart' show EmbeddedOption, RetroTuningPersist;
 
+enum Ps3ProviderStatus {
+  unavailable('Connection status unavailable with this RPCS3 core.'),
+  waiting('Waiting for the game to start its network connection.'),
+  connecting('Connecting and signing in.'),
+  signaling('Checking the connection for multiplayer.'),
+  ready('Connected at startup. Use the game’s multiplayer menu to join.'),
+  connectionFailed('Could not connect to the provider. Check your connection and provider setup.'),
+  loginRejected('Sign-in was rejected. Check your RPCN account in Game Settings.'),
+  signalingFailed('Signed in, but multiplayer signaling did not respond.');
+
+  const Ps3ProviderStatus(this.detail);
+
+  final String detail;
+
+  static Ps3ProviderStatus fromNative(Object? code) => switch (code) {
+    0 => waiting,
+    1 => connecting,
+    2 => signaling,
+    3 => ready,
+    4 => connectionFailed,
+    5 => loginRejected,
+    6 => signalingFailed,
+    _ => unavailable,
+  };
+}
+
 class EmbeddedRetroGame extends RunningGame {
   EmbeddedRetroGame._(
     this.textureId,
@@ -70,6 +96,8 @@ class EmbeddedRetroGame extends RunningGame {
   bool get isNetplay => _netplay;
   bool get isPs2Lan => _ps2Lan;
   bool get isPs3Online => _online;
+  Ps3ProviderStatus? _ps3ProviderStatus;
+  Ps3ProviderStatus? get ps3ProviderStatus => _online ? _ps3ProviderStatus ?? Ps3ProviderStatus.unavailable : null;
   final bool localNetplayStaging;
   Ps1NetplayMedia? get stagedNetplayMedia => localNetplayStaging && _portableCheckpoint ? _netplayMedia : null;
   double? get displayAspect => switch (framing) {
@@ -202,6 +230,13 @@ class EmbeddedRetroGame extends RunningGame {
       }
       final updatedAspect = status['aspect'];
       var updated = false;
+      if (_online) {
+        final providerStatus = Ps3ProviderStatus.fromNative(status['ps3ProviderStatus']);
+        if (providerStatus != ps3ProviderStatus) {
+          _ps3ProviderStatus = providerStatus;
+          updated = true;
+        }
+      }
       _portableCheckpoint = status['portableCheckpoint'] == true;
       if (status['netplayReady'] == true && !_netplayReady.isCompleted) {
         _netplayReady.complete(true);

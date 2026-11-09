@@ -6029,6 +6029,8 @@ class AppModel extends ChangeNotifier {
             title: running!.$1.name,
             rows: [
               PanelRow(id: 'resume', title: T.text('quickResume'), kind: ActionRow(resumeGame)),
+              if (embeddedGame?.ps3ProviderStatus case final status?)
+                PanelRow(id: 'ps3ProviderStatus', title: 'PS3 provider connection', kind: InfoRow(status.detail)),
               // Settings › Battery & Heat: the profile that holds lifted for now.
               if (powerWatch.canUndo)
                 PanelRow(

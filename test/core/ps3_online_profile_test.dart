@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -270,6 +271,68 @@ $ppu:
     expect(launch['system'], profile.systemRoot);
     expect(launch['saves'], profile.saveRoot);
     expect(launch.toString(), isNot(contains('test-only')));
+  });
+
+  test('PS3 provider status follows native signaling independently of the first frame', () async {
+    final profile = await verify();
+    const channel = MethodChannel('anyps5/retro_core');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    var status = <String, Object?>{};
+    var polled = Completer<void>();
+    var changes = 0;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'start') return 7;
+      if (call.method == 'status') {
+        if (!polled.isCompleted) polled.complete();
+        return status;
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final game = await EmbeddedRetroGame.start(
+      root.path,
+      (platform: RetroPlatform.ps3, path: disc),
+      onlineProfile: profile,
+      internalResolution: null,
+      graphics: const {},
+      onResolutionSelected: (_) {},
+      onGraphicsSelected: (_, _) {},
+      readPad: () => PadState.idle,
+      changed: () => changes++,
+    );
+    addTearDown(() async {
+      status = {'ended': true};
+      await game.exitCode.timeout(const Duration(seconds: 2));
+    });
+    Future<void> poll() async {
+      await polled.future.timeout(const Duration(seconds: 2));
+      await Future<void>.delayed(Duration.zero);
+      polled = Completer<void>();
+    }
+
+    await poll();
+    expect(game.presented, isFalse);
+    expect(game.ps3ProviderStatus, Ps3ProviderStatus.unavailable);
+    expect(changes, 0);
+    for (final (code, expected) in [
+      (0, Ps3ProviderStatus.waiting),
+      (1, Ps3ProviderStatus.connecting),
+      (2, Ps3ProviderStatus.signaling),
+      (3, Ps3ProviderStatus.ready),
+      (4, Ps3ProviderStatus.connectionFailed),
+      (5, Ps3ProviderStatus.loginRejected),
+      (6, Ps3ProviderStatus.signalingFailed),
+      (999, Ps3ProviderStatus.unavailable),
+    ]) {
+      final priorChanges = changes;
+      status = {'presented': code >= 4, 'ps3ProviderStatus': code};
+      await poll();
+      expect(game.ps3ProviderStatus, expected);
+      expect(game.presented, code >= 4);
+      expect(changes, priorChanges + 1);
+      await poll();
+      expect(changes, priorChanges + 1);
+    }
   });
 
   test('rejects an unqualified provider or shared offline system before boot', () async {

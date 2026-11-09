@@ -797,6 +797,8 @@ class RetroCoreSession {
     };
     if (netplay_) status.emplace(Value("netplayReady"), Value(netplay_ready_.load()));
     if (netplay_) status.emplace(Value("portableCheckpoint"), Value(checkpoint_supported_.load()));
+    const auto provider_status = ps3_provider_status_.load();
+    if (provider_status >= 0) status.emplace(Value("ps3ProviderStatus"), Value(provider_status));
     return status;
   }
 
@@ -1538,6 +1540,14 @@ class RetroCoreSession {
       if (Symbol<unsigned (*)()>(dll, "retro_api_version")() != 1)
         throw std::runtime_error("Unsupported emulator core API");
       if (ps3_) SelectPs3NetworkPolicy(dll, online_, online_.has_value());
+      using ReadPs3ProviderStatus = int32_t (*)();
+      ReadPs3ProviderStatus read_provider_status = nullptr;
+      if (online_) {
+        const auto address = GetProcAddress(dll, "retro_anyps5_ps3_provider_status_v1");
+        static_assert(sizeof(read_provider_status) == sizeof(address));
+        std::memcpy(&read_provider_status, &address, sizeof(read_provider_status));
+        if (read_provider_status) ps3_provider_status_ = 0;
+      }
       const auto init = Symbol<VoidFunction>(dll, "retro_init");
       deinit = Symbol<VoidFunction>(dll, "retro_deinit");
       unload = Symbol<VoidFunction>(dll, "retro_unload_game");
@@ -1674,6 +1684,7 @@ class RetroCoreSession {
           continue;
         }
         step();
+        if (read_provider_status) ps3_provider_status_ = read_provider_status();
         if (!paused_) ++steps_;
         if (ps3_ && vulkan_.unsupported_sync())
           throw std::runtime_error("This RPCS3 core uses Vulkan synchronization AnyPS5 does not support.");
@@ -1715,6 +1726,7 @@ class RetroCoreSession {
   const std::string initial_resolution_;
   const std::map<std::string, std::string> initial_graphics_;
   const std::optional<Ps3NetworkPolicy> online_;
+  std::atomic<int32_t> ps3_provider_status_{-1};
   const std::vector<std::string> packages_;
   std::atomic<int32_t> package_completed_{0};
   std::atomic<bool> package_rejected_{false};

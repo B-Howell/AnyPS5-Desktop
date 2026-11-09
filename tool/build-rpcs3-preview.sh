@@ -41,6 +41,7 @@ if [[ ${2:-} == --network-policy ]]; then
   sed 's/\r$//' "$patch_dir/rpcs3-libretro-rpcn-identity.patch" > "$output/rpcn-identity.patch"
   git apply --check "$output/rpcn-identity.patch"
   git apply "$output/rpcn-identity.patch"
+  git apply "$patch_dir/rpcs3-libretro-provider-status.patch"
 fi
 
 sed \
