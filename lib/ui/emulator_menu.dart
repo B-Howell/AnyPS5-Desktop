@@ -200,7 +200,7 @@ class _EmulatorMenu {
     return groups;
   }
 
-  PanelCategory _ps2LanSetupPage() {
+  PanelCategory _ps2LanSetupPage({VoidCallback? onReady}) {
     final game = app._ps2LanSetupTitle;
     final available = app.together.ps2LanSetupAvailable;
     final installed = app.ps2LanCoreInstalled;
@@ -220,7 +220,7 @@ class _EmulatorMenu {
           PanelRow(
             id: 'ps2-lan-setup-install',
             title: T.text('ps2LanPackageInstall'),
-            detail: T.text('ps2LanPackageDetail'),
+            detail: T.text(app._ps2LanPackageAvailable ? 'ps2LanBundledPackageDetail' : 'ps2LanPackageDetail'),
             kind: available
                 ? ActionRow(() => unawaited(app._preparePs2LanMedia(bios: false)))
                 : InfoRow(T.text('ps2LanBusy')),
@@ -246,6 +246,13 @@ class _EmulatorMenu {
             title: T.format('ps2LanSetupOpen', [game.name]),
             detail: T.text('ps2LanSetupInstructions'),
             kind: blocker == null ? ActionRow(() => unawaited(app._configurePs2Lan(game))) : InfoRow(T.text(blocker)),
+          ),
+        if (onReady != null)
+          PanelRow(
+            id: 'ps2-lan-setup-continue',
+            title: T.text('ps2LanSetupContinue'),
+            detail: T.text('ps2LanUseGameMenu'),
+            kind: blocker == null ? ActionRow(onReady) : InfoRow(T.text(blocker)),
           ),
       ],
     );

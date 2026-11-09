@@ -4,13 +4,16 @@ import 'dart:io';
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
+import 'package:anyps5_desktop/core/toolkit_download.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
-import 'package:anyps5_desktop/ui/together_model.dart';
+import 'package:archive/archive.dart';
+import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import '../support/fake_together.dart';
-import '../support/fixtures.dart' show writePs2IdentityIso;
+import '../support/fixtures.dart' show ps2LanFixtureDll, writePs2IdentityIso;
 import '../support/ui_support.dart';
 
 void main() {
@@ -103,4 +106,171 @@ void main() {
     lan.handle(Command.back);
     expect(lan.overlay, Layer.friends);
   }, skip: Abi.current() != Abi.windowsX64);
+
+  Future<void> verifyBundledSetup({required bool expired, bool configureCard = false}) async {
+    final server = await FakeTogether.start();
+    addTearDown(server.close);
+    final environment = {'ANYPS5_PS2_LAN': '1'};
+    late File bios;
+    final extensionsPicked = <List<String>>[];
+    final fixture = makeFixture(
+      together: server.base,
+      system: HostSystem.windows,
+      environment: environment,
+      pickFile: (_, extensions) async {
+        extensionsPicked.add(extensions);
+        return bios.path;
+      },
+    );
+    final model = fixture.model;
+    addTearDown(() {
+      model.dispose();
+      fixture.dispose();
+    });
+    final root = fixture.temp.path;
+    bios = File(p.join(root, 'bios.bin'))..writeAsBytesSync(Uint8List(4 * 1024 * 1024)..[0] = 7);
+    final packages = Directory(p.join(root, 'packages'))..createSync();
+    final bytes = ps2LanFixtureDll();
+    final archive = File(p.join(packages.path, 'pcsx2_libretro.dll.zip'))
+      ..writeAsBytesSync(
+        ZipEncoder().encode(Archive()..addFile(ArchiveFile('pcsx2_libretro.dll', bytes.length, bytes))),
+      );
+    environment['ANYPS5_MANAGED_CORE_PACKAGES'] = packages.path;
+    environment['ANYPS5_PS2_LAN_CORE_DIGESTS'] =
+        '${await AssetDownload.sha256Of(archive.path)}:${sha256.convert(bytes)}';
+    final offline = File(p.join(p.dirname(model.paths.toolkits), 'Emulators', 'pcsx2_libretro.dll'))
+      ..createSync(recursive: true)
+      ..writeAsBytesSync([1, 2, 3]);
+    final disc = File(p.join(root, 'game.iso'));
+    writePs2IdentityIso(disc, bootSerial: 'SLUS_211.48', revision: '1.00');
+    final setupDisc = File(p.join(root, 'network-setup.iso'));
+    writePs2IdentityIso(setupDisc, bootSerial: 'SCUS_973.28', revision: '2.00');
+    model.games.add(
+      Game(
+        folder: root,
+        titleId: 'PS2-TIMESPLITTERS',
+        name: 'TimeSplitters fixture',
+        names: const {},
+        defaultLanguage: 'en',
+        version: '1.00',
+        executable: ExecutableKind.disc,
+        retro: (platform: RetroPlatform.ps2, path: disc.path),
+        retroSerial: 'SLUS21148',
+      ),
+    );
+    model.games.add(
+      Game(
+        folder: root,
+        titleId: 'PS2-GT4',
+        name: 'Gran Turismo 4',
+        names: const {},
+        defaultLanguage: 'en',
+        version: '2.00',
+        executable: ExecutableKind.disc,
+        retro: (platform: RetroPlatform.ps2, path: setupDisc.path),
+        retroSerial: 'SCUS97328',
+      ),
+    );
+    const host = '12345678-1234-4234-8234-123456789ab1';
+    const roomId = '12345678-1234-4234-8234-123456789abc';
+    final protocol = RetroOnlineMode.lan.protocol;
+    final invite = {
+      'sessionId': roomId,
+      'from': server.person(host, 'ana', 'Ana'),
+      'titleId': 'SLUS21148',
+      'gameVersion': '1.00',
+      'engineBuild': protocol,
+    };
+    server.gameInvites.add(invite);
+    server.answers['GET game-sessions/$roomId'] = (
+      200,
+      {
+        ...invite,
+        'id': roomId,
+        'host': {'userId': host},
+        'kind': 'online',
+        'capacity': 2,
+        'joinable': false,
+        'properties': {'protocol': protocol, 'discSha256': await AssetDownload.sha256Of(disc.path)},
+      },
+    );
+    server.answers['POST game-sessions/$roomId/join'] = (403, {'code': 'fixture_done'});
+    model.together.email = 'fixture@example.invalid';
+    await model.together.sendCode();
+    model.together.code = '123456';
+    await model.together.verify();
+    await until(() => model.together.hub.socket.status.name == 'ready');
+    await model.together.hub.games.refresh();
+    model.open(Layer.friends);
+    PanelRow row(String id) => model.panelCategories().single.rows.singleWhere((row) => row.id == id);
+    void press(String id) => (row(id).kind as ActionRow).run();
+    const continueId = 'ps2-lan-setup-continue';
+    press('game-accept-$roomId');
+    expect(row(continueId).kind, isA<InfoRow>());
+    press('ps2-lan-setup-install');
+    await until(() => model.ps2LanCoreInstalled && model.managedSetupConsole == null);
+    expect(extensionsPicked, isEmpty);
+    expect(row(continueId).kind, isA<InfoRow>());
+    press('ps2-lan-setup-bios');
+    await until(() => model.ps2LanBiosPath != null && model.managedSetupConsole == null);
+    expect(extensionsPicked.single, contains('bin'));
+    expect(row('ps2-lan-setup-launch').kind, isA<ActionRow>());
+    expect(offline.readAsBytesSync(), [1, 2, 3]);
+    expect(server.callsTo('game-sessions/$roomId'), isEmpty);
+    if (configureCard) {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      const channel = MethodChannel('anyps5/retro_core');
+      final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      var stopped = false;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'stop') stopped = true;
+        return switch (call.method) {
+          'start' => 42,
+          'status' => {'presented': true, 'ended': stopped},
+          'ps2LanExchange' => <Uint8List>[],
+          _ => null,
+        };
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      press('ps2-lan-setup-launch');
+      await until(() => model.embeddedGame?.presented == true && model.starting == null);
+      expect(model.overlay, isNull);
+      expect(model.running?.$1.titleId, 'PS2-GT4');
+      await model.stopRunningGame();
+      await until(() => model.overlay == Layer.emulatorMenu && !model.ps2LanSetupActive);
+      expect(row(continueId).kind, isA<ActionRow>());
+      expect(server.callsTo('game-sessions/$roomId'), isEmpty);
+    }
+    if (expired) {
+      server.gameInvites.clear();
+      server.push('game_session.ended', {'sessionId': roomId});
+      await until(() => model.together.hub.games.invites.isEmpty);
+      press(continueId);
+      expect(model.toast, contains('no longer active'));
+      expect(server.callsTo('game-sessions/$roomId'), isEmpty);
+      expect(server.callsTo('game-sessions/$roomId/join'), isEmpty);
+      expect(model.running, isNull);
+      return;
+    }
+    press(continueId);
+    await until(() => server.callsTo('game-sessions/$roomId/join', method: 'POST').isNotEmpty);
+    expect(model.overlay, Layer.friends);
+    expect(model.running, isNull);
+  }
+
+  test(
+    'a bundled PS2 LAN core and BIOS setup continue the original invite',
+    () => verifyBundledSetup(expired: false),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'finishing PS2 LAN setup cannot join an invite that ended during setup',
+    () => verifyBundledSetup(expired: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'closing the local PS2 card setup restores the pending LAN invite',
+    () => verifyBundledSetup(expired: false, configureCard: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
 }

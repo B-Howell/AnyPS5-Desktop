@@ -374,12 +374,27 @@ The launcher verifies the ISO itself when joining. If the LAN core or
 BIOS is missing, the action opens the existing setup page. **Back**
 returns to the same friend or invite without creating, joining or
 declining a room. If sign-out cleared the selected friend, Back opens
-Friends. The [launcher invite test](../test/ui/ps2_lan_invite_test.dart)
-checks both directions and the missing-disc case.
+Friends. Once both prerequisites are ready, **Continue to LAN Play**
+resumes the original request from the setup page. The
+[Friends flow](../lib/ui/together_ps2_lan.dart) rechecks the account,
+matching library entry and incoming invitation before opening the room.
+For a blank card, the same page offers the supported Gran Turismo 4
+setup path if the disc is present. Closing that local setup session
+returns to the setup page with the invitation still pending.
+The [launcher invite tests](../test/ui/ps2_lan_invite_test.dart) cover
+Back, the missing-disc case, an expired invite and a clean-profile setup
+through the original room's join request. A simulated embedded GT4
+session also returns to the pending invite after stopping. A separate Windows probe
+repeated the clean-profile path with the pinned LRPS2 package and a
+real BIOS dump. The bundled core installed without a ZIP picker, the
+offline core fixture kept its original bytes, and the fake room received
+the join request after Continue.
 
 You can also open **Settings → Emulators → PS2 → Setup → Set up
-LAN network**. Choose **Install PS2 LAN core** and select the pinned
-`pcsx2_libretro.dll.zip`. The installer verifies the ZIP, DLL and DEV9
+LAN network**. **Install PS2 LAN core** uses the pinned
+`pcsx2_libretro.dll.zip` from the configured
+`ANYPS5_MANAGED_CORE_PACKAGES` directory when supplied with the build.
+Without that package the action opens a ZIP picker. The installer verifies the ZIP, DLL and DEV9
 export before publishing it under `Emulators/PS2-LAN`. LAN setup and rooms
 prefer that dedicated core. Offline PS2 play keeps its usual core.
 **Import PS2 BIOS** accepts the user's own BIOS on the same page.

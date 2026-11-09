@@ -4068,7 +4068,12 @@ class AppModel extends ChangeNotifier {
     return _playRetro(game, disc, netplay: (media: media, seat: 0), localNetplayStaging: true);
   }
 
-  Future<RetroLanGame> preparePs2Lan(Game game, Uint8List mac, {required bool Function() canBoot}) async {
+  Future<RetroLanGame> preparePs2Lan(
+    Game game,
+    Uint8List mac, {
+    required bool Function() canBoot,
+    bool keepSetupPage = false,
+  }) async {
     final disc = game.retro;
     final bios = ps2LanBiosPath;
     if (!managedRetroAvailable || disc?.platform != RetroPlatform.ps2 || bios == null) {
@@ -4084,7 +4089,11 @@ class AppModel extends ChangeNotifier {
     try {
       if (!canBoot()) throw StateError('The PS2 LAN room closed before the game could start.');
       final booted = Completer<EmbeddedRetroGame?>();
-      closeOverlay();
+      if (keepSetupPage) {
+        _dismissOverlay();
+      } else {
+        closeOverlay();
+      }
       final settled = launch = _playRetro(
         game,
         disc!,
@@ -4106,22 +4115,25 @@ class AppModel extends ChangeNotifier {
   String get _ps2LanCoreHome => _managedRetro.installedPs2LanHome ?? retroCoreOverride ?? _managedRetro.root;
 
   bool get ps2LanCoreInstalled => ManagedRetro(_ps2LanCoreHome).supportsPs2Lan;
+  bool get _ps2LanPackageAvailable => _managedRetro.configuredPs2LanPackage != null;
 
-  void openPs2LanSetup() {
+  void openPs2LanSetup({VoidCallback? onReady}) {
     if (!together.ps2LanSetupAvailable) return show(T.text('ps2LanBusy'));
-    _emulatorMenu.openPage(_emulatorMenu._ps2LanSetupPage);
+    _emulatorMenu.openPage(() => _emulatorMenu._ps2LanSetupPage(onReady: onReady));
   }
 
   Future<void> _preparePs2LanMedia({required bool bios}) async {
     if (!together.ps2LanSetupAvailable) return show(T.text('ps2LanBusy'));
-    final origin = spot;
+    final setupPage = _emulatorMenu._page;
     managedSetupConsole = RetroPlatform.ps2;
     try {
       _changed();
       if (bios) {
         if (await chooseManagedBios(RetroPlatform.ps2) && !_disposed) show(T.text('ps2LanBiosImported'));
       } else {
-        final archive = await services.pickFile?.call(T.text('ps2LanPackagePicker'), ['zip']);
+        final archive =
+            _managedRetro.configuredPs2LanPackage ??
+            await services.pickFile?.call(T.text('ps2LanPackagePicker'), ['zip']);
         if (archive == null || _disposed) return;
         _setRetroSetup(T.text('ps2LanPackageInstalling'));
         await _managedRetro.installPs2Lan(archive);
@@ -4132,7 +4144,10 @@ class AppModel extends ChangeNotifier {
     } finally {
       managedSetupConsole = null;
       if (!_disposed) {
-        if (spot == origin) _skipToFocusable();
+        if (overlay == Layer.emulatorMenu && identical(_emulatorMenu._page, setupPage)) {
+          panelRow = 0;
+          _skipToFocusable();
+        }
         if (retroSetupProgress != null) {
           _setRetroSetup(null);
         } else {
@@ -4164,11 +4179,14 @@ class AppModel extends ChangeNotifier {
       return show(T.text('ps2LanSetupMediaChanged'));
     }
     final owner = currentProfile?.id;
+    final setupPage = _emulatorMenu._page;
+    final setupSpot = spot;
     _ps2LanSetupActive = true;
     try {
       final run = await preparePs2Lan(
         game,
         Uint8List.fromList([2, 0, 0, 0, 0, 1]),
+        keepSetupPage: true,
         canBoot: () {
           if (_disposed || currentProfile?.id != owner) return false;
           final current = disc.statSync();
@@ -4214,7 +4232,13 @@ class AppModel extends ChangeNotifier {
       if (!_disposed) show(T.text('ps2LanSetupFailed'));
     } finally {
       _ps2LanSetupActive = false;
-      if (!_disposed) _changed();
+      if (!_disposed) {
+        if (overlay == null && currentProfile?.id == owner && identical(_emulatorMenu._page, setupPage)) {
+          returnTo(setupSpot);
+        } else {
+          _changed();
+        }
+      }
     }
   }
 

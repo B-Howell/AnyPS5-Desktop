@@ -110,13 +110,41 @@ extension TogetherPs2Lan on TogetherModel {
       return app.show(T.text('ps2LanBusy'));
     }
     if (candidates.isEmpty) return app.show(T.text('ps2LanDisc'));
-    if (_ps2LanSetupIssue != null) return app.openPs2LanSetup();
+    if (_ps2LanSetupIssue != null) {
+      final gameIds = candidates.map((game) => game.id).toSet();
+      return app.openPs2LanSetup(
+        onReady: () {
+          app.open(Layer.friends);
+          if (account.user?.id != me) return app.show(T.text('ps2LanUnavailable'));
+          if (roomId != null &&
+              !hub.games.invites.any(
+                (invite) =>
+                    invite.sessionId == roomId &&
+                    invite.engineBuild == spec.mode.protocol &&
+                    _ps2LanInviteSpec(invite) == spec,
+              )) {
+            return app.show(T.text('ps2LanInviteExpired'));
+          }
+          unawaited(
+            _startPs2Lan(
+              spec,
+              _ps2LanCandidates(spec).where((game) => gameIds.contains(game.id)),
+              friendId: friendId,
+              roomId: roomId,
+            ),
+          );
+        },
+      );
+    }
     if (friendId != null) app.open(Layer.friends);
 
     final attempt = _ps2Lan = _Ps2LanAttempt();
     bool active() => identical(_ps2Lan, attempt) && !attempt.cancelled && account.user?.id == me;
     RetroOnlineRooms rooms([String? digest]) => RetroOnlineRooms(
-      call: account.call,
+      call: (method, path, [body]) {
+        if (account.user?.id != me) throw StateError('The AnyTogether account changed.');
+        return account.call(method, path, body);
+      },
       me: me,
       spec: spec,
       discDigest: digest,

@@ -171,6 +171,13 @@ class ManagedRetro {
 
   String get _ps2LanHome => p.join(root, 'PS2-LAN');
 
+  String? get configuredPs2LanPackage {
+    final directory = packageDirectory;
+    if (directory == null || !p.isAbsolute(directory)) return null;
+    final archive = File(p.join(directory, '${libraryName(RetroPlatform.ps2)}.zip'));
+    return archive.existsSync() ? archive.path : null;
+  }
+
   String? get installedPs2LanHome {
     final library = File(p.join(_ps2LanHome, libraryName(RetroPlatform.ps2)));
     final stat = library.statSync();
