@@ -564,6 +564,12 @@ picker binds to the running worker and its verified release. It resumes
 the game while AnyTogether sends the invitation. Leaving the room keeps
 the game open for another invite. Closing the worker releases its room.
 Players still meet in the game's own online menu.
+An incoming invite for the same title and update can also reuse a
+running worker after provider sign-in. AnyPS5 verifies the room
+fingerprint and checks the sender against the room host when the invite
+supplies a sender. A mismatch leaves the
+game open and keeps the player in Friends. A successful join returns
+to the same worker, and Leave releases the room without stopping it.
 If the embedded core reports a connection, sign-in, or signaling failure
 before its first successful provider connection, AnyPS5 displays the
 specific reason and releases that launch's party room. The same startup

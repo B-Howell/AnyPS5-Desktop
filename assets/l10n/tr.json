@@ -349,6 +349,7 @@
   "ps3PartyStarting": "Özel AnyTogether grubu açılıyor…",
   "ps3PartyBooting": "PS3 çevrimiçi oyunu başlatılıyor…",
   "ps3PartyGameMenu": "Arkadaşınızla oyunun çevrimiçi menüsünde buluşun.",
+  "ps3PartyContinueInGame": "Açık olan oyununuza dönün ve arkadaşınızla çevrimiçi menüde buluşun.",
   "ps3PartyUnavailable": "PS3 davetleri için AnyTogether'da oturum açın ve yeniden bağlanın.",
   "ps3PartyBusy": "Bu daveti kullanmadan önce mevcut oyunu veya oturumu kapatın.",
   "ps3PartyFailed": "PS3 grubu açılamadı. Davetin hâlâ geçerli olduğunu ve iki oyuncunun aynı çevrimiçi profili kullandığını kontrol edin.",

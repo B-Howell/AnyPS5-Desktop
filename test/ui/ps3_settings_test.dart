@@ -32,6 +32,7 @@ void main() {
 
   Future<void> verifySetup(String mode) async {
     final quickHost = mode == 'solo-quick-host';
+    final quickGuest = mode == 'solo-quick-guest';
     const title = 'BCUS98208';
     const ppu = 'PPU-545c1abbf1c562d60fca7435401f020beab76b53';
     const patch =
@@ -262,7 +263,7 @@ void main() {
         model.together.openFriend(friend);
         activate('ps3-party-invite');
         expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
-      } else if (!quickHost) {
+      } else if (!quickHost && !quickGuest) {
         final invite = {
           'sessionId': roomId,
           'from': server.person(friendId, 'ana', 'Ana'),
@@ -368,7 +369,7 @@ void main() {
     });
     expect(launch.toString(), isNot(contains('fake-token')));
     expect(launch.toString(), isNot(contains('test-only')));
-    if (server != null && !quickHost) {
+    if (server != null && !quickHost && !quickGuest) {
       final action = mode == 'host' ? 'invites' : 'join';
       expect(server.callsTo('game-sessions/$roomId/$action', method: 'POST'), hasLength(1));
       if (mode == 'host') {
@@ -387,6 +388,48 @@ void main() {
         isFalse,
       );
       expect(calls.any((call) => call.method == 'pause'), isFalse);
+      if (quickGuest) {
+        final worker = model.embeddedGame;
+        providerStatus = 3;
+        await waitFor(() => worker?.ps3ProviderStatus?.name == 'ready');
+        const path = 'game-sessions/$roomId';
+        final valid = server!.answers['GET $path']!;
+        final room = valid.$2 as Map<String, dynamic>;
+        server.gameInvites.add({
+          'sessionId': roomId,
+          'from': server.person(friendId, 'ana', 'Ana'),
+          'titleId': title,
+          'gameVersion': '01.30',
+          'engineBuild': protocol,
+        });
+        await model.together.hub.games.refresh();
+        model.open(Layer.friends);
+        server.answers['GET $path'] = (
+          200,
+          {
+            ...room,
+            'properties': {'protocol': protocol, 'profileSha256': '0' * 64},
+          },
+        );
+        activate('game-accept-$roomId');
+        await waitFor(() => server.callsTo(path, method: 'GET').isNotEmpty);
+        await waitFor(() => model.together.ps3PartyRows().isEmpty);
+        expect(server.callsTo('$path/join'), isEmpty);
+        expect(model.embeddedGame, same(worker));
+        expect(model.overlay, Layer.friends);
+        expect(model.toast, contains('same online profile'));
+        server.answers['GET $path'] = valid;
+        activate('game-accept-$roomId');
+        await waitFor(() => server.callsTo('$path/join', method: 'POST').length == 1 && model.overlay == null);
+        expect(model.embeddedGame, same(worker));
+        expect(calls.where((call) => call.method == 'start'), hasLength(1));
+        model.open(Layer.quickMenu);
+        activate('ps3-party-leave');
+        await waitFor(() => model.together.ps3PartyRows().isEmpty);
+        expect(server.callsTo('$path/leave'), hasLength(1));
+        expect(model.embeddedGame, same(worker));
+        expect(stopped, isFalse);
+      }
       if (quickHost) {
         final worker = model.embeddedGame;
         expect(model.panelCategories().single.rows.any((row) => row.id == 'ps3-party-invite-from-game'), isFalse);
@@ -501,6 +544,7 @@ void main() {
   for (final mode in [
     'solo',
     'solo-quick-host',
+    'solo-quick-guest',
     'host',
     'guest',
     'guest-ended',
