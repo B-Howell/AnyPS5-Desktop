@@ -154,11 +154,43 @@ The generated executable SHA-256 was
 `a4c387dfb3953caac515a2d23b9d7ef5d8be4d6681dcd21a6abc6a33a023a247`
 and the Patchwork module SHA-256 was
 `c849af910568ccfcb613917ff86371096b990c39ad5dcc51325aee3d4671440d`.
-The wrapper ran without a GUI. These files have yet to boot in the
-embedded core. The next test needs to verify when Patchwork loads and
-applies its protections, then gate network access on the generated
-update, module, and endpoint configuration before attempting the
-actual Refresh login.
+The wrapper ran without a GUI. A disconnected embedded boot loaded
+this module, observed its URL, digest and lobby-key writes, and reached
+video and audio. The writes completed about 0.22 seconds before the
+game's first `sceNpInit` in that run. The bundled module identifies
+itself as Patchwork 1.2. This run does not qualify it as a replacement
+for the 2.0 force-join and script protections already used for GOTY.
+
+The private sign-in test instead extends the existing 26-write
+protection YAML. The upstream
+[LittleBigPlanet 1.30 definitions](https://github.com/HugeSpaceship/Patchwork/blob/452690c29cac8dd4250d488c13008ae06f80d358/lbpdefs/lbp1.yaml)
+and the
+[Patchwork server generator](https://github.com/HugeSpaceship/Patchwork/blob/452690c29cac8dd4250d488c13008ae06f80d358/tools/patch_generator/rpcs3_patch/helpers.go)
+identify the HTTP, HTTPS, and digest string writes. The scratch YAML
+also replaces the 16-byte lobby key at the offset used by
+[Patchwork's LBP1 runtime](https://github.com/HugeSpaceship/Patchwork/blob/452690c29cac8dd4250d488c13008ae06f80d358/src/offsets.h).
+The core rejected an initial version before networking because each
+aligned 64-bit key entry counted as two writes. Four 32-bit entries
+make the YAML and the runtime both expect 33 writes.
+
+The 33-write patch booted in the headless Linux embedded core. The
+core verified the patch before connecting, verified the RPCN TLS
+certificate, and reached provider Ready. The running game requested
+its own ticket for `UP9000-BCUS98148_00`. That is the base game's
+network service ID, while the installed disc and update report
+`BCUS98208`. RPCN issued the signed ticket and Refresh recorded a
+successful LittleBigPlanet 1 login. No fixture posted a substitute
+HTTP login in this run. The core stopped after the server accepted
+the ticket. PostgreSQL, Refresh and RPCN shut down and released their
+listeners. This verifies game-to-server authentication on one PC.
+
+The next end-to-end test needs two isolated game profiles with the
+same private join key, distinct RPCN accounts and independently
+reachable signaling endpoints. Verify that both clients receive
+their game session tokens, reach the same native lobby, and finish
+a level. Keep the frontend's RPCN Ready state separate from actual
+game login and lobby state. The release catalog remains gated on
+provider qualification.
 
 Once the exact title update and protected client patch qualify, point the
 isolated client profile at the private server using
