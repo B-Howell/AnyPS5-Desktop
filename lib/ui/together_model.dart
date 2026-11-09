@@ -11,6 +11,10 @@ import '../core/host.dart';
 import '../core/online/online_peer.dart';
 import '../core/online/online_peer_mesh.dart';
 import '../core/online/online_play.dart';
+import '../core/online/ps1_netplay_match.dart';
+import '../core/online/ps1_netplay_media.dart';
+import '../core/online/ps1_netplay_session.dart';
+import '../core/online/retro_online_rooms.dart';
 import '../core/profiles/profiles.dart' show ProfileAccount, ProfileMode;
 import '../core/remote/remote_protocol.dart';
 import '../core/capture/clip_tools.dart';
@@ -59,6 +63,7 @@ import 'compare_view.dart';
 import 'family_gate.dart';
 import 'livekit_room.dart';
 import 'online_webrtc.dart';
+import 'ps1_netplay_runner.dart';
 import 'sealed_photo.dart';
 import 'strings.dart';
 import 'voice_webrtc.dart';
@@ -68,6 +73,7 @@ part 'together_ask.dart';
 part 'together_party.dart';
 part 'together_party_chat.dart';
 part 'together_play.dart';
+part 'together_ps1_netplay.dart';
 part 'together_profile.dart';
 part 'together_find.dart';
 part 'together_social.dart';
@@ -82,6 +88,9 @@ const launcherVersion = '0.1.20';
 /// on the website, or the paired phone), the server it uses, and the rows the settings show for
 /// it. The interface reads it through [AppModel].
 class TogetherModel {
+  Ps1NetplayMatch? _ps1Match;
+  bool _verifyingPs1 = false;
+
   TogetherModel(this.app) : environment = app.services.environment ?? Platform.environment {
     // The session of the profile playing; another profile's goes in when it plays.
     sessions = ProfileTokenStore(app.tokenStoreFor(app.sessionProfileId));
@@ -409,6 +418,7 @@ class TogetherModel {
 
   /// Signed in or out: what depends on it starts or stops.
   void signedInChanged() {
+    unawaited(_ps1Match?.leave());
     app.remote?.togetherServer = account.base.toString();
     // Another account (or none): what was typed for the last one's profile goes, and so do a
     // call ringing and the Captures read for it.
@@ -838,7 +848,9 @@ class TogetherModel {
 
   /// A game's name in this library, else its title ID.
   String gameName(String titleId) =>
-      app.games.where((game) => game.titleId == titleId).firstOrNull?.nameFor([T.language.code]) ?? titleId;
+      app.games.where((game) => game.titleId == titleId).firstOrNull?.nameFor([T.language.code]) ??
+      Ps1NetplayProfile.qualified.where((profile) => profile.titleId == titleId).firstOrNull?.title ??
+      titleId;
 
   /// "Playing Neon Alley · 25 min", "Online", "Idle", "Do Not Disturb", "Offline", with the
   /// party they are in.
@@ -1040,6 +1052,7 @@ class TogetherModel {
         ),
         T.format('askRemoveFriend', [friend.person.displayName]),
       ),
+      ...ps1NetplayInvites(friend),
       PanelRow(id: 'friend-back', title: T.text('back'), kind: ActionRow(() => app.open(Layer.friends))),
     ];
   }
@@ -1335,6 +1348,7 @@ class TogetherModel {
 
   /// Gateway events worth a word on screen, and the outbox's chance after a reconnect.
   void _event(TogetherEvent event) {
+    _ps1Match?.receive(event.type, event.json);
     // Online play follows the same game session: players joining, leaving, signalling.
     online.handle(event);
     // Share play: the one hosted, the one watched, the invites.
@@ -1606,6 +1620,7 @@ class TogetherModel {
   }
 
   void dispose() {
+    unawaited(_ps1Match?.leave());
     stopRinging();
     calls.noAnswer?.cancel();
     unawaited(online.stop());

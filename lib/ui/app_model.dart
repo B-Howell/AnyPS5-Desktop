@@ -74,6 +74,7 @@ import '../core/together/media.dart' show SfuRoom;
 import '../core/together/talk_key.dart';
 import '../core/together/token_store.dart';
 import '../core/online/online_peer_mesh.dart';
+import '../core/online/ps1_netplay_media.dart';
 import '../core/together/voice_mesh.dart';
 import '../core/themes/theme_design.dart';
 import '../core/themes/theme_library.dart';
@@ -3980,12 +3981,44 @@ class AppModel extends ChangeNotifier {
 
   bool get managedPs3FirmwareDownloaded => _managedRetro.hasPs3FirmwarePackage;
 
+  Future<Ps1NetplayMedia> verifyPs1Netplay(Game game, Ps1NetplayProfile profile) async {
+    final disc = game.retro;
+    final bios = managedBiosPath(RetroPlatform.ps1);
+    if (disc == null || disc.platform != RetroPlatform.ps1) {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
+    }
+    if (bios == null) throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.bios);
+    return Ps1NetplayMedia.verify(
+      profile: profile,
+      disc: disc.path,
+      bios: bios,
+      core: p.join(retroCoreOverride ?? _managedRetro.root, ManagedRetro.libraryName(RetroPlatform.ps1)),
+    );
+  }
+
+  Future<EmbeddedRetroGame> preparePs1Netplay(
+    Game game,
+    Ps1NetplayMedia media,
+    int seat, {
+    required bool Function() canBoot,
+  }) async {
+    final disc = game.retro;
+    if (disc == null || !managedRetroAvailable) throw StateError('PS1 netplay requires embedded play on Windows x64.');
+    final booted = Completer<EmbeddedRetroGame?>();
+    closeOverlay();
+    final launch = _playRetro(game, disc, booted: booted, canBoot: canBoot, netplay: (media: media, seat: seat));
+    final prepared = await Future.any([booted.future, launch.then<EmbeddedRetroGame?>((_) => null)]);
+    if (prepared == null) throw StateError('The PS1 netplay game could not start.');
+    return prepared;
+  }
+
   Future<void> _playRetro(
     Game game,
     RetroDisc disc, {
     Map<String, String> trialOptions = const {},
     Completer<EmbeddedRetroGame?>? booted,
     bool Function()? canBoot,
+    ({Ps1NetplayMedia media, int seat})? netplay,
   }) async {
     if (managedSetupConsole != null || starting != null || running != null || canBoot?.call() == false) return;
     final allowed = together.family.beforePlay(game);
@@ -3999,9 +4032,9 @@ class AppModel extends ChangeNotifier {
     final ps3 = disc.platform == RetroPlatform.ps3;
     final override = ps3 ? null : retroCoreOverride;
     final program = retroSettings.program(disc.platform);
-    final standalone = program != null && File(program).existsSync();
-    final managed = override == null && !standalone && managedRetroAvailable ? _managedRetro : null;
-    final embeddedHome = override ?? managed?.root;
+    final standalone = netplay == null && program != null && File(program).existsSync();
+    final managed = netplay == null && override == null && !standalone && managedRetroAvailable ? _managedRetro : null;
+    final embeddedHome = netplay != null ? p.dirname(netplay.media.core) : override ?? managed?.root;
     if (embeddedHome == null && !standalone) {
       show(
         ps3
@@ -4121,6 +4154,7 @@ class AppModel extends ChangeNotifier {
             return player == null ? PadState.idle : controllers.stateOf(player.id) ?? PadState.idle;
           },
           changed: _changed,
+          netplay: netplay,
         );
       } else {
         retroSettings.applyQueuedGraphics(program!, disc.platform);
@@ -4136,6 +4170,9 @@ class AppModel extends ChangeNotifier {
       stopping = false;
       final cancelled = canBoot?.call() == false;
       if (cancelled) unawaited(stopRunningGame());
+      if (netplay != null && booted != null && !booted.isCompleted) {
+        booted.complete(!cancelled && run is EmbeddedRetroGame ? run : null);
+      }
       together.family.followGame();
       if (ps3) _watchPs3Trophies(game);
       if (run is EmbeddedRetroGame) {
@@ -5778,7 +5815,7 @@ class AppModel extends ChangeNotifier {
                   title: T.text('gameSettings'),
                   kind: ActionRow(() => open(Layer.gameSettings)),
                 ),
-              if (running?.$1.retro != null)
+              if (running?.$1.retro != null && embeddedGame?.isNetplay != true)
                 PanelRow(
                   id: 'retroGraphics',
                   title: 'Graphics',

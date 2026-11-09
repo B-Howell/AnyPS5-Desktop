@@ -37,6 +37,16 @@ encoding emulator settings as PS5 engine fields. Use a shared preflight result
 and match controller, then hand off to the relevant mode. Do not combine
 frame replay, Ethernet and provider traffic into one game protocol.
 
+The experimental [retro room API](../lib/core/online/retro_online_rooms.dart)
+takes a title, version, capacity and gameplay mode. It shares invitation,
+membership and device binding across modes. The
+[PS1 qualification profiles](../lib/core/online/ps1_netplay_media.dart)
+keep tested disc revisions outside the launcher UI. The
+[invite dispatcher](../lib/ui/together_profile.dart) keeps retro invitations
+out of the PS5 launch path. CTR is the first qualified PS1 profile. The
+PS2 and PS3 room contracts are testable with fakes while their gameplay
+adapters are being qualified.
+
 | Future test | PS1 | PS2 | PS3 |
 | --- | --- | --- | --- |
 | One PC, fakes | Invite and mismatch, packet validation, failure and teardown | Same launcher checks, virtual segment and packet isolation | Same launcher checks, provider errors, profile verification and redaction |

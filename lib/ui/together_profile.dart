@@ -501,13 +501,13 @@ extension TogetherProfiles on TogetherModel {
   /// A session while a game runs (when friends may join), none after; called whenever what runs
   /// changes.
   void followGameSession() {
-    if (!signedIn) return;
+    if (!signedIn || _ps1Match != null) return;
     final running = app.running;
     final games = hub.games;
     if (running != null) {
       if (!app.preferences.friendsJoin || games.session != null || openingSession) return;
       final game = running.$1;
-      if (!SyncTitle.valid(game.titleId)) return;
+      if (game.retro != null || !SyncTitle.valid(game.titleId)) return;
       openingSession = true;
       unawaited(() async {
         try {
@@ -551,8 +551,10 @@ extension TogetherProfiles on TogetherModel {
   /// A friend's game, from their presence or an invite: the same game here, checked first.
   Future<void> joinFriendGame(String sessionId, {required String titleId, required String host}) async {
     if (!signedIn) return;
+    if (_ps1Match != null) return app.show(T.text('retroOnlineBusy'));
     final game = app.games.where((game) => game.titleId == titleId).firstOrNull;
     if (game == null) return app.show(T.format('gameNotHere', [titleId]));
+    if (game.retro != null) return _unsupportedRetroInvite();
     final running = app.running;
     if (running != null) return app.show(T.format('gameCloseFirst', [running.$1.name]));
     if (app.stateOf(game) is! Installed) return app.show(T.format('gameUnlockFirst', [game.name]));
@@ -606,6 +608,7 @@ extension TogetherProfiles on TogetherModel {
     final session = games.session;
     final rows = <PanelRow>[
       ...togetherOfferRows(),
+      ...ps1NetplayRows(),
       for (final invite in games.invites) ...[
         PanelRow(
           id: 'game-accept-${invite.sessionId}',
@@ -613,9 +616,12 @@ extension TogetherProfiles on TogetherModel {
           detail: T.text('gameInvitedDetail'),
           person: invite.from == null ? null : TogetherModel.card(invite.from!, status: PersonStatus.playing),
           kind: ActionRow(
-            () => unawaited(
-              joinFriendGame(invite.sessionId, titleId: invite.titleId, host: invite.from?.displayName ?? ''),
-            ),
+            () => unawaited(switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {
+              RetroOnlineMode.synchronized => joinPs1Netplay(invite),
+              RetroOnlineMode.lan || RetroOnlineMode.nativeOnline => _unsupportedRetroInvite(),
+              null when RetroOnlineMode.isRetroProtocol(invite.engineBuild) => _unsupportedRetroInvite(),
+              null => joinFriendGame(invite.sessionId, titleId: invite.titleId, host: invite.from?.displayName ?? ''),
+            }),
           ),
         ),
         PanelRow(

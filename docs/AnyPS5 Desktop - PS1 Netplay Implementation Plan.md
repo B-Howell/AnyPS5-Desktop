@@ -169,6 +169,69 @@ diagnostics if rollback exceeds the frame budget.
 
 ## 4. Connect to AnyTogether without changing PS5 sessions
 
+### Windows development checkpoint
+
+Set `ANYPS5_PS1_NETPLAY=1` on an experimental Windows x64 build to expose
+CTR invitations from a friend's options and accept them in AnyTogether Games.
+Both players need the supported
+US CUE and track files, an SCPH-1001 BIOS dump and the pinned SwanStation DLL.
+[Media verification](../lib/core/online/ps1_netplay_media.dart) hashes these
+locally and sends only the compatibility fingerprints. The
+[launcher integration](../lib/ui/together_ps1_netplay.dart) routes CTR
+invites separately from PS5 and uses the
+[embedded match runner](../lib/ui/ps1_netplay_runner.dart) to start both
+players at frame zero. Each copy displays CTR's original split-screen.
+
+[Shared room handling](../lib/core/online/retro_online_rooms.dart) uses a private
+two-seat `online` room with a versioned marker in its properties and build
+field. This follows the [AnyTogether game-session schema](https://github.com/AnyTogether/AnyTogether/blob/main/packages/shared/src/gameSessions.ts).
+The [match owner](../lib/core/online/ps1_netplay_match.dart) binds signals
+to the other player's room, account and device. The
+[peer adapter](../lib/core/online/ps1_netplay_peer.dart) carries reliable
+handshake and lifecycle messages separately from the unordered input
+snapshots. The [session protocol](../lib/core/online/ps1_netplay_session.dart)
+checks compatibility before boot, acknowledges inputs and closes the runner
+if either player leaves or stops advancing. It also compares RAM fingerprints
+every 120 confirmed frames and stops the match at the first mismatch. The
+other player may see a disconnect if the link closes before their copy
+receives the final fingerprint.
+
+The [Windows worker](../windows/runner/retro_core_host.cpp) starts with
+isolated storage, the full BIOS boot and two digital pads. It holds until both inputs for a
+frame are confirmed, with a two-tick input buffer. The stock SwanStation DLL
+diverged when restoring checkpoints in the earlier tests. The separate patched
+core and prediction lane established the rollback performance result in
+section 3. Shipping rollback still requires the patched core, native
+prediction scheduling and frame pacing verification through the application.
+A patched native single-core test completed the same race under 120 ms RTT,
+25 ms jitter, 5% random loss and a ten-tick burst with the two-tick buffer.
+All 114 fingerprints matched. Peak worker costs were 59.06 and 71.75 ms,
+which exceed the 16.67 ms budget. The earlier separate prediction lane is
+the implementation target for smooth rollback.
+The [native timeline](../windows/runner/ps1_netplay_timeline.h) owns the
+delay, retransmit window and ordered inputs. Its
+[unit test](../windows/runner/tests/ps1_netplay_timeline_test.cpp) checks
+gaps and conflicting inputs. The
+[console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
+[driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real
+embedded worker with a headless texture and audio sink. They check periodic
+RAM fingerprints and the race result against the recorded CTR trace.
+On Windows x64, two stock-core workers finished the 13,706-frame Coco Park
+Versus fixture with 114 matching RAM fingerprints. CTR marked both seats as
+finished. This run used local confirmed inputs. The 120 ms fault-injection
+rollback results in section 3 use a separate harness and patched core.
+
+[Room tests](../test/core/online/ps1_netplay_rooms_test.dart) cover invite
+validation, member binding, cancellation during room creation and teardown
+while the WebRTC plugin is opening.
+[Peer tests](../test/core/online/ps1_netplay_peer_test.dart) use fake data
+channels for negotiation and teardown.
+[Session tests](../test/core/online/ps1_netplay_session_test.dart) exercise
+input delivery, acknowledgement under reordering, timeout and cleanup.
+[Media tests](../test/core/online/ps1_netplay_media_test.dart) cover track
+resolution and disc identity. Service sign-in, direct or relayed WebRTC,
+and WAN gameplay still need the qualification below.
+
 **Existing code:** [GameSessions](../lib/core/together/game_sessions.dart)
 creates LAN Play Together rooms and validates title/version/build.
 [Play Together](../lib/ui/together_play.dart) launches that PS5 flow.
@@ -192,7 +255,8 @@ the game-session API. Existing PS5 datagrams have their own wire format.
    Show compatibility reason, connection route and coarse latency. Test with
    the [peer mesh suite](../test/core/online/online_peer_mesh_test.dart),
    [join verdict suite](../test/core/play_together_test.dart) and
-   [launcher party tests](../test/ui/together_test.dart). Run focused suites
+[launcher party tests](../test/ui/together_test.dart), including the guard
+that keeps CTR invites out of the PS5 launch path. Run focused suites
    with `flutter test test/core/play_together_test.dart test/core/online/online_peer_mesh_test.dart`
    and the applicable launcher tests on the project's supported CI platform.
 

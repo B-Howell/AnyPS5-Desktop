@@ -26,6 +26,14 @@ The [RPCS3 Libretro feature table](https://docs.libretro.com/library/rpcs3/#feat
 
 **Exit gate:** Record a provider-approved, reproducible test configuration and the supported join flow. Provider incompatibility or missing verified protections blocks the live trial.
 
+The local LittleBigPlanet GOTY disc reports `BCUS98208` at `01.18`.
+The same-title data directory has no updated executable or `APP_VER`.
+The [Patchwork LittleBigPlanet profile](https://github.com/HugeSpaceship/Patchwork/blob/main/lbpdefs/lbp1.yaml)
+lists version `01.30` and does not list `BCUS98208`. Leave this disc's
+online option disabled until the exact updated executable has a
+provider-approved profile. Keep title and revision checks generic so
+other supported PS3 titles can use the same native-online launch path.
+
 ## 2. Make the embedded profile honor the selected settings
 
 **Existing seam:** [PS3 settings model](../lib/ui/ps3_settings_model.dart), [embedded launch contract](../lib/ui/embedded_retro_game.dart), [native core option handling](../windows/runner/retro_core_host.cpp) and [frontend patch](../tool/patches/rpcs3-libretro-frontend.patch). The frontend supplies saved values for recognized boot and graphics options. Upstream network options being listed does not prove an effective network profile on launch.

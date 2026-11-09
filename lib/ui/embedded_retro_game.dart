@@ -9,14 +9,21 @@ import '../core/game_library.dart';
 import '../core/game_process.dart';
 import '../core/managed_retro.dart';
 import '../core/gamepad/pad_navigation.dart';
+import '../core/online/ps1_netplay_media.dart';
+import '../core/online/ps1_netplay_session.dart';
 
 import 'retro_game_tuning.dart';
 
 export 'retro_game_tuning.dart' show EmbeddedOption, RetroTuningPersist;
 
 class EmbeddedRetroGame extends RunningGame {
-  EmbeddedRetroGame._(this.textureId, this._finished, this._onResolutionSelected, this._onGraphicsSelected)
-    : super.embedded(_finished.future, DateTime.now());
+  EmbeddedRetroGame._(
+    this.textureId,
+    this._finished,
+    this._onResolutionSelected,
+    this._onGraphicsSelected,
+    this._netplay,
+  ) : super.embedded(_finished.future, DateTime.now());
 
   static const _channel = MethodChannel('anyps5/retro_core');
   static const ps3Resolution = 'rpcs3_resolution_scale';
@@ -25,6 +32,8 @@ class EmbeddedRetroGame extends RunningGame {
   final void Function(String) _onResolutionSelected;
   final void Function(String, String) _onGraphicsSelected;
   final _ready = Completer<bool>();
+  final _netplayReady = Completer<bool>();
+  final bool _netplay;
   late final Timer _watch;
   late final Timer _input;
   bool _reading = false;
@@ -47,6 +56,8 @@ class EmbeddedRetroGame extends RunningGame {
   List<int> _lastInput = const [];
 
   Future<bool> get ready => _ready.future;
+  Future<bool> get netplayReady => _netplayReady.future;
+  bool get isNetplay => _netplay;
   double? get displayAspect => switch (framing) {
     0 => aspect,
     1 => 4 / 3,
@@ -64,24 +75,41 @@ class EmbeddedRetroGame extends RunningGame {
     RetroTuningPersist? onTuningApplied,
     required PadState Function() readPad,
     required void Function() changed,
+    ({Ps1NetplayMedia media, int seat})? netplay,
   }) async {
-    final core = p.join(folder, ManagedRetro.libraryName(disc.platform));
+    if (netplay != null && (disc.platform != RetroPlatform.ps1 || p.absolute(disc.path) != netplay.media.disc)) {
+      throw ArgumentError('Netplay must use the verified PS1 disc.');
+    }
+    final core = netplay?.media.core ?? p.join(folder, ManagedRetro.libraryName(disc.platform));
     if (!File(core).existsSync()) throw FileSystemException('The embedded emulator core is missing', core);
-    final saveRoot = Directory(p.join(folder, 'saves', disc.platform.name))..createSync(recursive: true);
+    final saveRoot = netplay == null
+        ? (Directory(p.join(folder, 'saves', disc.platform.name))..createSync(recursive: true)).path
+        : Directory.systemTemp.path;
     final id = await _channel.invokeMethod<int>('start', {
       'core': core,
-      'disc': disc.path,
+      'disc': netplay?.media.disc ?? disc.path,
       'system': p.join(folder, 'system'),
-      'saves': saveRoot.path,
-      'internalResolution': ?internalResolution,
-      if (graphics.isNotEmpty) 'graphics': graphics,
+      'saves': saveRoot,
+      if (netplay == null) ...{
+        'internalResolution': ?internalResolution,
+        if (graphics.isNotEmpty) 'graphics': graphics,
+      } else ...{
+        'ps1NetplaySeat': netplay.seat,
+        'ps1NetplayBios': netplay.media.bios,
+      },
     });
     if (id == null || id < 0) throw StateError('The game surface could not start.');
-    final session = EmbeddedRetroGame._(id, Completer<int>(), onResolutionSelected, onGraphicsSelected);
+    final session = EmbeddedRetroGame._(
+      id,
+      Completer<int>(),
+      onResolutionSelected,
+      onGraphicsSelected,
+      netplay != null,
+    );
     session.tuning = RetroGameTuning(
       platform: disc.platform,
       options: session.options,
-      ready: () => session.presented && session.hardwareRendering && !session._closing,
+      ready: () => !session._netplay && session.presented && session.hardwareRendering && !session._closing,
       writeOptions: (expected, values) async {
         if (session._closing) return false;
         final accepted = await _channel.invokeMethod<bool>('tuningOptions', {'expected': expected, 'values': values});
@@ -121,11 +149,15 @@ class EmbeddedRetroGame extends RunningGame {
         _input.cancel();
         tuning.endSession();
         if (!_ready.isCompleted) _ready.complete(false);
+        if (!_netplayReady.isCompleted) _netplayReady.complete(false);
         _finished.complete(error.isEmpty ? 0 : 1);
         return;
       }
       final updatedAspect = status['aspect'];
       var updated = false;
+      if (status['netplayReady'] == true && !_netplayReady.isCompleted) {
+        _netplayReady.complete(true);
+      }
       if (!presented && status['presented'] == true) {
         presented = true;
         _ready.complete(true);
@@ -205,7 +237,7 @@ class EmbeddedRetroGame extends RunningGame {
     if (_closing) return;
     if (_playing != playing) {
       _playing = playing;
-      unawaited(_channel.invokeMethod<void>('pause', !playing));
+      if (!_netplay) unawaited(_channel.invokeMethod<void>('pause', !playing));
     }
     final acceptsInput = playing && focused;
     if (_acceptsInput == acceptsInput) return;
@@ -220,7 +252,7 @@ class EmbeddedRetroGame extends RunningGame {
   }
 
   Future<void> setOption(String key, String value) async {
-    if (_closing || tuning.updating) return;
+    if (_netplay || _closing || tuning.updating) return;
     if (tuning.canCancel) await tuning.cancel();
     if (_closing || tuning.updating) return;
     final accepted = await _channel.invokeMethod<bool>('option', {'key': key, 'value': value});
@@ -242,6 +274,54 @@ class EmbeddedRetroGame extends RunningGame {
             }.contains(key))) {
       _onGraphicsSelected(key, value);
     }
+  }
+
+  Future<void> startNetplayFrames() async {
+    if (!_netplay || _closing || await _channel.invokeMethod<bool>('netplayStart') != true) {
+      throw StateError('The PS1 netplay runner could not start.');
+    }
+  }
+
+  Future<Ps1NetplayTick> exchangeNetplayFrames(List<Ps1NetplayFrame> remote, int? acknowledgedFrame) async {
+    if (!_netplay || _closing) throw StateError('The PS1 netplay runner is closed.');
+    final reply = await _channel.invokeMapMethod<String, Object?>('netplaySync', {
+      'remote': [
+        for (final sample in remote)
+          [
+            sample.frame,
+            sample.input.buttons,
+            sample.input.leftX,
+            sample.input.leftY,
+            sample.input.rightX,
+            sample.input.rightY,
+          ],
+      ],
+      'acknowledgedFrame': acknowledgedFrame,
+    });
+    if (reply == null) throw StateError('The PS1 netplay runner returned no frames.');
+    return (
+      frame: reply['frame'] as int,
+      confirmedFrame: reply['confirmedFrame'] as int?,
+      receivedFrame: reply['receivedFrame'] as int?,
+      waiting: reply['waiting'] as bool,
+      fingerprints: {
+        for (final sample in (reply['fingerprints'] as List<Object?>).cast<List<Object?>>())
+          sample[0] as int: sample[1] as String,
+      },
+      local: [
+        for (final sample in (reply['local'] as List<Object?>).cast<List<Object?>>())
+          (
+            frame: sample[0] as int,
+            input: (
+              buttons: sample[1] as int,
+              leftX: sample[2] as int,
+              leftY: sample[3] as int,
+              rightX: sample[4] as int,
+              rightY: sample[5] as int,
+            ),
+          ),
+      ],
+    );
   }
 
   static bool _usesGraphicsCheckpoint(String key) => const {
