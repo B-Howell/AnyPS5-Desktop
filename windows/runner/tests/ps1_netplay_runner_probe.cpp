@@ -423,7 +423,8 @@ int main(int argc, char** argv) {
   std::string command;
   while (std::cin >> command && command != "quit") {
     if (dual && command == "presentation-steps") {
-      std::cout << session.presentation_steps() << ' ' << session.presentation_frames() << std::endl;
+      std::cout << session.presentation_steps() << ' ' << session.presentation_frames() << ' '
+                << session.peak_prediction_depth() << std::endl;
       continue;
     }
     if ((rollback || audio_control) && command == "audio") {

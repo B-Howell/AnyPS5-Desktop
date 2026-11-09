@@ -778,7 +778,7 @@ Run the same native driver with `--rollback --trace` and the
 to exchange the native workers' actual controller packets at 60 Hz.
 The driver uses the 120 ms RTT model with 25 ms jitter, 5% random loss,
 a ten-tick loss burst and seeds 2401 and 2402. The workers retain the
-two-frame input delay and eight-frame native prediction window. The
+two-frame input delay. The single-core prediction window is eight frames. The
 driver requires both game-owned finishes, matching confirmed RAM
 fingerprints, and matching PCM drained through the final frame. It
 reports native worker time before pacing sleep, texture callback gaps,
@@ -837,8 +837,22 @@ and 230.052 ms, and peak confirmed PCM delivery gaps reached 333.695
 and 233.346 ms. The timing counter covers the primary thread, including
 both replay slices, and excludes the spare thread. The result passes
 the primary work budget and still fails the presentation cadence gate.
-The eight-frame prediction window remains shorter than the modeled
-ten-tick burst.
+That dual-core baseline used an eight-frame prediction window, shorter
+than the modeled ten-tick burst. Attaching the spare now expands the
+headless primary window to sixteen frames. The worker sizes its
+checkpoint and PCM buffers to the selected window. The short test
+withholds one input for twelve frames of prediction and verifies
+recovery against confirmed-input RAM and PCM.
+
+The sixteen-frame run used the full window on both seats and finished
+in 288.80 seconds with the same 114 RAM fingerprints and 10,104,619
+stereo pairs. The worst primary work was 21.723 ms with five overruns
+on seat 2. The largest video and PCM gaps were 404.254 and 348.712 ms.
+This profile improved race completion time over the eight-frame
+dual-core baseline while increasing the largest presentation gap.
+The forced-gap test showed the spare could keep advancing after the
+primary reached its previous high-water mark. The primary needs to
+continue catching up until it reaches the spare's displayed frame.
 
 The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
 [driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real

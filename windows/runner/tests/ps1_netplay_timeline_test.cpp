@@ -205,5 +205,22 @@ int main() {
   preview.Commit();
   assert(preview.Prepare({}, host_inputs));
   assert(host_inputs[0] == host_pad);
+  Timeline burst(0);
+  try {
+    burst = Timeline(0, 16);
+  } catch (const std::invalid_argument&) {
+    return 1;
+  }
+  burst.Start();
+  for (uint32_t frame = 0; frame < 16; ++frame) {
+    assert(burst.Prepare(host_pad, host_inputs));
+    burst.Commit();
+  }
+  assert(burst.waiting() && !burst.Prepare(host_pad, host_inputs));
+  assert(burst.Receive({{0, guest_pad}}, std::nullopt));
+  assert(burst.correction() == 0u && burst.Rewind(0));
+  assert(burst.Prepare({}, host_inputs) && host_inputs[1] == guest_pad);
+  burst.Commit();
+  assert(burst.confirmed() == 0u && burst.frame() == 16);
   VerifyDelayedReplay();
 }

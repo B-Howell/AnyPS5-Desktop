@@ -489,6 +489,7 @@ def verify_native_rollback(args, cleanup):
     sent = [set(), set()]
     fingerprints = [{}, {}]
     gap = 119
+    gap_crossing = 12 if args.presentation_core else 3
 
     def pump(seat, hold_gap):
         frame, _, local, _ = states[seat]
@@ -503,7 +504,7 @@ def verify_native_rollback(args, cleanup):
                 f"Worker {seat} changed a published fingerprint at frame {index}")
 
     deadline = monotonic() + 35
-    while states[0][0] < gap or states[1][0] < gap + 3:
+    while states[0][0] < gap or states[1][0] < gap + gap_crossing:
         if monotonic() > deadline:
             raise TimeoutError(f"Native worker did not predict through the gap: {states}")
         for seat in range(2):
@@ -533,8 +534,9 @@ def verify_native_rollback(args, cleanup):
     assert after[0] == after[1] and int(after[0][0]) > int(before[0][0]), (
         f"Corrected audio did not match the confirmed-input control: {after}")
     if args.presentation_core:
-        steps, video = map(int, peers[1].send("presentation-steps").split())
+        steps, video, depth = map(int, peers[1].send("presentation-steps").split())
         assert steps > 0 and video > 0, "The spare core never published video during replay"
+        assert gap_crossing <= depth <= 16, f"Unexpected peak prediction depth: {depth}"
         if target % 120 == 0:
             assert peers[1].send("fingerprint") == fingerprints[1][target - 1], (
                 "The probe read RAM from the wrong core")
@@ -626,9 +628,10 @@ def traced_rollback_race(args, cleanup):
               f"{long_gaps} gaps over two ticks; max confirmed PCM gap {audio_gap / 1000:.3f} ms; "
               f"max native work {work / 1000:.3f} ms, {overruns} iterations over 16.667 ms.")
         if args.presentation_core:
-            steps, video = map(int, peer.send("presentation-steps").split())
+            steps, video, depth = map(int, peer.send("presentation-steps").split())
             assert steps > 0 and video > 0, "The spare core never published video during the race"
-            print(f"Seat {seat}: {video} speculative texture updates across {steps} presentation steps.")
+            print(f"Seat {seat}: {video} speculative texture updates across {steps} presentation steps; "
+                  f"peak primary prediction depth {depth} frames.")
 
 
 def traced_race(peers, frames, args, cleanup):

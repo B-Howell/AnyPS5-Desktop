@@ -39,7 +39,8 @@ class Timeline {
   static constexpr uint32_t kHistory = 64;
   static constexpr uint32_t kMaxFrame = 0xfffffffe;
   static constexpr uint32_t kMaxPacket = 8;
-  static constexpr uint32_t kMaxPrediction = 8;
+  static constexpr uint32_t kStandardPrediction = 8;
+  static constexpr uint32_t kMaxPrediction = 16;
 
   explicit Timeline(unsigned seat, uint32_t prediction_window = 0)
       : seat_(seat), prediction_window_(prediction_window) {
@@ -55,6 +56,13 @@ class Timeline {
     return true;
   }
   void Reset() { *this = Timeline(seat_, prediction_window_); }
+  bool SetPredictionWindow(uint32_t window) {
+    if (started_ || frame_ || window > kMaxPrediction) return false;
+    prediction_window_ = window;
+    return true;
+  }
+  uint32_t prediction_window() const { return prediction_window_; }
+  uint32_t prediction_depth() const { return cursor_ - NextUnconfirmed(); }
   // The transport reports a monotonic frame. The emulator cursor can rewind.
   uint32_t frame() const { return frame_; }
   uint32_t cursor() const { return cursor_; }

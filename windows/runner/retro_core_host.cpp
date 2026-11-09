@@ -571,6 +571,7 @@ class RetroCoreSession {
   int64_t trace_work_overruns() const { return trace_work_overruns_; }
   uint32_t presentation_steps() const { return presentation_steps_; }
   uint32_t presentation_frames() const { return presentation_frames_; }
+  uint32_t peak_prediction_depth() const { return peak_prediction_depth_; }
 
   RetroCoreSession(flutter::TextureRegistrar* registrar, std::string core,
                    std::string disc, std::string system, std::string saves,
@@ -588,7 +589,7 @@ class RetroCoreSession {
                    CallbackSlot callback_slot = CallbackSlot::kPrimary)
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
         netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(
-                                   *netplay_seat, rollback ? ps1_netplay::Timeline::kMaxPrediction : 0)
+                                   *netplay_seat, rollback ? ps1_netplay::Timeline::kStandardPrediction : 0)
                               : nullptr),
         rollback_(rollback),
         audio_sink_(std::move(audio_sink)),
@@ -627,6 +628,7 @@ class RetroCoreSession {
     if (!core || !rollback_ || callback_slot_ != CallbackSlot::kPrimary || worker_.joinable() ||
         presentation_core_ || core->callback_slot_ != CallbackSlot::kPresentation ||
         core->worker_.joinable() || core->disc_ != disc_) return false;
+    if (!netplay_->SetPredictionWindow(ps1_netplay::Timeline::kMaxPrediction)) return false;
     core->presentation_target_ = this;
     presentation_core_ = std::move(core);
     return true;
@@ -1752,7 +1754,7 @@ class RetroCoreSession {
       std::optional<uint32_t> frame;
       CheckpointBytes bytes;
     };
-    std::array<RollbackState, ps1_netplay::Timeline::kMaxPrediction> checkpoints;
+    std::vector<RollbackState> checkpoints(netplay_->prediction_window());
     // The extra slot holds the frame being stepped before its confirmation.
     std::vector<RollbackAudioFrame> pending_audio(rollback_ ? checkpoints.size() + 1 : 0);
     uint32_t next_audio_frame = 0;
@@ -1953,6 +1955,8 @@ class RetroCoreSession {
           local_prepared_ = false;
         } else {
           netplay_->Commit();
+          if (rollback_)
+            peak_prediction_depth_ = std::max(peak_prediction_depth_.load(), netplay_->prediction_depth());
         }
         if (checkpoint_supported_) {
           if (checkpoint_history_.size() == kPs1CatchupHistory) checkpoint_history_.pop_front();
@@ -2329,6 +2333,7 @@ class RetroCoreSession {
   bool rendering_on_target_ = false;
   std::atomic<uint32_t> presentation_steps_{0};
   std::atomic<uint32_t> presentation_frames_{0};
+  std::atomic<uint32_t> peak_prediction_depth_{0};
   std::atomic<int64_t> rollback_audio_drained_{-1};
   std::atomic<int64_t> trace_max_work_us_{0};
   std::atomic<int64_t> trace_work_overruns_{0};
