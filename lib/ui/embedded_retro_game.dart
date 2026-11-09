@@ -8,6 +8,7 @@ import '../core/controllers/pad_info.dart';
 import '../core/game_library.dart';
 import '../core/game_process.dart';
 import '../core/managed_retro.dart';
+import '../core/ps3_online_profile.dart';
 import '../core/gamepad/pad_navigation.dart';
 import '../core/online/ps1_checkpoint_transfer.dart';
 import '../core/online/ps1_netplay_media.dart';
@@ -27,12 +28,14 @@ class EmbeddedRetroGame extends RunningGame {
     this._netplayMedia,
     this.localNetplayStaging,
     this._ps2Lan,
+    this._online,
   ) : super.embedded(_finished.future, DateTime.now());
 
   static const _channel = MethodChannel('anyps5/retro_core');
   static const ps3Resolution = 'rpcs3_resolution_scale';
   final int textureId;
   final Completer<int> _finished;
+  final bool _online;
   final void Function(String) _onResolutionSelected;
   final void Function(String, String) _onGraphicsSelected;
   final _ready = Completer<bool>();
@@ -88,6 +91,7 @@ class EmbeddedRetroGame extends RunningGame {
     ({Ps1NetplayMedia media, int seat})? netplay,
     bool localNetplayStaging = false,
     ({Uint8List mac, String system, String saves})? ps2Lan,
+    Ps3OnlineProfile? onlineProfile,
   }) async {
     if (ps2Lan != null && (disc.platform != RetroPlatform.ps2 || ps2Lan.mac.length != 6 || netplay != null)) {
       throw ArgumentError('A private PS2 LAN session needs a PS2 game and a six-byte MAC.');
@@ -99,18 +103,29 @@ class EmbeddedRetroGame extends RunningGame {
       throw ArgumentError('Netplay must use the verified PS1 disc.');
     }
     final core = netplay?.media.core ?? p.join(folder, ManagedRetro.libraryName(disc.platform));
+    if (onlineProfile != null) {
+      if (disc.platform != RetroPlatform.ps3 ||
+          !p.equals(p.absolute(core), onlineProfile.core) ||
+          !p.equals(p.absolute(disc.path), onlineProfile.disc)) {
+        throw Ps3OnlineIssue.unqualified;
+      }
+      await onlineProfile.revalidate();
+    }
     if (!File(core).existsSync()) throw FileSystemException('The embedded emulator core is missing', core);
     final saveRoot =
         ps2Lan?.saves ??
         (netplay == null
-            ? (Directory(p.join(folder, 'saves', disc.platform.name))..createSync(recursive: true)).path
+            ? (Directory(
+                onlineProfile?.saveRoot ?? p.join(folder, 'saves', disc.platform.name),
+              )..createSync(recursive: true)).path
             : Directory.systemTemp.path);
     final id = await _channel.invokeMethod<int>('start', {
       'core': core,
-      'disc': netplay?.media.disc ?? disc.path,
-      'system': ps2Lan?.system ?? p.join(folder, 'system'),
+      'disc': netplay?.media.disc ?? onlineProfile?.disc ?? disc.path,
+      'system': ps2Lan?.system ?? onlineProfile?.systemRoot ?? p.join(folder, 'system'),
       'saves': saveRoot,
       if (ps2Lan != null) 'ps2LanMac': ps2Lan.mac,
+      if (onlineProfile != null) 'ps3Online': onlineProfile.networkArguments,
       if (netplay == null) ...{
         'internalResolution': ?internalResolution,
         if (graphics.isNotEmpty) 'graphics': graphics,
@@ -129,14 +144,20 @@ class EmbeddedRetroGame extends RunningGame {
       netplay?.media,
       localNetplayStaging,
       ps2Lan != null,
+      onlineProfile != null,
     );
     session.tuning = RetroGameTuning(
       platform: disc.platform,
       options: session.options,
       ready: () =>
-          !session._netplay && !session._ps2Lan && session.presented && session.hardwareRendering && !session._closing,
+          !session._online &&
+          !session._netplay &&
+          !session._ps2Lan &&
+          session.presented &&
+          session.hardwareRendering &&
+          !session._closing,
       writeOptions: (expected, values) async {
-        if (session._closing) return false;
+        if (onlineProfile != null || session._closing) return false;
         final accepted = await _channel.invokeMethod<bool>('tuningOptions', {'expected': expected, 'values': values});
         return accepted == true &&
             (!values.keys.any(_usesGraphicsCheckpoint) || await session._waitForGraphics(values));
@@ -278,7 +299,7 @@ class EmbeddedRetroGame extends RunningGame {
   }
 
   Future<void> setOption(String key, String value) async {
-    if (_netplay || _closing || tuning.updating) return;
+    if (_online || _netplay || _closing || tuning.updating) return;
     if (tuning.canCancel) await tuning.cancel();
     if (_closing || tuning.updating) return;
     final accepted = await _channel.invokeMethod<bool>('option', {'key': key, 'value': value});

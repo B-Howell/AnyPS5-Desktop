@@ -71,6 +71,58 @@ other supported PS3 titles can use the same native-online launch path.
 
 **Exit gate:** A one-PC profile probe proves option precedence, offline isolation, redacted errors and clean teardown. A single isolated embedded launch can test provider sign-in and lobby access later with an approved account. Those checks alone do not prove co-op.
 
+### Unarmed launch-profile checkpoint
+
+[Profile verification](../lib/core/ps3_online_profile.dart) accepts only a
+cataloged provider and disc serial. It checks the updated executable, core,
+provider module and public provider configuration by SHA-256. It checks that
+firmware is present and that the locally stored RPCN config names the reviewed
+host and supplies an account. It returns only the selected DNS, UPnP and XFloat
+settings to the launcher. A separate system and save root is required. The
+verifier accepts the exact in-profile VFS layout written by the pinned
+core so a second launch can reuse the profile. It rejects redirected
+mounts, alternate VFS files and links inside the profile. The launch
+bridge revalidates the profile before sending its arguments to the host.
+
+[The launch bridge](../lib/ui/embedded_retro_game.dart) passes the verified
+profile separately from graphics preferences. The
+[Windows core host](../windows/runner/retro_core_host.cpp) rejects an online
+launch before core initialization if the DLL lacks the versioned policy
+export. The [network policy patch](../tool/patches/rpcs3-libretro-network-policy.patch)
+applies the mode before boot and again after RPCS3 overlays global, title or
+database settings. Online policy disables RPCS3's `/host_root` mount. A
+normal launch asks a patched core to disable internet, RPCN and UPnP. An
+older package still follows its existing offline launch path.
+The [package builder](../tool/build-rpcs3-preview.sh) accepts
+`--network-policy` for this variant.
+
+The [profile tests](../test/core/ps3_online_profile_test.dart) use synthetic
+files to verify safe reopening, artifact hashes and the isolated online
+launch arguments. The [offline boot test](../test/ui/ps3_online_boot_test.dart)
+checks that a normal launch uses its original system and saves and sends
+no online profile. Run both with
+`flutter test test/core/ps3_online_profile_test.dart test/ui/ps3_online_boot_test.dart`.
+The Windows host compiled with MSVC `/W4 /WX`. A patched Linux x64 core
+built from the pinned source and exported the versioned selector. In two
+headless LittleBigPlanet boots with the same scratch profile, global and
+title configs requested internet, RPCN and UPnP. Mode 0 overrode those
+settings on both launches. Both runs rendered frames, produced audio and
+stopped cleanly. The selector rejected changes during play and accepted
+selection after shutdown. A socket trace captured one loopback bind per
+run and zero non-loopback Internet socket connects or sends inside the
+isolated network namespace. The tested Linux core SHA-256 was
+`12f8905517226005767c03b663bab5ca2da9dbc8e0c452bdbd8bed6fda4d67c3`.
+The packaged Windows core, sequential offline and online storage
+isolation, and live provider sign-in remain open.
+
+This checkpoint has no approved release entries or launcher action that starts
+an online game. Before enabling a provider, verify its native connection uses
+the expected endpoint when RPCS3 reloads the config, and verify protected
+profile storage through a complete isolated launch. RPCS3 can record the
+RPCN account ID and display name in its detailed log after sign-in. Keep
+that log private and exclude it from diagnostics before provider activation.
+Then qualify a real private level using the provider's approved client setup.
+
 ## 3. Reuse party invites and hand off to the game
 
 1. Use the shared lifecycle in the [multiplayer design](<AnyPS5 Desktop - Emulator Multiplayer Design.md>). Advertise a verified `ps3-native` mode with title/update, provider profile version and compatibility policy. The party service handles admission to the AnyTogether session. The game and provider decide admission to the native lobby.
