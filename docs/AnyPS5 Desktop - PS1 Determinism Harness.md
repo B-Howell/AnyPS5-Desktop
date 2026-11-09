@@ -225,6 +225,28 @@ patched local builds reproduced the tick carry change only with the
 unmodified build. Seat 2 also passed the first 1,680 frames of the 80 ms
 loss trace on the patched build with the same three rewinds as the red run.
 
+### Portable checkpoint handoff
+
+For the [late-join probe](../tool/ps1_netplay/late_join.py), apply the
+[portable checkpoint patch](../tool/patches/swanstation-portable-checkpoint.patch)
+to the same pinned source after the SPU checkpoint patch, then rebuild the
+DLL using the commands above. Point the probe at that DLL, the local BIOS,
+the original CUE, a CUE with equivalent disc contents at a different path
+and filename, and the [recorded race](../tool/ps1_netplay/fixtures/ctr_usa_coco_park_versus.json).
+The default join frame is 6,600. Use `--checkpoint legacy` with matching
+filenames in separate directories to exercise the ordinary save-state path.
+The portable test also requires the core to reject a truncated checkpoint
+and a mismatched disc hash without changing guest RAM.
+
+The Windows build with SHA-256
+`5ef8eba64119146e405a90c5e9243a249c9d57c405fd75415fb4234d5b6080eb`
+passed the renamed-CUE test. Both racers finished and all 62 checks
+matched through frame 13,706. The exported checkpoint was 4,361,481 bytes
+and contained no exact match for the host CUE path. The guest rejected the
+wrong hash and truncated input before restoring the valid state. The
+legacy control on the preceding build, whose ordinary state code was
+identical, matched the same 62 checks with matching filenames.
+
 ### Patched full-race trials
 
 Each profile used the recompiler, `--delay 2 --window 8 --seed 2401`, and

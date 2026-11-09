@@ -44,13 +44,22 @@ The patched SwanStation probe restored a frame 6,600 CTR checkpoint into
 a guest in a separate directory and matched 62 RAM and video checks through
 frame 13,706. The initial check compares RAM before the guest renders its
 first frame. The snapshot was 11 MiB raw and about 2.1 MiB after compression.
-It contained the host's absolute disc path. An equivalent CUE with a
-different basename was rejected, consistent with the pinned core's
+The legacy snapshot contained the host's absolute disc path. An equivalent
+CUE with a different basename was rejected, consistent with the pinned core's
 [media lookup](https://github.com/libretro/swanstation/blob/631f0fb31b809e0f889d7c551fe695788e39c1d3/src/libretro/libretro_host_interface.cpp).
-A portable checkpoint must refer to verified disc identity and an agreed
-disc slot. The guest resolves it to its own file without interpreting or
-opening a host path. Treat the current core's checkpoint as a trusted
-local test artifact.
+The [portable checkpoint patch](../tool/patches/swanstation-portable-checkpoint.patch)
+adds separate versioned exports for this handoff. The frontend hashes each
+player's verified disc and prepares the agreed disc slot. The checkpoint
+stores the disc SHA-256 and the core's game ID. Import checks both against
+the local verified disc, validates the state length and version, and
+restores against the disc already mounted on the guest. The portable
+serializer omits the display title, disc path and legacy path trailer.
+Ordinary save states still use their existing format.
+
+Portable snapshots can contain memory-card data. Treat this probe's
+snapshots as trusted local artifacts and use isolated cards. Live transfer
+needs an explicit card-sharing policy and a validated bootstrap in the
+match controller before it can be exposed in the Quick Menu.
 
 The acceptance test for the Quick Menu also needs a successful invitation,
 cancel and disconnect during catch-up, proof that host playback and saves
