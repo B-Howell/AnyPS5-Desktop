@@ -198,8 +198,7 @@ before calling its restore handler. The session keeps both input timelines
 held until the restore succeeds. Cancellation and link failure release the
 pending transfer. The [session tests](../test/core/online/ps1_netplay_session_test.dart)
 exercise multiple windows, delayed restore, corruption, mismatched startup
-modes and cancellation. The production Quick Menu still needs the host
-transition and input catch-up adapters to use this bootstrap.
+modes and cancellation.
 
 The Windows worker now keeps the last 1,024 confirmed controller pairs on
 the portable core. The [Flutter bridge](../lib/ui/embedded_retro_game.dart)
@@ -212,8 +211,19 @@ The native catch-up probe combines the recorded race and `--checkpoint-guest`
 to capture at frame 6,600 and compare the held guest's replayed RAM after
 the host advances 180 frames. The Windows run matched at the catch-up
 boundary and both original racers finished after 13,706 frames with 114
-matching RAM fingerprints. The live session still needs to send that
-history and align both input timelines at the handoff.
+matching RAM fingerprints.
+
+The [catch-up protocol](../lib/core/online/ps1_checkpoint_catchup.dart)
+starts after the guest has restored that checkpoint. The host holds at a
+confirmed frame and sends up to 120 controller pairs at a time over the
+ordered peer stream. The guest acknowledges each batch after replay, and
+both peers agree on the final frame before the ready handshake. That frame
+is the checkpoint cursor. Both peers start the new input epoch at zero. The
+session tests cover delayed restore and replay, a wrong cursor, incompatible
+bootstrap modes, cancellation, and the first live fingerprint after cutover.
+The Quick Menu still needs to transition a running local host into the
+online profile, start a fresh native input epoch at the cutover state, and
+exercise the complete handoff on a real WebRTC connection.
 
 ### Windows development checkpoint
 

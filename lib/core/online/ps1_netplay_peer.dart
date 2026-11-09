@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'online_peer_mesh.dart';
+import 'ps1_checkpoint_catchup.dart';
 import 'ps1_checkpoint_transfer.dart';
 import 'ps1_netplay_identity.dart';
 import 'ps1_netplay_session.dart';
@@ -69,6 +70,8 @@ final class Ps1NetplayPeer {
     required this.sendSignal,
     Future<Ps1CheckpointSnapshot> Function()? captureCheckpoint,
     Future<void> Function(Ps1CheckpointSnapshot)? restoreCheckpoint,
+    Ps1CatchupSource? catchupSource,
+    Ps1CatchupReplay? catchupReplay,
     int? hostEpoch,
     Duration timeout = const Duration(seconds: 30),
   }) : _link = link,
@@ -81,6 +84,8 @@ final class Ps1NetplayPeer {
          timeout: timeout,
          captureCheckpoint: captureCheckpoint,
          restoreCheckpoint: restoreCheckpoint,
+         catchupSource: catchupSource,
+         catchupReplay: catchupReplay,
          sendControl: (bytes) {
            if (!link.sendStream(bytes)) throw StateError('The PS1 control channel closed.');
          },

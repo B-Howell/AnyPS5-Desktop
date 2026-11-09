@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:anyps5_desktop/core/online/ps1_checkpoint_catchup.dart';
 import 'package:anyps5_desktop/core/online/ps1_checkpoint_transfer.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_identity.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_session.dart';
@@ -102,6 +103,8 @@ class _Peers {
     Duration timeout = const Duration(seconds: 5),
     Future<({int frame, Uint8List state})> Function()? capture,
     Future<void> Function(({int frame, Uint8List state}) snapshot)? restore,
+    Ps1CatchupSource? catchupSource,
+    Ps1CatchupReplay? catchupReplay,
   }) {
     host = Ps1NetplaySession(
       seat: 0,
@@ -112,6 +115,7 @@ class _Peers {
       sendInput: (message) => toGuestInput.add(message),
       timeout: timeout,
       captureCheckpoint: capture,
+      catchupSource: catchupSource,
     );
     guest = Ps1NetplaySession(
       seat: 1,
@@ -121,6 +125,7 @@ class _Peers {
       sendInput: (message) => toHostInput.add(message),
       timeout: timeout,
       restoreCheckpoint: restore,
+      catchupReplay: catchupReplay,
     );
   }
 
@@ -222,6 +227,134 @@ void main() {
     await peers.controls();
     expect(peers.host.phase, Ps1NetplayPhase.running);
     expect(peers.guest.phase, Ps1NetplayPhase.running);
+  });
+
+  test('waits for guest restore and replay before starting either live timeline', () async {
+    final restore = Completer<void>();
+    final replay = Completer<void>();
+    final reads = <int>[];
+    final received = <Ps1FrameInputs>[];
+    final expected = List<Ps1FrameInputs>.generate(
+      180,
+      (index) => (
+        (buttons: index, leftX: -32768, leftY: index, rightX: -index, rightY: 32767),
+        (buttons: 65535, leftX: index, leftY: -index, rightX: 32767, rightY: -32768),
+      ),
+    );
+    final peers = _Peers(
+      capture: () async => (frame: 6600, state: Uint8List(17)),
+      restore: (_) => restore.future,
+      catchupSource: (
+        hold: () async => 6780,
+        read: (first) async {
+          reads.add(first);
+          return (nextFrame: 6780, frames: expected.skip(first - 6600).take(120).toList());
+        },
+      ),
+      catchupReplay: (first, frames) async {
+        expect(first, 6600 + received.length);
+        received.addAll(frames);
+        await replay.future;
+      },
+    );
+    addTearDown(peers.close);
+    await peers.open();
+    expect(reads, isEmpty);
+    restore.complete();
+    await peers.controls();
+    expect(reads, [6600]);
+    expect(received, expected.take(120));
+    expect(peers.h.startCalls, 0);
+    expect(peers.g.startCalls, 0);
+    replay.complete();
+    await peers.controls();
+    expect(reads, [6600, 6720]);
+    expect(received, expected);
+    expect(peers.host.handoffFrame, 6780);
+    expect(peers.guest.handoffFrame, 6780);
+    expect(peers.h.startCalls, 1);
+    expect(peers.g.startCalls, 1);
+    peers.h.frameLimit = peers.g.frameLimit = 120;
+    for (var tick = 0; tick < 128; tick++) {
+      await peers.host.pump();
+      await peers.guest.pump();
+      peers.inputs();
+    }
+    await peers.controls();
+    expect(peers.host.confirmedFrame, 119);
+    expect(peers.guest.confirmedFrame, 119);
+    expect(peers.h.raced, peers.g.raced);
+    expect(peers.host.phase, Ps1NetplayPhase.running);
+    expect(peers.guest.phase, Ps1NetplayPhase.running);
+  });
+
+  test('an out-of-order catch-up batch never reaches guest replay', () async {
+    var replays = 0;
+    final peers = _Peers(
+      capture: () async => (frame: 6600, state: Uint8List(17)),
+      restore: (_) async {},
+      catchupSource: (hold: () async => 6601, read: (_) async => (nextFrame: 6601, frames: [(_neutral, _neutral)])),
+      catchupReplay: (_, _) async => replays++,
+    );
+    addTearDown(peers.close);
+    peers.guest.open();
+    peers.host.open();
+    await peers.controls(
+      toGuest: (packet) {
+        if (Ps1CheckpointCatchup.isCatchupPacket(packet) && packet[4] == 2) {
+          ByteData.sublistView(packet).setUint32(13, 6601);
+        }
+        return packet;
+      },
+    );
+    expect(replays, 0);
+    expect(peers.guest.ended, Ps1NetplayEnd.protocol);
+    expect(peers.h.startCalls, 0);
+    expect(peers.g.startCalls, 0);
+  });
+
+  test('leaving during a catch-up batch releases both held timelines', () async {
+    final replay = Completer<void>();
+    var replays = 0;
+    final peers = _Peers(
+      capture: () async => (frame: 6600, state: Uint8List(17)),
+      restore: (_) async {},
+      catchupSource: (hold: () async => 6601, read: (_) async => (nextFrame: 6601, frames: [(_neutral, _neutral)])),
+      catchupReplay: (_, _) {
+        replays++;
+        return replay.future;
+      },
+    );
+    addTearDown(peers.close);
+    await peers.open();
+    expect(replays, 1);
+    peers.guest.leave();
+    await peers.controls();
+    await Future.wait([peers.host.done, peers.guest.done]);
+    replay.complete();
+    await peers.controls();
+    expect(peers.h.stopCalls, 1);
+    expect(peers.g.stopCalls, 1);
+    expect(peers.h.startCalls, 0);
+    expect(peers.g.startCalls, 0);
+  });
+
+  test('checkpoint-only peers reject catch-up before state capture', () async {
+    var captures = 0;
+    final peers = _Peers(
+      capture: () async {
+        captures++;
+        return (frame: 6600, state: Uint8List(17));
+      },
+      restore: (_) async {},
+      catchupSource: (hold: () async => 6600, read: (_) async => (nextFrame: 6600, frames: <Ps1FrameInputs>[])),
+    );
+    addTearDown(peers.close);
+    await peers.open();
+    expect(captures, 0);
+    expect(peers.guest.ended, Ps1NetplayEnd.protocol);
+    expect(peers.h.startCalls, 0);
+    expect(peers.g.startCalls, 0);
   });
 
   test('a corrupted checkpoint never reaches the guest runner', () async {

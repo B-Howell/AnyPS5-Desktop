@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'online_peer_mesh.dart';
+import 'ps1_checkpoint_catchup.dart';
 import 'ps1_checkpoint_transfer.dart';
 import 'ps1_netplay_identity.dart';
 import 'ps1_netplay_peer.dart';
@@ -17,6 +18,8 @@ final class Ps1NetplayMatch {
     required this.runner,
     this.captureCheckpoint,
     this.restoreCheckpoint,
+    this.catchupSource,
+    this.catchupReplay,
   });
 
   final RetroOnlineRooms rooms;
@@ -25,6 +28,8 @@ final class Ps1NetplayMatch {
   final Ps1NetplayRunner runner;
   final Future<Ps1CheckpointSnapshot> Function()? captureCheckpoint;
   final Future<void> Function(Ps1CheckpointSnapshot)? restoreCheckpoint;
+  final Ps1CatchupSource? catchupSource;
+  final Ps1CatchupReplay? catchupReplay;
   final _closing = Completer<void>();
   final _done = Completer<void>();
   final _signals = <Map<String, dynamic>>[];
@@ -93,6 +98,8 @@ final class Ps1NetplayMatch {
       runner: runner,
       captureCheckpoint: seat == 0 ? captureCheckpoint : null,
       restoreCheckpoint: seat == 1 ? restoreCheckpoint : null,
+      catchupSource: seat == 0 ? catchupSource : null,
+      catchupReplay: seat == 1 ? catchupReplay : null,
       seat: seat,
       hostEpoch: seat == 0 ? Random.secure().nextInt(0x7fffffff) + 1 : null,
       sendSignal: (message) async => rooms.send(room, bound, message.toJson()),
