@@ -115,6 +115,9 @@ $ppu:
     release = review(yaml);
     final profile = await verify();
     expect(profile.networkArguments['patchProtection'], {
+      'sha256': sha256.convert(utf8.encode(yaml)).toString(),
+      'titleId': 'ABCD12345',
+      'updateVersion': '01.30',
       'ppuHash': ppu,
       'patches': [
         {'name': name, 'writes': 1, 'option': 'rpcs3_zpatch_0cf6eeaf'},
@@ -136,7 +139,11 @@ $ppu:
     final quoted = yaml.replaceFirst('Version: 1.2', "Version: '1.2'").replaceFirst('[01.30]', '["01.30"]');
     await file.writeAsString(quoted);
     release = review(quoted);
-    expect((await verify()).networkArguments, profile.networkArguments);
+    final quotedProfile = await verify();
+    expect(quotedProfile.networkArguments['patchProtection'], {
+      ...(profile.networkArguments['patchProtection'] as Map),
+      'sha256': sha256.convert(utf8.encode(quoted)).toString(),
+    });
     release = review(yaml);
     await file.writeAsString(yaml);
     final competing = write('online/system/rpcs3/patches/imported_patch.yml', [0]);

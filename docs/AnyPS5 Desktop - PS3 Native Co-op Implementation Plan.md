@@ -227,8 +227,9 @@ database it installs when the profile has none. The verifier checks that
 firmware is present and that the locally stored RPCN config names the reviewed
 host and supplies an account. It returns only the selected DNS, UPnP and XFloat
 settings to the launcher for an SPRX release. A YAML release also carries
-the required PPU hash, patch descriptions, instruction counts and option
-keys. A separate system and save root is required. The
+the exact file digest, title ID, update version, PPU hash, patch
+descriptions, instruction counts and option keys. A separate system and
+save root is required. The
 verifier accepts the exact in-profile VFS layout written by the pinned
 core so a second launch can reuse the profile. It rejects redirected
 mounts, alternate VFS files and links inside the profile. The launch
@@ -248,6 +249,20 @@ normal launch asks a patched core to disable internet, RPCN and UPnP. An
 older package still follows its existing offline launch path.
 The [package builder](../tool/build-rpcs3-preview.sh) accepts
 `--network-policy` for this variant.
+
+For the versioned YAML policy, the native gate should start disconnected
+and resolve the reviewed title patch in its isolated profile. RPCS3's
+`patch_engine::load` accepts in-memory content. Hash one bounded read and
+parse those same bytes into a fresh patch map for this policy, so the
+base and imported maps cannot substitute an effective patch. Count
+successful operations by patch description on the main executable's
+patch application and check the running title, version and PPU hash.
+The gate can then activate the selected network policy before
+`init_fxo_for_exec` initializes the NP handler. A failed check aborts
+boot, and every reset or executable reload requires a new attestation.
+Ordinary offline launches retain the original patch discovery.
+[Pinned patch loader](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/Utilities/bin_patch.cpp)
+[Pinned PPU loader](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/rpcs3/Emu/Cell/PPUModule.cpp)
 
 The [profile tests](../test/core/ps3_online_profile_test.dart) use synthetic
 files to verify safe reopening, artifact hashes and the isolated online

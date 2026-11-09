@@ -327,7 +327,13 @@ final class Ps3OnlineProfile {
         if (!options.add(option)) throw Ps3OnlineIssue.unqualified;
         requirements.add(Map.unmodifiable({'name': name, 'writes': writes, 'option': option}));
       }
-      return Map.unmodifiable({'ppuHash': protection.ppuHash, 'patches': List.unmodifiable(requirements)});
+      return Map.unmodifiable({
+        'sha256': protection.sha256,
+        'titleId': release.titleId,
+        'updateVersion': release.updateVersion,
+        'ppuHash': protection.ppuHash,
+        'patches': List.unmodifiable(requirements),
+      });
     } on FileSystemException {
       throw Ps3OnlineIssue.patch;
     } on FormatException {
