@@ -377,7 +377,7 @@
   "ps2LanRemoteEnded": "The PS2 LAN room closed on the other end.",
   "ps2LanGameContinues": "LAN Play ended. Your game is still open. Close it before starting a new LAN room.",
   "ps2LanReconnecting": "LAN connection interrupted. Reconnecting…",
-  "ps2LanReconnected": "LAN connection restored.",
+  "ps2LanReconnected": "LAN connection restored. If your game disconnected, regroup in its LAN menu.",
   "retroOnlineBusy": "Leave your current retro online game first.",
   "gameInvitedYou": "%@ invites you to %@",
   "gameNotHere": "%@ is not in your library",

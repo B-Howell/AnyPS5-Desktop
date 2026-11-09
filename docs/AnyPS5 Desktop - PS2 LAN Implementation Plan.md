@@ -837,3 +837,42 @@ and unchanged source cards. This run confirms the command retry and
 repeatable shared race entry. A full race still needs a driver that can
 recover from occluded markers and read the road at corners. Captures
 and logs are in the local `gt4-finish-eaa3a732` receipt.
+
+### GT4 race recovery over Windows WebRTC
+
+Two headless LRPS2 workers used the same pinned core and separate copies
+of the GT4 role cards. Their DEV9 traffic passed through the production
+[room match](../lib/core/online/retro_lan_match.dart) and Windows WebRTC
+data channels. A local [gateway fixture](../tool/ps1_netplay/webrtc_room_fixture.dart)
+supplied signaling without a hosted account or relay. Both consoles
+received a lease, entered Fuji Speedway '90s and advanced the race clock.
+
+The fixture then reported a failed connection on the guest and rejected
+the first restart request, offer and answer. At baseline `f7e8b6f`,
+the route recovered in 4,519 ms and two-way traffic resumed in 4,648 ms.
+GT4 displayed Disconnected on the guest and left the race despite the
+restored route. The [launcher message](../assets/l10n/en.json) now
+describes transport recovery and points players back to the game's LAN
+menu if the game disconnected.
+
+The recovery scheduler gives the original route one second to resume,
+then replays signaling every 750 ms within the existing recovery window.
+The [room tests](../test/core/online/retro_lan_match_test.dart) still
+exercise brief interruptions, terminal teardown and delayed launch.
+The tightened signaling-loss test timed out against the baseline and
+passed with the new scheduler.
+
+With the final timing, WebRTC reported recovery in 2,544 ms and two-way
+traffic resumed in 2,896 ms. One new ICE offer recovered the original
+two links. Both GT4 instances stayed on lap one and advanced to roughly
+12.2 seconds on the race clock. After independent throttle and brake
+inputs, the host showed first place at 52 mph and the guest showed
+second place at 4 mph. Each adapter recorded one lease and zero queue
+overflows. The room and both workers exited zero with empty core fault
+logs and unchanged source card hashes.
+
+The baseline and final paired captures, timing receipts and raw logs
+are under the local `gt4-webrtc-32b4c248` and
+`gt4-webrtc-final-58fa554f` directories. This qualifies one simulated
+connection interruption on one PC. A full GT4 race, hosted signaling,
+and play across separate networks still need verification.

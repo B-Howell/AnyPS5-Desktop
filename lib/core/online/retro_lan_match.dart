@@ -188,8 +188,11 @@ final class RetroLanMatch {
     unawaited(_untilClose(game.done).then((_) => leave(), onError: (Object error) => _failed(error)));
     ({Stopwatch timer, int route})? outage;
     var recoveryShown = false;
-    const routeRetryInterval = Duration(milliseconds: 1500);
-    var nextRouteAttempt = routeRetryInterval;
+    // Allow transient disconnects to recover before restarting ICE. Retry
+    // promptly because the native game can end the match during recovery.
+    const routeGrace = Duration(seconds: 1);
+    const routeRetryInterval = Duration(milliseconds: 750);
+    var nextRouteAttempt = routeGrace;
     _pump = Timer.periodic(const Duration(milliseconds: 8), (_) {
       if (!mesh.canSendGame(peerAddress)) {
         final interruption = outage ??= (timer: Stopwatch()..start(), route: mesh.gameRoute(peerAddress));
@@ -208,7 +211,7 @@ final class RetroLanMatch {
         }
       } else {
         outage = null;
-        nextRouteAttempt = routeRetryInterval;
+        nextRouteAttempt = routeGrace;
         if (recoveryShown) {
           recoveryShown = false;
           onRecoveryChanged?.call(false);

@@ -145,9 +145,17 @@ void main() {
     var rejectedOffer = false;
     var rejectedAnswer = false;
     String? rejectedCandidate;
+    final firstRestartOffer = Completer<void>();
+    final replayedRestartOffer = Completer<void>();
     gateway.rejectSignal = (from, kind, data) {
       if (data is! Map || data['iceRoute'] != 1) return false;
-      if (kind == 'offer' && !rejectedOffer) return rejectedOffer = true;
+      if (kind == 'offer') {
+        if (!rejectedOffer) {
+          firstRestartOffer.complete();
+          return rejectedOffer = true;
+        }
+        if (!replayedRestartOffer.isCompleted) replayedRestartOffer.complete();
+      }
       if (kind == 'answer' && !rejectedAnswer) return rejectedAnswer = true;
       if (from == WebRtcRoomFixture.host && kind == 'candidate' && rejectedCandidate == null) {
         rejectedCandidate = data['candidate'] as String;
@@ -182,7 +190,10 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 30));
     expect(host.closed || guest.closed, isFalse);
     expectRouteRestart = true;
-    await trafficAfterRouteRestart.future.timeout(const Duration(seconds: 7));
+    // Bound the retry delay separately from the fake link's handshake.
+    await firstRestartOffer.future.timeout(const Duration(milliseconds: 1350));
+    await replayedRestartOffer.future.timeout(const Duration(milliseconds: 1300));
+    await trafficAfterRouteRestart.future.timeout(const Duration(seconds: 4));
     await restartAnswer.future.timeout(const Duration(seconds: 2));
     await replayedCandidate.future.timeout(const Duration(seconds: 2));
     expect(gateway.signals, greaterThan(beforeRestart));
