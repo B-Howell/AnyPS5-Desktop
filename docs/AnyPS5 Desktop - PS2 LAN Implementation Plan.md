@@ -935,3 +935,40 @@ are under the local `gt4-webrtc-32b4c248` and
 `gt4-webrtc-final-58fa554f` directories. This qualifies one simulated
 connection interruption on one PC. A full GT4 race, hosted signaling,
 and play across separate networks still need verification.
+
+### High-Speed Ring race fixture
+
+The two-console course picker exposed six courses on the GT4 US v2.00
+scratch profiles. High-Speed Ring requires a separate Normal or Reverse
+confirmation before car selection. The offscreen setup script verifies
+that menu, then checks stable car and driving-option text before sending
+more inputs. The animated car preview changes with the capture time.
+Comparing the whole frame had stopped the first replay even though the
+selected car was correct.
+
+Both native-resolution D3D11 workers entered the same two-lap High-Speed
+Ring race. The host accelerated first while the guest held position,
+which gave the drivers separate inputs from the starting grid. Both
+received one lease. By the last sample, the host had transmitted 10,349
+and received 10,175 UDP/5000 frames. The guest had transmitted 10,175 and
+received 10,347. Both workers exited zero with empty fault logs and
+unchanged source cards. This run used the local UDP adapter with the
+production LAN frame filter. It did not open a launcher window or run
+the Windows WebRTC executable.
+
+The drivers did not finish. The host was centered at 41 mph when a
+1.2-pixel difference between its red marker and the traced map line
+caused an 11-tick steering pulse. The capture six steps later shows it
+at the guardrail. The race clock and DEV9 traffic kept advancing.
+This isolates an automation problem on the opening straight even when
+the car markers remain distinct. A road-line probe measured the launch
+frame's lane marking at x=322.9 for a 640-pixel image and declined to
+give an estimate on the stopped guardrail frame. It also found a false
+candidate on an intermediate frame, so it needs a continuity check
+before its output can control steering. Use the map to identify the
+course section and the road view to steer within it.
+
+Local receipts are in `gt4-ring-84ce5599` under the private test
+workspace. The setup script, controller trace, paired grid captures,
+worker logs, `drive-audit.png` and `road_observation.py` record the
+inputs, result and remaining driver limitation.
