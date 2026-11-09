@@ -552,6 +552,12 @@ can retry without waiting for a stale reply. Once a create or join
 request has been sent, the launcher waits for its result and releases
 any room it acquired before allowing another attempt. Friends shows
 the closing status during that cleanup.
+Guide opens the PS3 Quick Menu while the party's game is starting.
+**Cancel PS3 invite** is available through texture allocation and until
+the embedded worker reports its first presented frame. Cancel releases
+the room and keeps Closing visible while the worker shuts down, including
+when it arrives after cancellation. After the first presented frame,
+**Leave AnyTogether Room** releases the room and leaves the game open.
 The [existing PS5 flow](../lib/ui/together_play.dart) remains separate.
 
 The [PS3 settings integration tests](../test/ui/ps3_settings_test.dart)

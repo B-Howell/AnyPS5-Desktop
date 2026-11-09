@@ -201,8 +201,18 @@ extension Ps3OnlineReadinessPage on AppModel {
     _emulatorMenu.openPage(page);
   }
 
-  Future<void> playVerifiedPs3Online(Game game, Ps3OnlineProfile profile, {required bool Function() canBoot}) =>
-      _playRetro(game, game.retro!, onlineProfile: profile, canBoot: () => !_disposed && !_quitting && canBoot());
+  Future<void> playVerifiedPs3Online(
+    Game game,
+    Ps3OnlineProfile profile, {
+    required bool Function() canBoot,
+    Object? party,
+  }) => _playRetro(
+    game,
+    game.retro!,
+    onlineProfile: profile,
+    ps3Party: party,
+    canBoot: () => !_disposed && !_quitting && canBoot(),
+  );
 }
 
 PanelCategory _ps3OnlineReadinessPanel(

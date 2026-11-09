@@ -4,6 +4,7 @@ import 'dart:ffi' show Abi;
 import 'dart:io';
 
 import 'package:anyps5_desktop/core/game_library.dart';
+import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:anyps5_desktop/core/ps3_online_profile.dart';
@@ -116,16 +117,20 @@ void main() {
     const channel = MethodChannel('anyps5/retro_core');
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     final start = Completer<Map<Object?, Object?>>();
+    final bootReply = Completer<void>();
+    final cancelBeforeWorker = mode == 'guest-boot-cancel';
+    final cancelBeforeFrame = mode == 'guest-first-frame-cancel';
     final calls = <MethodCall>[];
     var stopped = false;
     messenger.setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
       if (call.method == 'start') {
         start.complete(call.arguments as Map<Object?, Object?>);
+        if (cancelBeforeWorker) await bootReply.future;
         return 7;
       }
       if (call.method == 'stop') stopped = true;
-      return call.method == 'status' ? {'ended': stopped, 'presented': true} : null;
+      return call.method == 'status' ? {'ended': stopped, 'presented': !cancelBeforeFrame} : null;
     });
     addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
     Future<void> waitFor(bool Function() settled) async {
@@ -140,6 +145,18 @@ void main() {
           '${server?.calls.map((call) => call.path).toList()}',
         ),
       );
+    }
+
+    if (cancelBeforeWorker || cancelBeforeFrame) {
+      addTearDown(() async {
+        if (!bootReply.isCompleted) {
+          final cancel = model.together.cancelPs3PartyAndWait();
+          bootReply.complete();
+          await cancel;
+        }
+        if (model.running != null) await model.stopRunningGame();
+        await waitFor(() => model.starting == null && model.running == null);
+      });
     }
 
     String? patchStatus() =>
@@ -299,6 +316,30 @@ void main() {
       onTimeout: () =>
           throw StateError('$mode launch timed out: ${model.toast}, ${server?.calls.map((call) => call.path)}'),
     );
+    if (cancelBeforeWorker || cancelBeforeFrame) {
+      if (cancelBeforeFrame) {
+        await waitFor(() => model.running != null && calls.any((call) => call.method == 'status'));
+        expect(model.embeddedGame?.startupVisible, isFalse);
+      } else {
+        expect(model.running, isNull);
+      }
+      expect(model.starting, same(game));
+      model.padCommand(PadCommand.home);
+      expect(model.overlay, Layer.quickMenu);
+      PanelRow cancelRow() => model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-party-leave');
+      expect(cancelRow().title, 'Cancel PS3 invite');
+      expect(cancelRow().detail, 'Starting the PS3 online game…');
+      activate('ps3-party-leave');
+      await waitFor(() => server!.callsTo('game-sessions/$roomId/leave').isNotEmpty);
+      if (cancelBeforeWorker) {
+        expect(cancelRow().kind, isA<InfoRow>());
+        bootReply.complete();
+      }
+      await waitFor(() => model.starting == null && model.running == null && model.together.ps3PartyRows().isEmpty);
+      expect(stopped, isTrue);
+      expect(server!.callsTo('game-sessions/$roomId/leave'), hasLength(1));
+      return;
+    }
     expect(launch['system'], await Directory(p.join(profile, 'system')).resolveSymbolicLinks());
     expect(launch['saves'], await Directory(p.join(profile, 'saves')).resolveSymbolicLinks());
     expect(launch['ps3Online'], contains('patchProtection'));
@@ -355,7 +396,7 @@ void main() {
     }
   }
 
-  for (final mode in ['solo', 'host', 'guest', 'guest-ended']) {
+  for (final mode in ['solo', 'host', 'guest', 'guest-ended', 'guest-boot-cancel', 'guest-first-frame-cancel']) {
     test(
       'PS3 $mode verifies setup and launches only the isolated profile',
       () => HttpOverrides.runWithHttpOverrides(() => verifySetup(mode), _LoopbackHttpOverrides()),

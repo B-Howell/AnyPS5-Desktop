@@ -334,6 +334,7 @@
   "ps3PartyCancel": "Cancel PS3 invite",
   "ps3PartyClosing": "Closing the AnyTogether room…",
   "ps3PartyStarting": "Opening the private AnyTogether party…",
+  "ps3PartyBooting": "Starting the PS3 online game…",
   "ps3PartyGameMenu": "Use the game's online menu to meet your friend.",
   "ps3PartyUnavailable": "Sign in to AnyTogether and reconnect to use PS3 invites.",
   "ps3PartyBusy": "Close the current game or session before using this invite.",

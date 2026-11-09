@@ -2536,6 +2536,11 @@ class AppModel extends ChangeNotifier {
   Game? starting;
   bool _retroStartIsPs2Lan = false;
   bool get startingPs2Lan => _retroStartIsPs2Lan && starting?.retro?.platform == RetroPlatform.ps2;
+  Object? _ps3PartyLaunch;
+  bool isStartingPs3Party(Object party) =>
+      identical(_ps3PartyLaunch, party) && starting?.retro?.platform == RetroPlatform.ps3 && !isPlayingPs3Party(party);
+  bool isPlayingPs3Party(Object party) =>
+      identical(_ps3PartyLaunch, party) && embeddedGame?.isPs3Online == true && embeddedGame?.startupVisible == true;
   String? _retroSetupDetail;
   int? _retroSetupPercent;
 
@@ -4316,6 +4321,7 @@ class AppModel extends ChangeNotifier {
     bool localNetplayStaging = false,
     ({Uint8List mac, String system, String saves})? ps2Lan,
     Ps3OnlineProfile? onlineProfile,
+    Object? ps3Party,
     ({int ticket, String core, String home})? ordinaryRecovery,
   }) async {
     if (managedSetupConsole != null || starting != null || running != null || canBoot?.call() == false) return;
@@ -4374,6 +4380,7 @@ class AppModel extends ChangeNotifier {
     final launchTime = Stopwatch()..start();
     sounds.play(Cue.select);
     _retroStartIsPs2Lan = ps2Lan != null;
+    _ps3PartyLaunch = ps3Party;
     starting = game;
     _changed();
     EmbeddedRetroGame? lanRun;
@@ -4622,7 +4629,10 @@ class AppModel extends ChangeNotifier {
           _stopTimer = null;
         }
       }
-      if (identical(_retroSettled, settled)) _retroSettled = null;
+      if (identical(_retroSettled, settled)) {
+        _retroSettled = null;
+        _ps3PartyLaunch = null;
+      }
       settled.complete();
     }
     _changed();
@@ -6214,7 +6224,7 @@ class AppModel extends ChangeNotifier {
               if (embeddedGame == null) ...sharePlay.rows(),
               ...together.ps1QuickRows(),
               ...together.ps2LanQuickRows(),
-              if (embeddedGame?.isPs3Online == true) ...together.ps3PartyRows(),
+              ...together.ps3PartyQuickRows(),
               PanelRow(
                 id: 'closeGame',
                 title: T.text('quickCloseGame'),
@@ -6225,7 +6235,7 @@ class AppModel extends ChangeNotifier {
           ),
         ];
       case Layer.quickMenu when _retroLaunchGame != null:
-        final onlineRows = [...together.ps1QuickRows(), ...together.ps2LanQuickRows()];
+        final onlineRows = [...together.ps1QuickRows(), ...together.ps2LanQuickRows(), ...together.ps3PartyQuickRows()];
         return [
           PanelCategory(
             id: 'quickMenu',

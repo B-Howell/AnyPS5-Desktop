@@ -87,18 +87,30 @@ extension TogetherPs3Online on TogetherModel {
     if (attempt.cancelled.isCompleted) {
       return [PanelRow(id: 'ps3-party-leave', title: T.text('ps3PartyClosing'), kind: const InfoRow(''))];
     }
-    final playing = app.embeddedGame?.isPs3Online == true;
+    final playing = app.isPlayingPs3Party(attempt);
     return [
       PanelRow(
         id: 'ps3-party-leave',
         title: T.text(playing ? 'ps3PartyLeave' : 'ps3PartyCancel'),
-        detail: T.text(playing ? 'ps3PartyGameMenu' : 'ps3PartyStarting'),
+        detail: T.text(
+          playing
+              ? 'ps3PartyGameMenu'
+              : app.isStartingPs3Party(attempt)
+              ? 'ps3PartyBooting'
+              : 'ps3PartyStarting',
+        ),
         kind: ActionRow(() {
           attempt.cancel();
           app.refresh();
         }, destructive: true),
       ),
     ];
+  }
+
+  List<PanelRow> ps3PartyQuickRows() {
+    final attempt = _ps3Party;
+    if (attempt == null || (!app.isStartingPs3Party(attempt) && !app.isPlayingPs3Party(attempt))) return const [];
+    return ps3PartyRows();
   }
 
   Future<void> _startPs3Party(
@@ -131,6 +143,7 @@ extension TogetherPs3Online on TogetherModel {
     final attempt = _ps3Party = _Ps3PartyAttempt()..roomId = invite?.sessionId;
     bool active() => !attempt.cancelled.isCompleted && account.user?.id == me;
     RetroRoom? room;
+    Future<void>? launch;
     app.returnTo((layer: Layer.friends, category: 'friends', row: 'ps3-party-leave'));
     try {
       room = invite == null
@@ -141,12 +154,15 @@ extension TogetherPs3Online on TogetherModel {
       if (!_ps3LaunchAvailable) return app.show(T.text('ps3PartyBusy'));
       if (friendId != null) await rooms.invite(room, friendId);
       if (!active()) return;
-      await Future.any<void>([app.playVerifiedPs3Online(game, profile, canBoot: active), attempt.cancelled.future]);
+      launch = app.playVerifiedPs3Online(game, profile, canBoot: active, party: attempt);
+      await Future.any<void>([launch, attempt.cancelled.future]);
     } on RetroRoomHostMismatch {
       if (active()) app.show(T.text('retroInviteHostChanged'));
     } on Object {
       if (active()) app.show(T.text('ps3PartyFailed'));
     } finally {
+      final pendingBoot = app.isStartingPs3Party(attempt) ? launch : null;
+      if (pendingBoot != null && app.running != null) unawaited(app.stopRunningGame());
       if (room != null && !attempt.roomEnded && account.user?.id == me) {
         try {
           await rooms.leave(room);
@@ -154,6 +170,7 @@ extension TogetherPs3Online on TogetherModel {
           // The room can already have ended on the other device.
         }
       }
+      await pendingBoot?.catchError((Object _) {});
       if (identical(_ps3Party, attempt)) _ps3Party = null;
       attempt.done.complete();
       if (!attempt.disposed) {
