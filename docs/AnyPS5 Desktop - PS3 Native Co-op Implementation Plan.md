@@ -112,9 +112,12 @@ network policy. This tests patch application, without testing sign-in,
 invite enforcement or gameplay with another peer.
 
 The pinned core rebuilds `patch_config.yml` from its frontend options
-before boot. A future verified YAML profile must therefore pin the approved
-YAML and request the expected protection and provider options at startup.
-The existing SPRX-only release verifier cannot qualify this route.
+before boot. The launch profile now verifies the reviewed YAML and derives
+the expected frontend protection options. To enable this route, the core
+must verify the effective patch identity and the applied writes before
+online initialization. An equal or newer base patch can take precedence
+over a title patch with the same description and PPU hash, even if its
+write count matches.
 [Core patch-manager source](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/rpcs3/libretro/libretro_patch_manager.cpp)
 
 ### Embedded update installation checkpoint
@@ -214,10 +217,18 @@ Windows RPCS3 package and the protected provider lobby remain unqualified.
 
 [Profile verification](../lib/core/ps3_online_profile.dart) accepts only a
 cataloged provider and disc serial. It checks the updated executable, core,
-provider module and public provider configuration by SHA-256. It checks that
+public provider configuration and selected protection artifact by SHA-256.
+Protection can be an SPRX module or the title's RPCS3 YAML. The YAML
+preflight checks the PPU hash, disc serial, update version, patch
+descriptions and instruction counts against the reviewed release. It
+rejects a competing imported patch database and requires the reviewed
+digest for any on-disk base database. The pinned DLL identifies the base
+database it installs when the profile has none. The verifier checks that
 firmware is present and that the locally stored RPCN config names the reviewed
 host and supplies an account. It returns only the selected DNS, UPnP and XFloat
-settings to the launcher. A separate system and save root is required. The
+settings to the launcher for an SPRX release. A YAML release also carries
+the required PPU hash, patch descriptions, instruction counts and option
+keys. A separate system and save root is required. The
 verifier accepts the exact in-profile VFS layout written by the pinned
 core so a second launch can reuse the profile. It rejects redirected
 mounts, alternate VFS files and links inside the profile. The launch
@@ -227,7 +238,10 @@ bridge revalidates the profile before sending its arguments to the host.
 profile separately from graphics preferences. The
 [Windows core host](../windows/runner/retro_core_host.cpp) rejects an online
 launch before core initialization if the DLL lacks the versioned policy
-export. The [network policy patch](../tool/patches/rpcs3-libretro-network-policy.patch)
+export. It also rejects the additional YAML protection field before
+creating a game session. The release catalog is empty while the native
+verification gate and provider qualification remain open. The
+[network policy patch](../tool/patches/rpcs3-libretro-network-policy.patch)
 applies the mode before boot and again after RPCS3 overlays global, title or
 database settings. Online policy disables RPCS3's `/host_root` mount. A
 normal launch asks a patched core to disable internet, RPCN and UPnP. An

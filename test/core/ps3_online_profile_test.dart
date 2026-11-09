@@ -47,8 +47,7 @@ void main() {
       updateVersion: '01.30',
       coreSha256: sha256.convert([1]).toString(),
       executableSha256: sha256.convert([2]).toString(),
-      patchName: 'provider.sprx',
-      patchSha256: sha256.convert([3]).toString(),
+      protection: Ps3SprxProtection('provider.sprx', sha256.convert([3]).toString()),
       rpcnHost: 'rpcn.example.invalid',
       providerFiles: {
         'plugins/provider.conf': sha256.convert([4]).toString(),
@@ -78,6 +77,77 @@ void main() {
     expect(profile.saveRoot, p.join(canonical, 'saves'));
     expect(profile.disc, disc);
     expect(profile.core, core);
+  });
+
+  test('verifies the reviewed per-title YAML and carries its required boot patches', () async {
+    const ppu = 'PPU-545c1abbf1c562d60fca7435401f020beab76b53';
+    const name = 'Patchwork Combined Patch';
+    const yaml =
+        '''
+Version: 1.2
+$ppu:
+  $name:
+    Games:
+      Fixture:
+        ABCD12345: [01.30]
+    Patch:
+      - [be32, 0x10000, 0x60000000]
+''';
+    final file = write('online/system/rpcs3/patches/ABCD12345_patch.yml', utf8.encode(yaml));
+    Ps3OnlineRelease review(String source, {String? baseDigest}) => Ps3OnlineRelease(
+      provider: release.provider,
+      titleId: release.titleId,
+      updateVersion: release.updateVersion,
+      coreSha256: release.coreSha256,
+      executableSha256: release.executableSha256,
+      protection: Ps3YamlProtection(
+        sha256: sha256.convert(utf8.encode(source)).toString(),
+        ppuHash: ppu,
+        patches: const {name: 1},
+        basePatchSha256: baseDigest,
+      ),
+      rpcnHost: release.rpcnHost,
+      providerFiles: const {},
+      xfloat: release.xfloat,
+      dns: release.dns,
+      upnp: release.upnp,
+    );
+    release = review(yaml);
+    final profile = await verify();
+    expect(profile.networkArguments['patchProtection'], {
+      'ppuHash': ppu,
+      'patches': [
+        {'name': name, 'writes': 1, 'option': 'rpcs3_zpatch_0cf6eeaf'},
+      ],
+    });
+    final wrongVersion = yaml.replaceFirst('01.30', '01.28');
+    await file.writeAsString(wrongVersion);
+    await expectLater(profile.revalidate(), throwsA(Ps3OnlineIssue.patch));
+    for (final invalid in [
+      wrongVersion,
+      yaml.replaceFirst('Version: 1.2', 'Version: 1.20'),
+      yaml.replaceFirst('545c', '645c'),
+      '$yaml      - [be32, 0x10004, 0x60000000]\n',
+    ]) {
+      await file.writeAsString(invalid);
+      release = review(invalid);
+      await expectLater(verify(), throwsA(Ps3OnlineIssue.patch));
+    }
+    final quoted = yaml.replaceFirst('Version: 1.2', "Version: '1.2'").replaceFirst('[01.30]', '["01.30"]');
+    await file.writeAsString(quoted);
+    release = review(quoted);
+    expect((await verify()).networkArguments, profile.networkArguments);
+    release = review(yaml);
+    await file.writeAsString(yaml);
+    final competing = write('online/system/rpcs3/patches/imported_patch.yml', [0]);
+    await expectLater(profile.revalidate(), throwsA(Ps3OnlineIssue.patch));
+    competing.deleteSync();
+    final base = write('online/system/rpcs3/patches/patch.yml', [0]);
+    await expectLater(profile.revalidate(), throwsA(Ps3OnlineIssue.patch));
+    release = review(yaml, baseDigest: sha256.convert([0]).toString());
+    expect((await verify()).networkArguments, profile.networkArguments);
+    await base.writeAsBytes([1]);
+    await expectLater(verify(), throwsA(Ps3OnlineIssue.patch));
   });
 
   test('a listed release and detected update still require a verified profile', () {
