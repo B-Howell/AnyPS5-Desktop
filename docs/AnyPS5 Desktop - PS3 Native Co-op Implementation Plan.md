@@ -227,6 +227,26 @@ comparison, drive the intro to the Pod in a scratch profile using
 the single-client native-resolution control, then stage two verified
 Pod-ready profiles for a native invite and join.
 
+Two subsequent single-client runs at 100% internal resolution reached the
+intro on the same private server under Linux software Vulkan. The
+instrumented run rendered Sackboy and opened the native pause menu.
+At 1,748 frames, after the next Start input, the Vulkan readback fence
+returned VK_TIMEOUT at the host's five-second deadline. The other run
+also stopped on a readback error in the intro. Both used disposable
+profiles and a read-only disc mount. This identifies where the traced
+run stopped. It does not explain the earlier paired loading stall or
+establish a failure on hardware Vulkan. The native lobby test still
+requires two Pod-ready clients.
+
+A disconnected Windows control selected an RTX 4080 SUPER and
+rendered the intro offscreen at 1280×720. Fixture controller input
+opened and closed the native pause menu, and readback continued to
+the 2,350-frame stop condition without a fence error. The control used
+the earlier Windows v2 core and a disposable disc copy and profile.
+It qualifies the Windows hardware path for the pause interaction.
+The next online control needs the Windows v3 core and a private
+transport path to RPCN and Refresh before trying a paired join.
+
 The Quick Menu labels the current status **RPCN connection** and
 describes game sign-in and lobby handling separately. The
 [English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
