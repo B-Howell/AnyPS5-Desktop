@@ -87,6 +87,8 @@ def main():
                         help="Also check an older core lacks the ordinary-play export capability")
     parser.add_argument("--ordinary-restore", action="store_true",
                         help="Restore an ordinary hardware checkpoint into two isolated match workers")
+    parser.add_argument("--ordinary-park", action="store_true",
+                        help="Hold and recover the original worker using its private native checkpoint")
     args = parser.parse_args()
     if args.frames < 120:
         parser.error("at least 120 frames are required to compare a fingerprint")
@@ -104,6 +106,8 @@ def main():
         parser.error("--ordinary-control-core requires --ordinary-checkpoint")
     if args.ordinary_restore and not args.ordinary_checkpoint:
         parser.error("--ordinary-restore requires --ordinary-checkpoint")
+    if args.ordinary_park and not args.ordinary_restore:
+        parser.error("--ordinary-park requires --ordinary-restore")
 
     with ExitStack() as cleanup:
         if args.ordinary_checkpoint:
@@ -188,6 +192,7 @@ def verify_ordinary_checkpoint(args, cleanup):
         peer = boot(args.core, active)
         renderer = peer.send("renderer")
         assert peer.send("local-support") == "yes"
+        assert peer.send("resume-checkpoint") == "unavailable"
         assert peer.send(f"checkpoint 1 {path}") == "unavailable"
         assert peer.send(f"stale-blank 1 {path}") == "unavailable"
         assert peer.send(f"cancel-blank 1 {path}") == "cancelled"
@@ -216,7 +221,8 @@ def verify_ordinary_checkpoint(args, cleanup):
             paused = peer.send("published")
             # A busy boundary still completes the request without moving
             # the paused source. A match can retry on a later boundary.
-            paused_reply = peer.send(f"blank-checkpoint 1 {path}")
+            operation = "park-checkpoint" if args.ordinary_park else "blank-checkpoint"
+            paused_reply = peer.send(f"{operation} 1 {path}")
             assert paused_reply.startswith("checkpoint ") or paused_reply == "rejected"
             assert peer.send("published") == paused
             if paused_reply != "rejected" or not args.ordinary_restore or monotonic() >= deadline:
@@ -230,8 +236,21 @@ def verify_ordinary_checkpoint(args, cleanup):
             held_snapshot = snapshot.read_bytes()
             assert len(held_snapshot) == int(paused_reply.split()[2])
             assert marker not in held_snapshot and blank in held_snapshot
+            if args.ordinary_park:
+                assert peer.send("resume") == "resume"
+                sleep(0.08)
+                assert peer.send("published") == paused, "Normal playback released the match hold"
+                assert peer.send(f"park-checkpoint 1 {path}") == "unavailable"
+                assert peer.send(f"erase-card-tail {len(marker)}") == "erased"
             verify_ordinary_restore(args, peer, bios, path)
             assert peer.send("published") == paused, "The original session moved during the match probe"
+            if args.ordinary_park:
+                assert peer.send("pause") == "pause"
+                assert peer.send("resume-checkpoint") == "resumed"
+                assert peer.send("resume-checkpoint") == "unavailable"
+                assert peer.send(f"cancel-park 1 {path}") == "cancelled"
+                assert peer.send("resume-checkpoint") == "unavailable"
+                print("Native recovery restored the held source after a scratch card mutation.")
         assert peer.send("resume") == "resume"
         wait_for_picture(peer, int(paused) + 1)
     assert card.read_bytes() == private

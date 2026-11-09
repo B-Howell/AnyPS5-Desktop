@@ -142,8 +142,42 @@ int main(int argc, char** argv) {
       std::cout << (available != status.end() && IntegerValue(available->second) ? "yes" : "no") << std::endl;
       continue;
     }
+    if (ordinary && command == "resume-checkpoint") {
+      const auto status = session.Status();
+      const auto entry = status.find(Value("localBlankCardCheckpoint"));
+      const auto request = session.RequestOrdinaryCheckpointResume(
+          entry == status.end() ? 0 : IntegerValue(entry->second).value_or(0));
+      if (!request) {
+        std::cout << "unavailable" << std::endl;
+        continue;
+      }
+      const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+      while (std::chrono::steady_clock::now() < until) {
+        const auto value = session.TakeCheckpoint(*request);
+        if (const auto* restored = std::get_if<bool>(&value)) {
+          std::cout << (*restored ? "resumed" : "rejected") << std::endl;
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      if (std::chrono::steady_clock::now() >= until) return 7;
+      continue;
+    }
+    if (ordinary && command == "erase-card-tail") {
+      size_t count;
+      const auto status = session.Status();
+      if (!(std::cin >> count) || count == 0 || count > 128 ||
+          !std::get<bool>(status.at(Value("ordinaryCheckpointParked")))) return 7;
+      const auto dll = GetModuleHandleW(L"swanstation_libretro.dll");
+      auto* card = static_cast<uint8_t*>(Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data")(0));
+      const auto size = Symbol<size_t (*)(unsigned)>(dll, "retro_get_memory_size")(0);
+      if (!card || size != 128 * 1024) return 7;
+      std::fill_n(card + size - count, count, uint8_t{0});
+      std::cout << "erased" << std::endl;
+      continue;
+    }
     if (command == "checkpoint" || command == "blank-checkpoint" || command == "cancel-blank" ||
-        command == "stale-blank" ||
+        command == "stale-blank" || command == "park-checkpoint" || command == "cancel-park" ||
         command == "restore") {
       unsigned digest_byte;
       std::string path;
@@ -169,13 +203,21 @@ int main(int argc, char** argv) {
         const auto status = session.Status();
         const auto entry = status.find(Value("localBlankCardCheckpoint"));
         const auto source = entry == status.end() ? 0 : IntegerValue(entry->second).value_or(0);
-        request = session.RequestBlankCardCheckpoint(source + (command == "stale-blank" ? 1 : 0), digest);
+        request = session.RequestBlankCardCheckpoint(source + (command == "stale-blank" ? 1 : 0), digest,
+                                                     command == "park-checkpoint" || command == "cancel-park");
       }
       if (!request) {
         std::cout << "unavailable" << std::endl;
         continue;
       }
-      if (command == "cancel-blank") {
+      if (command == "cancel-park") {
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (!std::get<bool>(session.Status().at(Value("ordinaryCheckpointParked")))) {
+          if (std::chrono::steady_clock::now() >= until) return 7;
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+      }
+      if (command == "cancel-blank" || command == "cancel-park") {
         session.CancelCheckpoint(*request);
         const auto discarded = session.TakeCheckpoint(*request);
         const auto* available = std::get_if<bool>(&discarded);

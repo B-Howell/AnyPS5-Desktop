@@ -423,6 +423,46 @@ reply if the source closes before the reply arrives. The host Quick Menu
 still needs the reversible session switch before it can issue a version
 3 invite.
 
+### Holding and recovering the ordinary host
+
+`ps1LocalCheckpointPark` uses the same source token and texture checks as
+capture. The qualified core supplies both portable exporters and the
+portable importer. The [worker](../windows/runner/retro_core_host.cpp) saves the
+blank-card checkpoint for the guest and a second, private recovery
+checkpoint at the same emulation boundary. It returns only the
+blank-card checkpoint. The private snapshot stays in the native session
+and is never sent over the method channel. The source holds its existing
+texture and flushes pending audio. Ordinary playback messages cannot
+advance it while parked.
+
+`ps1LocalCheckpointResume` queues a restore of that private state in the
+original worker. It releases the hold only after a successful restore and
+refreshes the card pointer before the next frame or save. Canceling a
+park request before consuming its result releases the unmodified source.
+The launcher will own the explicit restore after consuming a park result.
+Canceling a restore already in flight discards its reply. A successful
+restore still releases the source.
+For the in-app switch, keep the private snapshot in the launcher-side
+native host while it replaces the ordinary worker with the isolated
+match worker. Bind the return to the original disc, core and storage
+paths. If match startup or peer preparation fails, reopen the original
+profile, restore the private snapshot, and then release input. The
+current operations keep the snapshot inside the original worker, so
+they do not yet cover that replacement.
+
+The [headless driver](../windows/runner/tests/run_ps1_netplay_probe.py)
+accepts `--ordinary-checkpoint --ordinary-restore --ordinary-park`. The
+fixture holds a hardware source while two separate software workers
+consume the guest checkpoint. It deliberately erases the marker from the
+held worker's scratch card, then exercises the native restore and checks
+the original saved bytes at teardown. It also cancels an unclaimed
+successful park and checks that normal playback resumes.
+The Windows CTR fixture passed these checks with a hardware-rendered
+source and the pinned blank-card DLL. The two restored match workers
+also agreed at frame 120, and the preceding Cached Interpreter build
+passed its separate 120-frame control. Logs are in the local
+`ps1-local-park-34f1b3e` directory.
+
 ### Windows development checkpoint
 
 Set `ANYPS5_PS1_NETPLAY=1` on an experimental Windows x64 build to invite

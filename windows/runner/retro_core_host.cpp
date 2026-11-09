@@ -704,11 +704,19 @@ class RetroCoreSession {
     return QueueCheckpoint(digest, std::move(restore), frame, {});
   }
 
-  std::optional<int64_t> RequestBlankCardCheckpoint(int64_t source, const Ps1DiscHash& digest) {
+  std::optional<int64_t> RequestBlankCardCheckpoint(int64_t source, const Ps1DiscHash& digest, bool park = false) {
     if (source != local_checkpoint_source_ || !LocalBlankCardCheckpointReady()) return std::nullopt;
     std::lock_guard<std::mutex> lock(checkpoint_mutex_);
-    if (checkpoint_) return std::nullopt;
-    return QueueCheckpoint(digest, {}, std::nullopt, {});
+    if (checkpoint_ || ordinary_parked_ || (park && !ordinary_recovery_supported_)) return std::nullopt;
+    return QueueCheckpoint(digest, {}, std::nullopt, {},
+                           park ? CheckpointAction::kParkOrdinary : CheckpointAction::kExchange);
+  }
+
+  std::optional<int64_t> RequestOrdinaryCheckpointResume(int64_t source) {
+    if (source != local_checkpoint_source_ || !LocalBlankCardCheckpointReady()) return std::nullopt;
+    std::lock_guard<std::mutex> lock(checkpoint_mutex_);
+    if (checkpoint_ || !ordinary_parked_) return std::nullopt;
+    return QueueCheckpoint(ordinary_recovery_digest_, {}, std::nullopt, {}, CheckpointAction::kResumeOrdinary);
   }
 
   std::optional<int64_t> RequestCatchup(uint32_t first, std::vector<Ps1Ports> frames) {
@@ -757,6 +765,10 @@ class RetroCoreSession {
     if (checkpoint_->running && !checkpoint_->result) {
       checkpoint_->cancelled = true;
     } else {
+      if (checkpoint_->action == CheckpointAction::kParkOrdinary && ordinary_parked_) {
+        ordinary_recovery_.clear();
+        ordinary_parked_ = false;
+      }
       checkpoint_.reset();
     }
   }
@@ -826,8 +838,10 @@ class RetroCoreSession {
     };
     if (netplay_) status.emplace(Value("netplayReady"), Value(netplay_ready_.load()));
     if (netplay_) status.emplace(Value("portableCheckpoint"), Value(checkpoint_supported_.load()));
-    if (LocalBlankCardCheckpointReady())
+    if (LocalBlankCardCheckpointReady()) {
       status.emplace(Value("localBlankCardCheckpoint"), Value(local_checkpoint_source_));
+      status.emplace(Value("ordinaryCheckpointParked"), Value(ordinary_parked_.load()));
+    }
     const auto provider_status = ps3_provider_status_.load();
     if (provider_status >= 0) status.emplace(Value("ps3ProviderStatus"), Value(provider_status));
     return status;
@@ -1348,12 +1362,15 @@ class RetroCoreSession {
     }
   }
 
+  enum class CheckpointAction { kExchange, kParkOrdinary, kResumeOrdinary };
+
   struct CheckpointJob {
     int64_t id;
     Ps1DiscHash digest;
     CheckpointBytes restore;
     std::optional<uint32_t> frame;
     std::vector<Ps1Ports> replay;
+    CheckpointAction action;
     bool running = false;
     std::optional<Value> result;
     bool cancelled = false;
@@ -1372,26 +1389,35 @@ class RetroCoreSession {
 
   // Caller holds checkpoint_mutex_.
   int64_t QueueCheckpoint(const Ps1DiscHash& digest, CheckpointBytes restore,
-                          std::optional<uint32_t> frame, std::vector<Ps1Ports> replay) {
+                          std::optional<uint32_t> frame, std::vector<Ps1Ports> replay,
+                          CheckpointAction action = CheckpointAction::kExchange) {
     static std::atomic<int64_t> next_id{0};
     const auto id = ++next_id;
-    checkpoint_ = CheckpointJob{id, digest, std::move(restore), frame, std::move(replay), false, std::nullopt};
+    checkpoint_ = CheckpointJob{id, digest, std::move(restore), frame, std::move(replay), action, false, std::nullopt};
     return id;
   }
 
-  void ServiceCheckpoint(SavePortable save, LoadPortable load, size_t capacity, void (*step)()) {
+  // Returns true when a private restore may have replaced the card buffer.
+  bool ServiceCheckpoint(SavePortable save, LoadPortable load, size_t capacity, void (*step)(),
+                         SavePortable save_private = nullptr) {
     std::optional<CheckpointJob> work;
     {
       std::lock_guard<std::mutex> lock(checkpoint_mutex_);
-      if (!checkpoint_ || checkpoint_->running) return;
+      if (!checkpoint_ || checkpoint_->running) return false;
       work = std::move(*checkpoint_);
       // Keep the request identity and kind visible while the core call runs.
       checkpoint_->frame = work->frame;
       checkpoint_->running = true;
+      if (work->action == CheckpointAction::kResumeOrdinary) work->restore = std::move(ordinary_recovery_);
     }
     Value result(false);
     std::optional<uint32_t> cursor;
-    if (!work->frame) {
+    CheckpointBytes recovery;
+    bool resumed = false;
+    if (work->action == CheckpointAction::kResumeOrdinary) {
+      resumed = load(work->restore.data(), work->restore.size(), work->digest.data());
+      result = Value(resumed);
+    } else if (!work->frame) {
       int64_t frame = steps_.load();
       if (netplay_) {
         std::lock_guard<std::mutex> lock(netplay_mutex_);
@@ -1402,9 +1428,16 @@ class RetroCoreSession {
                             ? save(bytes.data(), bytes.size(), work->digest.data())
                             : 0;
       if (used && used <= bytes.size()) {
-        bytes.resize(used);
-        result = Value(Map{{Value("frame"), Value(frame)},
-                           {Value("state"), Value(std::move(bytes))}});
+        if (work->action == CheckpointAction::kParkOrdinary) {
+          recovery.resize(capacity);
+          const auto private_size = save_private(recovery.data(), recovery.size(), work->digest.data());
+          recovery.resize(private_size <= recovery.size() ? private_size : 0);
+        }
+        if (work->action != CheckpointAction::kParkOrdinary || !recovery.empty()) {
+          bytes.resize(used);
+          result = Value(Map{{Value("frame"), Value(frame)},
+                             {Value("state"), Value(std::move(bytes))}});
+        }
       }
     } else if (!work->restore.empty()) {
       const bool imported = load(work->restore.data(), work->restore.size(), work->digest.data());
@@ -1423,12 +1456,23 @@ class RetroCoreSession {
       result = Value(cursor.has_value());
     }
     std::lock_guard<std::mutex> lock(checkpoint_mutex_);
+    if (work->action == CheckpointAction::kResumeOrdinary) {
+      if (resumed) ordinary_parked_ = false;
+      else ordinary_recovery_ = std::move(work->restore);
+    }
     if (checkpoint_->cancelled) {
       checkpoint_.reset();
     } else {
+      if (!recovery.empty()) {
+        ordinary_recovery_ = std::move(recovery);
+        ordinary_recovery_digest_ = work->digest;
+        ordinary_parked_ = true;
+        audio_.Flush();
+      }
       if (cursor) replay_cursor_ = cursor;
       checkpoint_->result = std::move(result);
     }
+    return work->action == CheckpointAction::kResumeOrdinary;
   }
 
   void RunNetplay(HMODULE dll, void (*step)(), std::chrono::steady_clock::duration frame_time,
@@ -1674,15 +1718,24 @@ class RetroCoreSession {
         throw std::runtime_error("The core could not boot this disc. Check its BIOS and game files.");
       const auto save_blank = ps1 && !netplay_ ? reinterpret_cast<SavePortable>(
           GetProcAddress(dll, "retro_anyps5_export_blank_card_checkpoint_v1")) : nullptr;
+      const auto save_private = save_blank ? reinterpret_cast<SavePortable>(
+          GetProcAddress(dll, "retro_anyps5_export_checkpoint_v1")) : nullptr;
+      const auto load_private = save_blank ? reinterpret_cast<LoadPortable>(
+          GetProcAddress(dll, "retro_anyps5_import_checkpoint_v1")) : nullptr;
       const size_t maximum = save_blank ? Symbol<size_t (*)()>(dll, "retro_serialize_size")() : 0;
+      ordinary_recovery_supported_ = save_private && load_private;
       local_blank_checkpoint_supported_ = maximum && maximum <= kMaxPs1Checkpoint - kPs1CheckpointPrefix;
       void* card = nullptr;
       size_t card_size = 0;
       std::filesystem::path card_path;
-      const auto restore_card = [&] {
+      const auto refresh_card = [&] {
         if (!ps1 || netplay_) return;
         card = Symbol<void* (*)(unsigned)>(dll, "retro_get_memory_data")(0);
         card_size = Symbol<size_t (*)(unsigned)>(dll, "retro_get_memory_size")(0);
+      };
+      const auto restore_card = [&] {
+        if (!ps1 || netplay_) return;
+        refresh_card();
         card_path = std::filesystem::u8path(saves_) / std::filesystem::u8path(disc_).stem();
         card_path += L".srm";
         RestoreCard(card_path, card, card_size);
@@ -1709,7 +1762,7 @@ class RetroCoreSession {
       auto next = Clock::now();
       auto hardware_deadline = next + std::chrono::seconds(8);
       while (!netplay_ && !stop_) {
-        if (ps1 || ps2)
+        if ((ps1 || ps2) && !ordinary_parked_)
           ApplyCheckpointGraphics(dll, reopen, step, ps1, card, card_size, card_path);
         if (!ps3_ && hardware_callbacks_.reset && !frame_ready_ && Clock::now() > hardware_deadline) {
           if (!use_native_resolution()) {
@@ -1727,9 +1780,10 @@ class RetroCoreSession {
           restore_card();
           hardware_deadline = Clock::now() + std::chrono::seconds(8);
         }
-        if (local_blank_checkpoint_supported_)
-          ServiceCheckpoint(save_blank, nullptr, maximum + kPs1CheckpointPrefix, step);
-        if (paused_ && frame_ready_) {
+        if (local_blank_checkpoint_supported_ &&
+            ServiceCheckpoint(save_blank, load_private, maximum + kPs1CheckpointPrefix, step, save_private))
+          refresh_card();
+        if ((paused_ && frame_ready_) || ordinary_parked_) {
           std::this_thread::sleep_for(std::chrono::milliseconds(5));
           next = Clock::now();
           continue;
@@ -1812,8 +1866,13 @@ class RetroCoreSession {
   std::mutex checkpoint_mutex_;
   std::atomic<bool> checkpoint_supported_{false};
   std::atomic<bool> local_blank_checkpoint_supported_{false};
+  // Initialized before publishing local_blank_checkpoint_supported_.
+  bool ordinary_recovery_supported_ = false;
   inline static std::atomic<int64_t> next_checkpoint_source_{0};
   const int64_t local_checkpoint_source_ = ++next_checkpoint_source_;
+  std::atomic<bool> ordinary_parked_{false};
+  CheckpointBytes ordinary_recovery_;
+  Ps1DiscHash ordinary_recovery_digest_{};
   std::optional<CheckpointJob> checkpoint_;
   std::optional<uint32_t> replay_cursor_;
   std::deque<Ps1Ports> checkpoint_history_;
@@ -2082,17 +2141,23 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
   } else if (method == "ps1ResumeLocal") {
     result->Success(Value(session_->ResumeLocalNetplay()));
   } else if (method == "ps1CheckpointExport" || method == "ps1CheckpointImport" ||
-             method == "ps1LocalCheckpointExport") {
+             method == "ps1LocalCheckpointExport" || method == "ps1LocalCheckpointPark" ||
+             method == "ps1LocalCheckpointResume") {
     const auto* fields = std::get_if<Map>(arguments);
     if (!fields) return result->Error("checkpoint", "Expected checkpoint arguments");
     std::optional<int64_t> source;
-    if (method == "ps1LocalCheckpointExport") {
+    if (method != "ps1CheckpointExport" && method != "ps1CheckpointImport") {
       const auto texture_field = fields->find(Value("texture"));
       if (texture_field == fields->end() || IntegerValue(texture_field->second) != session_->texture_id())
         return result->Error("checkpoint", "The local PS1 session changed");
       const auto source_field = fields->find(Value("source"));
       if (source_field != fields->end()) source = IntegerValue(source_field->second);
       if (!source) return result->Error("checkpoint", "Expected the local PS1 checkpoint source");
+      if (method == "ps1LocalCheckpointResume") {
+        const auto id = session_->RequestOrdinaryCheckpointResume(*source);
+        if (!id) return result->Error("checkpoint", "The local PS1 checkpoint is unavailable");
+        return result->Success(Value(*id));
+      }
     }
     const auto digest_field = fields->find(Value("discHash"));
     const auto* digest = digest_field == fields->end() ? nullptr
@@ -2117,7 +2182,7 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
       restore = *state;
     }
     const auto id = source
-                        ? session_->RequestBlankCardCheckpoint(*source, hash)
+                        ? session_->RequestBlankCardCheckpoint(*source, hash, method == "ps1LocalCheckpointPark")
                         : session_->RequestCheckpoint(hash, std::move(restore), frame);
     if (!id) return result->Error("checkpoint", "This core cannot run that checkpoint operation now");
     result->Success(Value(*id));
