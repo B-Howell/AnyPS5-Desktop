@@ -47,6 +47,12 @@ int main() {
     assert(lan.Inject(outbound.data(), outbound.size()));
   }
   assert(!lan.Inject(outbound.data(), outbound.size()));
+  outbound[11] = 1;
+  assert(active->send(active->opaque, outbound.data(), outbound.size()));
+  lan.ClearFrames();
+  assert(lan.Drain(frame.data(), frame.size()) == 0);
+  assert(active->recv(active->opaque, frame.data(), frame.size()) == 0);
+  assert(lan.Inject(outbound.data(), outbound.size()));
   lan.Close();
   assert(!lan.Inject(outbound.data(), outbound.size()));
   assert(active->recv(active->opaque, frame.data(), frame.size()) == 0);

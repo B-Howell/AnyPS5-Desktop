@@ -101,6 +101,7 @@ class TogetherModel {
   bool _verifyingPs1 = false;
   _Ps1InviteVerification? _ps1InviteVerification;
   _Ps2LanAttempt? _ps2Lan;
+  _Ps2LanWorker? _ps2LanWorker;
   _Ps3PartyAttempt? _ps3Party;
 
   TogetherModel(this.app) : environment = app.services.environment ?? Platform.environment {
@@ -433,6 +434,7 @@ class TogetherModel {
     _cancelPs1InviteVerification();
     unawaited(_ps1Match?.leave());
     _ps2Lan?.cancel();
+    _ps2LanWorker = null;
     _ps3Party?.cancel();
     app.remote?.togetherServer = account.base.toString();
     // Another account (or none): what was typed for the last one's profile goes, and so do a
@@ -1656,6 +1658,7 @@ class TogetherModel {
 
   void dispose() {
     _cancelPs1InviteVerification();
+    _ps2LanWorker = null;
     unawaited(_ps1Match?.leave());
     if (_ps2Lan case final attempt?) {
       attempt.disposed = true;

@@ -450,6 +450,11 @@ class EmbeddedRetroGame extends RunningGame {
     return _channel.invokeListMethod<Uint8List>('ps2LanExchange', {'texture': textureId, 'frames': input});
   }
 
+  Future<bool> resetPs2LanFrames() async {
+    if (!_ps2Lan || _closing || _finished.isCompleted) return false;
+    return await _channel.invokeMethod<bool>('ps2LanReset', textureId) == true;
+  }
+
   /// Captures the state immediately before the returned emulation frame.
   Future<Ps1CheckpointSnapshot> captureNetplayCheckpoint() async {
     final result = await _exchangeCheckpoint('ps1CheckpointExport', {'discHash': _checkpointDiscHash()});

@@ -304,6 +304,7 @@ void main() {
       final pauseRequests = <Object?>[];
       final inputRequests = <Object?>[];
       var exchanges = 0;
+      var resets = 0;
       var stopped = false;
       messenger.setMockMethodCallHandler(channel, (call) async {
         if (call.method == 'start') {
@@ -314,6 +315,11 @@ void main() {
         if (call.method == 'stop') stopped = true;
         if (call.method == 'pause') pauseRequests.add(call.arguments);
         if (call.method == 'input') inputRequests.add(call.arguments);
+        if (call.method == 'ps2LanReset') {
+          expect(call.arguments, 42);
+          resets++;
+          return true;
+        }
         if (call.method == 'ps2LanExchange') {
           exchanges++;
           return <Uint8List>[];
@@ -329,22 +335,30 @@ void main() {
         await until(() => model.starting == null && model.running == null && model.together.ps2LanRows().isEmpty);
         messenger.setMockMethodCallHandler(channel, null);
       });
-      final peer = await network.links.link([]);
-      addTearDown(peer.close);
-      await peer.openChannel();
-      final offer = await peer.createOffer();
-      await peer.setLocal(offer);
-      press(continueId);
-      await server.nextFrame('signal', test: (frame) => frame['kind'] == 'renegotiate');
-      server.push('game_session.signal', {
-        'sessionId': roomId,
-        'from': host,
-        'device': hostDevice,
-        'kind': 'offer',
-        'data': {'sdp': offer['sdp']},
-      });
-      final answer = await server.nextFrame('signal', test: (frame) => frame['kind'] == 'answer');
-      await peer.setRemote({'type': 'answer', ...(answer['data'] as Map<String, dynamic>)});
+      Future<void> connectPeer(String id, String action) async {
+        final peer = await network.links.link([]);
+        addTearDown(peer.close);
+        await peer.openChannel();
+        final offer = await peer.createOffer();
+        await peer.setLocal(offer);
+        press(action);
+        await until(
+          () => server.callsTo('game-sessions/$id/join', method: 'POST').isNotEmpty,
+          reason: 'Expected room admission for $id. Status: ${model.toast}',
+        );
+        await server.nextFrame('signal', test: (frame) => frame['kind'] == 'renegotiate');
+        server.push('game_session.signal', {
+          'sessionId': id,
+          'from': host,
+          'device': hostDevice,
+          'kind': 'offer',
+          'data': {'sdp': offer['sdp']},
+        });
+        final answer = await server.nextFrame('signal', test: (frame) => frame['kind'] == 'answer');
+        await peer.setRemote({'type': 'answer', ...(answer['data'] as Map<String, dynamic>)});
+      }
+
+      await connectPeer(roomId, continueId);
       await starting.future.timeout(const Duration(seconds: 5));
       expect(model.starting?.titleId, 'PS2-TIMESPLITTERS');
       if (quickMenuDuringPlay) {
@@ -360,7 +374,10 @@ void main() {
         expect(inputRequests, anyElement(equals([0, 0, 0, 0, 0])));
         expect(pauseRequests, isEmpty);
         expect(model.quickMenuPaused, isFalse);
-        await until(() => row('ps2-lan-status').detail?.endsWith(' · Direct · 42 ms') == true);
+        await until(
+          () => row('ps2-lan-status').detail?.endsWith(' · Direct · 42 ms') == true,
+          reason: 'The first route should report direct latency.',
+        );
         final readingOldPath = Completer<void>();
         final oldPath = Completer<({bool? relayed, int? roundTripMs})?>();
         addTearDown(() {
@@ -373,14 +390,23 @@ void main() {
         await readingOldPath.future.timeout(const Duration(seconds: 5));
         final localLink = network.all.last;
         localLink.reportState('disconnected');
-        await until(() => row('ps2-lan-status').detail == 'LAN connection interrupted. Reconnecting…');
+        await until(
+          () => row('ps2-lan-status').detail == 'LAN connection interrupted. Reconnecting…',
+          reason: 'A disconnected link should show Reconnecting.',
+        );
         network.readPath = () async => (relayed: true, roundTripMs: 65);
         localLink.reportState('connected');
-        await until(() => row('ps2-lan-status').detail?.startsWith("Open the game's LAN mode") == true);
+        await until(
+          () => row('ps2-lan-status').detail?.startsWith("Open the game's LAN mode") == true,
+          reason: 'The restored link should clear Reconnecting.',
+        );
         oldPath.complete((relayed: false, roundTripMs: 999));
         await Future<void>.delayed(Duration.zero);
         expect(row('ps2-lan-status').detail, isNot(contains('999 ms')));
-        await until(() => row('ps2-lan-status').detail?.endsWith(' · Through the relay · 65 ms') == true);
+        await until(
+          () => row('ps2-lan-status').detail?.endsWith(' · Through the relay · 65 ms') == true,
+          reason: 'The restored route should report the new relay latency.',
+        );
         final worker = model.embeddedGame;
         expect(row('ps2-lan-status').title, 'Leave LAN Play');
         press('ps2-lan-status');
@@ -395,9 +421,35 @@ void main() {
         model.padCommand(PadCommand.home);
         expect(model.overlay, isNull);
         expect(pauseRequests, isEmpty);
+        const nextRoom = '12345678-1234-4234-8234-123456789abd';
+        const nextPath = 'game-sessions/$nextRoom';
+        final next = {...room, 'id': nextRoom, 'sessionId': nextRoom};
+        server.answers.addAll({
+          'GET $nextPath': (200, next),
+          'POST $nextPath/join': (204, null),
+          'PUT $nextPath/members/me': (200, next),
+          'GET $nextPath/ice-servers': (200, {'iceServers': []}),
+          'POST $nextPath/leave': (204, null),
+        });
+        server.gameInvites
+          ..clear()
+          ..add({...invite, 'sessionId': nextRoom});
+        await model.together.hub.games.refresh();
+        model.open(Layer.friends);
+        await connectPeer(nextRoom, 'game-accept-$nextRoom');
+        await until(
+          () => exchanges > afterLeave && model.overlay == null,
+          reason: 'The second room should resume exchange and return from Friends to the same game.',
+        );
+        expect(model.embeddedGame, same(worker));
+        expect(resets, 1);
         await model.stopRunningGame();
         await until(() => stopped && model.running == null);
         expect(server.callsTo('$path/leave'), hasLength(1));
+        await until(
+          () => server.callsTo('$nextPath/leave').length == 1,
+          reason: 'Closing the reused worker should release its new room.',
+        );
         return;
       }
       model.padCommand(PadCommand.home);

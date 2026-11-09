@@ -1,6 +1,21 @@
 part of 'together_model.dart';
 
+final class _Ps2LanWorker {
+  const _Ps2LanWorker(this.game, this.session, this.run, this.digest, this.owner, this.profile, {required this.host});
+
+  final Game game;
+  final EmbeddedRetroGame session;
+  final RetroLanGame run;
+  final String digest;
+  final String owner;
+  final String? profile;
+  final bool host;
+}
+
 final class _Ps2LanAttempt {
+  _Ps2LanAttempt(this.borrowed);
+
+  final _Ps2LanWorker? borrowed;
   final cancellation = Completer<void>();
   RetroLanMatch? match;
   Game? launchGame;
@@ -21,6 +36,19 @@ extension TogetherPs2Lan on TogetherModel {
 
   bool get _ps2LaunchAvailable =>
       app.running == null && app.starting == null && !app.stopping && app.managedSetupConsole == null;
+  _Ps2LanWorker? _ps2ReusableWorker({required bool host}) {
+    final worker = _ps2LanWorker;
+    return worker != null &&
+            identical(app.embeddedGame, worker.session) &&
+            worker.session.startupVisible &&
+            worker.host == host &&
+            worker.owner == account.user?.id &&
+            worker.profile == app.currentProfile?.id &&
+            !app.stopping &&
+            app.managedSetupConsole == null
+        ? worker
+        : null;
+  }
 
   bool get _ps2LanBusy => _ps2Lan != null || _ps3Party != null || app.ps2LanSetupActive;
 
@@ -48,15 +76,19 @@ extension TogetherPs2Lan on TogetherModel {
 
   String ps2LanInviteDetail(GameInvite invite) {
     if (!_ps2LanEnabled) return T.text('retroOnlineUnavailable');
-    if (_ps2LanCandidates(_ps2LanInviteSpec(invite)).isEmpty) return T.text('ps2LanDisc');
+    final candidates = _ps2LanCandidates(_ps2LanInviteSpec(invite));
+    if (candidates.isEmpty) return T.text('ps2LanDisc');
+    final reuse = _ps2ReusableWorker(host: false);
+    if (reuse != null && candidates.any((game) => game.id == reuse.game.id)) return T.text('ps2LanInviteDetail');
     return T.text(_ps2LanSetupIssue ?? 'ps2LanInviteDetail');
   }
 
   List<PanelRow> ps2LanInvites(Friend friend) {
     final game = app.selectedGame;
     final spec = game == null ? null : _ps2LanSpec(game);
+    final reuse = _ps2ReusableWorker(host: true);
     if (!_ps2LanEnabled ||
-        !_ps2LaunchAvailable ||
+        (!_ps2LaunchAvailable && (reuse == null || reuse.game.id != game?.id)) ||
         _ps2LanBusy ||
         _ps1Match != null ||
         _verifyingPs1 ||
@@ -69,7 +101,7 @@ extension TogetherPs2Lan on TogetherModel {
       PanelRow(
         id: 'ps2-lan-invite',
         title: T.format('ps2LanInvite', [game.name]),
-        detail: T.text(_ps2LanSetupIssue ?? 'ps2LanInviteDetail'),
+        detail: T.text(reuse == null ? _ps2LanSetupIssue ?? 'ps2LanInviteDetail' : 'ps2LanInviteDetail'),
         kind: ActionRow(() => unawaited(_startPs2Lan(spec, [game], friendId: friend.person.id))),
       ),
     ];
@@ -135,11 +167,16 @@ extension TogetherPs2Lan on TogetherModel {
   }) async {
     final me = account.user?.id;
     if (me == null || hub.socket.status != SocketStatus.ready) return app.show(T.text('ps2LanUnavailable'));
-    if (_ps2LanBusy || _ps1Match != null || _verifyingPs1 || !_ps2LaunchAvailable) {
+    final profile = app.currentProfile?.id;
+    final host = roomId == null;
+    final worker = _ps2ReusableWorker(host: host);
+    final reuse = worker != null && candidates.any((game) => game.id == worker.game.id) ? worker : null;
+    bool canLaunch() => reuse == null ? _ps2LaunchAvailable : identical(_ps2ReusableWorker(host: host), reuse);
+    if (_ps2LanBusy || _ps1Match != null || _verifyingPs1 || !canLaunch()) {
       return app.show(T.text(_ps2Lan?.closing == true ? 'ps2LanClosing' : 'ps2LanBusy'));
     }
     if (candidates.isEmpty) return app.show(T.text('ps2LanDisc'));
-    if (_ps2LanSetupIssue != null) {
+    if (reuse == null && _ps2LanSetupIssue != null) {
       final gameIds = candidates.map((game) => game.id).toSet();
       return app.openPs2LanSetup(
         onReady: () {
@@ -169,8 +206,9 @@ extension TogetherPs2Lan on TogetherModel {
     }
     if (friendId != null) app.open(Layer.friends);
 
-    final attempt = _ps2Lan = _Ps2LanAttempt();
-    bool owned() => !attempt.disposed && identical(_ps2Lan, attempt) && account.user?.id == me;
+    final attempt = _ps2Lan = _Ps2LanAttempt(reuse)..launchGame = reuse?.game;
+    bool owned() =>
+        !attempt.disposed && identical(_ps2Lan, attempt) && account.user?.id == me && app.currentProfile?.id == profile;
     bool active() => owned() && !attempt.cancelled;
     RetroOnlineRooms rooms([String? digest]) => RetroOnlineRooms(
       call: (method, path, [body]) {
@@ -197,7 +235,8 @@ extension TogetherPs2Lan on TogetherModel {
       if (!active()) return;
       if (roomId != null && expected == null) return app.show(T.text('ps2LanDisc'));
       for (final game in candidates) {
-        if (!active() || !_ps2LaunchAvailable) return;
+        if (!active() || !canLaunch()) return;
+        if (reuse != null && game.id != reuse.game.id) continue;
         final disc = game.retro!.path;
         final String digest;
         final file = File(disc);
@@ -213,15 +252,17 @@ extension TogetherPs2Lan on TogetherModel {
         } on FileSystemException {
           continue;
         }
-        if (!active() || !_ps2LaunchAvailable) return;
+        if (!active() || !canLaunch()) return;
+        if (reuse != null && digest != reuse.digest) continue;
         if (expected != null && digest != expected) continue;
 
         final match = attempt.match = RetroLanMatch(
+          ownsGame: reuse == null,
           onPathChanged: () {
             if (active()) app.refresh();
           },
           onRecoveryChanged: (recovering) {
-            if (active() && app.running?.$1 == game) {
+            if (active() && identical(app.running?.$1, attempt.launchGame)) {
               app.show(T.text(recovering ? 'ps2LanReconnecting' : 'ps2LanReconnected'));
             }
           },
@@ -229,15 +270,35 @@ extension TogetherPs2Lan on TogetherModel {
           links: app.services.gameLinks?.call() ?? WebRtcGameLinks(),
           launch: (mac) async {
             if (!unchanged(await file.stat())) throw StateError('The verified PS2 disc changed before launch.');
-            if (!_ps2LaunchAvailable) throw StateError('Another game started before PS2 LAN.');
+            if (!active() || !canLaunch()) throw StateError('The PS2 game changed before LAN attached.');
+            if (reuse != null) {
+              if (!await reuse.session.resetPs2LanFrames() || !active() || !canLaunch()) {
+                throw StateError('The running PS2 LAN adapter could not be reused.');
+              }
+              return reuse.run;
+            }
             attempt.launchGame = game;
-            return app.preparePs2Lan(game, mac, canBoot: () => active() && attempt.match?.closed == false);
+            final run = await app.preparePs2Lan(game, mac, canBoot: () => active() && attempt.match?.closed == false);
+            if (app.embeddedGame case final session? when active() && identical(app.running?.$1, game)) {
+              final started = _ps2LanWorker = _Ps2LanWorker(game, session, run, digest, me, profile, host: host);
+              void forgetWorker() {
+                if (!identical(_ps2LanWorker, started)) return;
+                _ps2LanWorker = null;
+                final current = _ps2Lan;
+                if (current != null && identical(current.borrowed, started)) current.cancel();
+              }
+
+              unawaited(run.done.then<void>((_) => forgetWorker(), onError: (Object _) => forgetWorker()));
+            }
+            return run;
           },
         );
         unawaited(
           match.ending.then((_) {
             if (!owned()) return;
-            if (match.gameContinues && app.running?.$1 == game) app.show(T.text('ps2LanGameContinues'));
+            if (match.gameContinues && identical(app.running?.$1, attempt.launchGame)) {
+              app.show(T.text('ps2LanGameContinues'));
+            }
             app.refresh();
           }),
         );
@@ -248,7 +309,10 @@ extension TogetherPs2Lan on TogetherModel {
           await match.join(roomId, expectedHost: expectedHost);
           if (owned()) unawaited(hub.games.refresh().catchError((Object _) {}));
         }
-        if (active() && match.attached) app.show(T.text('ps2LanUseGameMenu'));
+        if (active() && match.attached) {
+          if (reuse != null && canLaunch() && app.overlay == Layer.friends) app.resumeGame();
+          app.show(T.text('ps2LanUseGameMenu'));
+        }
         await match.done;
         if (active() && !match.gameContinues) {
           if (match.failure != null) {

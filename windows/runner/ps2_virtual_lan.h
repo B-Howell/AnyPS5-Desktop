@@ -51,8 +51,7 @@ class Ps2VirtualLan {
     if (!bound_) return true;
     if (!bound_(nullptr)) return false;
     bound_ = nullptr;
-    incoming_.Clear();
-    outgoing_.Clear();
+    ClearFrames();
     return true;
   }
 
@@ -72,6 +71,10 @@ class Ps2VirtualLan {
 
   void Close() {
     closed_ = true;
+    ClearFrames();
+  }
+
+  void ClearFrames() {
     incoming_.Clear();
     outgoing_.Clear();
   }

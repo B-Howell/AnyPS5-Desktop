@@ -419,7 +419,7 @@
   "ps2LanBios": "Select your PS2 BIOS in Settings → Emulators → PS2.",
   "ps2LanDisconnected": "PS2 LAN Play ended before the connection could continue.",
   "ps2LanRemoteEnded": "The PS2 LAN room closed on the other end.",
-  "ps2LanGameContinues": "LAN Play ended. Your game is still open. Close it before starting a new LAN room.",
+  "ps2LanGameContinues": "LAN Play ended. Your game is still open. You can connect to another room from the same seat.",
   "ps2LanReconnecting": "LAN connection interrupted. Reconnecting…",
   "ps2LanReconnected": "LAN connection restored. If your game disconnected, regroup in its LAN menu.",
   "retroOnlineBusy": "Leave your current retro online game first.",

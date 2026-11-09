@@ -642,6 +642,12 @@ class RetroCoreSession {
     return output;
   }
 
+  bool ClearLanFrames() {
+    if (!lan_ || !lan_ready_ || stop_ || ended_) return false;
+    lan_->ClearFrames();
+    return !stop_ && !ended_;
+  }
+
   void Pause(bool pause) {
     if (netplay_ || lan_) {
       if (pause) SetInput(0, {});
@@ -2250,6 +2256,9 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
     if (!ordinary_recovery_) return result->Error("checkpoint", "The original PS1 game is not parked.");
     Release();
     result->Success(Value(*token));
+  } else if (method == "ps2LanReset") {
+    const auto texture = arguments ? IntegerValue(*arguments) : std::nullopt;
+    result->Success(Value(texture == session_->texture_id() && session_->ClearLanFrames()));
   } else if (method == "ps2LanExchange") {
     const auto* fields = std::get_if<Map>(arguments);
     if (!fields) return result->Error("argument", "Expected a PS2 LAN frame batch.");

@@ -297,8 +297,15 @@ The [LAN bridge](../lib/core/online/retro_lan_bridge.dart) keeps at most
 and allows one exchange of up to 16 frames at a time. On exit, the
 match stops forwarding frames and drains the current exchange. A peer
 departure, lost game channel, or **Leave LAN Play** releases the room while keeping an
-already started game open. The launcher explains that the player can
-return to the game and must close it before opening a new LAN room.
+already started game open. The player can return to the game or connect
+to a new room from the same host or guest seat. The launcher reuses the
+same verified disc, account, running worker and save lease. Changing
+seats requires a fresh launch because the network address is fixed at
+boot. Before connecting a new bridge, the
+[Windows host](../windows/runner/retro_core_host.cpp) clears both queues
+in the [virtual adapter](../windows/runner/ps2_virtual_lan.h). When
+the connection is ready, Friends returns the player to the running game.
+The game still owns its LAN lobby, so players regroup in its multiplayer menu.
 **Close Game** still shuts down the local game. Cancel during startup
 also closes a worker that returns after cancellation. Local worker
 cleanup runs independently of the room release request. Another LAN
@@ -442,6 +449,10 @@ just because a card file exists. **Leave LAN Play** in the Quick Menu
 closes the room and keeps the game open. Restart trials are unavailable
 while the LAN worker is active.
 
+The [LAN invite test](../test/ui/ps2_lan_invite_test.dart) joins two rooms
+in sequence with the same guest worker and checks the queue reset.
+The [virtual adapter test](../windows/runner/tests/ps2_virtual_lan_test.cpp)
+checks that resetting discards both queued directions and keeps the adapter usable.
 The [library test](../test/core/retro_library_test.dart) verifies serial
 and revision extraction with a conflicting manifest. The
 [emulator test](../test/ui/embedded_retro_game_test.dart) checks the private

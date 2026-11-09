@@ -24,6 +24,7 @@ final class RetroLanMatch {
     required this.rooms,
     required this.links,
     required this.launch,
+    this.ownsGame = true,
     this.onRecoveryChanged,
     this.onPathChanged,
     this.recoveryWindow = const Duration(seconds: 8),
@@ -36,6 +37,7 @@ final class RetroLanMatch {
   final RetroOnlineRooms rooms;
   final GameLinks links;
   final Future<RetroLanGame> Function(Uint8List mac) launch;
+  final bool ownsGame;
   final void Function(bool recovering)? onRecoveryChanged;
   final void Function()? onPathChanged;
   final Duration recoveryWindow;
@@ -309,7 +311,7 @@ final class RetroLanMatch {
       final game = await _launching;
       if (game == null) return;
       await _bridge?.drained;
-      if (_gameContinues) return;
+      if (_gameContinues || !ownsGame) return;
       await game.close();
       await game.done;
     } on Object catch (error) {
