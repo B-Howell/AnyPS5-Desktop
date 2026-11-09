@@ -537,6 +537,7 @@ def verify_native_rollback(args, cleanup):
         steps, video, depth = map(int, peers[1].send("presentation-steps").split())
         assert steps > 0 and video > 0, "The spare core never published video during replay"
         assert gap_crossing <= depth <= 16, f"Unexpected peak prediction depth: {depth}"
+        assert steps < 60, f"The primary did not catch the spare after the single correction: {steps} steps"
         if target % 120 == 0:
             assert peers[1].send("fingerprint") == fingerprints[1][target - 1], (
                 "The probe read RAM from the wrong core")

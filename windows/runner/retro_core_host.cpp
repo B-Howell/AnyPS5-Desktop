@@ -1967,7 +1967,10 @@ class RetroCoreSession {
       }
       release_audio();
       last_advance = Clock::now();
-      if (!replay_slice && presented_cursor && replaying && last_advance - tick_begin < std::chrono::microseconds(7500)) {
+      // The spare can move past the old simulation high-water mark. The
+      // primary still needs catch-up work until it reaches the spare's tip.
+      if (!replay_slice && presented_cursor && frame + 1 < *presented_cursor &&
+          last_advance - tick_begin < std::chrono::microseconds(7500)) {
         replay_slice = true;
         continue;
       }

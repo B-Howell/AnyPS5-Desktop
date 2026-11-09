@@ -854,6 +854,21 @@ The forced-gap test showed the spare could keep advancing after the
 primary reached its previous high-water mark. The primary needs to
 continue catching up until it reaches the spare's displayed frame.
 
+The second catch-up slice now uses the spare's frame as its target.
+It retains the two-slice limit and permits the extra step only if
+the elapsed work is under 7.5 ms. In the forced-gap regression the
+spare supplied eleven updates before the primary caught up, down from
+589 with the previous condition. RAM and PCM still matched the
+confirmed-input control.
+
+The same full race then finished in 289.35 seconds with matching RAM
+and PCM. The spare supplied 3,737 and 4,936 texture updates, down from
+6,217 and 7,222. The worst primary work fell to 18.468 ms with four
+overruns across both seats. The largest video gap increased to 419.268
+ms and the largest PCM gap reached 349.324 ms. These observations
+support faster return to the primary after a correction. Presentation
+cadence and the strict frame budget remain open.
+
 The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
 [driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real
 embedded worker with a headless texture and audio sink. They check periodic
