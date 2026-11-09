@@ -39,6 +39,7 @@ final class RetroLanMatch {
   final Duration recoveryWindow;
   final _closing = Completer<void>();
   final _done = Completer<void>();
+  final _roomCleanupDone = Completer<void>();
   final _early = <Map<String, dynamic>>[];
   Future<RetroRoom>? _entering;
   Future<RetroLanGame>? _launching;
@@ -54,6 +55,10 @@ final class RetroLanMatch {
   Object? failure;
 
   Future<void> get done => _done.future;
+
+  /// Room cleanup can outlast the bounded local shutdown wait.
+  Future<void> get roomCleanupDone => _roomCleanupDone.future;
+
   Future<void> get ending => _closing.future;
   bool get closed => _closed;
   bool get gameContinues => _gameContinues;
@@ -276,6 +281,8 @@ final class RetroLanMatch {
       if (room != null) await rooms.leave(room);
     } on Object {
       // The room can already be gone after a peer exits.
+    } finally {
+      _roomCleanupDone.complete();
     }
   }
 

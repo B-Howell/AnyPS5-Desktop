@@ -6,6 +6,7 @@ final class _Ps2LanAttempt {
   bool playing = false;
 
   bool get cancelled => cancellation.isCompleted;
+  bool get closing => cancelled || match?.closed == true;
 
   void cancel() {
     if (cancelled) return;
@@ -75,8 +76,8 @@ extension TogetherPs2Lan on TogetherModel {
 
   List<PanelRow> ps2LanRows() {
     final attempt = _ps2Lan;
-    if (attempt == null || (attempt.match?.closed == true && !attempt.cancelled)) return const [];
-    if (attempt.cancelled) {
+    if (attempt == null) return const [];
+    if (attempt.closing) {
       return [PanelRow(id: 'ps2-lan-status', title: T.text('ps2LanClosing'), kind: const InfoRow(''))];
     }
     return [
@@ -111,7 +112,7 @@ extension TogetherPs2Lan on TogetherModel {
     final me = account.user?.id;
     if (me == null || hub.socket.status != SocketStatus.ready) return app.show(T.text('ps2LanUnavailable'));
     if (_ps2LanBusy || _ps1Match != null || _verifyingPs1 || !_ps2LaunchAvailable) {
-      return app.show(T.text('ps2LanBusy'));
+      return app.show(T.text(_ps2Lan?.closing == true ? 'ps2LanClosing' : 'ps2LanBusy'));
     }
     if (candidates.isEmpty) return app.show(T.text('ps2LanDisc'));
     if (_ps2LanSetupIssue != null) {
@@ -238,6 +239,7 @@ extension TogetherPs2Lan on TogetherModel {
     } on Object {
       if (active()) app.show(T.text('ps2LanDisconnected'));
     } finally {
+      if (attempt.match case final match? when match.closed) await match.roomCleanupDone;
       if (identical(_ps2Lan, attempt)) _ps2Lan = null;
       app.refresh();
     }

@@ -114,6 +114,7 @@ void main() {
     required bool expired,
     bool configureCard = false,
     bool cancelLookup = false,
+    bool cancelAdmission = false,
   }) async {
     final server = await FakeTogether.start();
     addTearDown(server.close);
@@ -297,6 +298,55 @@ void main() {
       expect(model.running, isNull);
       return;
     }
+    if (cancelAdmission) {
+      const path = 'game-sessions/$roomId';
+      final answer = server.answers['GET $path']!;
+      final admitting = Completer<void>();
+      final admitted = Completer<void>();
+      final leaving = Completer<void>();
+      final left = Completer<void>();
+      server.answers.remove('POST $path/join');
+      server.answers['PUT $path/members/me'] = answer;
+      server.handlers.add((call) async {
+        if (call.method != 'POST') return null;
+        if (call.path == '$path/join') {
+          admitting.complete();
+          await admitted.future;
+          return (204, null);
+        }
+        if (call.path == '$path/leave') {
+          leaving.complete();
+          await left.future;
+          return (204, null);
+        }
+        return null;
+      });
+      addTearDown(() {
+        if (!admitted.isCompleted) admitted.complete();
+        if (!left.isCompleted) left.complete();
+      });
+      press(continueId);
+      await admitting.future.timeout(const Duration(seconds: 5));
+      press('ps2-lan-status');
+      expect(row('ps2-lan-status').kind, isA<InfoRow>());
+      await Future<void>.delayed(const Duration(milliseconds: 8250));
+      expect(row('ps2-lan-status').kind, isA<InfoRow>());
+      press('game-accept-$roomId');
+      expect(model.toast, 'Closing the LAN session…');
+      expect(server.callsTo('$path/join'), hasLength(1));
+
+      admitted.complete();
+      await leaving.future.timeout(const Duration(seconds: 5));
+      expect(row('ps2-lan-status').kind, isA<InfoRow>());
+      left.complete();
+      await until(() => !model.panelCategories().single.rows.any((row) => row.id == 'ps2-lan-status'));
+      expect(model.running, isNull);
+      server.answers['POST $path/join'] = (403, {'code': 'fixture_done'});
+      press('game-accept-$roomId');
+      await until(() => server.callsTo('$path/join').length == 2);
+      expect(server.callsTo('$path/leave'), hasLength(1));
+      return;
+    }
     press(continueId);
     await until(() => server.callsTo('game-sessions/$roomId/join', method: 'POST').isNotEmpty);
     expect(model.overlay, Layer.friends);
@@ -321,6 +371,11 @@ void main() {
   test(
     'canceling a stalled PS2 LAN lookup releases the invite for retry before the old reply',
     () => verifyBundledSetup(expired: false, cancelLookup: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'PS2 LAN retry waits for a canceled admission and its room leave after local close times out',
+    () => verifyBundledSetup(expired: false, cancelAdmission: true),
     skip: Abi.current() != Abi.windowsX64,
   );
 }

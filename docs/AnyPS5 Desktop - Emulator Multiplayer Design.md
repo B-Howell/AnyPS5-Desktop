@@ -210,7 +210,8 @@ use the closing signal from the [PS1 match](../lib/core/online/ps1_netplay_match
 Cancel releases pending read-only checks immediately. Once a room
 create or join request has gone out, cleanup keeps tracking the result
 so it can release any room it acquired. PS2 retains its existing
-eight-second close wait cap and can finish cleanup in the background.
+eight-second close wait cap. Friends keeps the Closing status and
+blocks new online attempts until the pending room cleanup finishes.
 A canceled PS1 start returns normally so the launcher does not report
 a connection failure.
 
