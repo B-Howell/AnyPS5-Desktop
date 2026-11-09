@@ -202,6 +202,18 @@ contract and block changing them during a race. Detect desync and end the
 match cleanly if recovery fails. Split-screen remains split-screen because
 that is the mode the original game supplies.
 
+## Canceling room admission
+
+The [shared room admission checks](../lib/core/online/retro_online_rooms.dart)
+use the closing signal from the [PS1 match](../lib/core/online/ps1_netplay_match.dart),
+[PS2 LAN match](../lib/core/online/retro_lan_match.dart), or PS3 invite.
+Cancel releases pending read-only checks immediately. Once a room
+create or join request has gone out, cleanup keeps tracking the result
+so it can release any room it acquired. PS2 retains its existing
+eight-second close wait cap and can finish cleanup in the background.
+A canceled PS1 start returns normally so the launcher does not report
+a connection failure.
+
 ## Acceptance before exposing Play Together
 
 - Two players on separate networks each run a local copy and complete a level

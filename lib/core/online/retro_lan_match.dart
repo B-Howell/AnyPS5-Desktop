@@ -58,8 +58,8 @@ final class RetroLanMatch {
   bool get closed => _closed;
   bool get gameContinues => _gameContinues;
 
-  Future<void> host(String friend) => _open(rooms.host, friend: friend);
-  Future<void> join(String id) => _open(() => rooms.join(id), roomId: id);
+  Future<void> host(String friend) => _open(() => rooms.host(cancelBeforeAdmission: _closing), friend: friend);
+  Future<void> join(String id) => _open(() => rooms.join(id, cancelBeforeAdmission: _closing), roomId: id);
 
   Future<T?> _untilClose<T>(Future<T> action) => Future.any<T?>([action, _closing.future.then((_) => null)]);
 

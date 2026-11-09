@@ -47,9 +47,10 @@ final class Ps1NetplayMatch {
   Ps1NetplaySession? get session => _peer?.session;
   bool get closed => _closed;
 
-  Future<void> host(String friendId) => _open(0, rooms.host, friendId: friendId);
+  Future<void> host(String friendId) => _open(0, () => rooms.host(cancelBeforeAdmission: _closing), friendId: friendId);
 
-  Future<void> join(String roomId) => _open(1, () => rooms.join(roomId), roomId: roomId);
+  Future<void> join(String roomId) =>
+      _open(1, () => rooms.join(roomId, cancelBeforeAdmission: _closing), roomId: roomId);
 
   Future<void> _open(int seat, Future<RetroRoom> Function() enter, {String? friendId, String? roomId}) async {
     if (_closed || _entering != null) throw StateError('This PS1 match has already been opened or closed.');
@@ -59,6 +60,7 @@ final class Ps1NetplayMatch {
     try {
       await _connect(seat, await entering, friendId);
     } on Object {
+      if (_closed) return;
       await leave();
       rethrow;
     }

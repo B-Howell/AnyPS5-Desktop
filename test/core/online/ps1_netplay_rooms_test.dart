@@ -253,6 +253,36 @@ void main() {
     expect(requests, [('GET', 'me/game-session'), ('POST', 'game-sessions'), ('DELETE', _path)]);
   });
 
+  test('cancel while checking whether PS1 can host never creates a room', () async {
+    final requested = Completer<void>();
+    final reply = Completer<Map<String, dynamic>>();
+    final calls = <(String, String)>[];
+    final rooms = RetroOnlineRooms(
+      spec: _spec,
+      me: _host,
+      call: (method, path, [body]) async {
+        calls.add((method, path));
+        if (path == 'me/game-session') {
+          requested.complete();
+          return reply.future;
+        }
+        return _view();
+      },
+      signal: (_, _, _, _, _) {},
+    );
+    final match = Ps1NetplayMatch(rooms: rooms, links: _UnusedLinks(), identity: _identity(), runner: _UnusedRunner());
+    final opening = match.host(_guest);
+    await requested.future.timeout(const Duration(seconds: 2));
+    try {
+      await Future.wait([opening, match.leave(), match.done]).timeout(const Duration(seconds: 2));
+      expect(calls, [('GET', 'me/game-session')]);
+    } finally {
+      reply.complete({'session': null});
+    }
+    await Future<void>.delayed(Duration.zero);
+    expect(calls, [('GET', 'me/game-session')]);
+  });
+
   test('cancel during room creation releases the late room without sending an invite', () async {
     final calls = <(String, String)>[];
     final requested = Completer<void>();

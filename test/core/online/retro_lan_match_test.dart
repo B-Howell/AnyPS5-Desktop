@@ -9,6 +9,54 @@ import '../../../tool/ps1_netplay/webrtc_room_fixture.dart';
 import '../../support/online_fakes.dart';
 
 void main() {
+  test('cancel while rechecking a PS2 room never admits the player', () async {
+    const id = WebRtcRoomFixture.roomId;
+    const spec = (titleId: 'SLUS21148', gameVersion: '1', mode: RetroOnlineMode.lan, capacity: 2);
+    final requested = Completer<void>();
+    final reply = Completer<Map<String, dynamic>>();
+    final calls = <(String, String)>[];
+    final rooms = RetroOnlineRooms(
+      me: WebRtcRoomFixture.guest,
+      spec: spec,
+      discDigest: 'a' * 64,
+      call: (method, path, [body]) async {
+        calls.add((method, path));
+        if (path == 'me/game-session') return {'session': null};
+        if (method == 'GET' && path == 'game-sessions/$id') {
+          requested.complete();
+          return reply.future;
+        }
+        throw StateError('Unexpected fixture request: $method $path');
+      },
+      signal: (_, _, _, _, _) {},
+    );
+    final match = RetroLanMatch(
+      rooms: rooms,
+      links: FakeGameNetwork().links,
+      launch: (_) async => throw StateError('The canceled match must not launch.'),
+    );
+    final opening = match.join(id);
+    await requested.future.timeout(const Duration(seconds: 2));
+    try {
+      await Future.wait([opening, match.leave(), match.done]).timeout(const Duration(seconds: 2));
+      expect(calls, [('GET', 'me/game-session'), ('GET', 'game-sessions/$id')]);
+    } finally {
+      reply.complete({
+        'id': id,
+        'host': {'userId': WebRtcRoomFixture.host},
+        'kind': 'online',
+        'titleId': spec.titleId,
+        'gameVersion': spec.gameVersion,
+        'engineBuild': spec.mode.protocol,
+        'capacity': spec.capacity,
+        'joinable': false,
+        'properties': {'protocol': spec.mode.protocol, 'discSha256': 'a' * 64},
+      });
+    }
+    await Future<void>.delayed(Duration.zero);
+    expect(calls, [('GET', 'me/game-session'), ('GET', 'game-sessions/$id')]);
+  });
+
   test('leaving a private PS2 room keeps the other player’s game open', () async {
     final digest = 'a' * 64;
     final gateway = WebRtcRoomFixture((
