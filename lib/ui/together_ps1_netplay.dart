@@ -4,7 +4,12 @@ extension TogetherPs1Netplay on TogetherModel {
   bool get _ps1NetplayEnabled => environment['ANYPS5_PS1_NETPLAY'] == '1' && app.managedRetroAvailable;
 
   List<PanelRow> ps1LocalLaunchRows(Game game) {
-    if (!_ps1NetplayEnabled || app.running != null || app.starting != null || _verifyingPs1 || _ps1Match != null) {
+    if (!_ps1NetplayEnabled ||
+        app.running != null ||
+        app.starting != null ||
+        _verifyingPs1 ||
+        _ps1Match != null ||
+        _ps2Lan != null) {
       return const [];
     }
     final profile = Ps1NetplayProfile.tryRead(game.retroSerial);
@@ -20,7 +25,7 @@ extension TogetherPs1Netplay on TogetherModel {
   }
 
   Future<void> _launchPs1Local(Game game, Ps1NetplayProfile profile) async {
-    if (_verifyingPs1 || _ps1Match != null) return;
+    if (_verifyingPs1 || _ps1Match != null || _ps2Lan != null) return;
     _verifyingPs1 = true;
     app.show(T.text('ps1OnlineVerifying'));
     app.refresh();
@@ -114,6 +119,7 @@ extension TogetherPs1Netplay on TogetherModel {
     if (!_ps1NetplayEnabled ||
         !friend.presence.online ||
         _ps1Match != null ||
+        _ps2Lan != null ||
         _verifyingPs1 ||
         app.running != null ||
         app.starting != null) {
@@ -173,7 +179,7 @@ extension TogetherPs1Netplay on TogetherModel {
         !app.stopping &&
         app.starting == null &&
         (host == null ? app.running == null : identical(app.embeddedGame, host));
-    if (_verifyingPs1 || _ps1Match != null || !hostAvailable()) return;
+    if (_verifyingPs1 || _ps1Match != null || _ps2Lan != null || !hostAvailable()) return;
     _verifyingPs1 = true;
     app.show(T.text('ps1OnlineVerifying'));
     Ps1NetplayMatch? opened;

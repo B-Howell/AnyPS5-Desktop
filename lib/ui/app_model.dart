@@ -75,6 +75,7 @@ import '../core/together/talk_key.dart';
 import '../core/together/token_store.dart';
 import '../core/online/online_peer_mesh.dart';
 import '../core/online/ps1_netplay_media.dart';
+import '../core/online/retro_lan_match.dart';
 import '../core/together/voice_mesh.dart';
 import '../core/themes/theme_design.dart';
 import '../core/themes/theme_library.dart';
@@ -4020,6 +4021,54 @@ class AppModel extends ChangeNotifier {
     return _playRetro(game, disc, netplay: (media: media, seat: 0), localNetplayStaging: true);
   }
 
+  Future<RetroLanGame> preparePs2Lan(Game game, Uint8List mac, {required bool Function() canBoot}) async {
+    final disc = game.retro;
+    final bios = ps2LanBiosPath;
+    if (!managedRetroAvailable || disc?.platform != RetroPlatform.ps2 || bios == null) {
+      throw StateError('PS2 LAN requires the embedded emulator and a PS2 BIOS.');
+    }
+    final scratch = await Directory.systemTemp.createTemp('anyps5-ps2-lan-');
+    Future<void> cleanup() async {
+      try {
+        await scratch.delete(recursive: true);
+      } on FileSystemException {
+        // An open OS handle can defer cleanup of this temporary profile.
+      }
+    }
+
+    try {
+      final system = p.join(scratch.path, 'system');
+      final biosFolder = await Directory(p.join(system, 'pcsx2', 'bios')).create(recursive: true);
+      await File(bios).copy(p.join(biosFolder.path, 'anyps5-imported.bin'));
+      final saves = await Directory(p.join(scratch.path, 'saves')).create();
+      if (!canBoot()) throw StateError('The PS2 LAN room closed before the game could start.');
+      final booted = Completer<EmbeddedRetroGame?>();
+      closeOverlay();
+      final launch = _playRetro(
+        game,
+        disc!,
+        booted: booted,
+        canBoot: canBoot,
+        ps2Lan: (mac: mac, system: system, saves: saves.path),
+      ).whenComplete(cleanup);
+      final run = await Future.any([booted.future, launch.then<EmbeddedRetroGame?>((_) => null)]);
+      if (run == null) {
+        await launch;
+        throw StateError('The PS2 LAN game could not start.');
+      }
+      return (exchange: run.exchangePs2LanFrames, close: run.close, done: launch);
+    } on Object {
+      await cleanup();
+      rethrow;
+    }
+  }
+
+  bool get ps2LanCoreInstalled => ManagedRetro(retroCoreOverride ?? _managedRetro.root).supportsPs2Lan;
+
+  String? get ps2LanBiosPath =>
+      _managedRetro.biosPath(RetroPlatform.ps2) ??
+      ManagedRetro(retroCoreOverride ?? _managedRetro.root).biosPath(RetroPlatform.ps2);
+
   Future<void> _playRetro(
     Game game,
     RetroDisc disc, {
@@ -4028,6 +4077,7 @@ class AppModel extends ChangeNotifier {
     bool Function()? canBoot,
     ({Ps1NetplayMedia media, int seat})? netplay,
     bool localNetplayStaging = false,
+    ({Uint8List mac, String system, String saves})? ps2Lan,
   }) async {
     if (managedSetupConsole != null || starting != null || running != null || canBoot?.call() == false) return;
     final allowed = together.family.beforePlay(game);
@@ -4041,9 +4091,13 @@ class AppModel extends ChangeNotifier {
     final ps3 = disc.platform == RetroPlatform.ps3;
     final override = ps3 ? null : retroCoreOverride;
     final program = retroSettings.program(disc.platform);
-    final standalone = netplay == null && program != null && File(program).existsSync();
-    final managed = netplay == null && override == null && !standalone && managedRetroAvailable ? _managedRetro : null;
-    final embeddedHome = netplay != null ? p.dirname(netplay.media.core) : override ?? managed?.root;
+    final standalone = netplay == null && ps2Lan == null && program != null && File(program).existsSync();
+    final managed = netplay == null && ps2Lan == null && override == null && !standalone && managedRetroAvailable
+        ? _managedRetro
+        : null;
+    final embeddedHome = netplay != null
+        ? p.dirname(netplay.media.core)
+        : override ?? (ps2Lan == null ? managed?.root : _managedRetro.root);
     if (embeddedHome == null && !standalone) {
       show(
         ps3
@@ -4165,6 +4219,7 @@ class AppModel extends ChangeNotifier {
           changed: _changed,
           netplay: netplay,
           localNetplayStaging: localNetplayStaging,
+          ps2Lan: ps2Lan,
         );
       } else {
         retroSettings.applyQueuedGraphics(program!, disc.platform);
@@ -4180,7 +4235,7 @@ class AppModel extends ChangeNotifier {
       stopping = false;
       final cancelled = canBoot?.call() == false;
       if (cancelled) unawaited(stopRunningGame());
-      if (netplay != null && booted != null && !booted.isCompleted) {
+      if ((netplay != null || ps2Lan != null) && booted != null && !booted.isCompleted) {
         booted.complete(!cancelled && run is EmbeddedRetroGame ? run : null);
       }
       together.family.followGame();
@@ -5851,6 +5906,7 @@ class AppModel extends ChangeNotifier {
               if (embeddedGame == null) ...media.gameRows(),
               if (embeddedGame == null) ...sharePlay.rows(),
               ...together.ps1QuickRows(),
+              ...together.ps2LanQuickRows(),
               PanelRow(
                 id: 'closeGame',
                 title: T.text('quickCloseGame'),

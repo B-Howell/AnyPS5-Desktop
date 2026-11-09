@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/painting.dart' show Color;
 
 import '../core/audio/tones.dart';
@@ -15,6 +16,7 @@ import '../core/online/ps1_netplay_match.dart';
 import '../core/online/ps1_local_handoff.dart';
 import '../core/online/ps1_netplay_media.dart';
 import '../core/online/ps1_netplay_session.dart';
+import '../core/online/retro_lan_match.dart';
 import '../core/online/retro_online_rooms.dart';
 import '../core/profiles/profiles.dart' show ProfileAccount, ProfileMode;
 import '../core/remote/remote_protocol.dart';
@@ -76,6 +78,7 @@ part 'together_party.dart';
 part 'together_party_chat.dart';
 part 'together_play.dart';
 part 'together_ps1_netplay.dart';
+part 'together_ps2_lan.dart';
 part 'together_profile.dart';
 part 'together_find.dart';
 part 'together_social.dart';
@@ -92,6 +95,7 @@ const launcherVersion = '0.1.20';
 class TogetherModel {
   Ps1NetplayMatch? _ps1Match;
   bool _verifyingPs1 = false;
+  _Ps2LanAttempt? _ps2Lan;
 
   TogetherModel(this.app) : environment = app.services.environment ?? Platform.environment {
     // The session of the profile playing; another profile's goes in when it plays.
@@ -421,6 +425,7 @@ class TogetherModel {
   /// Signed in or out: what depends on it starts or stops.
   void signedInChanged() {
     unawaited(_ps1Match?.leave());
+    _ps2Lan?.cancel();
     app.remote?.togetherServer = account.base.toString();
     // Another account (or none): what was typed for the last one's profile goes, and so do a
     // call ringing and the Captures read for it.
@@ -1055,6 +1060,7 @@ class TogetherModel {
         T.format('askRemoveFriend', [friend.person.displayName]),
       ),
       ...ps1NetplayInvites(friend),
+      ...ps2LanInvites(friend),
       PanelRow(id: 'friend-back', title: T.text('back'), kind: ActionRow(() => app.open(Layer.friends))),
     ];
   }
@@ -1351,6 +1357,7 @@ class TogetherModel {
   /// Gateway events worth a word on screen, and the outbox's chance after a reconnect.
   void _event(TogetherEvent event) {
     _ps1Match?.receive(event.type, event.json);
+    _ps2Lan?.match?.receive(event.type, event.json);
     // Online play follows the same game session: players joining, leaving, signalling.
     online.handle(event);
     // Share play: the one hosted, the one watched, the invites.
@@ -1623,6 +1630,7 @@ class TogetherModel {
 
   void dispose() {
     unawaited(_ps1Match?.leave());
+    _ps2Lan?.cancel();
     stopRinging();
     calls.noAnswer?.cancel();
     unawaited(online.stop());

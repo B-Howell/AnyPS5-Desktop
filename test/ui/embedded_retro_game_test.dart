@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
+import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/components.dart';
 import 'package:anyps5_desktop/ui/console_badge.dart';
@@ -17,6 +18,78 @@ import 'desktop_features_test.dart' show FakePads;
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('anyps5/retro_core');
+
+  test('PS2 LAN boots the embedded core with a private BIOS copy, save directory and adapter', () async {
+    final environment = <String, String>{};
+    final fixture = makeFixture(system: HostSystem.windows, environment: environment);
+    addTearDown(fixture.dispose);
+    final app = fixture.model;
+    final home = fixture.temp.path;
+    environment['ANYPS5_LIBRETRO_HOME'] = home;
+    final core = File(p.join(home, 'pcsx2_libretro.dll'))..createSync();
+    final disc = File(p.join(home, 'test.iso'))..createSync();
+    final bios = File(p.join(home, 'system', 'pcsx2', 'bios', 'anyps5-imported.bin'))
+      ..createSync(recursive: true)
+      ..writeAsBytesSync(Uint8List(4 * 1024 * 1024)..[0] = 7);
+    final original = File(p.join(home, 'bios-source.bin'))..writeAsBytesSync([1, 2, 3]);
+    app.preferences.retroBiosSources['ps2'] = original.path;
+    final game = Game(
+      folder: home,
+      titleId: 'PS2-SLUS21148',
+      name: 'LAN fixture',
+      names: const {},
+      defaultLanguage: 'en',
+      version: '1.00',
+      executable: ExecutableKind.disc,
+      retro: (platform: RetroPlatform.ps2, path: disc.path),
+    );
+    Map<Object?, Object?>? start;
+    var stopped = false;
+    final frame = Uint8List(14)..[0] = 255;
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'start':
+          start = call.arguments as Map<Object?, Object?>;
+          return 7;
+        case 'status':
+          return {'presented': true, 'ended': stopped};
+        case 'ps2LanExchange':
+          expect(call.arguments['texture'], 7);
+          expect(call.arguments['frames'], [frame]);
+          return [frame];
+        case 'stop':
+          stopped = true;
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    final mac = Uint8List.fromList([2, 0, 0, 0, 0, 1]);
+    final session = await app.preparePs2Lan(game, mac, canBoot: () => true);
+    final args = start!;
+    final system = args['system']! as String;
+    final saves = args['saves']! as String;
+    try {
+      expect(args['core'], core.path);
+      expect(args['disc'], disc.path);
+      expect(args['ps2LanMac'], mac);
+      expect(p.isWithin(home, system), isFalse);
+      final isolatedBios = File(p.join(system, 'pcsx2', 'bios', 'anyps5-imported.bin'));
+      expect(isolatedBios.readAsBytesSync().first, 7);
+      expect(isolatedBios.lengthSync(), bios.lengthSync());
+      expect(Directory(saves).listSync(), isEmpty);
+      expect(app.embeddedGame?.isPs2Lan, isTrue);
+      expect(await session.exchange([frame]), [frame]);
+    } finally {
+      await session.close();
+      await session.done.timeout(const Duration(seconds: 4));
+    }
+    expect(Directory(system).existsSync(), isFalse);
+    expect(Directory(saves).existsSync(), isFalse);
+    expect(bios.readAsBytesSync().first, 7);
+    expect(original.readAsBytesSync(), [1, 2, 3]);
+  }, skip: !Platform.isWindows);
 
   test('PS3 graphics preferences keep separate choices for each title', () {
     final temp = Directory.systemTemp.createTempSync('anyps5-ps3-preferences-');

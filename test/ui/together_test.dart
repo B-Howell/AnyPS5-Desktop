@@ -1917,6 +1917,25 @@ void main() {
       expect(model.running, isNull);
     });
 
+    test('a PS2 LAN invite stays separate from PS5 game sessions on builds without LAN play', () async {
+      final invite = {
+        'sessionId': 'ps2-ana',
+        'from': ana,
+        'titleId': 'SLUS21148',
+        'gameVersion': '1.00',
+        'engineBuild': RetroOnlineMode.lan.protocol,
+      };
+      server.gameInvites.add(invite);
+      server.push('game_session.invite', invite);
+      await until(() => model.together.hub.games.invites.isNotEmpty);
+      model.open(Layer.friends);
+      final accept = model.panelCategories().single.rows.singleWhere((row) => row.id == 'game-accept-ps2-ana');
+      (accept.kind as ActionRow).run();
+      expect(model.toast, 'This build does not support the game\'s online mode.');
+      expect(server.callsTo('game-sessions/ps2-ana/join'), isEmpty);
+      expect(model.running, isNull);
+    });
+
     test('enabling friend join while a retro game runs does not open a PS5 session', () async {
       final game = Game(
         folder: fixture.temp.path,

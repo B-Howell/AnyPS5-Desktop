@@ -40,6 +40,7 @@ final class RetroLanMatch {
   Timer? _pump;
   String? _pendingRoom;
   bool _closed = false;
+  bool remoteEnded = false;
   Object? failure;
 
   Future<void> get done => _done.future;
@@ -121,7 +122,7 @@ final class RetroLanMatch {
             _bridge?.receive(peer.userId, datagram.data);
           }
         },
-        peerGone: (_) => unawaited(leave()),
+        peerGone: (_) => _remoteEnded(),
       ),
     );
     mesh.update(
@@ -186,7 +187,7 @@ final class RetroLanMatch {
   void receive(String type, Map<String, dynamic> event) {
     if (_closed || event['sessionId'] != (_room?.id ?? _pendingRoom) || event['sessionId'] == null) return;
     if (type == 'game_session.member_left' || type == 'game_session.ended') {
-      unawaited(leave());
+      _remoteEnded();
     } else if (type == 'game_session.signal') {
       if (_mesh != null) {
         _receiveSignal(event);
@@ -194,6 +195,12 @@ final class RetroLanMatch {
         _early.add(event);
       }
     }
+  }
+
+  void _remoteEnded() {
+    if (_closed) return;
+    remoteEnded = true;
+    unawaited(leave());
   }
 
   void _receiveSignal(Map<String, dynamic> event) {

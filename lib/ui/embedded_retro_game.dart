@@ -65,6 +65,7 @@ class EmbeddedRetroGame extends RunningGame {
   Future<bool> get ready => _ready.future;
   Future<bool> get netplayReady => _netplayReady.future;
   bool get isNetplay => _netplay;
+  bool get isPs2Lan => _ps2Lan;
   final bool localNetplayStaging;
   Ps1NetplayMedia? get stagedNetplayMedia => localNetplayStaging && _portableCheckpoint ? _netplayMedia : null;
   double? get displayAspect => switch (framing) {

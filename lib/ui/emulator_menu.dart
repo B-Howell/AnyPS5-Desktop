@@ -240,7 +240,7 @@ class _EmulatorMenu {
       resume: () {
         if (app.embeddedGame == session && app.spot?.category == 'emulator-tune-game') app.resumeGame();
       },
-      openRestartTrials: () => _push(() => app._retroRestartTrials.page(game, session)),
+      openRestartTrials: session.isPs2Lan ? null : () => _push(() => app._retroRestartTrials.page(game, session)),
     );
   }
 

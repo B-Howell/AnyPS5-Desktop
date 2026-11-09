@@ -278,7 +278,7 @@ abstract final class GameLibrary {
             discs[file.path] = RetroPlatform.ps1;
           case '.chd' when ps1Folder != ps2Folder && _fileMagic(file, ascii.encode('MComprHD')):
             discs[file.path] = ps1Folder ? RetroPlatform.ps1 : RetroPlatform.ps2;
-          case '.iso' when _ps2Iso(file):
+          case '.iso' when _ps2BootConfig(file) != null:
             discs[file.path] = RetroPlatform.ps2;
         }
       } on FileSystemException {
@@ -339,7 +339,7 @@ abstract final class GameLibrary {
     }
   }
 
-  static bool _ps2Iso(File file) {
+  static String? _ps2BootConfig(File file) {
     final source = file.openSync();
     try {
       const sectorSize = 2048;
@@ -348,12 +348,12 @@ abstract final class GameLibrary {
       if (descriptor.length < 190 ||
           descriptor[0] != 1 ||
           ascii.decode(descriptor.sublist(1, 6), allowInvalid: true) != 'CD001') {
-        return false;
+        return null;
       }
       final header = ByteData.sublistView(descriptor);
       final rootOffset = header.getUint32(158, Endian.little) * sectorSize;
       final rootLength = header.getUint32(166, Endian.little);
-      if (rootLength == 0 || rootLength > 1024 * 1024 || rootOffset + rootLength > source.lengthSync()) return false;
+      if (rootLength == 0 || rootLength > 1024 * 1024 || rootOffset + rootLength > source.lengthSync()) return null;
       source.setPositionSync(rootOffset);
       final records = source.readSync(rootLength);
       final data = ByteData.sublistView(records);
@@ -363,20 +363,44 @@ abstract final class GameLibrary {
           pos = (pos ~/ sectorSize + 1) * sectorSize;
           continue;
         }
-        if (length < 34 || pos + length > records.length || 33 + records[pos + 32] > length) return false;
+        if (length < 34 || pos + length > records.length || 33 + records[pos + 32] > length) return null;
         final name = ascii.decode(records.sublist(pos + 33, pos + 33 + records[pos + 32]), allowInvalid: true);
         if (name == 'SYSTEM.CNF;1' || name == 'SYSTEM.CNF') {
           final start = data.getUint32(pos + 2, Endian.little) * sectorSize;
           final size = data.getUint32(pos + 10, Endian.little);
-          if (size == 0 || size > 64 * 1024 || start + size > source.lengthSync()) return false;
+          if (size == 0 || size > 64 * 1024 || start + size > source.lengthSync()) return null;
           source.setPositionSync(start);
-          return RegExp(r'^\s*BOOT2\s*=', multiLine: true, caseSensitive: false).hasMatch(_text(source.readSync(size)));
+          final config = _text(source.readSync(size));
+          return RegExp(r'^\s*BOOT2\s*=', multiLine: true, caseSensitive: false).hasMatch(config) ? config : null;
         }
         pos += length;
       }
-      return false;
+      return null;
     } finally {
       source.closeSync();
+    }
+  }
+
+  /// Verifies the title and revision using a PS2 DVD's boot metadata.
+  static ({String serial, String revision})? ps2DiscIdentity(String disc) {
+    if (p.extension(disc).toLowerCase() != '.iso') return null;
+    try {
+      final config = _ps2BootConfig(File(disc));
+      if (config == null) return null;
+      final boot = RegExp(
+        r'^\s*BOOT2\s*=\s*cdrom0?:\s*(?:[^;\r\n]*[\\/])?([A-Z]{4})[_-](\d{3})\.(\d{2})(?:;1)?[ \t\r]*$',
+        multiLine: true,
+        caseSensitive: false,
+      ).firstMatch(config);
+      final revision = RegExp(
+        r'^\s*VER\s*=\s*(\d+\.\d+)[ \t\r]*$',
+        multiLine: true,
+        caseSensitive: false,
+      ).firstMatch(config)?[1];
+      if (boot == null || revision == null) return null;
+      return (serial: '${boot[1]}${boot[2]}${boot[3]}'.toUpperCase(), revision: revision);
+    } on FileSystemException {
+      return null;
     }
   }
 
@@ -384,6 +408,7 @@ abstract final class GameLibrary {
     final name = p.basenameWithoutExtension(disc);
     final id = p.normalize(p.absolute(disc));
     final digest = sha256.convert(utf8.encode(id)).toString().substring(0, 16).toUpperCase();
+    final ps2 = platform == RetroPlatform.ps2 ? ps2DiscIdentity(disc) : null;
     return Game(
       folder: folder,
       libraryId: id,
@@ -391,10 +416,10 @@ abstract final class GameLibrary {
       name: name,
       names: {'en-US': name},
       defaultLanguage: 'en-US',
-      version: '',
+      version: ps2?.revision ?? '',
       executable: ExecutableKind.disc,
       retro: (platform: platform, path: disc),
-      retroSerial: platform == RetroPlatform.ps1 ? Ps1DiscSerial.read(disc) : null,
+      retroSerial: platform == RetroPlatform.ps1 ? Ps1DiscSerial.read(disc) : ps2?.serial,
     );
   }
 
@@ -515,20 +540,21 @@ abstract final class GameLibrary {
         RetroPlatform.ps3 => {'.sfb'},
       });
       if (disc == null) return null;
+      final ps2 = platform == RetroPlatform.ps2 ? ps2DiscIdentity(disc) : null;
       return Game(
         folder: folder,
         titleId: '${platform.name.toUpperCase()}-$titleId',
         name: name,
         names: {'en-US': name},
         defaultLanguage: 'en-US',
-        version: '',
+        version: ps2?.revision ?? '',
         executable: ExecutableKind.disc,
         icon: localFile('icon', {'.png', '.jpg', '.jpeg', '.webp'}),
         background: localFile('background', {'.png', '.jpg', '.jpeg', '.webp'}),
         music: localFile('music', {'.wav', '.mp3', '.m4a'}),
         ageLevels: AgeLevels.parse(json['ageLevel']),
         retro: (platform: platform, path: disc),
-        retroSerial: platform == RetroPlatform.ps1 ? Ps1DiscSerial.read(disc) : null,
+        retroSerial: platform == RetroPlatform.ps1 ? Ps1DiscSerial.read(disc) : ps2?.serial,
       );
     } on FileSystemException {
       return null;

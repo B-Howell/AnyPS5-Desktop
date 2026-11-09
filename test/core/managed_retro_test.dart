@@ -9,6 +9,57 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
+  test('PS2 LAN requires the named DEV9 export in the installed x64 DLL', () {
+    final root = Directory.systemTemp.createTempSync('anyps5-managed-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final managed = ManagedRetro(root.path);
+    final file = File(p.join(root.path, ManagedRetro.libraryName(RetroPlatform.ps2)));
+    const pe = 64;
+    const optional = pe + 24;
+    const section = optional + 120;
+    const raw = 512;
+    const rva = 0x1000;
+    final bytes = Uint8List(1024);
+    final dll = ByteData.sublistView(bytes);
+    void u16(int at, int value) => dll.setUint16(at, value, Endian.little);
+    void u32(int at, int value) => dll.setUint32(at, value, Endian.little);
+    u16(0, 0x5a4d);
+    u32(60, pe);
+    u32(pe, 0x4550);
+    u16(pe + 4, 0x8664);
+    u16(pe + 6, 1);
+    u16(pe + 20, 120);
+    u16(pe + 22, 0x2000);
+    u16(optional, 0x20b);
+    u32(optional + 108, 1);
+    u32(optional + 112, rva);
+    u32(optional + 116, 128);
+    u32(section + 12, rva);
+    u32(section + 16, 512);
+    u32(section + 20, raw);
+    u32(section + 36, 0x20000000);
+    u32(raw + 20, 1);
+    u32(raw + 24, 1);
+    u32(raw + 28, rva + 40);
+    u32(raw + 32, rva + 44);
+    u32(raw + 36, rva + 48);
+    u32(raw + 40, rva + 128);
+    u32(raw + 44, rva + 52);
+    file.writeAsBytesSync(bytes);
+    expect(managed.isInstalled(RetroPlatform.ps2), isTrue);
+    expect(managed.supportsPs2Lan, isFalse);
+    bytes.setAll(raw + 52, 'retro_anyps5_dev9_bind_v1'.codeUnits);
+    file.writeAsBytesSync(bytes);
+    expect(managed.supportsPs2Lan, isTrue);
+    u32(section + 36, 0);
+    file.writeAsBytesSync(bytes);
+    expect(managed.supportsPs2Lan, isFalse, reason: 'A data export is not a DEV9 implementation.');
+    u32(section + 36, 0x20000000);
+    u32(raw + 40, rva + 52);
+    file.writeAsBytesSync(bytes);
+    expect(managed.supportsPs2Lan, isFalse, reason: 'A forwarded export is not a DEV9 implementation.');
+  });
+
   test('a configured PS3 package must exist and match the supported build', () async {
     final temp = Directory.systemTemp.createTempSync('anyps5-managed-');
     addTearDown(() => temp.deleteSync(recursive: true));

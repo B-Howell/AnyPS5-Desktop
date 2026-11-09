@@ -291,13 +291,41 @@ the [two-player room fixture](../tool/ps1_netplay/webrtc_lan_probe.dart)
 over real Windows data channels. The probe checks the assigned MACs,
 matches broadcast and unicast frames byte for byte, and checks room and
 adapter teardown. It uses synthetic NICs and a simulated room gateway.
-The launcher still needs to supply its embedded-game factory and route
-PS2 invites into this match.
+
+### Launcher preview
+
+On Windows x64, `ANYPS5_PS2_LAN=1` enables the [PS2 LAN actions](../lib/ui/together_ps2_lan.dart).
+Highlight a PS2 disc, open an online friend's options, and choose **Invite
+to LAN Play**. The invitee accepts in Friends. The launcher checks the
+serial and revision from the [ISO boot metadata](../lib/core/game_library.dart)
+and matches the disc SHA-256 before joining. The cover name and manifest
+title can be customized independently of matchmaking. This path currently
+requires a verified ISO. CHD identity is not implemented.
+
+[Emulator preflight](../lib/core/managed_retro.dart) checks the Windows
+DLL for the DEV9 binding before sending an invite. Use the managed
+emulator directory or `ANYPS5_LIBRETRO_HOME` with a patched
+`pcsx2_libretro.dll`, and import a PS2 BIOS. [Embedded launch](../lib/ui/app_model.dart) copies the BIOS into
+a temporary system directory and creates separate, empty save storage for
+each session. This preview deletes that storage after the game exits, so
+LAN-session saves and network profiles do not carry over. Existing offline
+saves stay separate. After the room connects, both users open the game's
+own LAN menu. **Leave LAN Play** in the Quick Menu closes the session, and
+restart trials are unavailable while it is active.
+
+The [library test](../test/core/retro_library_test.dart) verifies serial
+and revision extraction with a conflicting manifest. The
+[emulator test](../test/ui/embedded_retro_game_test.dart) checks the private
+launch arguments, frame exchange and cleanup through a mocked runner.
+The [managed core test](../test/core/managed_retro_test.dart) verifies the
+export check, and the [invite routing test](../test/ui/together_test.dart)
+checks that PS2 invites cannot join a PS5 session on a build with LAN off.
 
 The patched DEV9 object compiled with GCC in WSL at the pinned core
 revision. The object exports `retro_anyps5_dev9_bind_v1`. This is a
-source and object check. The complete core package, private guest IP
-assignment and a game run over the patched adapter still need verification.
+source and object check. The complete Windows core package, private guest
+IP assignment and a real invite-to-game run over the patched adapter still
+need verification.
 
 TimeSplitters: Future Perfect is a second PS2 fixture. Its US NTSC disc
 reports `SLUS21148` and version `1.00` in `SYSTEM.CNF`. The [original manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)

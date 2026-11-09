@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart' show getCrc32;
 import 'package:path/path.dart' as p;
 
+import 'binary.dart';
 import 'game_library.dart';
 import 'toolkit_download.dart';
 
@@ -30,6 +31,11 @@ class ManagedRetro {
   };
 
   bool isInstalled(RetroPlatform platform) => _windowsX64Library(File(p.join(root, libraryName(platform))));
+
+  bool get supportsPs2Lan => _windowsX64Library(
+    File(p.join(root, libraryName(RetroPlatform.ps2))),
+    requiredExport: 'retro_anyps5_dev9_bind_v1',
+  );
 
   Future<void> install(RetroPlatform platform, {void Function(int, int)? progress}) async {
     final name = libraryName(platform);
@@ -202,7 +208,7 @@ class ManagedRetro {
     await staged.rename(target.path);
   }
 
-  static bool _windowsX64Library(File file) {
+  static bool _windowsX64Library(File file, {String? requiredExport}) {
     try {
       final source = file.openSync();
       try {
@@ -214,14 +220,71 @@ class ManagedRetro {
         final header = source.readSync(24);
         if (header.length != 24) return false;
         final pe = ByteData.sublistView(header);
-        return pe.getUint32(0, Endian.little) == 0x4550 &&
+        final dll =
+            pe.getUint32(0, Endian.little) == 0x4550 &&
             pe.getUint16(4, Endian.little) == 0x8664 &&
             pe.getUint16(22, Endian.little) & 0x2000 != 0;
+        return dll && (requiredExport == null || _hasExport(source, header, requiredExport));
       } finally {
         source.closeSync();
       }
     } on FileSystemException {
       return false;
     }
+  }
+
+  // Read the PE32+ export table without loading or executing the DLL.
+  static bool _hasExport(RandomAccessFile file, Uint8List coff, String name) {
+    final optionalSize = Binary.u16(coff, 20);
+    final sectionCount = Binary.u16(coff, 6);
+    if (optionalSize < 120 || sectionCount == 0 || sectionCount > 96) return false;
+    final optional = file.readSync(optionalSize);
+    if (optional.length != optionalSize || Binary.u16(optional, 0) != 0x20b || Binary.u32(optional, 108) == 0) {
+      return false;
+    }
+    final sections = file.readSync(sectionCount * 40);
+    if (sections.length != sectionCount * 40) return false;
+    final fileSize = file.lengthSync();
+    Uint8List? readRva(int rva, int count, {bool executable = false}) {
+      if (rva == 0) return null;
+      for (var i = 0; i < sections.length; i += 40) {
+        final delta = rva - Binary.u32(sections, i + 12);
+        if (delta < 0 || delta + count > Binary.u32(sections, i + 16)) continue;
+        if (executable && Binary.u32(sections, i + 36) & 0x20000000 == 0) return null;
+        final offset = Binary.u32(sections, i + 20) + delta;
+        if (offset + count > fileSize) return null;
+        file.setPositionSync(offset);
+        final bytes = file.readSync(count);
+        return bytes.length == count ? bytes : null;
+      }
+      return null;
+    }
+
+    final exportsRva = Binary.u32(optional, 112);
+    final exportsSize = Binary.u32(optional, 116);
+    if (exportsSize < 40) return false;
+    final exports = readRva(exportsRva, 40);
+    if (exports == null) return false;
+    final count = Binary.u32(exports, 24);
+    if (count == 0 || count > 4096) return false;
+    final names = readRva(Binary.u32(exports, 32), count * 4);
+    if (names == null) return false;
+    final expected = [...name.codeUnits, 0];
+    for (var index = 0; index < count; index++) {
+      final symbol = readRva(Binary.u32(names, index * 4), expected.length);
+      if (symbol == null || !symbol.asMap().entries.every((entry) => entry.value == expected[entry.key])) continue;
+      final ordinals = readRva(Binary.u32(exports, 36), count * 2);
+      if (ordinals == null) return false;
+      final ordinal = Binary.u16(ordinals, index * 2);
+      if (ordinal >= Binary.u32(exports, 20)) return false;
+      final addressTable = Binary.u32(exports, 28);
+      if (addressTable == 0) return false;
+      final address = readRva(addressTable + ordinal * 4, 4);
+      if (address == null) return false;
+      final functionRva = Binary.u32(address, 0);
+      return (functionRva < exportsRva || functionRva >= exportsRva + exportsSize) &&
+          readRva(functionRva, 1, executable: true) != null;
+    }
+    return false;
   }
 }

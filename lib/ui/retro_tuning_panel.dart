@@ -6,7 +6,7 @@ import 'embedded_retro_game.dart';
 PanelCategory retroTuningPanel(
   EmbeddedRetroGame session, {
   required void Function() resume,
-  required void Function() openRestartTrials,
+  required void Function()? openRestartTrials,
 }) {
   final tuning = session.tuning;
   Future<void> record(Future<bool> Function() start) async {
@@ -17,12 +17,13 @@ PanelCategory retroTuningPanel(
     id: 'emulator-tune-game',
     title: 'Tune This Game',
     rows: [
-      PanelRow(
-        id: 'tuning-restart-trials',
-        title: 'Restart Trials',
-        detail: 'Compare graphics, CPU, renderer or I/O settings that need a restart.',
-        kind: ActionRow(openRestartTrials),
-      ),
+      if (openRestartTrials != null)
+        PanelRow(
+          id: 'tuning-restart-trials',
+          title: 'Restart Trials',
+          detail: 'Compare graphics, CPU, renderer or I/O settings that need a restart.',
+          kind: ActionRow(openRestartTrials),
+        ),
       PanelRow(id: 'tuning-status', title: 'Gameplay test', kind: InfoRow(tuning.status)),
       if (tuning.canStartBaseline)
         PanelRow(
