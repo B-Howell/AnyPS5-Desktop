@@ -163,6 +163,18 @@ int main(int argc, char** argv) {
       std::cout << NetplayFingerprint(ram, 2 * 1024 * 1024) << std::endl;
       continue;
     }
+    if (command == "hold") {
+      const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+      while (std::chrono::steady_clock::now() < until) {
+        if (const auto frame = session.HoldNetplay()) {
+          std::cout << "held " << *frame << std::endl;
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      if (std::chrono::steady_clock::now() >= until) return 7;
+      continue;
+    }
     if (command == "start") {
       std::cout << (session.StartNetplay() ? "started" : "error") << std::endl;
       continue;

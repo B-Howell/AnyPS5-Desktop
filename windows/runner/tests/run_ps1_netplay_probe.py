@@ -70,9 +70,17 @@ def main():
     parser.add_argument("--frames", type=int, default=650)
     parser.add_argument("--trace", type=Path, help="Drive the exact two-player CTR fixture and require the race finish")
     parser.add_argument("--checkpoint-guest", type=Path, help="Verify a held peer can import with a renamed CUE")
+    parser.add_argument("--cutover", action="store_true", help="Replace the second player and verify the new input epoch")
+    parser.add_argument("--cutover-frame", type=int, help="Trace frame where the replacement guest takes over")
     args = parser.parse_args()
     if args.frames < 120:
         parser.error("at least 120 frames are required to compare a fingerprint")
+    if args.cutover and not args.checkpoint_guest:
+        parser.error("--cutover requires --checkpoint-guest")
+    if args.cutover_frame is not None and not (args.cutover and args.trace):
+        parser.error("--cutover-frame requires --cutover and --trace")
+    if args.cutover and args.trace and args.cutover_frame is None:
+        parser.error("a traced cutover requires --cutover-frame")
 
     with ExitStack() as cleanup:
         frames = read_trace(args.trace) if args.trace else None
@@ -125,7 +133,9 @@ def main():
 def verify_checkpoint(args, host, cleanup, during_transfer):
     checkpoint = capture_checkpoint(host, cleanup)
     during_transfer(checkpoint[0])
-    replay_checkpoint(args, host, cleanup, checkpoint)
+    guest = replay_checkpoint(args, host, cleanup, checkpoint)
+    if args.cutover:
+        verify_new_input_epoch(host, guest)
 
 
 def capture_checkpoint(host, cleanup):
@@ -154,7 +164,15 @@ def replay_checkpoint(args, host, cleanup, checkpoint):
     assert guest.send(f"replay {held_frame + 1} 1 0 0") == "unavailable"
     published = guest.send("published")
     cursor = held_frame
-    end = host.sync()[0]
+    if args.cutover:
+        status, frame = host.send("hold").split()
+        assert status == "held"
+        end = int(frame)
+        host.sync(inputs=[(end, 65535)])
+        sleep(0.08)
+        assert host.sync()[0] == end, "A queued remote input advanced the held host"
+    else:
+        end = host.sync()[0]
     assert end - held_frame >= 180
     while cursor < end:
         count, *pads = host.send(f"history {cursor}").split()
@@ -170,7 +188,30 @@ def replay_checkpoint(args, host, cleanup, checkpoint):
     assert guest.send(f"restore 1 {path} {held_frame}") == "unavailable"
     assert guest.send(f"replay {cursor} 1 0 0") == "unavailable"
     assert guest.send(f"checkpoint 1 {path}") == "unavailable"
-    print(f"The held guest replayed {end - held_frame} host frames across a renamed CUE and matched the host RAM.")
+    print(f"The held guest replayed {end - held_frame} host frames and matched the host RAM.")
+    if args.cutover:
+        assert host.send("start") == "started"
+    return guest
+
+
+def verify_new_input_epoch(host, guest):
+    peers = [host, guest]
+    states = [peer.sync() for peer in peers]
+    assert all(frame == 0 and received == -1 and not hashes
+               and all(buttons == 0 for _, buttons in local[:2])
+               for frame, received, local, hashes in states), "Stale input or fingerprints survived cutover"
+    fingerprints = [{}, {}]
+    deadline = monotonic() + 15
+    while min(state[0] for state in states) < 120:
+        if monotonic() > deadline:
+            raise TimeoutError("The new host and guest input epoch did not reach frame 120")
+        states = [peer.sync(states[1 - seat][1], states[1 - seat][2])
+                  for seat, peer in enumerate(peers)]
+        for seat, state in enumerate(states):
+            fingerprints[seat].update(state[3])
+        sleep(0.002)
+    assert fingerprints[0][119] == fingerprints[1][119], "PS1 RAM diverged after cutover"
+    print("The held host and replacement guest matched the first RAM fingerprint in the new input epoch.")
 
 
 def read_trace(trace):
@@ -184,12 +225,20 @@ def read_trace(trace):
 
 def traced_race(peers, frames, args, cleanup):
     assert frames[:3] == [[0, 0]] * 3, "The native delay starts with neutral input"
+    cutover = args.cutover_frame
+    if cutover is not None:
+        assert 180 < cutover <= len(frames) - 120 and frames[cutover:cutover + 3] == [[0, 0]] * 3, (
+            "The cutover must have 180 preceding frames and three neutral frames for the new input buffer")
     states = [peer.sync() for peer in peers]
     histories = [{}, {}]
     pads = [0, 0]
     joining = cleanup.enter_context(ExitStack()) if args.checkpoint_guest else None
     checkpoint = None
+    epoch_start = 0
+    checkpoint_frame = cutover - 180 if cutover is not None else 6600
+    replay_frame = cutover if cutover is not None else 6780
     for frame in range(len(frames)):
+        epoch_frame = frame - epoch_start
         # Frame f+2 is captured when the worker waits for frame f. Exchange
         # only frame f after setting the pad it must capture at frame f+1.
         upcoming = frames[frame + 3] if frame + 3 < len(frames) else [0, 0]
@@ -197,28 +246,35 @@ def traced_race(peers, frames, args, cleanup):
             if pads[seat] != mask:
                 assert peers[seat].send(f"pad {mask}") == "pad"
                 pads[seat] = mask
-        outputs = [dict(state[2])[frame] for state in states]
+        outputs = [dict(state[2])[epoch_frame] for state in states]
         assert outputs == frames[frame], f"Script input mismatch at frame {frame}"
         for seat, peer in enumerate(peers):
-            states[seat] = peer.sync(frame - 1, [(frame, outputs[1 - seat])])
+            states[seat] = peer.sync(epoch_frame - 1, [(epoch_frame, outputs[1 - seat])])
         deadline = monotonic() + 3
         for seat, peer in enumerate(peers):
             state = states[seat]
-            while state[0] <= frame or frame + 3 not in dict(state[2]):
+            while state[0] <= epoch_frame or epoch_frame + 3 not in dict(state[2]):
                 if monotonic() > deadline:
                     raise TimeoutError(f"Seat {seat + 1} stopped advancing at frame {frame}")
                 sleep(0.001)
-                state = peer.sync(frame - 1)
+                state = peer.sync(epoch_frame - 1)
             states[seat] = state
-            histories[seat].update(state[3])
-        if (frame + 1) % 120 == 0:
+            histories[seat].update((epoch_start + cursor, digest) for cursor, digest in state[3].items())
+        if (epoch_frame + 1) % 120 == 0:
             assert histories[0][frame] == histories[1][frame], f"PS1 RAM diverged at frame {frame}"
-        if joining and frame + 1 == 6600:
+        if joining and frame + 1 == checkpoint_frame:
             checkpoint = capture_checkpoint(peers[0], joining)
-        if joining and frame + 1 == 6780:
+        if joining and frame + 1 == replay_frame:
             assert checkpoint is not None
-            replay_checkpoint(args, peers[0], joining, checkpoint)
-            joining.close()
+            if cutover is not None:
+                peers[1].close()
+                peers[1] = replay_checkpoint(args, peers[0], joining, checkpoint)
+                epoch_start = cutover
+                states = [peer.sync() for peer in peers]
+                assert all(state[:2] == (0, -1) for state in states)
+            else:
+                replay_checkpoint(args, peers[0], joining, checkpoint)
+                joining.close()
         if (frame + 1) % 1800 == 0:
             print(f"Verified {frame + 1}/{len(frames)} native frames", flush=True)
     placements = race_placements(peers)

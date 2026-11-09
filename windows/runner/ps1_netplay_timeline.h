@@ -45,6 +45,12 @@ class Timeline {
   }
 
   void Start() { started_ = true; }
+  bool Hold() {
+    if (prepared_) return false;
+    started_ = false;
+    return true;
+  }
+  void Reset() { *this = Timeline(seat_); }
   uint32_t frame() const { return frame_; }
   std::optional<uint32_t> confirmed() const {
     return frame_ ? std::optional<uint32_t>(frame_ - 1) : std::nullopt;
@@ -125,7 +131,7 @@ class Timeline {
     }
   }
 
-  const unsigned seat_;
+  unsigned seat_;
   bool started_ = false;
   bool prepared_ = false;
   uint32_t frame_ = 0;

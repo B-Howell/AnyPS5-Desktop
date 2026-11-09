@@ -527,9 +527,24 @@ class RetroCoreSession {
     if (!netplay_ || !netplay_ready_ || stop_ || ended_) return false;
     std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
     if (checkpoint_) return false;
+    if (netplay_held_) {
+      netplay_->Reset();
+      checkpoint_history_.clear();
+      netplay_fingerprints_.clear();
+      netplay_held_ = false;
+      netplay_epoch_reset_ = true;
+    }
     netplay_->Start();
     netplay_started_ = true;
     return true;
+  }
+
+  std::optional<uint32_t> HoldNetplay() {
+    if (!CheckpointReady()) return std::nullopt;
+    std::scoped_lock lock(netplay_mutex_, checkpoint_mutex_);
+    if (!netplay_started_ || checkpoint_ || !netplay_->Hold()) return std::nullopt;
+    netplay_held_ = true;
+    return netplay_->frame();
   }
 
   std::optional<int64_t> RequestCheckpoint(const Ps1DiscHash& digest, CheckpointBytes restore = {},
@@ -1251,18 +1266,20 @@ class RetroCoreSession {
         local = {buttons_, axes_};
       }
       bool started;
+      bool epoch_reset;
       bool advance;
       uint32_t frame;
       {
         std::lock_guard<std::mutex> lock(netplay_mutex_);
-        started = netplay_started_;
+        started = netplay_started_ && !netplay_held_;
+        epoch_reset = std::exchange(netplay_epoch_reset_, false);
         frame = netplay_->frame();
         advance = netplay_->Prepare(local, netplay_ports_);
       }
-      if (started && !started_before) {
+      if (started && (!started_before || epoch_reset)) {
         last_advance = Clock::now();
-        started_before = true;
       }
+      started_before = started;
       if (!advance) {
         if (Clock::now() - last_advance > (started ? std::chrono::seconds(15) : std::chrono::seconds(60)))
           throw std::runtime_error(started ? "PS1 netplay stopped waiting for the other player."
@@ -1503,6 +1520,8 @@ class RetroCoreSession {
   std::deque<Ps1Ports> checkpoint_history_;
   std::atomic<bool> netplay_ready_{false};
   bool netplay_started_ = false;
+  bool netplay_held_ = false;
+  bool netplay_epoch_reset_ = false;
   std::array<ps1_netplay::PadInput, 2> netplay_ports_{};
   std::vector<std::pair<uint32_t, std::string>> netplay_fingerprints_;
   std::shared_ptr<Frame> frame_;
@@ -1605,6 +1624,8 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
     result->Success(Value(session_->Status()));
   } else if (method == "netplayStart") {
     result->Success(Value(session_->StartNetplay()));
+  } else if (method == "ps1CheckpointHold") {
+    result->Success(FrameValue(session_->HoldNetplay()));
   } else if (method == "ps1CheckpointExport" || method == "ps1CheckpointImport") {
     const auto* fields = std::get_if<Map>(arguments);
     if (!fields) return result->Error("checkpoint", "Expected checkpoint arguments");

@@ -67,4 +67,16 @@ int main() {
     assert(guest.LocalPacket().size() <= 8);
   }
   assert(host.frame() == 2003 && host.frame() == guest.frame());
+
+  assert(host.Receive(guest.LocalPacket(), guest.received()));
+  assert(host.Prepare(host_pad, host_inputs));
+  assert(!host.Hold());
+  host.Commit();
+  assert(host.Hold());
+  assert(!host.Prepare(host_pad, host_inputs));
+  assert(host.frame() == 2004);
+  host.Reset();
+  assert(host.frame() == 0 && !host.received() && !host.confirmed());
+  assert((host.LocalPacket() == std::vector<FrameInput>{{0, {}}, {1, {}}}));
+  assert(!host.Prepare(host_pad, host_inputs));
 }

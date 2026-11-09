@@ -302,6 +302,18 @@ class EmbeddedRetroGame extends RunningGame {
     }
   }
 
+  /// Holds at a committed frame so the guest can replay a stable input range.
+  Future<int> holdNetplayForCutover() async {
+    _requirePortableCheckpoint();
+    final timer = Stopwatch()..start();
+    while (!_closing && !_finished.isCompleted && timer.elapsed < const Duration(seconds: 3)) {
+      final frame = await _channel.invokeMethod<int>('ps1CheckpointHold');
+      if (frame != null) return frame;
+      await Future<void>.delayed(const Duration(milliseconds: 8));
+    }
+    throw StateError('The emulator could not hold the online timeline.');
+  }
+
   Future<({int nextFrame, List<Ps1FrameInputs> frames})> readNetplayHistory(int firstFrame) async {
     _requirePortableCheckpoint();
     final reply = await _channel.invokeMapMethod<String, Object?>('ps1CheckpointHistory', firstFrame);

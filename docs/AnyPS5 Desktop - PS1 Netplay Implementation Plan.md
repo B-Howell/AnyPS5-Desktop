@@ -221,9 +221,26 @@ both peers agree on the final frame before the ready handshake. That frame
 is the checkpoint cursor. Both peers start the new input epoch at zero. The
 session tests cover delayed restore and replay, a wrong cursor, incompatible
 bootstrap modes, cancellation, and the first live fingerprint after cutover.
-The Quick Menu still needs to transition a running local host into the
-online profile, start a fresh native input epoch at the cutover state, and
-exercise the complete handoff on a real WebRTC connection.
+
+The [Windows worker](../windows/runner/retro_core_host.cpp) holds between
+committed frames and keeps that history stable for the guest. Starting again
+clears the previous peer's inputs, history, and fingerprint counters while
+preserving the emulator state. The [input timeline](../windows/runner/ps1_netplay_timeline.h)
+refuses to hold while a frame is being committed. The [headless probe](../windows/runner/tests/run_ps1_netplay_probe.py)
+can replace a peer with `--cutover` and verify the fresh input epoch with
+the real core. With the recorded CTR fixture, `--cutover-frame 4748`
+selects a neutral input span for the new two-tick buffer. The headless
+Windows run replayed 180 frames into the replacement guest, then both
+peers finished at frame 13,706 with 113 matching RAM fingerprints across
+the two input epochs. The control run finished at the same frame with
+114 matches in a single epoch.
+
+The Quick Menu still needs to bring an ordinary local game into the
+deterministic profile and exercise the handoff over WebRTC. Its adapter
+must drain the previous peer's native calls before resetting the timeline.
+The portable state includes memory card data, so the adapter also needs
+to keep checkpoint exchange scoped to game-specific or session-owned
+storage.
 
 ### Windows development checkpoint
 
