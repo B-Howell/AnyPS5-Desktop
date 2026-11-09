@@ -622,7 +622,7 @@ void main() {
 
     await model.openQuickMenu();
     choose('ps1-invite-from-game');
-    expect(model.overlay, Layer.ps1OnlineFriends);
+    expect(model.overlay, Layer.retroOnlineFriends);
     choose('ps1-invite-$friendId');
     expect(model.overlay, isNull);
     await model.openQuickMenu();

@@ -69,7 +69,7 @@ extension TogetherPs1Netplay on TogetherModel {
       PanelRow(
         id: 'ps1-invite-from-game',
         title: T.text('ps1OnlineCouch'),
-        kind: ActionRow(() => app.open(Layer.ps1OnlineFriends)),
+        kind: ActionRow(() => app.open(Layer.retroOnlineFriends)),
       ),
     ];
   }
@@ -95,34 +95,16 @@ extension TogetherPs1Netplay on TogetherModel {
     final mode = _ps1HostMode(host, game);
     final profile = Ps1NetplayProfile.tryRead(game.retroSerial);
     if (mode == null || profile == null) return const [];
-    final online = hub.friends.friends.where((friend) => friend.presence.online).toList();
-    if (account.user == null || hub.socket.status != SocketStatus.ready || online.isEmpty) {
-      return [
-        PanelRow(
-          id: 'ps1-invite-empty',
-          title: T.text('ps1OnlineCouch'),
-          kind: InfoRow(
-            T.text(
-              account.user == null || hub.socket.status != SocketStatus.ready
-                  ? 'ps1OnlineUnavailable'
-                  : 'ps1OnlineNoFriends',
-            ),
-          ),
-        ),
-      ];
-    }
-    return [
-      for (final friend in online)
-        PanelRow(
-          id: 'ps1-invite-${friend.person.id}',
-          title: friend.person.displayName,
-          detail: T.text('ps1OnlineInviteDetail'),
-          kind: ActionRow(() {
-            app.resumeGame();
-            unawaited(_startPs1Netplay(profile, friendId: friend.person.id, host: host, mode: mode));
-          }),
-        ),
-    ];
+    return _retroInviteFriendRows(
+      prefix: 'ps1-invite',
+      title: 'ps1OnlineCouch',
+      detail: 'ps1OnlineInviteDetail',
+      unavailable: 'ps1OnlineUnavailable',
+      invite: (friend) {
+        app.resumeGame();
+        unawaited(_startPs1Netplay(profile, friendId: friend.person.id, host: host, mode: mode));
+      },
+    );
   }
 
   Iterable<Game> _ps1Candidates(Ps1NetplayProfile profile) => app.games.where((game) {

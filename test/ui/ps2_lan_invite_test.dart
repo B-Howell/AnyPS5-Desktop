@@ -121,6 +121,7 @@ void main() {
     bool hostChanged = false,
     bool quickBootCancel = false,
     bool quickMenuDuringPlay = false,
+    bool hostRematch = false,
   }) async {
     final server = await FakeTogether.start();
     addTearDown(server.close);
@@ -191,7 +192,9 @@ void main() {
     const roomId = '12345678-1234-4234-8234-123456789abc';
     const local = '12345678-1234-4234-8234-123456789ab2';
     const hostDevice = '12345678-1234-4234-8234-123456789ab3';
-    if (quickBootCancel || quickMenuDuringPlay) server.me['id'] = local;
+    final liveMenu = quickMenuDuringPlay || hostRematch;
+    if (quickBootCancel || liveMenu) server.me['id'] = local;
+    if (hostRematch) server.friend(host, 'ana', 'Ana', presence: {'state': 'online'});
     final protocol = RetroOnlineMode.lan.protocol;
     final invite = {
       'sessionId': roomId,
@@ -277,10 +280,11 @@ void main() {
       expect(model.running, isNull);
       return;
     }
-    if (quickBootCancel || quickMenuDuringPlay) {
+    if (quickBootCancel || liveMenu) {
       const path = 'game-sessions/$roomId';
       final room = {
         ...(server.answers['GET $path']!.$2 as Map<String, dynamic>),
+        if (hostRematch) 'host': {'userId': local},
         'members': [
           {'userId': local},
           {
@@ -296,6 +300,11 @@ void main() {
         'PUT $path/members/me': (200, room),
         'GET $path/ice-servers': (200, {'iceServers': []}),
         'POST $path/leave': (204, null),
+        if (hostRematch) ...{
+          'POST game-sessions': (201, room),
+          'POST $path/invites': (204, null),
+          'DELETE $path': (204, null),
+        },
       });
       const channel = MethodChannel('anyps5/retro_core');
       final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -324,7 +333,7 @@ void main() {
           exchanges++;
           return <Uint8List>[];
         }
-        return call.method == 'status' ? {'presented': quickMenuDuringPlay, 'ended': stopped} : null;
+        return call.method == 'status' ? {'presented': liveMenu, 'ended': stopped} : null;
       });
       addTearDown(() async {
         for (final row in model.together.ps2LanRows()) {
@@ -335,15 +344,15 @@ void main() {
         await until(() => model.starting == null && model.running == null && model.together.ps2LanRows().isEmpty);
         messenger.setMockMethodCallHandler(channel, null);
       });
-      Future<void> connectPeer(String id, String action) async {
+      Future<void> connectPeer(String id, void Function() admit) async {
         final peer = await network.links.link([]);
         addTearDown(peer.close);
         await peer.openChannel();
         final offer = await peer.createOffer();
         await peer.setLocal(offer);
-        press(action);
+        admit();
         await until(
-          () => server.callsTo('game-sessions/$id/join', method: 'POST').isNotEmpty,
+          () => server.callsTo('game-sessions/$id/${hostRematch ? 'invites' : 'join'}', method: 'POST').isNotEmpty,
           reason: 'Expected room admission for $id. Status: ${model.toast}',
         );
         await server.nextFrame('signal', test: (frame) => frame['kind'] == 'renegotiate');
@@ -358,10 +367,20 @@ void main() {
         await peer.setRemote({'type': 'answer', ...(answer['data'] as Map<String, dynamic>)});
       }
 
-      await connectPeer(roomId, continueId);
+      await connectPeer(roomId, () {
+        if (hostRematch) {
+          model.selected = model.games.indexWhere((game) => game.titleId == 'PS2-TIMESPLITTERS');
+          expect(model.selectedGame?.titleId, 'PS2-TIMESPLITTERS');
+          final friend = model.together.hub.friends.friends.single;
+          expect(friend.presence.online, isTrue);
+          (model.together.ps2LanInvites(friend).single.kind as ActionRow).run();
+        } else {
+          press(continueId);
+        }
+      });
       await starting.future.timeout(const Duration(seconds: 5));
       expect(model.starting?.titleId, 'PS2-TIMESPLITTERS');
-      if (quickMenuDuringPlay) {
+      if (liveMenu) {
         network.readPath = () async => (relayed: false, roundTripMs: 42);
         finishStart.complete();
         await until(() => model.embeddedGame?.presented == true && model.starting == null && exchanges > 0);
@@ -411,7 +430,9 @@ void main() {
         expect(row('ps2-lan-status').title, 'Leave LAN Play');
         press('ps2-lan-status');
         await until(() => model.together.ps2LanRows().isEmpty);
-        expect(server.callsTo('$path/leave'), hasLength(1));
+        List<FakeCall> leaves(String path) =>
+            hostRematch ? server.callsTo(path, method: 'DELETE') : server.callsTo('$path/leave');
+        expect(leaves(path), hasLength(1));
         expect(model.embeddedGame, same(worker));
         expect(stopped, isFalse);
         expect(model.toast, contains('Your game is still open'));
@@ -430,13 +451,32 @@ void main() {
           'PUT $nextPath/members/me': (200, next),
           'GET $nextPath/ice-servers': (200, {'iceServers': []}),
           'POST $nextPath/leave': (204, null),
+          if (hostRematch) ...{
+            'POST game-sessions': (201, next),
+            'POST $nextPath/invites': (204, null),
+            'DELETE $nextPath': (204, null),
+          },
         });
         server.gameInvites
           ..clear()
           ..add({...invite, 'sessionId': nextRoom});
         await model.together.hub.games.refresh();
-        model.open(Layer.friends);
-        await connectPeer(nextRoom, 'game-accept-$nextRoom');
+        if (hostRematch) {
+          model.padCommand(PadCommand.home);
+          press('ps2-lan-invite-from-game');
+          expect(model.overlay, Layer.retroOnlineFriends);
+          expect(row('ps2-lan-invite-$host').title, 'Ana');
+          expect(model.embeddedGame, same(worker));
+          press('retro-invite-back');
+          expect(model.overlay, Layer.quickMenu);
+          press('ps2-lan-invite-from-game');
+          model.selected = model.games.indexWhere((game) => game.titleId == 'PS2-GT4');
+          await connectPeer(nextRoom, () => press('ps2-lan-invite-$host'));
+          expect(server.callsTo('game-sessions', method: 'POST').last.body['titleId'], 'SLUS21148');
+        } else {
+          model.open(Layer.friends);
+          await connectPeer(nextRoom, () => press('game-accept-$nextRoom'));
+        }
         await until(
           () => exchanges > afterLeave && model.overlay == null,
           reason: 'The second room should resume exchange and return from Friends to the same game.',
@@ -445,9 +485,9 @@ void main() {
         expect(resets, 1);
         await model.stopRunningGame();
         await until(() => stopped && model.running == null);
-        expect(server.callsTo('$path/leave'), hasLength(1));
+        expect(leaves(path), hasLength(1));
         await until(
-          () => server.callsTo('$nextPath/leave').length == 1,
+          () => leaves(nextPath).length == 1,
           reason: 'Closing the reused worker should release its new room.',
         );
         return;
@@ -618,6 +658,11 @@ void main() {
   test(
     'PS2 LAN keeps exchanging frames while the Quick Menu is open',
     () => verifyBundledSetup(expired: false, quickMenuDuringPlay: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'PS2 LAN host can invite a friend to a new room from the Quick Menu',
+    () => verifyBundledSetup(expired: false, hostRematch: true),
     skip: Abi.current() != Abi.windowsX64,
   );
 }

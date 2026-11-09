@@ -883,7 +883,7 @@ enum Layer {
 
   /// PS in a game: the game paused under Resume, Game Settings and Close Game.
   quickMenu,
-  ps1OnlineFriends,
+  retroOnlineFriends,
 
   /// A friend's share play watched full screen (share_play_model.dart): the controller is the
   /// game's, PS leaves.
@@ -4596,7 +4596,7 @@ class AppModel extends ChangeNotifier {
       if (overlay == Layer.quickMenu ||
           overlay == Layer.closeGame ||
           overlay == Layer.retroGraphics ||
-          overlay == Layer.ps1OnlineFriends ||
+          overlay == Layer.retroOnlineFriends ||
           (overlay == Layer.emulatorMenu && _emulatorMenu.fromGraphics)) {
         overlay = null;
       }
@@ -5034,7 +5034,7 @@ class AppModel extends ChangeNotifier {
     final playing = running?.$1;
     if (playing == null) return false;
     return switch (overlay) {
-      Layer.quickMenu || Layer.closeGame || Layer.retroGraphics || Layer.ps1OnlineFriends => true,
+      Layer.quickMenu || Layer.closeGame || Layer.retroGraphics || Layer.retroOnlineFriends => true,
       Layer.emulatorMenu => _emulatorMenu.fromGraphics || _emulatorMenu.fromQuickMenu,
       Layer.gameSettings => playing.retro != null && selectedGame?.id == playing.id,
       _ => false,
@@ -5322,7 +5322,7 @@ class AppModel extends ChangeNotifier {
         // A question asked in place (together_ask.dart) is answered Cancel first.
         if (!together.cancelAsk()) open(Layer.friends, cue: Cue.back);
         return;
-      case Layer.ps1OnlineFriends when command == Command.back || command == Command.options:
+      case Layer.retroOnlineFriends when command == Command.back || command == Command.options:
         open(Layer.quickMenu, cue: Cue.back);
         return;
       case Layer.settings ||
@@ -5339,7 +5339,7 @@ class AppModel extends ChangeNotifier {
           Layer.party ||
           Layer.family ||
           Layer.quickMenu ||
-          Layer.ps1OnlineFriends ||
+          Layer.retroOnlineFriends ||
           Layer.closeGame ||
           Layer.homeMenu ||
           Layer.confirmQuit ||
@@ -6180,14 +6180,17 @@ class AppModel extends ChangeNotifier {
             rows: updates.requiredRows(together.account.tooOld!),
           ),
         ];
-      case Layer.ps1OnlineFriends when running != null:
+      case Layer.retroOnlineFriends when running != null:
         return [
           PanelCategory(
-            id: 'ps1OnlineFriends',
-            title: T.text('ps1OnlineChooseFriend'),
+            id: 'retroOnlineFriends',
+            title: T.text('retroOnlineChooseFriend'),
             rows: [
-              ...together.ps1InviteFriendRows(),
-              PanelRow(id: 'ps1-invite-back', title: T.text('back'), kind: ActionRow(() => open(Layer.quickMenu))),
+              if (running?.$1.retro?.platform == RetroPlatform.ps2)
+                ...together.ps2LanInviteFriendRows()
+              else
+                ...together.ps1InviteFriendRows(),
+              PanelRow(id: 'retro-invite-back', title: T.text('back'), kind: ActionRow(() => open(Layer.quickMenu))),
             ],
           ),
         ];

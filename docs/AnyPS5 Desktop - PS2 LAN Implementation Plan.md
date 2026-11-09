@@ -306,6 +306,11 @@ boot. Before connecting a new bridge, the
 in the [virtual adapter](../windows/runner/ps2_virtual_lan.h). When
 the connection is ready, Friends returns the player to the running game.
 The game still owns its LAN lobby, so players regroup in its multiplayer menu.
+After the old room finishes closing, a retained host can choose
+**Invite a Friend to LAN Play** from the Quick Menu. The picker uses
+the running game's verified disc regardless of the library selection.
+Back returns to the Quick Menu. Choosing a friend resumes the game
+while AnyPS5 verifies the disc and connects the room.
 **Close Game** still shuts down the local game. Cancel during startup
 also closes a worker that returns after cancellation. Local worker
 cleanup runs independently of the room release request. Another LAN

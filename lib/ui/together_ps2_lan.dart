@@ -145,11 +145,36 @@ extension TogetherPs2Lan on TogetherModel {
 
   bool _ps2LanStarting(_Ps2LanAttempt attempt) => app.startingPs2Lan && identical(app.starting, attempt.launchGame);
 
+  _Ps2LanWorker? get _ps2LanQuickHost =>
+      !_ps2LanEnabled || _ps2LanBusy || _ps1Match != null || _verifyingPs1 ? null : _ps2ReusableWorker(host: true);
+
   List<PanelRow> ps2LanQuickRows() {
     final attempt = _ps2Lan;
-    if (attempt == null) return const [];
+    if (attempt == null) {
+      return [
+        if (_ps2LanQuickHost != null)
+          PanelRow(
+            id: 'ps2-lan-invite-from-game',
+            title: T.text('ps2LanInviteFromGame'),
+            kind: ActionRow(() => app.open(Layer.retroOnlineFriends)),
+          ),
+      ];
+    }
     final embedded = app.embeddedGame?.isPs2Lan == true && identical(app.running?.$1, attempt.launchGame);
     return _ps2LanStarting(attempt) || embedded ? ps2LanRows() : const [];
+  }
+
+  List<PanelRow> ps2LanInviteFriendRows() {
+    final worker = _ps2LanQuickHost;
+    final spec = worker == null ? null : _ps2LanSpec(worker.game);
+    if (worker == null || spec == null) return const [];
+    return _retroInviteFriendRows(
+      prefix: 'ps2-lan-invite',
+      title: 'ps2LanInviteFromGame',
+      detail: 'ps2LanInviteDetail',
+      unavailable: 'ps2LanUnavailable',
+      invite: (friend) => unawaited(_startPs2Lan(spec, [worker.game], friendId: friend.person.id, fromGame: worker)),
+    );
   }
 
   Future<void> joinPs2Lan(GameInvite invite) async {
@@ -164,6 +189,7 @@ extension TogetherPs2Lan on TogetherModel {
     String? friendId,
     String? roomId,
     String? expectedHost,
+    _Ps2LanWorker? fromGame,
   }) async {
     final me = account.user?.id;
     if (me == null || hub.socket.status != SocketStatus.ready) return app.show(T.text('ps2LanUnavailable'));
@@ -171,6 +197,7 @@ extension TogetherPs2Lan on TogetherModel {
     final host = roomId == null;
     final worker = _ps2ReusableWorker(host: host);
     final reuse = worker != null && candidates.any((game) => game.id == worker.game.id) ? worker : null;
+    if (fromGame != null && !identical(reuse, fromGame)) return app.show(T.text('ps2LanBusy'));
     bool canLaunch() => reuse == null ? _ps2LaunchAvailable : identical(_ps2ReusableWorker(host: host), reuse);
     if (_ps2LanBusy || _ps1Match != null || _verifyingPs1 || !canLaunch()) {
       return app.show(T.text(_ps2Lan?.closing == true ? 'ps2LanClosing' : 'ps2LanBusy'));
@@ -204,7 +231,11 @@ extension TogetherPs2Lan on TogetherModel {
         },
       );
     }
-    if (friendId != null) app.open(Layer.friends);
+    if (fromGame != null) {
+      app.resumeGame();
+    } else if (friendId != null) {
+      app.open(Layer.friends);
+    }
 
     final attempt = _ps2Lan = _Ps2LanAttempt(reuse)..launchGame = reuse?.game;
     bool owned() =>

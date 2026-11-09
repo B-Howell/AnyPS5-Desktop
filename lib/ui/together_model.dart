@@ -1085,6 +1085,35 @@ class TogetherModel {
     ];
   }
 
+  List<PanelRow> _retroInviteFriendRows({
+    required String prefix,
+    required String title,
+    required String detail,
+    required String unavailable,
+    required void Function(Friend) invite,
+  }) {
+    final online = hub.friends.friends.where((friend) => friend.presence.online).toList();
+    final connected = account.user != null && hub.socket.status == SocketStatus.ready;
+    if (!connected || online.isEmpty) {
+      return [
+        PanelRow(
+          id: '$prefix-empty',
+          title: T.text(title),
+          kind: InfoRow(T.text(connected ? 'retroOnlineNoFriends' : unavailable)),
+        ),
+      ];
+    }
+    return [
+      for (final friend in online)
+        PanelRow(
+          id: '$prefix-${friend.person.id}',
+          title: friend.person.displayName,
+          detail: T.text(detail),
+          kind: ActionRow(() => invite(friend)),
+        ),
+    ];
+  }
+
   // Rows.
 
   /// The sign-in screen's rows: the ways in, without the server's rows.
