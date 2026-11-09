@@ -243,7 +243,22 @@ resumes.
 
 ## 2. Prove a private segment on one PC
 
-**Planned seam:** A DEV9-facing packet adapter in the selected core or native bridge, and a transport-independent `lib/core/online/retro_lan_transport.dart` in the launcher. Confirm the core boundary before naming native files. Reuse [OnlinePeerMesh](../lib/core/online/online_peer_mesh.dart) at its peer connection boundary. Keep the PS5 virtual socket wire format separate from the PS2 payload.
+The [retro LAN transport](../lib/core/online/retro_lan_transport.dart)
+routes guest Ethernet frames between authenticated room members. It
+associates each member with a distinct MAC, forwards discovery broadcasts,
+and drops stale epochs, spoofed sources and traffic to other segments. The
+[transport tests](../test/core/online/retro_lan_transport_test.dart) exercise
+those rules with synthetic frames. The DEV9-facing adapter is still needed.
+It will supply Ethernet frames without a frame check sequence and use the
+existing [peer connection layer](../lib/core/online/online_peer_mesh.dart).
+
+At [the pinned DEV9 source revision](https://github.com/libretro/parallel-ps2/blob/da5b07ebebc18016e1ca5b401188a283971a0e8d/pcsx2/DEV9/net.cpp),
+`tx_put` can pass a stack-backed packet, so an asynchronous adapter must
+copy it before returning. The adapter supplies the assigned guest MAC
+through `SetMACAddress` before the receive thread starts. The receive side
+fills a core-owned `NetPacket` and uses a bounded wait that teardown can
+wake. Release the frontend transport only after the core's receive thread
+has joined. None of these operations need a system NIC or driver.
 
 1. Run two isolated game workers with distinct virtual identities. Connect their packet adapters through an in-memory switch or authenticated local IPC. Assign a bounded queue to each endpoint. Tie addresses to the session and member, and reserve broadcast delivery to members of that segment. Match the title's observed addressing and discovery behavior. Expose only the needed guest networking functions.
 2. Add fixtures for the observed discovery exchange and match traffic. Refuse oversized or malformed frames, spoofed source identity, stale epochs and packets for a different match. Test unicast, required broadcast, frame ordering behavior, queue overflow and teardown. Keep traffic off the physical LAN and keep host interfaces, DNS and firewall settings outside the adapter.
