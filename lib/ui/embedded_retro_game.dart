@@ -57,7 +57,7 @@ class EmbeddedRetroGame extends RunningGame {
     this.localNetplayStaging,
     this._ps2Lan,
     this._localPs2LanSetup,
-    this._online,
+    this.ps3OnlineRelease,
     this._sourcePaths,
     this._ordinaryRecovery,
   ) : super.embedded(_finished.future, DateTime.now());
@@ -66,7 +66,7 @@ class EmbeddedRetroGame extends RunningGame {
   static const ps3Resolution = 'rpcs3_resolution_scale';
   final int textureId;
   final Completer<int> _finished;
-  final bool _online;
+  final Ps3OnlineRelease? ps3OnlineRelease;
   final void Function(String) _onResolutionSelected;
   final void Function(String, String) _onGraphicsSelected;
   final _ready = Completer<bool>();
@@ -80,7 +80,8 @@ class EmbeddedRetroGame extends RunningGame {
   final bool _ps2Lan;
   final bool _localPs2LanSetup;
   bool get _netplay => _netplayMedia != null;
-  bool get pausesForOverlay => !_netplay && !_online && (!_ps2Lan || _localPs2LanSetup) && !_awaitingRecoveryRestore;
+  bool get pausesForOverlay =>
+      !_netplay && !isPs3Online && (!_ps2Lan || _localPs2LanSetup) && !_awaitingRecoveryRestore;
   late final Timer _watch;
   late final Timer _input;
   bool _reading = false;
@@ -129,9 +130,9 @@ class EmbeddedRetroGame extends RunningGame {
   }
 
   bool get isPs2Lan => _ps2Lan;
-  bool get isPs3Online => _online;
+  bool get isPs3Online => ps3OnlineRelease != null;
   Ps3ProviderStatus? _ps3ProviderStatus;
-  Ps3ProviderStatus? get ps3ProviderStatus => _online ? _ps3ProviderStatus ?? Ps3ProviderStatus.unavailable : null;
+  Ps3ProviderStatus? get ps3ProviderStatus => isPs3Online ? _ps3ProviderStatus ?? Ps3ProviderStatus.unavailable : null;
   Future<Ps3ProviderStatus?> get initialProviderFailure => _initialProviderFailure.future;
   final bool localNetplayStaging;
   Ps1NetplayMedia? get stagedNetplayMedia => localNetplayStaging && _portableCheckpoint ? _netplayMedia : null;
@@ -218,7 +219,7 @@ class EmbeddedRetroGame extends RunningGame {
       localNetplayStaging,
       ps2Lan != null,
       localPs2LanSetup,
-      onlineProfile != null,
+      onlineProfile?.release,
       (core: core, disc: p.absolute(disc.path), system: p.join(folder, 'system')),
       ordinaryRecovery,
     );
@@ -226,7 +227,7 @@ class EmbeddedRetroGame extends RunningGame {
       platform: disc.platform,
       options: session.options,
       ready: () =>
-          !session._online &&
+          !session.isPs3Online &&
           !session._netplay &&
           !session._ps2Lan &&
           session.presented &&
@@ -279,7 +280,7 @@ class EmbeddedRetroGame extends RunningGame {
       }
       final updatedAspect = status['aspect'];
       var updated = false;
-      if (_online) {
+      if (isPs3Online) {
         final providerStatus = Ps3ProviderStatus.fromNative(status['ps3ProviderStatus']);
         if (!_initialProviderFailure.isCompleted &&
             (providerStatus == Ps3ProviderStatus.ready || providerStatus.failed)) {
@@ -413,7 +414,7 @@ class EmbeddedRetroGame extends RunningGame {
   }
 
   Future<void> setOption(String key, String value) async {
-    if (_online || _netplay || _closing || tuning.updating) return;
+    if (isPs3Online || _netplay || _closing || tuning.updating) return;
     if (tuning.canCancel) await tuning.cancel();
     if (_closing || tuning.updating) return;
     final accepted = await _channel.invokeMethod<bool>('option', {'key': key, 'value': value});

@@ -78,6 +78,7 @@ class _EmulatorMenu {
   );
 
   bool get fromGraphics => _origin?.layer == Layer.retroGraphics;
+  bool get fromQuickMenu => _origin?.layer == Layer.quickMenu;
 
   List<PanelCategory> get categories => [if (_page case final page?) page()];
 
@@ -150,6 +151,7 @@ class _EmulatorMenu {
       _originGameId = null;
       _page = null;
       if (origin == null) return false;
+      if (origin.layer == Layer.quickMenu && app.running == null && app.starting == null) return false;
       if (origin.layer == Layer.friendOptions && app.together.chosen == null) {
         app.open(Layer.friends, cue: Cue.back);
         return true;

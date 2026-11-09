@@ -5035,7 +5035,7 @@ class AppModel extends ChangeNotifier {
     if (playing == null) return false;
     return switch (overlay) {
       Layer.quickMenu || Layer.closeGame || Layer.retroGraphics || Layer.ps1OnlineFriends => true,
-      Layer.emulatorMenu => _emulatorMenu.fromGraphics,
+      Layer.emulatorMenu => _emulatorMenu.fromGraphics || _emulatorMenu.fromQuickMenu,
       Layer.gameSettings => playing.retro != null && selectedGame?.id == playing.id,
       _ => false,
     };
@@ -6198,12 +6198,7 @@ class AppModel extends ChangeNotifier {
             title: running!.$1.name,
             rows: [
               PanelRow(id: 'resume', title: T.text('quickResume'), kind: ActionRow(resumeGame)),
-              if (embeddedGame?.ps3ProviderStatus case final status?)
-                PanelRow(
-                  id: 'ps3ProviderStatus',
-                  title: T.text('ps3ProviderConnection'),
-                  kind: InfoRow(T.text(status.detailKey)),
-                ),
+              ?_ps3ProviderQuickRow(running!.$1),
               // Settings › Battery & Heat: the profile that holds lifted for now.
               if (powerWatch.canUndo)
                 PanelRow(

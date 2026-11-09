@@ -565,6 +565,12 @@ boundary applies: an opening worker stops, while a game that has
 presented its first frame stays open. Later status changes remain
 visible in the Quick Menu and do not automatically release the room
 after the provider has reported a successful connection.
+For a visible game with a provider error, the Quick Menu offers
+**Review Online Setup**. It shows the error and lets the player go back
+to the game. **Close Game to Edit Online Setup** warns about unsaved
+progress and opens the readiness actions for the exact release only
+after the embedded worker exits. For a rejected sign-in, controller
+focus moves to account import. Back then returns to Home.
 The [existing PS5 flow](../lib/ui/together_play.dart) remains separate.
 
 The [PS3 settings integration tests](../test/ui/ps3_settings_test.dart)

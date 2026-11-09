@@ -394,6 +394,50 @@ void main() {
           expect(server.callsTo('game-sessions/$roomId/leave'), hasLength(1));
           expect(model.toast, contains('Sign-in was rejected'));
           expect(stopped, isFalse);
+          final release = releases.single;
+          releases.add(
+            Ps3OnlineRelease(
+              provider: 'other-provider',
+              titleId: release.titleId,
+              updateVersion: '01.29',
+              updateTreeDigest: release.updateTreeDigest,
+              coreSha256: release.coreSha256,
+              executableSha256: release.executableSha256,
+              protection: release.protection,
+              rpcnHost: 'other.example.invalid',
+              rpcnCertificateSha256: release.rpcnCertificateSha256,
+              providerFiles: const {},
+              xfloat: release.xfloat,
+              dns: release.dns,
+              upnp: false,
+            ),
+          );
+          final worker = model.embeddedGame;
+          activate('ps3ProviderStatus');
+          expect(model.overlay, Layer.emulatorMenu);
+          expect(model.panelCategories().single.rows.any((row) => row.id == 'ps3-online-import-account'), isFalse);
+          expect(model.embeddedGame, same(worker));
+          model.closeOverlay();
+          expect(model.overlay, Layer.quickMenu);
+          expect(stopped, isFalse);
+          activate('ps3ProviderStatus');
+          activate('ps3-online-close-for-repair');
+          expect(model.panelCategories().single.rows.any((row) => row.id == 'ps3-online-import-account'), isFalse);
+          await waitFor(() => model.running == null && stopped);
+          await waitFor(() => model.panelCategories().single.rows.any((row) => row.id == 'ps3-online-import-account'));
+          expect(model.overlay, Layer.emulatorMenu);
+          expect(model.spot?.row, 'ps3-online-import-account');
+          expect(server.callsTo('game-sessions/$roomId/leave'), hasLength(1));
+          selectedPatch = write(
+            p.join(fixture.temp.path, 'replacement-account.yml'),
+            utf8.encode(account.replaceFirst('fake-token', 'replacement-test-token')),
+          ).path;
+          model.activateRow(model.panelRow);
+          await waitFor(() => accountStatus() == 'Provider account imported.');
+          expect(jsonDecode(installedAccount.readAsStringSync()), containsPair('Token', 'replacement-test-token'));
+          model.closeOverlay();
+          expect(model.overlay, isNull);
+          return;
         } else if (mode == 'guest-ended') {
           server!.push('game_session.ended', {'sessionId': roomId});
           await waitFor(() => model.together.ps3PartyRows().isEmpty);

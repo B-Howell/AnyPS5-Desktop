@@ -23,6 +23,25 @@ String _ps3OnlineIssueText(Ps3OnlineIssue issue) => T.text(switch (issue) {
 });
 
 extension Ps3OnlineReadinessPage on AppModel {
+  PanelRow? _ps3ProviderQuickRow(Game game) {
+    final session = embeddedGame;
+    final status = session?.ps3ProviderStatus;
+    if (session == null || status == null) return null;
+    final canReview = status.failed && session.startupVisible && !stopping;
+    return PanelRow(
+      id: 'ps3ProviderStatus',
+      title: T.text(canReview ? 'ps3ProviderReviewSetup' : 'ps3ProviderConnection'),
+      detail: canReview ? T.text(status.detailKey) : null,
+      kind: canReview
+          ? ActionRow(() {
+              if (identical(embeddedGame, session) && !stopping) {
+                openPs3OnlineReadiness(game, partyRelease: session.ps3OnlineRelease, repairSession: session);
+              }
+            })
+          : InfoRow(T.text(status.detailKey)),
+    );
+  }
+
   void _watchPs3ProviderFailure(EmbeddedRetroGame session, Object? party) {
     unawaited(
       session.initialProviderFailure.then((failure) {
@@ -45,6 +64,7 @@ extension Ps3OnlineReadinessPage on AppModel {
     Ps3OnlineRelease? partyRelease,
     String? partyAction,
     Future<void> Function(Ps3OnlineProfile)? onPartyReady,
+    EmbeddedRetroGame? repairSession,
   }) {
     final disc = game.retro!;
     final managed = _managedRetro;
@@ -56,6 +76,7 @@ extension Ps3OnlineReadinessPage on AppModel {
     var report = inspect();
     var checking = false;
     var preparingFirmware = false;
+    var closingForRepair = false;
     String? firmwareDetail;
     _Ps3ProfileFile? importing;
     String? failure;
@@ -63,8 +84,37 @@ extension Ps3OnlineReadinessPage on AppModel {
     late final PanelCategory Function() page;
     bool visible() => !_disposed && overlay == Layer.emulatorMenu && identical(_emulatorMenu._page, page);
     bool available() =>
-        !_disposed && !_quitting && managedSetupConsole == null && starting == null && running == null && !stopping;
+        !_disposed &&
+        !_quitting &&
+        managedSetupConsole == null &&
+        starting == null &&
+        running == null &&
+        !stopping &&
+        !closingForRepair;
     bool busy() => checking || importing != null || preparingFirmware;
+
+    Future<void> closeForRepair() async {
+      if (!visible() || closingForRepair || stopping || !identical(embeddedGame, repairSession)) return;
+      closingForRepair = true;
+      final settled = waitForRetroWorkerExit();
+      try {
+        await stopRunningGame();
+        await settled;
+      } finally {
+        closingForRepair = false;
+        if (visible()) {
+          final rows = page().rows;
+          final preferred = repairSession?.ps3ProviderStatus == Ps3ProviderStatus.loginRejected
+              ? 'ps3-online-import-account'
+              : _ps3OnlineRecheck;
+          final index = rows.indexWhere((row) => row.id == preferred);
+          panelRow = index < 0 ? rows.indexWhere((row) => row.id == _ps3OnlineRecheck) : index;
+          if (panelRow < 0) panelRow = 0;
+          _skipToFocusable();
+          refresh();
+        }
+      }
+    }
 
     Future<void> prepareFirmware(Ps3OnlineRelease release) async {
       if (busy() || !visible() || !available()) return;
@@ -167,6 +217,28 @@ extension Ps3OnlineReadinessPage on AppModel {
     }
 
     page = () {
+      if (closingForRepair || (repairSession != null && identical(embeddedGame, repairSession))) {
+        return PanelCategory(
+          id: 'ps3-online-check',
+          title: T.text('ps3OnlineReadiness'),
+          rows: [
+            if (repairSession?.ps3ProviderStatus case final status?)
+              PanelRow(
+                id: 'ps3-online-provider-issue',
+                title: T.text('ps3ProviderConnection'),
+                kind: InfoRow(T.text(status.detailKey)),
+              ),
+            PanelRow(
+              id: 'ps3-online-close-for-repair',
+              title: T.text(closingForRepair || stopping ? 'ps3ProviderClosing' : 'ps3ProviderCloseForSetup'),
+              detail: closingForRepair || stopping ? null : T.text('closeGameDetail'),
+              kind: closingForRepair || stopping
+                  ? const InfoRow('')
+                  : ActionRow(() => unawaited(closeForRepair()), destructive: true),
+            ),
+          ],
+        );
+      }
       final eligible = releases.where((release) => release.titleId == report.titleId);
       final release = eligible.length == 1 ? eligible.single : null;
       return _ps3OnlineReadinessPanel(
