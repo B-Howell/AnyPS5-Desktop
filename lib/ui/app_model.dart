@@ -4035,6 +4035,7 @@ class AppModel extends ChangeNotifier {
     required String bios,
     bool requireHandoff = false,
     Ps1NetplayExecution execution = Ps1NetplayExecution.standard,
+    bool Function()? canContinue,
   }) async {
     final disc = game.retro;
     if (disc == null || disc.platform != RetroPlatform.ps1) {
@@ -4058,6 +4059,7 @@ class AppModel extends ChangeNotifier {
       bios: bios,
       core: core,
       execution: execution,
+      canContinue: canContinue,
     );
     if (requireHandoff && !media.supportsHandoff) {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);

@@ -232,8 +232,30 @@ void main() {
       final offline = File(p.join(folder, 'offline.bin'))..writeAsBytesSync(incompatible);
       model.preferences.retroBiosSources['ps1'] = offline.path;
 
+      final roomPath = 'game-sessions/$roomId';
+      final roomAnswer = server.answers.remove('GET $roomPath')!;
+      final roomRequested = Completer<void>();
+      final roomReply = Completer<void>();
+      server.handlers.add((call) async {
+        if (call.method != 'GET' || call.path != roomPath) return null;
+        if (!roomRequested.isCompleted) roomRequested.complete();
+        await roomReply.future;
+        return roomAnswer;
+      });
+      addTearDown(() {
+        if (!roomReply.isCompleted) roomReply.complete();
+      });
       var joining = model.together.joinPs1Netplay(invite);
+      await roomRequested.future.timeout(const Duration(seconds: 5));
+      final stalled = model.together.gameRows().singleWhere((row) => row.id == 'ps1-netplay-cancel-verification');
+      (stalled.kind as ActionRow).run();
+      await joining.timeout(const Duration(seconds: 3));
+      expect(picking.isCompleted, isFalse);
+
+      server.answers['GET $roomPath'] = roomAnswer;
+      joining = model.together.joinPs1Netplay(invite);
       await picking.future.timeout(const Duration(seconds: 5));
+      roomReply.complete();
       chosen.complete(offline.path);
       await joining;
       expect(model.toast, contains('matching SCPH-1001'));
@@ -244,6 +266,17 @@ void main() {
       await picking.future.timeout(const Duration(seconds: 5));
       chosen.complete(null);
       await joining;
+
+      chosen = Completer<String?>();
+      picking = Completer<void>();
+      joining = model.together.joinPs1Netplay(invite);
+      await picking.future.timeout(const Duration(seconds: 5));
+      final cancel = model.together.gameRows().singleWhere((row) => row.id == 'ps1-netplay-cancel-verification');
+      (cancel.kind as ActionRow).run();
+      final canceledNotice = model.toast;
+      chosen.complete(offline.path);
+      await joining;
+      expect(model.toast, canceledNotice);
 
       chosen = Completer<String?>();
       picking = Completer<void>();
@@ -547,6 +580,18 @@ void main() {
     expect(model.overlay, Layer.ps1OnlineFriends);
     choose('ps1-invite-$friendId');
     expect(model.overlay, isNull);
+    await model.openQuickMenu();
+    expect(row('ps1-netplay-cancel-verification').detail, contains('Verifying your PS1 game'));
+    choose('ps1-netplay-cancel-verification');
+    expect(
+      await eventually(() => model.together.ps1QuickRows().any((row) => row.id == 'ps1-invite-from-game')),
+      isTrue,
+    );
+    expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
+    expect(native, ['local']);
+    expect(model.overlay, Layer.quickMenu);
+    choose('ps1-invite-from-game');
+    choose('ps1-invite-$friendId');
     expect(
       await eventually(() => server.callsTo('$path/invites').isNotEmpty, timeout: const Duration(seconds: 25)),
       isTrue,

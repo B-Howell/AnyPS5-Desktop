@@ -519,6 +519,14 @@ media, selects an online friend from the Quick Menu, and checks that the
 local worker stays active while waiting for the guest to connect. A
 local gateway and paired test links run the real invitation and
 checkpoint protocol.
+Before opening or joining a room, the Quick Menu for the host and the
+AnyTogether Games panel show the PS1 file check with a cancel action.
+Cancellation invalidates that attempt, stops an active media hash at a
+chunk boundary, and discards late picker and room lookup results. A
+pending room lookup releases the attempt immediately on cancel. A
+managed core install already in progress can finish safely before the
+attempt clears. The local game keeps running, and the same friend can
+be invited again when verification has stopped.
 The mocked native channel verifies the park, detach, isolated boot,
 frame-zero import, and running match. The online row shows **Waiting for
 the other player** until the compatible peer handshake completes and
@@ -533,12 +541,16 @@ Menu closes the peer and room and restores the original game on a new
 texture. This covers launcher orchestration. A two-client run with real
 workers, WebRTC, and the production service remains to be verified.
 
-On Windows, the focused suite passed 66 tests using the pinned CTR
-fixture. The suite includes the [PS1 setup](../test/ui/ps1_netplay_setup_test.dart),
-media, session, room and embedded worker tests plus the existing retro
-startup, session and menu window tests. The new assertions reproduced
-the stale waiting message and the missing row during recovery before
-the fix. The Guide command was dispatched through the launcher model.
+The Windows focused suite uses the pinned CTR fixture. It includes the
+[PS1 setup](../test/ui/ps1_netplay_setup_test.dart), media, session, room
+and embedded worker tests plus the existing retro startup, session and
+menu window tests. The handoff assertions reproduced the stale waiting
+message and the missing row during recovery before the fix. The Guide
+command was dispatched through the launcher model. Verification tests
+cover cancel and retry with the original worker active, a late BIOS
+picker reply, and a retry while the canceled guest lookup is still
+pending. The [media test](../test/core/online/ps1_netplay_media_test.dart)
+rejects a partial fingerprint when a track read is interrupted.
 
 ### Windows development checkpoint
 

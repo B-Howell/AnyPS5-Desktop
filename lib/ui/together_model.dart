@@ -98,6 +98,7 @@ const launcherVersion = '0.1.20';
 class TogetherModel {
   Ps1NetplayMatch? _ps1Match;
   bool _verifyingPs1 = false;
+  _Ps1InviteVerification? _ps1InviteVerification;
   _Ps2LanAttempt? _ps2Lan;
   _Ps3PartyAttempt? _ps3Party;
 
@@ -428,6 +429,7 @@ class TogetherModel {
 
   /// Signed in or out: what depends on it starts or stops.
   void signedInChanged() {
+    _cancelPs1InviteVerification();
     unawaited(_ps1Match?.leave());
     _ps2Lan?.cancel();
     _ps3Party?.cancel();
@@ -1652,6 +1654,7 @@ class TogetherModel {
   }
 
   void dispose() {
+    _cancelPs1InviteVerification();
     unawaited(_ps1Match?.leave());
     _ps2Lan?.cancel();
     if (_ps3Party case final attempt?) {

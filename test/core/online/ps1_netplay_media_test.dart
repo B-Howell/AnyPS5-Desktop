@@ -85,4 +85,12 @@ void main() {
     await cue.writeAsString('FILE track.bin BINARY\n');
     await expectLater(Ps1NetplayMedia.cueDigest(cue.path), throwsFormatException);
   });
+
+  test('a canceled track read cannot return a fingerprint for partial media', () async {
+    await File(p.join(folder.path, 'track.bin')).writeAsBytes(Uint8List(2 * 1024 * 1024));
+    await cue.writeAsString('FILE track.bin BINARY\nTRACK 01 MODE2/2352\nINDEX 01 00:00:00\n');
+    var checks = 0;
+    await expectLater(Ps1NetplayMedia.cueDigest(cue.path, canContinue: () => ++checks < 3), throwsStateError);
+    expect(await Ps1NetplayMedia.cueDigest(cue.path), matches(RegExp(r'^[0-9a-f]{64}$')));
+  });
 }

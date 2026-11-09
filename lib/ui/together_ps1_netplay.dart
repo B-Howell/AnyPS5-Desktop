@@ -1,7 +1,20 @@
 part of 'together_model.dart';
 
+final class _Ps1InviteVerification {
+  _Ps1InviteVerification(this.host);
+
+  final EmbeddedRetroGame? host;
+  final canceled = Completer<void>();
+}
+
 extension TogetherPs1Netplay on TogetherModel {
   bool get _ps1NetplayEnabled => environment['ANYPS5_PS1_NETPLAY'] == '1' && app.managedRetroAvailable;
+
+  void _cancelPs1InviteVerification() {
+    final verification = _ps1InviteVerification;
+    _ps1InviteVerification = null;
+    verification?.canceled.complete();
+  }
 
   List<PanelRow> ps1LocalLaunchRows(Game game) {
     if (!_ps1NetplayEnabled ||
@@ -47,6 +60,8 @@ extension TogetherPs1Netplay on TogetherModel {
     if (!_ps1NetplayEnabled) return const [];
     if (_ps1Match != null) return ps1NetplayRows();
     final host = app.embeddedGame;
+    if (host != null && identical(_ps1InviteVerification?.host, host)) return ps1NetplayRows();
+    if (_verifyingPs1) return const [];
     if (host == null || _ps1HostMode(host, app.running?.$1) == null) return const [];
     return [
       PanelRow(
@@ -118,6 +133,20 @@ extension TogetherPs1Netplay on TogetherModel {
 
   List<PanelRow> ps1NetplayRows() {
     if (!_ps1NetplayEnabled) return const [];
+    if (_ps1InviteVerification case final verification?) {
+      return [
+        PanelRow(
+          id: 'ps1-netplay-cancel-verification',
+          title: T.text('ps1OnlineCancel'),
+          detail: T.text('ps1OnlineVerifying'),
+          kind: ActionRow(() {
+            if (!identical(_ps1InviteVerification, verification)) return;
+            _cancelPs1InviteVerification();
+            app.refresh();
+          }),
+        ),
+      ];
+    }
     if (_ps1Match case final match?) {
       final session = match.session;
       final playing = session?.phase == Ps1NetplayPhase.running;
@@ -205,7 +234,8 @@ extension TogetherPs1Netplay on TogetherModel {
         (host == null ? app.running == null : identical(app.embeddedGame, host));
     if (_verifyingPs1 || _ps1Match != null || _ps2LanBusy || !hostAvailable()) return;
     _verifyingPs1 = true;
-    app.show(T.text('ps1OnlineVerifying'));
+    final verification = _ps1InviteVerification = _Ps1InviteVerification(host);
+    bool active() => identical(_ps1InviteVerification, verification) && account.user?.id == me && hostAvailable();
     Ps1NetplayMatch? opened;
     var holdingTransition = false;
     RetroOnlineRooms rooms([String? discDigest]) => RetroOnlineRooms(
@@ -225,8 +255,14 @@ extension TogetherPs1Netplay on TogetherModel {
       },
     );
     try {
-      final invitedDigest = roomId == null ? null : await rooms().invitedDiscDigest(roomId);
-      bool active() => account.user?.id == me && hostAvailable();
+      app.refresh();
+      if (!active()) return;
+      final invitedDigest = roomId == null
+          ? null
+          : await Future.any<String?>([
+              rooms().invitedDiscDigest(roomId),
+              verification.canceled.future.then((_) => null),
+            ]);
       if (!active()) return;
       if (roomId != null && invitedDigest == null) return app.show(T.text('ps1OnlineDisc'));
       final ordinaryHost = mode == Ps1NetplayRoomMode.ordinary ? host : null;
@@ -246,13 +282,14 @@ extension TogetherPs1Netplay on TogetherModel {
                 bios: bios!,
                 core: ordinaryHost.corePath,
                 execution: mode.execution,
+                canContinue: active,
               ),
             )
           : host != null
           ? (app.running!.$1, host.stagedNetplayMedia!)
           : selectedGame != null
-          ? (selectedGame, await app.verifyPs1Netplay(selectedGame, profile, bios: bios!))
-          : await _verifiedPs1(profile, candidates, invitedDigest, bios: bios!, mode: mode);
+          ? (selectedGame, await app.verifyPs1Netplay(selectedGame, profile, bios: bios!, canContinue: active))
+          : await _verifiedPs1(profile, candidates, invitedDigest, bios: bios!, mode: mode, canContinue: active);
       if (!active()) return;
       if (mode.needsCheckpoint && !media.supportsHandoff) return app.show(T.text('ps1OnlineHandoffCore'));
       late final Ps1NetplayMatch match;
@@ -297,6 +334,7 @@ extension TogetherPs1Netplay on TogetherModel {
         onStatusChanged: app.refresh,
       );
       _ps1Match = opened = match;
+      _ps1InviteVerification = null;
       if (host != null) {
         unawaited(
           host.exitCode.then((_) async {
@@ -327,12 +365,13 @@ extension TogetherPs1Netplay on TogetherModel {
           break;
       }
     } on Ps1NetplayMediaFailure catch (error) {
-      _showPs1MediaError(error, handoff: mode.needsCheckpoint);
+      if (opened != null || active()) _showPs1MediaError(error, handoff: mode.needsCheckpoint);
     } on Object {
-      app.show(T.text('ps1OnlineDisconnected'));
+      if (opened != null || active()) app.show(T.text('ps1OnlineDisconnected'));
     } finally {
       if (holdingTransition) app.setOrdinaryPs1Transition(null);
       if (identical(_ps1Match, opened)) _ps1Match = null;
+      if (identical(_ps1InviteVerification, verification)) _ps1InviteVerification = null;
       _verifyingPs1 = false;
       app.refresh();
     }
@@ -352,6 +391,7 @@ extension TogetherPs1Netplay on TogetherModel {
     String? invitedDigest, {
     required String bios,
     required Ps1NetplayRoomMode mode,
+    required bool Function() canContinue,
   }) async {
     for (final game in candidates) {
       try {
@@ -361,6 +401,7 @@ extension TogetherPs1Netplay on TogetherModel {
           bios: bios,
           requireHandoff: mode.needsCheckpoint,
           execution: mode.execution,
+          canContinue: canContinue,
         );
         if (invitedDigest == null || media.discDigest == invitedDigest) return (game, media);
       } on Ps1NetplayMediaFailure catch (error) {

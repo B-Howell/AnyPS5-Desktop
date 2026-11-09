@@ -88,18 +88,24 @@ final class Ps1NetplayMedia {
     required String bios,
     required String core,
     Ps1NetplayExecution execution = Ps1NetplayExecution.standard,
+    bool Function()? canContinue,
   }) async {
+    _checkActive(canContinue);
     final String cue;
     try {
       if (Ps1DiscSerial.read(disc) != profile.titleId) throw const FormatException('Wrong PS1 disc serial.');
-      cue = await cueDigest(disc);
+      cue = await cueDigest(disc, canContinue: canContinue);
     } on FileSystemException {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
     } on FormatException {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
     }
-    final firmware = await _verify(Ps1NetplayMediaProblem.bios, {biosPin}, () => _hashFile(bios));
-    final library = await _verify(Ps1NetplayMediaProblem.core, execution.coreDigests, () => _hashFile(core));
+    final firmware = await _verify(Ps1NetplayMediaProblem.bios, {biosPin}, () => _hashFile(bios, canContinue));
+    final library = await _verify(
+      Ps1NetplayMediaProblem.core,
+      execution.coreDigests,
+      () => _hashFile(core, canContinue),
+    );
     return Ps1NetplayMedia._(
       p.absolute(disc),
       p.absolute(bios),
@@ -134,10 +140,26 @@ final class Ps1NetplayMedia {
   }
 
   static String _hashText(String data) => sha256.convert(utf8.encode(data)).toString();
-  static Future<String> _hashFile(String path) async => (await sha256.bind(File(path).openRead()).first).toString();
+  static void _checkActive(bool Function()? canContinue) {
+    if (canContinue?.call() == false) throw StateError('PS1 media verification canceled.');
+  }
+
+  static Future<String> _hashFile(String path, bool Function()? canContinue) async {
+    _checkActive(canContinue);
+    final chunks = File(path).openRead();
+    final input = canContinue == null
+        ? chunks
+        : chunks.map((chunk) {
+            _checkActive(canContinue);
+            return chunk;
+          });
+    final digest = await sha256.bind(input).first;
+    _checkActive(canContinue);
+    return digest.toString();
+  }
 
   /// Mirrors the CTR harness digest. Track content and layout count. Local filenames do not.
-  static Future<String> cueDigest(String path) async {
+  static Future<String> cueDigest(String path, {bool Function()? canContinue}) async {
     final cue = File(path);
     if (p.extension(path).toLowerCase() != '.cue' || await cue.length() > 65536) {
       throw const FormatException('Expected a CUE sheet up to 64 KiB.');
@@ -161,7 +183,7 @@ final class Ps1NetplayMedia {
       }
       final track = await File(p.normalize(p.join(directory, name))).resolveSymbolicLinks();
       if (!p.isWithin(directory, track)) throw const FormatException('CUE track leaves the game folder.');
-      lines.add('FILE ${match[3]!.toUpperCase()} ${await _hashFile(track)}');
+      lines.add('FILE ${match[3]!.toUpperCase()} ${await _hashFile(track, canContinue)}');
     }
     if (files == 0 || !lines.any((line) => line.startsWith('TRACK '))) {
       throw const FormatException('CUE has no tracks.');
