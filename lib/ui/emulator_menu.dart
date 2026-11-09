@@ -198,17 +198,37 @@ class _EmulatorMenu {
 
   PanelCategory _ps2LanSetupPage() {
     final game = app._ps2LanSetupTitle;
-    final blocker = !app.together.ps2LanSetupAvailable
+    final available = app.together.ps2LanSetupAvailable;
+    final installed = app.ps2LanCoreInstalled;
+    final hasBios = app.ps2LanBiosPath != null;
+    final blocker = !available
         ? 'ps2LanBusy'
-        : !app.ps2LanCoreInstalled
+        : !installed
         ? 'ps2LanCore'
-        : app.ps2LanBiosPath == null
+        : !hasBios
         ? 'ps2LanBios'
         : null;
     return PanelCategory(
       id: 'ps2-lan-network-setup',
       title: T.text('ps2LanSetupTitle'),
       rows: [
+        if (!installed)
+          PanelRow(
+            id: 'ps2-lan-setup-install',
+            title: T.text('ps2LanPackageInstall'),
+            detail: T.text('ps2LanPackageDetail'),
+            kind: available
+                ? ActionRow(() => unawaited(app._preparePs2LanMedia(bios: false)))
+                : InfoRow(T.text('ps2LanBusy')),
+          ),
+        if (!hasBios)
+          PanelRow(
+            id: 'ps2-lan-setup-bios',
+            title: T.text('ps2LanBiosImport'),
+            kind: available
+                ? ActionRow(() => unawaited(app._preparePs2LanMedia(bios: true)))
+                : InfoRow(T.text('ps2LanBusy')),
+          ),
         if (game == null)
           PanelRow(
             id: 'ps2-lan-setup-media',

@@ -3897,6 +3897,7 @@ class AppModel extends ChangeNotifier {
     p.join(p.dirname(paths.toolkits), 'Emulators'),
     packageDirectory: (services.environment ?? Platform.environment)['ANYPS5_MANAGED_CORE_PACKAGES'],
     ps3CoreDigests: (services.environment ?? Platform.environment)['ANYPS5_PS3_CORE_DIGESTS'],
+    ps2LanCoreDigests: (services.environment ?? Platform.environment)['ANYPS5_PS2_LAN_CORE_DIGESTS'],
   );
   bool get managedRetroAvailable => system == HostSystem.windows && Abi.current() == Abi.windowsX64;
   String? get retroCoreOverride => (services.environment ?? Platform.environment)['ANYPS5_LIBRETRO_HOME'];
@@ -3912,8 +3913,9 @@ class AppModel extends ChangeNotifier {
   Future<bool> chooseManagedBios(RetroPlatform platform) async {
     final label = ManagedRetro.platformName(platform);
     final selected = await services.pickFile?.call('Select your $label BIOS', ['bin', 'rom', 'rom0']);
-    if (selected == null) return false;
+    if (selected == null || _disposed) return false;
     await _managedRetro.importBios(platform, selected);
+    if (_disposed) return false;
     preferences.retroBiosSources[platform.name] = selected;
     savePreferences();
     return true;
@@ -4059,7 +4061,39 @@ class AppModel extends ChangeNotifier {
     }
   }
 
-  bool get ps2LanCoreInstalled => ManagedRetro(retroCoreOverride ?? _managedRetro.root).supportsPs2Lan;
+  String get _ps2LanCoreHome => _managedRetro.installedPs2LanHome ?? retroCoreOverride ?? _managedRetro.root;
+
+  bool get ps2LanCoreInstalled => ManagedRetro(_ps2LanCoreHome).supportsPs2Lan;
+
+  Future<void> _preparePs2LanMedia({required bool bios}) async {
+    if (!together.ps2LanSetupAvailable) return show(T.text('ps2LanBusy'));
+    final origin = spot;
+    managedSetupConsole = RetroPlatform.ps2;
+    try {
+      _changed();
+      if (bios) {
+        if (await chooseManagedBios(RetroPlatform.ps2) && !_disposed) show(T.text('ps2LanBiosImported'));
+      } else {
+        final archive = await services.pickFile?.call(T.text('ps2LanPackagePicker'), ['zip']);
+        if (archive == null || _disposed) return;
+        _setRetroSetup(T.text('ps2LanPackageInstalling'));
+        await _managedRetro.installPs2Lan(archive);
+        if (!_disposed) show(T.text('ps2LanPackageInstalled'));
+      }
+    } on Object catch (error) {
+      if (!_disposed) show(T.format('ps2LanInstallFailed', [error]));
+    } finally {
+      managedSetupConsole = null;
+      if (!_disposed) {
+        if (spot == origin) _skipToFocusable();
+        if (retroSetupProgress != null) {
+          _setRetroSetup(null);
+        } else {
+          _changed();
+        }
+      }
+    }
+  }
 
   bool _ps2LanSetupActive = false;
   bool get ps2LanSetupActive => _ps2LanSetupActive;
@@ -4167,9 +4201,11 @@ class AppModel extends ChangeNotifier {
     final managed = netplay == null && ps2Lan == null && override == null && !standalone && managedRetroAvailable
         ? _managedRetro
         : null;
-    final embeddedHome = netplay != null
+    final embeddedHome = ps2Lan != null
+        ? _ps2LanCoreHome
+        : netplay != null
         ? p.dirname(netplay.media.core)
-        : override ?? (ps2Lan == null ? managed?.root : _managedRetro.root);
+        : override ?? managed?.root;
     if (embeddedHome == null && !standalone) {
       show(
         ps3

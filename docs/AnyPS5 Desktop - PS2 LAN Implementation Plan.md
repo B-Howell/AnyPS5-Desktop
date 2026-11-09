@@ -321,9 +321,10 @@ title can be customized independently of matchmaking. This path currently
 requires a verified ISO. CHD identity is not implemented.
 
 [Emulator preflight](../lib/core/managed_retro.dart) checks the Windows
-DLL for the DEV9 binding before sending an invite. Use the managed
-emulator directory or `ANYPS5_LIBRETRO_HOME` with a patched
-`pcsx2_libretro.dll`, and import a PS2 BIOS. [Embedded launch](../lib/ui/app_model.dart)
+DLL for the DEV9 binding before sending an invite. Install the patched
+core from the PS2 LAN setup page. The launcher also accepts a compatible
+legacy core in the managed emulator directory or `ANYPS5_LIBRETRO_HOME`.
+[Embedded launch](../lib/ui/app_model.dart)
 uses a [persistent PS2 LAN profile](../lib/core/online/ps2_lan_profile.dart)
 under `RetroLan/PS2` beside the launcher toolkits. Each launcher profile
 has its own directory, which holds a copy of the selected BIOS, the PS2
@@ -334,7 +335,16 @@ another instance from opening the same LAN profile until the game exits.
 Closing the game releases the lock and retains the card.
 
 Before inviting a peer, open **Settings → Emulators → PS2 → Setup → Set up
-LAN network**. The [setup page](../lib/ui/emulator_menu.dart) offers the
+LAN network**. Choose **Install PS2 LAN core** and select the pinned
+`pcsx2_libretro.dll.zip`. The installer verifies the ZIP, DLL and DEV9
+export before publishing it under `Emulators/PS2-LAN`. LAN setup and rooms
+prefer that dedicated core. Offline PS2 play keeps its usual core.
+**Import PS2 BIOS** accepts the user's own BIOS on the same page.
+An independently built reviewer ZIP can opt in to its own exact ZIP and
+DLL SHA-256 values using `ANYPS5_PS2_LAN_CORE_DIGESTS` as
+`<archive-sha256>:<dll-sha256>`. Normal setup uses the pins below.
+
+The [setup page](../lib/ui/emulator_menu.dart) then offers the
 verified Gran Turismo 4 USA v2.00 disc from the local library, identified by
 serial and revision. It explains when the disc, DEV9-capable core or BIOS
 is missing. [Setup launch](../lib/ui/app_model.dart) rereads the disc metadata
@@ -364,7 +374,10 @@ frame exchange with a mocked native runner. It also checks the PS1 setup
 guard before the emulator starts. The [DHCP test](../test/core/online/retro_lan_dhcp_test.dart)
 exercises Discover, Offer, Request and ACK on the setup bridge without a room.
 The [managed core test](../test/core/managed_retro_test.dart) verifies the
-export check, and the [invite routing test](../test/ui/together_test.dart)
+ZIP and DLL checks, DEV9 export, retry and preservation of offline and
+existing LAN cores. The setup test also drives both file pickers, checks
+that cancellation restores the page, and verifies the native launch
+receives the dedicated DLL path. The [invite routing test](../test/ui/together_test.dart)
 checks that PS2 invites cannot join a PS5 session on a build with LAN off.
 
 ### Windows core build and native smoke
@@ -394,6 +407,15 @@ Archive hashes can vary between packagers. The static link removes the
 dependency on an external WinLibs pthread DLL. The launcher export check
 accepted the packaged DLL, and the upstream Libretro smoke completed
 init, a BIOS-less load attempt, deinit and unload.
+
+A clean Windows scratch profile imported that exact ZIP using the
+[managed installer](../lib/core/managed_retro.dart). The dedicated DLL
+matched the expected hash on install and retry, and the offline core slot
+remained empty. A headless D3D11 worker loaded the installed DLL from
+`Emulators/PS2-LAN`, booted TimeSplitters and reached a one-player LAN lobby
+after one local DHCP lease. That run used a configured scratch card and
+exited zero. Installer, test and native evidence is stored beside the
+core under `timesplitters-lan/managed-core-import`.
 
 A separate no-window test opened the TimeSplitters ISO with a copied
 BIOS and fresh saves. It rendered 1,467 frames across 1,800 calls to
@@ -550,8 +572,11 @@ pinned LRPS2 DLL and resolved its DEV9 export. The
 used the exact WebRTC DLLs from that package. It assigned distinct DHCP
 leases, exchanged matching Ethernet frames and released both endpoints.
 That fixture uses a headless debug Flutter host and synthetic NICs.
-The patched core remains a separate local artifact. Hosted AnyTogether
-signaling, WAN play and setup through the packaged UI remain open.
+The patched core remains a separate local artifact. The launcher import
+action uses the pinned local ZIP. A public download requires an approved
+package location and distribution of corresponding source and notices.
+Hosted AnyTogether signaling, WAN play and setup through the packaged UI
+remain open.
 
 TimeSplitters: Future Perfect is a second PS2 fixture. Its US NTSC disc
 reports `SLUS21148` and version `1.00` in `SYSTEM.CNF`. The [original manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)

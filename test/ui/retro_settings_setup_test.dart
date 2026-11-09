@@ -8,9 +8,11 @@ import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/managed_retro.dart';
 import 'package:anyps5_desktop/core/retro_settings.dart';
 import 'package:anyps5_desktop/core/host.dart';
+import 'package:anyps5_desktop/core/toolkit_download.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/home.dart';
 import 'package:anyps5_desktop/ui/together_model.dart';
+import 'package:archive/archive.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -61,9 +63,16 @@ Directory _installFixtureCore(AppModel model, RetroPlatform platform, {bool lan 
 
 void main() {
   test('PS2 LAN setup can boot the verified title and exchange frames without signing in', () async {
+    String? selectedMedia;
+    final picks = <List<String>>[];
+    final environment = {'ANYPS5_PS2_LAN': '1', 'ANYPS5_PS1_NETPLAY': '1'};
     final fixture = makeFixture(
       system: HostSystem.windows,
-      environment: {'ANYPS5_PS2_LAN': '1', 'ANYPS5_PS1_NETPLAY': '1'},
+      environment: environment,
+      pickFile: (_, extensions) async {
+        picks.add(extensions);
+        return selectedMedia;
+      },
     );
     final model = fixture.model;
     addTearDown(() {
@@ -80,8 +89,29 @@ void main() {
     (setup.kind as ActionRow).run();
     final lan = model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps2-lan-setup');
     (lan.kind as ActionRow).run();
-    expect(model.panelCategories().single.rows.single.kind, isA<InfoRow>());
-    expect(model.panelCategories().single.rows.single.detail, contains('Gran Turismo 4'));
+    PanelRow setupRow(String name) =>
+        model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps2-lan-setup-$name');
+    expect(setupRow('media').kind, isA<InfoRow>());
+    expect(setupRow('media').detail, contains('Gran Turismo 4'));
+    final readyUpdates = <bool>[];
+    model.addListener(() => readyUpdates.add(model.managedSetupConsole == null));
+    Future<void> choose(String action) async {
+      (setupRow(action).kind as ActionRow).run();
+      for (var i = 0; i < 100 && model.managedSetupConsole != null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(model.managedSetupConsole, isNull);
+      expect(readyUpdates.last, isTrue, reason: 'The page must refresh after the picker releases its busy state.');
+    }
+
+    await choose('install');
+    expect(picks.single, ['zip']);
+    final invalid = File(p.join(fixture.temp.path, 'invalid.zip'))..writeAsBytesSync([1, 2, 3]);
+    selectedMedia = invalid.path;
+    await choose('install');
+    expect(picks.last, ['zip']);
+    expect(model.toast, contains('did not pass verification'));
+    expect(model.ps2LanCoreInstalled, isFalse);
     final iso = File(p.join(fixture.temp.path, 'gt4.iso'))..createSync();
     model.games.add(
       Game(
@@ -96,13 +126,30 @@ void main() {
         retroSerial: 'SCUS97328',
       ),
     );
-    PanelRow launch() => model.panelCategories().single.rows.single;
+    PanelRow launch() => setupRow('launch');
     expect(launch().title, 'Open Gran Turismo 4 for setup');
     expect(launch().kind, isA<InfoRow>());
     final core = _installFixtureCore(model, RetroPlatform.ps2, lan: true);
-    File(p.join(core.path, 'system', 'pcsx2', 'bios', 'anyps5-imported.bin'))
-      ..createSync(recursive: true)
-      ..writeAsBytesSync(Uint8List(4 * 1024 * 1024)..[0] = 7);
+    final offline = File(p.join(core.path, 'pcsx2_libretro.dll'));
+    final patchedBytes = await offline.readAsBytes();
+    final package = File(p.join(fixture.temp.path, 'pcsx2_libretro.dll.zip'))
+      ..writeAsBytesSync(
+        ZipEncoder().encode(Archive()..addFile(ArchiveFile('pcsx2_libretro.dll', patchedBytes.length, patchedBytes))),
+      );
+    final archiveDigest = await AssetDownload.sha256Of(package.path);
+    final libraryDigest = await AssetDownload.sha256Of(offline.path);
+    environment['ANYPS5_PS2_LAN_CORE_DIGESTS'] = '$archiveDigest:$libraryDigest';
+    _installFixtureCore(model, RetroPlatform.ps2);
+    final originalCore = await offline.readAsBytes();
+    selectedMedia = package.path;
+    await choose('install');
+    expect(model.ps2LanCoreInstalled, isTrue);
+    expect(await offline.readAsBytes(), originalCore);
+    final bios = File(p.join(fixture.temp.path, 'bios.bin'))..writeAsBytesSync(Uint8List(4 * 1024 * 1024)..[0] = 7);
+    selectedMedia = bios.path;
+    await choose('bios');
+    expect(picks.last, contains('bin'));
+    expect(model.ps2LanBiosPath, isNotNull);
     expect(model.ps2LanCoreInstalled, isTrue);
 
     const channel = MethodChannel('anyps5/retro_core');
@@ -115,6 +162,7 @@ void main() {
         case 'start':
           starts++;
           expect(call.arguments['disc'], iso.path);
+          expect(call.arguments['core'], p.join(core.path, 'PS2-LAN', 'pcsx2_libretro.dll'));
           expect(call.arguments['ps2LanMac'], [2, 0, 0, 0, 0, 1]);
           return 7;
         case 'status':

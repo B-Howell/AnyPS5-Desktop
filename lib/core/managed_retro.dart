@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart' show getCrc32;
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:path/path.dart' as p;
 
 import 'binary.dart';
@@ -10,11 +11,15 @@ import 'game_library.dart';
 import 'toolkit_download.dart';
 
 class ManagedRetro {
-  ManagedRetro(this.root, {this.packageDirectory, this.ps3CoreDigests});
+  ManagedRetro(this.root, {this.packageDirectory, this.ps3CoreDigests, this.ps2LanCoreDigests});
 
   final String root;
   final String? packageDirectory;
   final String? ps3CoreDigests;
+  final String? ps2LanCoreDigests;
+  static const _patchedPs2Archive = '2df47bc025ff7dfdfce5594b709fa25884667acdff698334ed2d4942a8dc67f7';
+  static const _patchedPs2Library = '801af1211407964a4851839c3f4e90607f18353671dd1e427f56e12201d712a4';
+  static final _ps2LanChecks = <String, ({FileStat stat, String digest, bool valid})>{};
   static const _patchedPs3Archive = '7bc267dc0a9cffdd21087340ab643c52ed91136606e6d33ae05c477adc7db3a4';
   static const _patchedPs3Library = '7ac7504de83acfa2d977345f8c9b48e92f5e71c576abbf026406e667fe7a1370';
 
@@ -32,16 +37,93 @@ class ManagedRetro {
 
   bool isInstalled(RetroPlatform platform) => _windowsX64Library(File(p.join(root, libraryName(platform))));
 
-  bool get supportsPs2Lan => _windowsX64Library(
-    File(p.join(root, libraryName(RetroPlatform.ps2))),
-    requiredExport: 'retro_anyps5_dev9_bind_v1',
-  );
+  bool get supportsPs2Lan => _ps2LanLibrary(File(p.join(root, libraryName(RetroPlatform.ps2))));
+
+  static bool _ps2LanLibrary(File library) => _windowsX64Library(library, requiredExport: 'retro_anyps5_dev9_bind_v1');
+
+  String get _ps2LanHome => p.join(root, 'PS2-LAN');
+
+  String? get installedPs2LanHome {
+    final library = File(p.join(_ps2LanHome, libraryName(RetroPlatform.ps2)));
+    final stat = library.statSync();
+    if (stat.type != FileSystemEntityType.file || stat.size <= 0 || stat.size > 128 * 1024 * 1024) return null;
+    try {
+      final (_, digest) = _coreDigests(ps2LanCoreDigests, (_patchedPs2Archive, _patchedPs2Library), 'PS2 LAN');
+      final key = p.absolute(library.path);
+      final cached = _ps2LanChecks[key];
+      if (cached != null &&
+          cached.digest == digest &&
+          cached.stat.modified == stat.modified &&
+          cached.stat.changed == stat.changed &&
+          cached.stat.size == stat.size) {
+        return cached.valid ? _ps2LanHome : null;
+      }
+      final expected = p.join(Directory(root).resolveSymbolicLinksSync(), p.basename(_ps2LanHome));
+      if (!p.equals(Directory(_ps2LanHome).resolveSymbolicLinksSync(), expected)) return null;
+      final opened = library.openSync();
+      final Uint8List bytes;
+      try {
+        bytes = opened.readSync(stat.size + 1);
+      } finally {
+        opened.closeSync();
+      }
+      final valid = bytes.length == stat.size && sha256.convert(bytes).toString() == digest && _ps2LanLibrary(library);
+      _ps2LanChecks[key] = (stat: stat, digest: digest, valid: valid);
+      return valid ? _ps2LanHome : null;
+    } on FileSystemException {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  Future<void> installPs2Lan(String package) async {
+    final (archiveDigest, libraryDigest) = _coreDigests(ps2LanCoreDigests, (
+      _patchedPs2Archive,
+      _patchedPs2Library,
+    ), 'PS2 LAN');
+    final source = File(package);
+    final info = await source.stat();
+    if (info.type != FileSystemEntityType.file || info.size <= 0 || info.size > 16 * 1024 * 1024) {
+      throw const FormatException('The PS2 LAN ZIP is missing or has an unexpected size.');
+    }
+    final directory = await Directory(root).create(recursive: true);
+    final stage = await directory.createTemp('ps2-lan-package-');
+    try {
+      final archive = File(p.join(stage.path, 'core.zip'));
+      await source.openRead(0, info.size).pipe(archive.openWrite());
+      if (await AssetDownload.sha256Of(archive.path) != archiveDigest) {
+        throw const FormatException('The PS2 LAN ZIP did not pass verification.');
+      }
+      final destination = await Directory(_ps2LanHome).create();
+      final expected = p.join(await directory.resolveSymbolicLinks(), p.basename(_ps2LanHome));
+      if (!p.equals(await destination.resolveSymbolicLinks(), expected)) {
+        throw const FormatException('The PS2 LAN core folder must be separate from the offline emulator.');
+      }
+      await _publishCore(
+        libraryName(RetroPlatform.ps2),
+        archive.path,
+        destination: destination.path,
+        verify: (file) async {
+          if (await AssetDownload.sha256Of(file.path) != libraryDigest || !_ps2LanLibrary(file)) {
+            throw const FormatException('The PS2 LAN core did not pass verification.');
+          }
+        },
+      );
+      _ps2LanChecks.remove(p.absolute(p.join(_ps2LanHome, libraryName(RetroPlatform.ps2))));
+    } finally {
+      await stage.delete(recursive: true);
+    }
+  }
 
   Future<void> install(RetroPlatform platform, {void Function(int, int)? progress}) async {
     final name = libraryName(platform);
     final installed = isInstalled(platform);
     if (platform == RetroPlatform.ps3) {
-      final (archiveDigest, libraryDigest) = _ps3Digests();
+      final (archiveDigest, libraryDigest) = _coreDigests(ps3CoreDigests, (
+        _patchedPs3Archive,
+        _patchedPs3Library,
+      ), 'PS3');
       if (installed && await AssetDownload.sha256Of(p.join(root, name)) == libraryDigest) return;
       final directory = packageDirectory;
       if (directory == null) {
@@ -100,24 +182,28 @@ class ManagedRetro {
     );
   }
 
-  (String, String) _ps3Digests() {
-    final configured = ps3CoreDigests;
-    if (configured == null) return (_patchedPs3Archive, _patchedPs3Library);
+  static (String, String) _coreDigests(String? configured, (String, String) pinned, String label) {
+    if (configured == null) return pinned;
     if (!RegExp(r'^[a-fA-F0-9]{64}:[a-fA-F0-9]{64}$').hasMatch(configured) || configured.length != 129) {
-      throw const FormatException('Set PS3 core digests to the package and DLL SHA-256 values separated by a colon.');
+      throw FormatException('Set $label core digests to the package and DLL SHA-256 values separated by a colon.');
     }
     return (configured.substring(0, 64).toLowerCase(), configured.substring(65).toLowerCase());
   }
 
-  Future<void> _publishCore(String name, String archive, {required Future<void> Function(File) verify}) async {
-    final directory = await Directory(root).create(recursive: true);
+  Future<void> _publishCore(
+    String name,
+    String archive, {
+    String? destination,
+    required Future<void> Function(File) verify,
+  }) async {
+    final directory = await Directory(destination ?? root).create(recursive: true);
     final stage = await directory.createTemp('install-');
     try {
       await SafeUnpack.unpack(archive, stage.path);
       final candidate = File(p.join(stage.path, name));
       if (!_windowsX64Library(candidate)) throw const FormatException('The download contains no Windows x64 core.');
       await verify(candidate);
-      await candidate.rename(p.join(root, name));
+      await candidate.rename(p.join(directory.path, name));
     } finally {
       await stage.delete(recursive: true);
     }

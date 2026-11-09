@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
-  test('PS2 LAN requires the named DEV9 export in the installed x64 DLL', () {
+  test('PS2 LAN verifies the DEV9 export and installs separately from the offline core', () async {
     final root = Directory.systemTemp.createTempSync('anyps5-managed-');
     addTearDown(() => root.deleteSync(recursive: true));
     final managed = ManagedRetro(root.path);
@@ -51,6 +51,12 @@ void main() {
     bytes.setAll(raw + 52, 'retro_anyps5_dev9_bind_v1'.codeUnits);
     file.writeAsBytesSync(bytes);
     expect(managed.supportsPs2Lan, isTrue);
+    final package = File(p.join(root.path, 'pcsx2_libretro.dll.zip'))
+      ..writeAsBytesSync(
+        ZipEncoder().encode(Archive()..addFile(ArchiveFile('pcsx2_libretro.dll', bytes.length, bytes))),
+      );
+    final archiveDigest = await AssetDownload.sha256Of(package.path);
+    final libraryDigest = await AssetDownload.sha256Of(file.path);
     u32(section + 36, 0);
     file.writeAsBytesSync(bytes);
     expect(managed.supportsPs2Lan, isFalse, reason: 'A data export is not a DEV9 implementation.');
@@ -58,6 +64,39 @@ void main() {
     u32(raw + 40, rva + 52);
     file.writeAsBytesSync(bytes);
     expect(managed.supportsPs2Lan, isFalse, reason: 'A forwarded export is not a DEV9 implementation.');
+    final offline = file.readAsBytesSync();
+    final preview = ManagedRetro(root.path, ps2LanCoreDigests: '$archiveDigest:$libraryDigest');
+    expect(preview.installedPs2LanHome, isNull);
+    await expectLater(managed.installPs2Lan(package.path), throwsFormatException);
+    expect(preview.installedPs2LanHome, isNull);
+    await preview.installPs2Lan(package.path);
+    final installed = File(p.join(preview.installedPs2LanHome!, 'pcsx2_libretro.dll'));
+    expect(await AssetDownload.sha256Of(installed.path), libraryDigest);
+    expect(await file.readAsBytes(), offline);
+    await preview.installPs2Lan(package.path);
+    expect(await AssetDownload.sha256Of(installed.path), libraryDigest);
+
+    final invalid = File(p.join(root.path, 'invalid.zip'))..writeAsBytesSync([1, 2, 3]);
+    await expectLater(preview.installPs2Lan(invalid.path), throwsFormatException);
+    expect(await AssetDownload.sha256Of(installed.path), libraryDigest);
+    final wrongCore = File(p.join(root.path, 'wrong-core.zip'))
+      ..writeAsBytesSync(
+        ZipEncoder().encode(Archive()..addFile(ArchiveFile('pcsx2_libretro.dll', offline.length, offline))),
+      );
+    final wrongArchiveDigest = await AssetDownload.sha256Of(wrongCore.path);
+    final wrongLibraryDigest = await AssetDownload.sha256Of(file.path);
+    final wrong = ManagedRetro(root.path, ps2LanCoreDigests: '$wrongArchiveDigest:$wrongLibraryDigest');
+    await expectLater(wrong.installPs2Lan(wrongCore.path), throwsFormatException);
+    expect(await AssetDownload.sha256Of(installed.path), libraryDigest);
+    await installed.writeAsBytes([0], mode: FileMode.append);
+    expect(ManagedRetro(p.dirname(installed.path)).supportsPs2Lan, isTrue);
+    expect(
+      preview.installedPs2LanHome,
+      isNull,
+      reason: 'A DEV9 export does not establish the managed package identity.',
+    );
+    await preview.installPs2Lan(package.path);
+    expect(preview.installedPs2LanHome, isNotNull);
   });
 
   test('a configured PS3 package must exist and match the supported build', () async {
