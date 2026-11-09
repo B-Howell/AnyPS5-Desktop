@@ -162,6 +162,8 @@ extension TogetherPs2Lan on TogetherModel {
         return;
       }
       if (active()) app.show(T.text('ps2LanDisc'));
+    } on Ps2LanProfileInUse {
+      if (active()) app.show(T.text('ps2LanProfileInUse'));
     } on Object {
       if (active()) app.show(T.text('ps2LanDisconnected'));
     } finally {

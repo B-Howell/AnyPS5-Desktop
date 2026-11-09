@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/host.dart';
+import 'package:anyps5_desktop/core/online/ps2_lan_profile.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/components.dart';
 import 'package:anyps5_desktop/ui/console_badge.dart';
@@ -19,7 +21,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('anyps5/retro_core');
 
-  test('PS2 LAN boots the embedded core with a private BIOS copy, save directory and adapter', () async {
+  test('PS2 LAN keeps a private network memory card and saves across rooms', () async {
     final environment = <String, String>{};
     final fixture = makeFixture(system: HostSystem.windows, environment: environment);
     addTearDown(fixture.dispose);
@@ -45,11 +47,13 @@ void main() {
     );
     Map<Object?, Object?>? start;
     var stopped = false;
+    Completer<void>? stopRequested;
     final frame = Uint8List(14)..[0] = 255;
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(channel, (call) async {
       switch (call.method) {
         case 'start':
+          stopped = false;
           start = call.arguments as Map<Object?, Object?>;
           return 7;
         case 'status':
@@ -59,36 +63,83 @@ void main() {
           expect(call.arguments['frames'], [frame]);
           return [frame];
         case 'stop':
-          stopped = true;
+          if (stopRequested case final pending?) {
+            pending.complete();
+          } else {
+            stopped = true;
+          }
       }
       return null;
     });
     addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
+    final offlineCard = File(p.join(home, 'system', 'pcsx2', 'memcards', 'Mcd001.ps2'))
+      ..createSync(recursive: true)
+      ..writeAsBytesSync([9]);
     final mac = Uint8List.fromList([2, 0, 0, 0, 0, 1]);
     final session = await app.preparePs2Lan(game, mac, canBoot: () => true);
     final args = start!;
     final system = args['system']! as String;
     final saves = args['saves']! as String;
+    final networkCard = File(p.join(system, 'pcsx2', 'memcards', 'Mcd001.ps2'));
+    final gameSave = File(p.join(saves, 'fixture.sav'));
     try {
       expect(args['core'], core.path);
       expect(args['disc'], disc.path);
       expect(args['ps2LanMac'], mac);
-      expect(p.isWithin(home, system), isFalse);
+      expect(system, isNot(p.join(home, 'system')));
       final isolatedBios = File(p.join(system, 'pcsx2', 'bios', 'anyps5-imported.bin'));
       expect(isolatedBios.readAsBytesSync().first, 7);
       expect(isolatedBios.lengthSync(), bios.lengthSync());
       expect(Directory(saves).listSync(), isEmpty);
       expect(app.embeddedGame?.isPs2Lan, isTrue);
       expect(await session.exchange([frame]), [frame]);
+      networkCard.createSync(recursive: true);
+      networkCard.writeAsBytesSync([4, 5, 6]);
+      gameSave.writeAsBytesSync([8]);
     } finally {
       await session.close();
       await session.done.timeout(const Duration(seconds: 4));
     }
-    expect(Directory(system).existsSync(), isFalse);
-    expect(Directory(saves).existsSync(), isFalse);
+    final nextMac = Uint8List.fromList([2, 0, 0, 0, 0, 2]);
+    final rejoined = await app.preparePs2Lan(game, nextMac, canBoot: () => true);
+    try {
+      expect(start!['system'], system);
+      expect(start!['saves'], saves);
+      expect(start!['ps2LanMac'], nextMac);
+      expect(networkCard.readAsBytesSync(), [4, 5, 6]);
+      expect(gameSave.readAsBytesSync(), [8]);
+    } finally {
+      await rejoined.close();
+      await rejoined.done.timeout(const Duration(seconds: 4));
+    }
+    expect(offlineCard.readAsBytesSync(), [9]);
     expect(bios.readAsBytesSync().first, 7);
     expect(original.readAsBytesSync(), [1, 2, 3]);
+
+    start = null;
+    final stopping = stopRequested = Completer<void>();
+    final failed = expectLater(
+      app.preparePs2Lan(game, mac, canBoot: () {
+        if (start != null) throw StateError('Launch interrupted after native startup');
+        return true;
+      }),
+      throwsStateError,
+    );
+    try {
+      await stopping.future.timeout(const Duration(seconds: 3));
+      await expectLater(
+        app.preparePs2Lan(game, mac, canBoot: () => true),
+        throwsA(isA<Ps2LanProfileInUse>()),
+      );
+    } finally {
+      stopRequested = null;
+      stopped = true;
+      await failed;
+      await app.embeddedGame?.exitCode.timeout(const Duration(seconds: 3));
+    }
+    expect(app.embeddedGame, isNull);
+    expect(networkCard.readAsBytesSync(), [4, 5, 6]);
   }, skip: !Platform.isWindows);
 
   test('PS3 graphics preferences keep separate choices for each title', () {

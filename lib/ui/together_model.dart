@@ -16,6 +16,7 @@ import '../core/online/ps1_netplay_match.dart';
 import '../core/online/ps1_local_handoff.dart';
 import '../core/online/ps1_netplay_media.dart';
 import '../core/online/ps1_netplay_session.dart';
+import '../core/online/ps2_lan_profile.dart';
 import '../core/online/retro_lan_match.dart';
 import '../core/online/retro_online_rooms.dart';
 import '../core/profiles/profiles.dart' show ProfileAccount, ProfileMode;

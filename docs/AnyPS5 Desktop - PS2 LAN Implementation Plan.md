@@ -323,18 +323,32 @@ requires a verified ISO. CHD identity is not implemented.
 [Emulator preflight](../lib/core/managed_retro.dart) checks the Windows
 DLL for the DEV9 binding before sending an invite. Use the managed
 emulator directory or `ANYPS5_LIBRETRO_HOME` with a patched
-`pcsx2_libretro.dll`, and import a PS2 BIOS. [Embedded launch](../lib/ui/app_model.dart) copies the BIOS into
-a temporary system directory and creates separate, empty save storage for
-each session. This preview deletes that storage after the game exits, so
-LAN-session saves and network profiles do not carry over. Existing offline
-saves stay separate. After the room connects, both users open the game's
-own LAN menu. **Leave LAN Play** in the Quick Menu closes the session, and
-restart trials are unavailable while it is active.
+`pcsx2_libretro.dll`, and import a PS2 BIOS. [Embedded launch](../lib/ui/app_model.dart)
+uses a [persistent PS2 LAN profile](../lib/core/online/ps2_lan_profile.dart)
+under `RetroLan/PS2` beside the launcher toolkits. Each launcher profile
+has its own directory, which holds a copy of the selected BIOS, the PS2
+LAN memory cards and the core save directory. Games that use the shared
+PS2 card can reuse the network configuration across rooms and titles.
+Offline cards and saves remain separate. A Windows file lock prevents
+another instance from opening the same LAN profile until the game exits.
+Closing the game releases the lock and retains the card.
+
+After the room connects, open the game's LAN menu. If the game prompts
+for network setup, choose automatic IP (DHCP) and save the configuration
+to its memory card. The host and guest each do this once per compatible
+network configuration. The launcher does not declare the network ready
+just because a card file exists. **Leave LAN Play** in the Quick Menu closes
+the session, and restart trials are unavailable while it is active.
 
 The [library test](../test/core/retro_library_test.dart) verifies serial
 and revision extraction with a conflicting manifest. The
 [emulator test](../test/ui/embedded_retro_game_test.dart) checks the private
-launch arguments, frame exchange and cleanup through a mocked runner.
+launch arguments and frame exchange through a mocked runner, then reopens
+the same card and save data in a second room with a different virtual MAC.
+It also interrupts a launch after native startup and verifies that the
+profile stays locked until the core reports exit.
+The [profile tests](../test/core/online/ps2_lan_profile_test.dart) cover
+exclusive access, separate owners and lease release after a BIOS copy failure.
 The [managed core test](../test/core/managed_retro_test.dart) verifies the
 export check, and the [invite routing test](../test/ui/together_test.dart)
 checks that PS2 invites cannot join a PS5 session on a build with LAN off.
@@ -447,10 +461,22 @@ core and bundle hashes, runner source, scripted inputs, teardown receipt
 and paired captures of the lobby, gameplay, results and scores. This run
 qualifies the two real guest instances and Windows WebRTC transport on one
 PC. Hosted AnyTogether signaling, WAN or TURN, and the shipping launcher
-UI are separate gates. The workers used preconfigured scratch cards. The
-shipping [PS2 LAN launch](../lib/ui/app_model.dart) creates a temporary card
-environment for each room, so the next setup gate is to persist the user's
-PS2 network configuration while keeping live test cards isolated.
+UI are separate gates. The workers used preconfigured scratch cards. This
+run predates the persistent PS2 LAN profile and does not qualify the first
+in-game network setup on a blank card.
+
+### Persistent card reopen on the native core
+
+Two sequential headless TimeSplitters launches used the Windows D3D11
+worker and the new profile lease. The first launch used a preconfigured
+scratch card and reached the host lobby. The second opened the same
+profile directory, verified the first launch's saved card hash, used a
+different virtual MAC and reached the LAN browser without repeating the
+game's setup. The private DHCP fixture issued one lease in each launch.
+Both game and lease processes exited zero. The test used a local DHCP
+fixture with one worker at a time. It verifies reuse of a saved card
+across processes, while blank-card setup and hosted play remain open.
+Evidence is stored beside the core under `timesplitters-lan/profile-reopen`.
 
 TimeSplitters: Future Perfect is a second PS2 fixture. Its US NTSC disc
 reports `SLUS21148` and version `1.00` in `SYSTEM.CNF`. The [original manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)

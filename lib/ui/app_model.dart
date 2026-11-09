@@ -75,6 +75,7 @@ import '../core/together/talk_key.dart';
 import '../core/together/token_store.dart';
 import '../core/online/online_peer_mesh.dart';
 import '../core/online/ps1_netplay_media.dart';
+import '../core/online/ps2_lan_profile.dart';
 import '../core/online/retro_lan_match.dart';
 import '../core/together/voice_mesh.dart';
 import '../core/themes/theme_design.dart';
@@ -4027,39 +4028,32 @@ class AppModel extends ChangeNotifier {
     if (!managedRetroAvailable || disc?.platform != RetroPlatform.ps2 || bios == null) {
       throw StateError('PS2 LAN requires the embedded emulator and a PS2 BIOS.');
     }
-    final scratch = await Directory.systemTemp.createTemp('anyps5-ps2-lan-');
-    Future<void> cleanup() async {
-      try {
-        await scratch.delete(recursive: true);
-      } on FileSystemException {
-        // An open OS handle can defer cleanup of this temporary profile.
-      }
-    }
-
+    if (!canBoot()) throw StateError('The PS2 LAN room closed before the game could start.');
+    final profile = await Ps2LanProfile.open(
+      root: p.join(p.dirname(paths.toolkits), 'RetroLan', 'PS2'),
+      owner: currentProfile?.id ?? LauncherProfile.legacyId,
+      bios: bios,
+    );
+    Future<void>? launch;
     try {
-      final system = p.join(scratch.path, 'system');
-      final biosFolder = await Directory(p.join(system, 'pcsx2', 'bios')).create(recursive: true);
-      await File(bios).copy(p.join(biosFolder.path, 'anyps5-imported.bin'));
-      final saves = await Directory(p.join(scratch.path, 'saves')).create();
       if (!canBoot()) throw StateError('The PS2 LAN room closed before the game could start.');
       final booted = Completer<EmbeddedRetroGame?>();
       closeOverlay();
-      final launch = _playRetro(
+      final settled = launch = _playRetro(
         game,
         disc!,
         booted: booted,
         canBoot: canBoot,
-        ps2Lan: (mac: mac, system: system, saves: saves.path),
-      ).whenComplete(cleanup);
-      final run = await Future.any([booted.future, launch.then<EmbeddedRetroGame?>((_) => null)]);
+        ps2Lan: (mac: mac, system: profile.system, saves: profile.saves),
+      ).whenComplete(profile.close);
+      final run = await Future.any([booted.future, settled.then<EmbeddedRetroGame?>((_) => null)]);
       if (run == null) {
-        await launch;
+        await settled;
         throw StateError('The PS2 LAN game could not start.');
       }
-      return (exchange: run.exchangePs2LanFrames, close: run.close, done: launch);
-    } on Object {
-      await cleanup();
-      rethrow;
+      return (exchange: run.exchangePs2LanFrames, close: run.close, done: settled);
+    } finally {
+      if (launch == null) await profile.close();
     }
   }
 
@@ -4117,6 +4111,7 @@ class AppModel extends ChangeNotifier {
     sounds.play(Cue.select);
     starting = game;
     _changed();
+    EmbeddedRetroGame? lanRun;
     try {
       if (managed != null) {
         final label = ManagedRetro.platformName(disc.platform);
@@ -4230,6 +4225,7 @@ class AppModel extends ChangeNotifier {
           logFile: paths.logFile(game.titleId),
         );
       }
+      if (ps2Lan != null && run is EmbeddedRetroGame) lanRun = run;
       running = (game, run);
       _stopped = false;
       stopping = false;
@@ -4322,6 +4318,13 @@ class AppModel extends ChangeNotifier {
         show('${T.text('startFailed')}: ${game.name} (exit $code).');
       }
     } on Object catch (error) {
+      if (lanRun != null && identical(running?.$2, lanRun)) {
+        try {
+          await lanRun.close();
+        } on Object catch (stopError) {
+          _padLog?.call('retro: interrupted PS2 LAN launch could not stop the core: $stopError');
+        }
+      }
       starting = null;
       _retroSetupDetail = null;
       _retroSetupPercent = null;
@@ -4329,6 +4332,16 @@ class AppModel extends ChangeNotifier {
       show('${T.text('startFailed')}: $error');
     } finally {
       if (booted != null && !booted.isCompleted) booted.complete(null);
+      if (lanRun != null) {
+        // The LAN card remains leased until the core has finished writing it.
+        await lanRun.exitCode;
+        if (identical(running?.$2, lanRun)) {
+          running = null;
+          stopping = false;
+          _stopTimer?.cancel();
+          _stopTimer = null;
+        }
+      }
       if (identical(_retroSettled, settled)) _retroSettled = null;
       settled.complete();
     }
