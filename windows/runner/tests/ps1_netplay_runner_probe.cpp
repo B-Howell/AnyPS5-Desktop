@@ -143,6 +143,8 @@ int main(int argc, char** argv) {
           std::ofstream file(std::filesystem::u8path(path), std::ios::binary);
           if (!file.write(reinterpret_cast<const char*>(bytes.data()),
                           static_cast<std::streamsize>(bytes.size()))) return 7;
+          file.close();
+          if (!file) return 7;
           std::cout << "checkpoint " << frame << ' ' << bytes.size() << std::endl;
           break;
         }

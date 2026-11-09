@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:anyps5_desktop/core/online/online_peer_mesh.dart';
+import 'package:anyps5_desktop/core/online/ps1_local_handoff.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_identity.dart';
+import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_peer.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_session.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_wire.dart';
@@ -9,13 +13,134 @@ import 'package:anyps5_desktop/ui/online_webrtc.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import 'webrtc_native_worker.dart';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   const report = MethodChannel('anyps5/ps1_webrtc_probe');
   try {
-    await report.invokeMethod<void>('pass', await _exercise());
+    final config = Platform.environment['ANYPS5_PS1_WEBRTC_NATIVE'];
+    await report.invokeMethod<void>('pass', config == null ? await _exercise() : await _nativeExercise(config));
   } on Object catch (error, stack) {
     await report.invokeMethod<void>('fail', '$error\n$stack');
+  }
+}
+
+Future<String> _nativeExercise(String config) async {
+  final args = (jsonDecode(await File(config).readAsString()) as List).cast<String>();
+  if (args.length != 5) throw const FormatException('Expected a worker, core, CUE, BIOS and disc serial.');
+  final profile = Ps1NetplayProfile.tryRead(args[4]);
+  if (profile == null) throw const FormatException('Invalid PS1 disc serial.');
+  final media = await Ps1NetplayMedia.verify(profile: profile, core: args[1], disc: args[2], bios: args[3]);
+  if (!media.supportsHandoff) throw StateError('The test needs the portable core.');
+  final work = await Directory.systemTemp.createTemp('anyps5-ps1-webrtc-');
+  final hostState = File('${work.path}/host.state');
+  final guestState = File('${work.path}/guest.state');
+  final launch = [args.first, media.core, media.disc, media.bios];
+  WebRtcNativeWorker? local;
+  WebRtcNativeWorker? remote;
+  GameLink? hostLink;
+  GameLink? guestLink;
+  Ps1NetplayPeer? hostPeer;
+  Ps1NetplayPeer? guestPeer;
+  try {
+    final host = local = await WebRtcNativeWorker.spawn(launch, hostState, 0, local: true);
+    await host.waitForPicture(180);
+    await host.setPad(8);
+    final guest = remote = await WebRtcNativeWorker.spawn(launch, guestState, 1);
+    await guest.setPad(256);
+    final links = WebRtcGameLinks();
+    hostLink = await links.link([]);
+    guestLink = await links.link([]);
+    var held = 0;
+    var replayed = 0;
+    var stateBytes = 0;
+    final handoff = Ps1LocalHandoff(
+      ready: () async => true,
+      capture: () async {
+        final snapshot = await host.capture();
+        stateBytes = snapshot.state.length;
+        return snapshot;
+      },
+      hold: () async => held = await host.hold(),
+      read: (first) => host.readHistory(first, held),
+      resume: host.resume,
+      begin: host.start,
+      exchange: host.sync,
+    );
+    final sender = hostPeer = Ps1NetplayPeer(
+      link: hostLink,
+      identity: media.identity,
+      runner: handoff,
+      seat: 0,
+      hostEpoch: 23,
+      sendSignal: (signal) async => guestPeer!.receiveSignal(signal),
+      captureCheckpoint: handoff.capture,
+      catchupSource: handoff.source,
+    );
+    final receiver = guestPeer = Ps1NetplayPeer(
+      link: guestLink,
+      identity: media.identity,
+      runner: guest,
+      seat: 1,
+      sendSignal: (signal) async => sender.receiveSignal(signal),
+      restoreCheckpoint: (snapshot) async {
+        // Keep the local host advancing while the guest is still loading.
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+        await guest.restore(snapshot);
+      },
+      catchupReplay: (first, batch) async {
+        await guest.replay(first, batch);
+        replayed += batch.length;
+      },
+    );
+    await receiver.open();
+    await sender.open();
+    final elapsed = Stopwatch()..start();
+    while ((sender.session.confirmedFrame ?? -1) < 359 || (receiver.session.confirmedFrame ?? -1) < 359) {
+      if (elapsed.elapsed > const Duration(seconds: 17) ||
+          sender.session.ended != null ||
+          receiver.session.ended != null) {
+        throw StateError(
+          'Native handoff stalled. Host: ${sender.session.ended}, guest: ${receiver.session.ended}, '
+          'replayed: $replayed.',
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    for (final frame in [119, 239, 359]) {
+      if (host.fingerprints[frame] == null || host.fingerprints[frame] != guest.fingerprints[frame]) {
+        throw StateError('Native RAM fingerprints differ at frame $frame.');
+      }
+    }
+    if (sender.session.ended != null || receiver.session.ended != null) {
+      throw StateError('A peer left before the test completed.');
+    }
+    if (replayed < 10 || !host.sentButtons.contains(8) || !guest.sentButtons.contains(256)) {
+      throw StateError('The test did not exercise catch-up and both controllers.');
+    }
+    await receiver.leave();
+    await sender.done.timeout(const Duration(seconds: 6));
+    final picture = await host.picture();
+    await host.waitForPicture(picture + 15);
+    return 'Native WebRTC loopback passed for ${profile.titleId}: $stateBytes checkpoint bytes, '
+        '$replayed replay frames, 360 live frames with three matching RAM fingerprints, and host resumed local play.';
+  } finally {
+    try {
+      await Future.wait([
+        if (hostPeer != null) hostPeer.leave() else if (hostLink != null) hostLink.close(),
+        if (guestPeer != null) guestPeer.leave() else if (guestLink != null) guestLink.close(),
+      ]).timeout(const Duration(seconds: 4));
+    } finally {
+      try {
+        await Future.wait([if (local != null) local.stop(), if (remote != null) remote.stop()]);
+      } finally {
+        for (final state in [hostState, guestState]) {
+          if (await state.exists()) await state.delete();
+        }
+        await work.delete();
+      }
+    }
   }
 }
 

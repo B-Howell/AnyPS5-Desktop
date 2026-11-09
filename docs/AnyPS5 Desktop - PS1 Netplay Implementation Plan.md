@@ -317,10 +317,22 @@ the plugin headers. Link `flutter_windows.dll.lib`, `flutter_wrapper_app.lib`,
 `flutter_wrapper_plugin.lib`, `flutter_webrtc_plugin.lib` and `user32.lib`.
 Stage the matching debug Flutter DLL, plugin DLL and libwebrtc DLL next
 to the executable and `icudtl.dat` under `data`. Run the executable with
-the `data` directory as its only argument. This probe isolates transport
-from the emulator and hosted service. Native-core correctness is covered
-by the separate worker probe. Authenticated invites and WAN or relay
-play still require end-to-end verification.
+the `data` directory as its only argument.
+
+To include the real emulator, build the [native worker probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp)
+and set `ANYPS5_PS1_WEBRTC_NATIVE` to a JSON file containing an array of
+five strings in this order. Use the worker executable, portable SwanStation
+DLL, local CUE, BIOS, and boot serial. The [worker client](../tool/ps1_netplay/webrtc_native_worker.dart)
+starts isolated host and guest cores, pipes digital pad input, and sends
+the host's actual checkpoint through WebRTC. It verifies guest replay,
+360 confirmed frames, three matching RAM fingerprints, and local frames
+after the guest leaves. The runner owns the worker processes through a
+Windows job object so a probe timeout cannot leave them behind.
+The Windows probe passed with Crash Team Racing and Tekken 3 using the
+same code. Each run transferred 4,359,153 checkpoint bytes and replayed
+56 or 57 frames before the new input timeline started.
+Signaling stays in-process. This check does not cover authenticated
+invites, WAN or relay play, or a finished match.
 
 The [Windows worker](../windows/runner/retro_core_host.cpp) starts with
 isolated storage, the full BIOS boot and two digital pads. It holds until both inputs for a
