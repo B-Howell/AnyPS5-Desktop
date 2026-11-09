@@ -13,6 +13,11 @@ final class _Ps3PartyAttempt {
 }
 
 extension TogetherPs3Online on TogetherModel {
+  void ps3ProviderFailed(Object? party) {
+    final attempt = _ps3Party;
+    if (attempt != null && identical(attempt, party)) attempt.cancel();
+  }
+
   bool get _ps3LaunchAvailable =>
       app.managedRetroAvailable &&
       app.running == null &&

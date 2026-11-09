@@ -333,6 +333,7 @@ $ppu:
       await poll();
       expect(changes, priorChanges + 1);
     }
+    expect(await game.initialProviderFailure.timeout(const Duration(seconds: 2)), isNull);
   });
 
   test('rejects an unqualified provider or shared offline system before boot', () async {

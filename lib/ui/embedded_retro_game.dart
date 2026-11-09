@@ -21,18 +21,19 @@ import 'retro_game_tuning.dart';
 export 'retro_game_tuning.dart' show EmbeddedOption, RetroTuningPersist;
 
 enum Ps3ProviderStatus {
-  unavailable('Connection status unavailable with this RPCS3 core.'),
-  waiting('Waiting for the game to start its network connection.'),
-  connecting('Connecting and signing in.'),
-  signaling('Checking the connection for multiplayer.'),
-  ready('Connected at startup. Use the game’s multiplayer menu to join.'),
-  connectionFailed('Could not connect to the provider. Check your connection and provider setup.'),
-  loginRejected('Sign-in was rejected. Check your RPCN account in Game Settings.'),
-  signalingFailed('Signed in, but multiplayer signaling did not respond.');
+  unavailable('ps3ProviderUnavailable'),
+  waiting('ps3ProviderWaiting'),
+  connecting('ps3ProviderConnecting'),
+  signaling('ps3ProviderSignaling'),
+  ready('ps3ProviderReady'),
+  connectionFailed('ps3ProviderConnectionFailed'),
+  loginRejected('ps3ProviderLoginRejected'),
+  signalingFailed('ps3ProviderSignalingFailed');
 
-  const Ps3ProviderStatus(this.detail);
+  const Ps3ProviderStatus(this.detailKey);
 
-  final String detail;
+  final String detailKey;
+  bool get failed => this == connectionFailed || this == loginRejected || this == signalingFailed;
 
   static Ps3ProviderStatus fromNative(Object? code) => switch (code) {
     0 => waiting,
@@ -70,6 +71,7 @@ class EmbeddedRetroGame extends RunningGame {
   final void Function(String, String) _onGraphicsSelected;
   final _ready = Completer<bool>();
   final _netplayReady = Completer<bool>();
+  final _initialProviderFailure = Completer<Ps3ProviderStatus?>();
   final Ps1NetplayMedia? _netplayMedia;
   final ({String core, String disc, String system}) _sourcePaths;
   int? _ordinaryRecovery;
@@ -130,6 +132,7 @@ class EmbeddedRetroGame extends RunningGame {
   bool get isPs3Online => _online;
   Ps3ProviderStatus? _ps3ProviderStatus;
   Ps3ProviderStatus? get ps3ProviderStatus => _online ? _ps3ProviderStatus ?? Ps3ProviderStatus.unavailable : null;
+  Future<Ps3ProviderStatus?> get initialProviderFailure => _initialProviderFailure.future;
   final bool localNetplayStaging;
   Ps1NetplayMedia? get stagedNetplayMedia => localNetplayStaging && _portableCheckpoint ? _netplayMedia : null;
   double? get displayAspect => switch (framing) {
@@ -278,6 +281,10 @@ class EmbeddedRetroGame extends RunningGame {
       var updated = false;
       if (_online) {
         final providerStatus = Ps3ProviderStatus.fromNative(status['ps3ProviderStatus']);
+        if (!_initialProviderFailure.isCompleted &&
+            (providerStatus == Ps3ProviderStatus.ready || providerStatus.failed)) {
+          _initialProviderFailure.complete(providerStatus.failed ? providerStatus : null);
+        }
         if (providerStatus != ps3ProviderStatus) {
           _ps3ProviderStatus = providerStatus;
           updated = true;
@@ -510,6 +517,7 @@ class EmbeddedRetroGame extends RunningGame {
     tuning.endSession();
     if (!_ready.isCompleted) _ready.complete(false);
     if (!_netplayReady.isCompleted) _netplayReady.complete(false);
+    if (!_initialProviderFailure.isCompleted) _initialProviderFailure.complete(null);
     _finished.complete(code);
   }
 

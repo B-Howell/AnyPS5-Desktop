@@ -558,6 +558,13 @@ the embedded worker reports its first presented frame. Cancel releases
 the room and keeps Closing visible while the worker shuts down, including
 when it arrives after cancellation. After the first presented frame,
 **Leave AnyTogether Room** releases the room and leaves the game open.
+If the embedded core reports a connection, sign-in, or signaling failure
+before its first successful provider connection, AnyPS5 displays the
+specific reason and releases that launch's party room. The same startup
+boundary applies: an opening worker stops, while a game that has
+presented its first frame stays open. Later status changes remain
+visible in the Quick Menu and do not automatically release the room
+after the provider has reported a successful connection.
 The [existing PS5 flow](../lib/ui/together_play.dart) remains separate.
 
 The [PS3 settings integration tests](../test/ui/ps3_settings_test.dart)

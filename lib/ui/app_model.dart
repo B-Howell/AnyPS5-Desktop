@@ -4518,6 +4518,7 @@ class AppModel extends ChangeNotifier {
       stopping = false;
       final cancelled = canBoot?.call() == false;
       if (cancelled) unawaited(stopRunningGame());
+      if (!cancelled && onlineProfile != null && run is EmbeddedRetroGame) _watchPs3ProviderFailure(run, ps3Party);
       if ((netplay != null || ps2Lan != null) && booted != null && !booted.isCompleted) {
         booted.complete(!cancelled && run is EmbeddedRetroGame ? run : null);
       }
@@ -6198,7 +6199,11 @@ class AppModel extends ChangeNotifier {
             rows: [
               PanelRow(id: 'resume', title: T.text('quickResume'), kind: ActionRow(resumeGame)),
               if (embeddedGame?.ps3ProviderStatus case final status?)
-                PanelRow(id: 'ps3ProviderStatus', title: 'PS3 provider connection', kind: InfoRow(status.detail)),
+                PanelRow(
+                  id: 'ps3ProviderStatus',
+                  title: T.text('ps3ProviderConnection'),
+                  kind: InfoRow(T.text(status.detailKey)),
+                ),
               // Settings › Battery & Heat: the profile that holds lifted for now.
               if (powerWatch.canUndo)
                 PanelRow(

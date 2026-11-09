@@ -120,8 +120,10 @@ void main() {
     final bootReply = Completer<void>();
     final cancelBeforeWorker = mode == 'guest-boot-cancel';
     final cancelBeforeFrame = mode == 'guest-first-frame-cancel';
+    final providerFailsDuringBoot = mode == 'guest-provider-boot-failed';
     final calls = <MethodCall>[];
     var stopped = false;
+    var providerStatus = 2;
     messenger.setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
       if (call.method == 'start') {
@@ -130,7 +132,13 @@ void main() {
         return 7;
       }
       if (call.method == 'stop') stopped = true;
-      return call.method == 'status' ? {'ended': stopped, 'presented': !cancelBeforeFrame} : null;
+      return call.method == 'status'
+          ? {
+              'ended': stopped,
+              'presented': !cancelBeforeFrame && !providerFailsDuringBoot,
+              'ps3ProviderStatus': providerStatus,
+            }
+          : null;
     });
     addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
     Future<void> waitFor(bool Function() settled) async {
@@ -147,7 +155,7 @@ void main() {
       );
     }
 
-    if (cancelBeforeWorker || cancelBeforeFrame) {
+    if (cancelBeforeWorker || cancelBeforeFrame || providerFailsDuringBoot) {
       addTearDown(() async {
         if (!bootReply.isCompleted) {
           final cancel = model.together.cancelPs3PartyAndWait();
@@ -316,6 +324,16 @@ void main() {
       onTimeout: () =>
           throw StateError('$mode launch timed out: ${model.toast}, ${server?.calls.map((call) => call.path)}'),
     );
+    if (providerFailsDuringBoot) {
+      await waitFor(() => model.running != null);
+      expect(model.embeddedGame?.startupVisible, isFalse);
+      providerStatus = 4;
+      await waitFor(() => model.starting == null && model.running == null && model.together.ps3PartyRows().isEmpty);
+      expect(server!.callsTo('game-sessions/$roomId/leave'), hasLength(1));
+      expect(model.toast, contains('Could not connect to the provider'));
+      expect(stopped, isTrue);
+      return;
+    }
     if (cancelBeforeWorker || cancelBeforeFrame) {
       if (cancelBeforeFrame) {
         await waitFor(() => model.running != null && calls.any((call) => call.method == 'status'));
@@ -369,7 +387,14 @@ void main() {
       );
       expect(calls.any((call) => call.method == 'pause'), isFalse);
       if (mode.startsWith('guest')) {
-        if (mode == 'guest-ended') {
+        if (mode == 'guest-provider-rejected') {
+          expect(server!.callsTo('game-sessions/$roomId/leave'), isEmpty);
+          providerStatus = 5;
+          await waitFor(() => model.together.ps3PartyRows().isEmpty);
+          expect(server.callsTo('game-sessions/$roomId/leave'), hasLength(1));
+          expect(model.toast, contains('Sign-in was rejected'));
+          expect(stopped, isFalse);
+        } else if (mode == 'guest-ended') {
           server!.push('game_session.ended', {'sessionId': roomId});
           await waitFor(() => model.together.ps3PartyRows().isEmpty);
           expect(server.callsTo('game-sessions/$roomId/leave'), isEmpty);
@@ -396,7 +421,16 @@ void main() {
     }
   }
 
-  for (final mode in ['solo', 'host', 'guest', 'guest-ended', 'guest-boot-cancel', 'guest-first-frame-cancel']) {
+  for (final mode in [
+    'solo',
+    'host',
+    'guest',
+    'guest-ended',
+    'guest-boot-cancel',
+    'guest-first-frame-cancel',
+    'guest-provider-rejected',
+    'guest-provider-boot-failed',
+  ]) {
     test(
       'PS3 $mode verifies setup and launches only the isolated profile',
       () => HttpOverrides.runWithHttpOverrides(() => verifySetup(mode), _LoopbackHttpOverrides()),

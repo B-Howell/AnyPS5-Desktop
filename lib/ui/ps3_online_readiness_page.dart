@@ -23,6 +23,16 @@ String _ps3OnlineIssueText(Ps3OnlineIssue issue) => T.text(switch (issue) {
 });
 
 extension Ps3OnlineReadinessPage on AppModel {
+  void _watchPs3ProviderFailure(EmbeddedRetroGame session, Object? party) {
+    unawaited(
+      session.initialProviderFailure.then((failure) {
+        if (failure == null || _disposed || _quitting || stopping || !identical(running?.$2, session)) return;
+        together.ps3ProviderFailed(party);
+        show(T.text(failure.detailKey));
+      }),
+    );
+  }
+
   PanelRow _ps3OnlineReadinessRow(Game game) => PanelRow(
     id: 'ps3-online-readiness',
     title: T.text('ps3OnlineReadiness'),
