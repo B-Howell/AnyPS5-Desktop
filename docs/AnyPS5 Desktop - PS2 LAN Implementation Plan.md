@@ -531,6 +531,28 @@ the first boot's scratch card. The recordings and logs are stored under
 the native core. The Settings action itself is covered by the mocked
 launcher test and still needs a pass in a packaged app.
 
+### Windows Release package check
+
+The multiplayer tree at `5322d69` with the [MSVC warning flag correction](../windows/CMakeLists.txt)
+built a Windows x64 Release bundle with Flutter 3.47.1, MSVC 19.29,
+CMake 4.4.4 and Ninja Multi-Config 1.13.2. The first Ninja build failed
+with D8021 because it passed literal quotes to `/wd`. The corrected
+build retained `/W4`, `/WX` and C4100 suppression. The scratch build also
+needed a short path and pre-extraction of media_kit's verified libmpv and
+ANGLE archives because the generator tried to link before extraction.
+The lockfile and authored application code matched the source archive.
+
+The local archive contains 95 verified release files. The package check
+loaded Flutter and WebRTC DLLs, checked the runner's DEV9 channel and
+packaged English and Turkish setup strings, and separately loaded the
+pinned LRPS2 DLL and resolved its DEV9 export. The
+[headless room fixture](../tool/ps1_netplay/webrtc_lan_probe.dart) then
+used the exact WebRTC DLLs from that package. It assigned distinct DHCP
+leases, exchanged matching Ethernet frames and released both endpoints.
+That fixture uses a headless debug Flutter host and synthetic NICs.
+The patched core remains a separate local artifact. Hosted AnyTogether
+signaling, WAN play and setup through the packaged UI remain open.
+
 TimeSplitters: Future Perfect is a second PS2 fixture. Its US NTSC disc
 reports `SLUS21148` and version `1.00` in `SYSTEM.CNF`. The [original manual](https://www.videogamemanual.com/PS2/TimeSplitters-%20Future%20Perfect%20%28USA%29.pdf)
 documents separate Online Game and LAN Game modes. The latter can exercise

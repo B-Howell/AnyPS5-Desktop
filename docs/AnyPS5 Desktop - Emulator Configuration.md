@@ -197,8 +197,11 @@ Use the Flutter version in the [upstream CI workflow](../.github/workflows/ci.ym
 with the Windows Desktop C++ toolchain. A fresh
 [Windows runner build](../windows/runner/CMakeLists.txt) fetches pinned,
 hash-verified Vulkan headers. Run `flutter pub get`, `flutter analyze`
-and `flutter build windows --release` from the repository root. For a
-separate local test profile, set ANYPS5_DESKTOP_EXPERIMENT_HOME to an
+and `flutter build windows --release` from the repository root. Use a short
+build path when running Ninja on Windows. The [Windows CMake settings](../windows/CMakeLists.txt)
+keep `/W4` and `/WX` enabled and pass `/wd4100` as one MSVC argument. Literal
+quotes around `4100` can survive Ninja generation and cause MSVC error D8021.
+For a separate local test profile, set ANYPS5_DESKTOP_EXPERIMENT_HOME to an
 absolute scratch directory before launching. The profile has its own
 config, emulator storage and logs, and skips desktop file and URL
 registration.
