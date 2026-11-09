@@ -37,6 +37,25 @@ class ManagedRetro {
 
   bool isInstalled(RetroPlatform platform) => _windowsX64Library(File(p.join(root, libraryName(platform))));
 
+  /// Imports are enabled only for the explicitly configured reviewer package.
+  Future<String?> verifiedPs3UpdateCore() async {
+    if (ps3CoreDigests == null) return null;
+    try {
+      final (_, digest) = _coreDigests(ps3CoreDigests, (_patchedPs3Archive, _patchedPs3Library), 'PS3');
+      final expected = p.join(await Directory(root).resolveSymbolicLinks(), libraryName(RetroPlatform.ps3));
+      final file = File(expected);
+      if (!p.equals(await file.resolveSymbolicLinks(), expected) ||
+          !_windowsX64Library(file, requiredExport: 'retro_anyps5_ps3_network_policy_v1')) {
+        return null;
+      }
+      return await AssetDownload.sha256Of(expected) == digest ? expected : null;
+    } on FileSystemException {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
   bool get supportsPs2Lan => _ps2LanLibrary(File(p.join(root, libraryName(RetroPlatform.ps2))));
 
   static bool _ps2LanLibrary(File library) => _windowsX64Library(library, requiredExport: 'retro_anyps5_dev9_bind_v1');

@@ -19,7 +19,11 @@ void main() {
   setUpAll(T.load);
 
   testWidgets('PS3 game settings show local online readiness and can recheck an installed update', (tester) async {
-    final fixture = makeFixture(system: HostSystem.windows);
+    final fixture = makeFixture(
+      system: HostSystem.windows,
+      environment: {'ANYPS5_PS3_CORE_DIGESTS': '${'0' * 64}:${'1' * 64}'},
+      pickFolder: (_) async => null,
+    );
     final model = fixture.model;
     addTearDown(() {
       model.dispose();
@@ -62,14 +66,21 @@ void main() {
     tester.view.physicalSize = const Size(1600, 1000);
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(body: PanelView(model: model)),
-      ),
+    Widget panel() => MaterialApp(
+      home: Scaffold(body: PanelView(model: model)),
     );
+    await tester.pumpWidget(panel());
     expect(find.text('No verified provider'), findsOneWidget);
     expect(find.textContaining('You can still play offline'), findsOneWidget);
     expect(find.text('BCUS98208'), findsOneWidget);
+    model.activateRow(model.panelCategories().single.rows.indexWhere((item) => item.id == 'ps3-update-prepare'));
+    await tester.pumpWidget(panel());
+    expect(find.text('Update 01.30 · 11 packages'), findsOneWidget);
+    expect(find.text('Choose Update Folder'), findsOneWidget);
+    expect(find.text('Install Update'), findsNothing);
+    model.panelCommand(Command.back);
+    expect(model.spot?.row, 'ps3-update-prepare');
+    model.panelCommand(Command.up);
     await tester.pumpWidget(const SizedBox.shrink());
 
     final update = p.join(

@@ -15,7 +15,7 @@ extension _Ps3OnlineReadinessPage on AppModel {
         Ps3OnlineReadiness.inspect(disc: game.retro!.path, managedSystem: _managedRetro.systemPath);
     var report = inspect();
     _emulatorMenu.openPage(
-      () => _ps3OnlineReadinessPanel(report, () {
+      () => _ps3OnlineReadinessPanel(report, _ps3UpdateRow(report), () {
         report = inspect();
         panelRow = _emulatorMenu.categories.single.rows.indexWhere((row) => row.id == _ps3OnlineRecheck);
         refresh();
@@ -24,7 +24,7 @@ extension _Ps3OnlineReadinessPage on AppModel {
   }
 }
 
-PanelCategory _ps3OnlineReadinessPanel(Ps3OnlineReadiness report, void Function() recheck) {
+PanelCategory _ps3OnlineReadinessPanel(Ps3OnlineReadiness report, PanelRow? update, void Function() recheck) {
   final (status, explanation) = switch (report.state) {
     Ps3OnlineReadinessState.discUnavailable => ('ps3OnlineDiscUnavailable', 'ps3OnlineDiscUnavailableDetail'),
     Ps3OnlineReadinessState.noProvider => ('ps3OnlineNoProvider', 'ps3OnlineNoProviderDetail'),
@@ -49,6 +49,7 @@ PanelCategory _ps3OnlineReadinessPanel(Ps3OnlineReadiness report, void Function(
         ),
       ],
       PanelRow(id: _ps3OnlineRecheck, title: T.text('ps3OnlineRecheck'), kind: ActionRow(recheck)),
+      ?update,
     ],
   );
 }

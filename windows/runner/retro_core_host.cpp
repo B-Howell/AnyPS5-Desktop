@@ -546,6 +546,7 @@ class RetroCoreSession {
         {Value("ended"), Value(ended)},
         {Value("error"), Value(ended ? error_ : std::string())},
         {Value("completed"), Value(package_completed_.load())},
+        {Value("rejected"), Value(package_rejected_.load())},
     };
   }
   void Stop() {
@@ -1460,7 +1461,9 @@ class RetroCoreSession {
       const bool installed = InstallPs3PackageBatch(
           packages_, [&](const std::string& package) {
             const GameInfo info{package.c_str(), nullptr, 0, nullptr};
-            return load(&info);
+            const bool accepted = load(&info);
+            package_rejected_ = !accepted;
+            return accepted;
           }, unload, [&] { return stop_.load(); }, [&](size_t count) {
             package_completed_ = static_cast<int32_t>(count);
           });
@@ -1675,6 +1678,7 @@ class RetroCoreSession {
   const std::optional<Ps3NetworkPolicy> online_;
   const std::vector<std::string> packages_;
   std::atomic<int32_t> package_completed_{0};
+  std::atomic<bool> package_rejected_{false};
   const bool ps3_;
   const bool local_staging_;
   flutter::TextureVariant texture_;

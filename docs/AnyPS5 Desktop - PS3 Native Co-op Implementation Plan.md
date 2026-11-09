@@ -140,16 +140,33 @@ rejection of linked packages, extra files, embedded NULs and an occupied
 staging system directory. The actual RPCS3 Windows package remains an
 acceptance gate.
 
-The dashboard importer should resolve the complete reviewed update chain
-before offering Install, then run the package operation without a gameplay
-surface. Install into a fresh staging profile, confirm the installed title,
-version and executable fingerprint, and only then make it available to
-online setup. If a package fails, report its required version and keep the
-previous profile usable. Qualify this flow with the Windows core before
-exposing it in Game Settings. The host count identifies the failed package
-in the reviewed chain. The caller is responsible for validating package
-digests, presenting the dependency information and promoting the staged
-title data after success.
+In a Windows reviewer configuration, **Game Settings → Online Readiness →
+Prepare Game Update** opens the [dashboard import panel](../lib/ui/ps3_update_panel.dart)
+for a matching disc and revision. The default offline package does not expose
+this action. The [managed core check](../lib/core/managed_retro.dart) requires
+an explicitly configured DLL SHA-256 and the network-policy export before
+the update worker can run.
+
+The [import transaction](../lib/core/ps3_update_import.dart) identifies local
+PKG files by size and SHA-256, reports missing revisions, and waits for
+**Install Update** before copying anything. It rechecks the staged copies,
+then publishes only the expected title, version and executable from the
+staging system into the isolated `OnlineUpdates` store. A redirected store is
+rejected. The [channel client](../lib/ui/ps3_update_worker.dart) reports
+package counts, retries temporary status failures and requests cancellation
+when the user leaves the page. It releases the lease after confirmed exit.
+If exit cannot be confirmed, the staging directory stays in place for safety.
+No network download or provider sign-in is part of this workflow.
+
+The [transaction tests](../test/core/ps3_update_import_test.dart) cover
+missing and changed packages, failed publication, cancellation and staging
+isolation. The [channel tests](../test/ui/ps3_update_worker_test.dart) cover
+success, cancellation, separate initialization and package errors, and
+lease recovery. The [settings widget test](../test/ui/ps3_settings_test.dart)
+exercises the route, visible update chain and Back focus. The production
+Dart transaction also published all 11 real LittleBigPlanet GOTY packages
+with the pinned Linux RPCS3 core through an isolated test adapter. The real
+Windows RPCS3 package and the protected provider lobby remain unqualified.
 
 ## 2. Make the embedded profile honor the selected settings
 
