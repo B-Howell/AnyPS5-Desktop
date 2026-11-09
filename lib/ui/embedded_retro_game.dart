@@ -117,6 +117,7 @@ class EmbeddedRetroGame extends RunningGame {
       !_closing &&
       !_finished.isCompleted &&
       activeOptions['swanstation_CPU_ExecutionMode'] == Ps1NetplayExecution.ordinaryHandoff.cpu;
+  bool continuedFromPs1Match = false;
 
   Future<String?> ordinaryMatchBios() async {
     if (!canParkOrdinaryPs1) return null;
@@ -293,6 +294,7 @@ class EmbeddedRetroGame extends RunningGame {
         }
       }
       _portableCheckpoint = status['portableCheckpoint'] == true;
+      continuedFromPs1Match = status['ps1ContinuedFromMatch'] == true;
       final source = status['localBlankCardCheckpoint'];
       final sourceToken = !_netplay && source is int && source > 0 ? source : null;
       if (_ordinaryCheckpointSource != sourceToken) {
@@ -392,6 +394,11 @@ class EmbeddedRetroGame extends RunningGame {
     });
     if (accepted == true) _ordinaryRecovery = null;
     return accepted == true;
+  }
+
+  Future<void> preserveConfirmedPs1Progress(int source) async {
+    if (_netplayMedia?.execution != Ps1NetplayExecution.rollbackHandoff || _closing || _finished.isCompleted) return;
+    await _exchangeCheckpoint('ps1LocalCheckpointContinue', {'texture': textureId, 'source': source});
   }
 
   void playback({required bool playing, required bool focused}) {

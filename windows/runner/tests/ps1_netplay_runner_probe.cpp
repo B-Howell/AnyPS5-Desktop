@@ -96,7 +96,7 @@ void VerifyRollbackChannel(ProbeTexture& texture, char** argv) {
   std::cout << "Rollback launcher channel rejected aliasing and ran on one surface." << std::endl;
 }
 
-int VerifyReplacement(ProbeTexture& texture, char** argv, const char* spare) {
+int VerifyReplacement(ProbeTexture& texture, char** argv, const char* spare, bool continue_match) {
   ProbeMessenger messenger;
   RetroCoreHost host(&messenger, &texture);
   const auto system = std::filesystem::u8path(argv[3]).parent_path().u8string();
@@ -107,6 +107,10 @@ int VerifyReplacement(ProbeTexture& texture, char** argv, const char* spare) {
   match.emplace(Value("ps1NetplayBios"), Value(std::string(argv[3])));
   match.emplace(Value("ps1NetplayCpu"), Value("Recompiler"));
   if (spare) match.emplace(Value("ps1PresentationCore"), Value(std::string(spare)));
+  if (continue_match) {
+    const auto disc = std::filesystem::u8path(argv[2]);
+    match.at(Value("disc")) = Value((disc.parent_path() / L"." / disc.filename()).u8string());
+  }
   const auto texture_id = messenger.Call("start", Value(ordinary));
   const auto source = messenger.Wait("localBlankCardCheckpoint").at(Value("localBlankCardCheckpoint"));
   constexpr auto crop = "swanstation_Display_CropMode";
@@ -140,12 +144,49 @@ int VerifyReplacement(ProbeTexture& texture, char** argv, const char* spare) {
   failed.at(Value("core")) = Value(std::string(argv[4]));
   messenger.Call("start", Value(failed));
   messenger.Wait("ended");
-  messenger.Call("start", Value(match));
+  const auto match_texture = messenger.Call("start", Value(match));
   messenger.Wait("netplayReady");
   Map restore{{Value("discHash"), Value(digest)}, {Value("frame"), Value(0)},
               {Value("state"), std::get<Map>(blank).at(Value("state"))}};
   if (!std::get<bool>(messenger.Take(messenger.Call("ps1CheckpointImport", Value(restore)))) ||
       fingerprint() != before) throw std::runtime_error("The match lost the source frame");
+  auto recovery_fingerprint = before;
+  if (continue_match) {
+    if (!std::get<bool>(messenger.Call("netplayStart"))) throw std::runtime_error("Match failed to start");
+    constexpr int64_t frontier = 120;
+    int64_t frame = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < deadline) {
+      List remote;
+      for (auto tick = frame; tick < std::min(frontier, frame + 8); ++tick)
+        remote.emplace_back(List{Value(tick), Value(0), Value(0), Value(0), Value(0), Value(0)});
+      const auto update = std::get<Map>(messenger.Call("netplaySync", Value(Map{
+          {Value("remote"), Value(std::move(remote))}, {Value("acknowledgedFrame"), Value(frame)}})));
+      frame = IntegerValue(update.at(Value("frame"))).value();
+      if (frame > frontier) {
+        if (IntegerValue(update.at(Value("confirmedFrame"))) != frontier - 1)
+          throw std::runtime_error("The match did not establish the intended confirmed frontier");
+        const auto& hashes = std::get<List>(update.at(Value("fingerprints")));
+        const auto& hash = std::get<List>(hashes.at(0));
+        if (IntegerValue(hash.at(0)) != frontier - 1) throw std::runtime_error("Wrong confirmed fingerprint");
+        recovery_fingerprint = std::get<std::string>(hash.at(1));
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (frame <= frontier || recovery_fingerprint == before || fingerprint() == recovery_fingerprint)
+      throw std::runtime_error("The match did not advance beyond the confirmed frontier");
+    const auto args = [&](Value source) {
+      return Value(Map{{Value("texture"), match_texture}, {Value("source"), std::move(source)}});
+    };
+    messenger.Call("ps1LocalCheckpointContinue", args(Value(0)), "checkpoint");
+    const auto saved = messenger.Take(messenger.Call("ps1LocalCheckpointContinue", args(ticket)));
+    if (!std::holds_alternative<bool>(saved) || !std::get<bool>(saved))
+      throw std::runtime_error("The confirmed continuation was unavailable or exposed raw state");
+    if (std::get<bool>(messenger.Call("netplayStart")))
+      throw std::runtime_error("The frozen match accepted a restart");
+    messenger.Call("netplaySync", Value(Map{{Value("remote"), Value(List{})}}), "netplayInput");
+  }
   messenger.Call("ps1LocalCheckpointReopen", ticket, "busy");
   messenger.Call("ps1LocalCheckpointDiscard", ticket, "busy");
   messenger.Call("stop");
@@ -182,9 +223,21 @@ int VerifyReplacement(ProbeTexture& texture, char** argv, const char* spare) {
   const auto& restored_crop = std::get<Map>(options.at(Value(crop))).at(Value("activeValue"));
   if (IntegerValue(recovered_texture) == IntegerValue(texture_id) ||
       IntegerValue(recovered.at(Value("ps1RecoveredSource"))) != IntegerValue(source) ||
-      std::get<std::string>(restored_crop) != "Overscan" || fingerprint() != before)
+      std::get<std::string>(restored_crop) != "Overscan" || fingerprint() != recovery_fingerprint)
     throw std::runtime_error("The original frame was not recovered");
+  if (continue_match) texture.EnablePresentation(false);
   messenger.Call("pause", Value(false));
+  if (continue_match) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(12);
+    while (true) {
+      const auto status = std::get<Map>(messenger.Call("status"));
+      if (std::get<bool>(status.at(Value("ended"))) || std::chrono::steady_clock::now() >= deadline)
+        throw std::runtime_error("An invisible continuation did not fall back to the original session");
+      if (!std::get<bool>(status.at(Value("ps1ContinuedFromMatch")))) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    texture.EnablePresentation(true);
+  }
   if (!std::get<bool>(messenger.Wait("startupVisible").at(Value("hardware"))))
     throw std::runtime_error("The original renderer was not recovered");
   messenger.Call("stop");
@@ -195,7 +248,7 @@ int VerifyReplacement(ProbeTexture& texture, char** argv, const char* spare) {
     throw std::runtime_error("Stopping a provisional recovery wrote to the original card");
   const auto retry_texture = messenger.Call("ps1LocalCheckpointReopen", ticket);
   messenger.Wait("ps1RecoveredSource");
-  if (fingerprint() != before) throw std::runtime_error("Retry lost the original frame");
+  if (fingerprint() != recovery_fingerprint) throw std::runtime_error("Retry lost the recovery frame");
   const Value acceptance(Map{{Value("texture"), retry_texture}, {Value("source"), ticket}});
   messenger.Call("ps1LocalCheckpointAccept", acceptance, "checkpoint");
   messenger.Call("pause", Value(false));
@@ -210,7 +263,9 @@ int VerifyReplacement(ProbeTexture& texture, char** argv, const char* spare) {
   RestoreCard(card_path, saved_card.data(), saved_card.size());
   if (saved_card != source_card)
     throw std::runtime_error("Accepted recovery did not save the restored card");
-  std::cout << "Native method channel replaced the PS1 worker and recovered its original frame." << std::endl;
+  std::cout << (continue_match ? "Native channel recovered the confirmed frame and verified visibility fallback."
+                              : "Native method channel replaced the PS1 worker and recovered its original frame.")
+            << std::endl;
   return 0;
 }
 
@@ -407,7 +462,7 @@ int main(int argc, char** argv) {
     std::cout << "Confirmed PCM preserved order, 10 ms sample deadlines, and both 120 ms reserves." << std::endl;
     return 0;
   }
-  if (argc < 5 || argc > 8) return 2;
+  if (argc < 5 || argc > 9) return 2;
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
   ProbeTexture texture;
   if (argc == 7 && std::string_view(argv[5]) == "rollback-channel") {
@@ -428,14 +483,16 @@ int main(int argc, char** argv) {
       return 9;
     }
   }
-  if ((argc == 7 || argc == 8) && std::string_view(argv[5]) == "replace") {
+  if (argc >= 7 && std::string_view(argv[5]) == "replace") {
     try {
-      return VerifyReplacement(texture, argv, argc == 8 ? argv[7] : nullptr);
+      if (argc == 9 && std::string_view(argv[8]) != "continue") return 2;
+      return VerifyReplacement(texture, argv, argc >= 8 ? argv[7] : nullptr, argc == 9);
     } catch (const std::exception& failure) {
       std::cerr << failure.what() << '\n';
       return 8;
     }
   }
+  if (argc > 8) return 2;
   const auto seat = std::stoul(argv[4]);
   const auto primary_core_path = std::filesystem::u8path(argv[1]);
   const std::string_view mode = argc >= 6 ? argv[5] : "";

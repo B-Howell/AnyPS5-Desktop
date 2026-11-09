@@ -428,6 +428,8 @@ void main() {
   Future<void> verifyOrdinaryHandoff({
     required bool guestMode,
     Ps1NetplayRoomMode mode = Ps1NetplayRoomMode.ordinary,
+    bool continuationAccepted = true,
+    bool friendLeaves = false,
   }) async {
     final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
     var packageDirectory = packages;
@@ -562,7 +564,10 @@ void main() {
             'startupVisible': worker != 3 || recoveredPlaying,
             if (worker == 1) 'localBlankCardCheckpoint': 17,
             if (worker == 2) ...{'netplayReady': true, 'portableCheckpoint': true},
-            if (worker == 3) 'ps1RecoveredSource': 17,
+            if (worker == 3) ...{
+              'ps1RecoveredSource': 17,
+              'ps1ContinuedFromMatch': rollbackHandoff && !guestMode && continuationAccepted,
+            },
             'options': {
               'swanstation_CPU_ExecutionMode': {
                 'values': ['Recompiler'],
@@ -596,7 +601,13 @@ void main() {
           return 53;
         case 'ps1CheckpointResult':
           if (call.arguments == 51) await finishPark.future;
+          if (call.arguments == 54) return continuationAccepted;
           return call.arguments == 51 ? {'frame': 616, 'state': bytes} : true;
+        case 'ps1LocalCheckpointContinue':
+          expect(rollbackHandoff && !guestMode, isTrue);
+          expect(call.arguments, {'source': 17, 'texture': 42});
+          native.add('continue');
+          return 54;
         case 'ps1LocalCheckpointDetach':
           native.add('detach');
           return 17;
@@ -904,7 +915,11 @@ void main() {
       await eventually(() => row('ps1-netplay-leave').detail == 'Match in progress · Through the relay · 84 ms'),
       isTrue,
     );
-    choose('ps1-netplay-leave');
+    if (friendLeaves) {
+      await guest.leave();
+    } else {
+      choose('ps1-netplay-leave');
+    }
     expect(await eventually(() => native.contains('reopen')), isTrue);
     expect(model.starting, same(game));
     model.padCommand(PadCommand.home);
@@ -922,6 +937,7 @@ void main() {
       'match',
       'import',
       'start match',
+      if (rollbackHandoff) 'continue',
       'stop 2',
       'release 2',
       'reopen',
@@ -931,9 +947,12 @@ void main() {
     expect(model.running?.$1, same(game));
     expect(model.ordinaryPs1RecoveryPending, isFalse);
     expect(model.overlay, isNull);
+    if (rollbackHandoff && !continuationAccepted) {
+      expect(await eventually(() => model.toast == 'Resumed from where co-op started.'), isTrue);
+    }
     await guest.done.timeout(const Duration(seconds: 5));
     expect(guest.session.phase, Ps1NetplayPhase.closed);
-    expect(guest.session.ended, Ps1NetplayEnd.peerLeft);
+    expect(guest.session.ended, friendLeaves ? Ps1NetplayEnd.left : Ps1NetplayEnd.peerLeft);
   }
 
   const handoffFixtureTimeout = Timeout(Duration(seconds: 90));
@@ -945,6 +964,19 @@ void main() {
       timeout: handoffFixtureTimeout,
     );
   }
+  test(
+    'Host keeps confirmed progress when a friend leaves rollback co-op',
+    () => verifyOrdinaryHandoff(guestMode: false, mode: Ps1NetplayRoomMode.rollbackHandoff, friendLeaves: true),
+    skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null,
+    timeout: handoffFixtureTimeout,
+  );
+  test(
+    'Quick Menu restores the original point if a safe match return is unavailable',
+    () =>
+        verifyOrdinaryHandoff(guestMode: false, mode: Ps1NetplayRoomMode.rollbackHandoff, continuationAccepted: false),
+    skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null,
+    timeout: handoffFixtureTimeout,
+  );
   test(
     'Quick Menu starts an ordinary host match and returns to the original session',
     () => verifyOrdinaryHandoff(guestMode: false),

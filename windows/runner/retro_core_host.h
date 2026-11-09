@@ -6,7 +6,9 @@
 #include <flutter/method_channel.h>
 #include <flutter/texture_registrar.h>
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 
 class RetroCoreSession;
 struct Ps1OrdinaryRecovery;
@@ -23,7 +25,8 @@ class RetroCoreHost {
 
   flutter::TextureRegistrar* textures_;
   std::shared_ptr<RetroCoreSession> session_;
-  std::shared_ptr<const Ps1OrdinaryRecovery> ordinary_recovery_;
+  std::shared_ptr<Ps1OrdinaryRecovery> ordinary_recovery_;
+  std::optional<int64_t> ps1_return_request_;
   flutter::MethodChannel<flutter::EncodableValue> channel_;
 };
 

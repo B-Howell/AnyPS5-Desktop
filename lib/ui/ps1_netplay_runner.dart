@@ -31,6 +31,8 @@ final class EmbeddedPs1NetplayRunner implements Ps1NetplayRunner {
 
   Future<void> restoreCheckpoint(Ps1CheckpointSnapshot snapshot) => _activeGame.restoreNetplayCheckpoint(snapshot);
 
+  Future<void> preserveConfirmedProgress(int ticket) => _activeGame.preserveConfirmedPs1Progress(ticket);
+
   Future<void> replayHistory(int first, List<Ps1FrameInputs> frames) => _activeGame.replayNetplayHistory(first, frames);
 
   EmbeddedRetroGame get _activeGame {
@@ -67,6 +69,7 @@ final class OrdinaryPs1NetplayRunner implements Ps1NetplayRunner {
     required this._drainWorker,
     required this._importMatch,
     required this._recover,
+    this._preserveProgress,
   });
 
   final Ps1NetplayRunner _match;
@@ -76,12 +79,14 @@ final class OrdinaryPs1NetplayRunner implements Ps1NetplayRunner {
   final Future<void> Function() _drainWorker;
   final Future<void> Function(Ps1CheckpointSnapshot) _importMatch;
   final Future<void> Function(int) _recover;
+  final Future<void> Function(int)? _preserveProgress;
   Future<void>? _preparing;
   Future<void>? _stopping;
   Ps1CheckpointSnapshot? _checkpoint;
   int? _ticket;
   bool _cancelled = false;
   bool _parked = false;
+  bool _started = false;
   bool detaching = false;
 
   @override
@@ -118,7 +123,10 @@ final class OrdinaryPs1NetplayRunner implements Ps1NetplayRunner {
   }
 
   @override
-  Future<void> start() => _match.start();
+  Future<void> start() async {
+    await _match.start();
+    _started = true;
+  }
 
   @override
   Future<Ps1NetplayTick> sync(List<Ps1NetplayFrame> remote, int? acknowledgedFrame) =>
@@ -132,6 +140,13 @@ final class OrdinaryPs1NetplayRunner implements Ps1NetplayRunner {
 
   Future<void> _stop() async {
     try {
+      if (_ticket case final ticket? when _started) {
+        try {
+          await _preserveProgress?.call(ticket);
+        } on Object {
+          // The private pre-match checkpoint is still available.
+        }
+      }
       await _match.stop();
     } finally {
       try {

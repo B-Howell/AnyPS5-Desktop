@@ -4112,7 +4112,7 @@ class AppModel extends ChangeNotifier {
 
   bool get ordinaryPs1RecoveryPending => _ordinaryPs1Recovery != null;
 
-  Future<void> restoreOrdinaryPs1(Game game, int ticket, String core, String home) async {
+  Future<bool> restoreOrdinaryPs1(Game game, int ticket, String core, String home) async {
     final disc = game.retro;
     if (disc?.platform != RetroPlatform.ps1 || _disposed) {
       throw StateError('The original PS1 game is unavailable.');
@@ -4135,6 +4135,7 @@ class AppModel extends ChangeNotifier {
       }
     }
     if (_ordinaryPs1Recovery == pending) _ordinaryPs1Recovery = null;
+    return restored.continuedFromPs1Match;
   }
 
   Future<RetroLanGame> preparePs2Lan(

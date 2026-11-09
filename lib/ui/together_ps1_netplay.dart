@@ -350,6 +350,8 @@ extension TogetherPs1Netplay on TogetherModel {
       }
       if (mode.needsCheckpoint && !media.supportsHandoff) return app.show(T.text('ps1OnlineHandoffCore'));
       late final Ps1NetplayMatch match;
+      var triedContinuation = false;
+      var continuedFromMatch = false;
       final owned = EmbeddedPs1NetplayRunner(
         (seat) => app.preparePs1Netplay(game, media, seat, canBoot: () => !match.closed && account.user?.id == me),
       );
@@ -377,8 +379,29 @@ extension TogetherPs1Netplay on TogetherModel {
               unpark: ordinaryWorker.resumeOrdinaryCheckpoint,
               drainWorker: app.waitForRetroWorkerExit,
               importMatch: owned.restoreCheckpoint,
-              recover: (ticket) =>
-                  app.restoreOrdinaryPs1(game, ticket, ordinaryWorker.corePath, ordinaryWorker.sourceHome),
+              preserveProgress: roomId == null && mode == Ps1NetplayRoomMode.rollbackHandoff
+                  ? (ticket) async {
+                      if (app.stopping) return;
+                      switch (match.session?.ended) {
+                        case Ps1NetplayEnd.left ||
+                            Ps1NetplayEnd.peerLeft ||
+                            Ps1NetplayEnd.disconnected ||
+                            Ps1NetplayEnd.timedOut:
+                          triedContinuation = true;
+                          await owned.preserveConfirmedProgress(ticket);
+                        default:
+                          break;
+                      }
+                    }
+                  : null,
+              recover: (ticket) async {
+                continuedFromMatch = await app.restoreOrdinaryPs1(
+                  game,
+                  ticket,
+                  ordinaryWorker.corePath,
+                  ordinaryWorker.sourceHome,
+                );
+              },
             );
       match = Ps1NetplayMatch(
         rooms: rooms(roomId == null ? media.discDigest : invitedDigest),
@@ -410,6 +433,10 @@ extension TogetherPs1Netplay on TogetherModel {
       await match.done;
       if (switching != null && app.ordinaryPs1RecoveryPending) {
         app.show(T.text('ps1OnlineReturnFailed'));
+        return;
+      }
+      if (triedContinuation && !continuedFromMatch) {
+        app.show(T.text('ps1OnlineReturnedToStart'));
         return;
       }
       final session = match.session;

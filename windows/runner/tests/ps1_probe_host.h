@@ -20,6 +20,7 @@ class ProbeTexture final : public flutter::TextureRegistrar {
   }
 
   bool MarkTextureFrameAvailable(int64_t) override {
+    if (!presentation_enabled_) return true;
     const auto* frame = std::get<flutter::PixelBufferTexture>(*texture_).CopyPixelBuffer(0, 0);
     if (!frame) return false;
     frame->release_callback(frame->release_context);
@@ -44,6 +45,7 @@ class ProbeTexture final : public flutter::TextureRegistrar {
   bool UnregisterTexture(int64_t) override { return true; }
   int64_t registered() const { return registered_; }
   uint64_t published() const { return published_; }
+  void EnablePresentation(bool enabled) { presentation_enabled_ = enabled; }
   std::pair<int64_t, uint64_t> presentation_gaps() {
     std::lock_guard<std::mutex> lock(presentation_mutex_);
     return {max_gap_us_, long_gaps_};
@@ -53,6 +55,7 @@ class ProbeTexture final : public flutter::TextureRegistrar {
   flutter::TextureVariant* texture_ = nullptr;
   int64_t registered_ = 0;
   std::atomic<uint64_t> published_{0};
+  std::atomic<bool> presentation_enabled_{true};
   std::mutex presentation_mutex_;
   std::chrono::steady_clock::time_point last_frame_{};
   int64_t max_gap_us_ = 0;

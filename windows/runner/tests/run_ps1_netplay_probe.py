@@ -111,6 +111,8 @@ def main():
                         help="Hold and recover the original worker using its private native checkpoint")
     parser.add_argument("--ordinary-replace", action="store_true",
                         help="Exercise replacing and recovering workers through the native method channel")
+    parser.add_argument("--ordinary-continue", action="store_true",
+                        help="Recover the latest confirmed rollback frame through the native method channel")
     args = parser.parse_args()
     rollback_restore = args.ordinary_restore and args.rollback_recompiler
     if args.rollback_recompiler and not (args.rollback or rollback_restore):
@@ -147,6 +149,8 @@ def main():
         parser.error("--ordinary-park requires --ordinary-restore")
     if args.ordinary_replace and (not args.ordinary_checkpoint or not args.ordinary_control_core):
         parser.error("--ordinary-replace requires --ordinary-checkpoint and --ordinary-control-core")
+    if args.ordinary_continue and not (args.ordinary_replace and rollback_restore and args.presentation_core):
+        parser.error("--ordinary-continue requires rollback restore, a presentation core and --ordinary-replace")
 
     with ExitStack() as cleanup:
         if args.rollback:
@@ -313,6 +317,8 @@ def verify_ordinary_checkpoint(args, cleanup):
                    "replace", saves]
         if args.presentation_core:
             command.append(args.presentation_core.resolve())
+        if args.ordinary_continue:
+            command.append("continue")
         result = run(command, timeout=60, capture_output=True, text=True,
                      creationflags=CREATE_NO_WINDOW | IDLE_PRIORITY_CLASS)
         if result.returncode:

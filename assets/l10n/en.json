@@ -286,6 +286,7 @@
   "ps1OnlineCore": "Install the supported SwanStation core in PS1 Setup.",
   "ps1OnlineHandoffCore": "Online couch co-op needs this build's checkpoint-enabled SwanStation package.",
   "ps1OnlineReturnFailed": "The original game could not resume. Select Play to try again.",
+  "ps1OnlineReturnedToStart": "Resumed from where co-op started.",
   "ps1OnlineJoinAndReturn": "Join your friend's match and return to your own game when you leave.",
   "ps1OnlineVerifying": "Verifying your PS1 game for online play.",
   "ps1OnlineMismatch": "The players have different PS1 netplay files or settings.",

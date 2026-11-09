@@ -946,9 +946,32 @@ The host shares only the blank-card checkpoint. Both seats import it before
 frame zero of the new input timeline. The rollback worker accepts one
 successful import at frame zero, while its presentation spare starts from an
 internal same-binary snapshot on the first correction. The private recovery
-checkpoint stays on the host. Leaving the match reopens the ordinary
-session at its pre-match position with the original card. Keeping the
-post-match position on disconnect remains open.
+checkpoint stays on the host. When a running rollback match ends normally
+or loses its connection, the host returns to ordinary Play at the latest
+confirmed frame. The guest returns to their own pre-match session if they
+joined from a running game.
+
+The [native host](../windows/runner/retro_core_host.cpp) checks the recovery
+ticket and active texture before freezing network input. If the worker is
+ahead of confirmation, it restores the rollback state immediately before
+the first unconfirmed frame. The blank-card exporter refuses an active
+card transaction. The method channel reports success without returning
+the checkpoint bytes. Reopening loads the original settings and private
+checkpoint, then applies the confirmed continuation and restores the
+original primary card bytes. Match card data stays isolated. If export,
+import or card restoration cannot use the continuation, or the continuation
+fails the existing visibility watchdog, the original checkpoint is used and the
+[launcher](../lib/ui/together_ps1_netplay.dart) reports the return to the
+pre-match point. Desync and protocol failures also retain that point.
+
+The [runner](../lib/ui/ps1_netplay_runner.dart) asks for the confirmed
+checkpoint before it stops the match worker. Add `--ordinary-continue`
+to the native channel replacement test to drive CTR past the confirmed
+frontier with speculative inputs, then check the reopened RAM against
+the exact confirmed fingerprint. The probe checks stale-ticket rejection,
+the private card, graphics restoration, a failed reopen and a visibility
+timeout. The focused launcher suite covers host leave, friend leave and
+the fallback notice.
 
 For a Windows test build, put the pinned `swanstation-netplay-rollback.zip`
 in the absolute directory configured by `ANYPS5_MANAGED_CORE_PACKAGES`.
