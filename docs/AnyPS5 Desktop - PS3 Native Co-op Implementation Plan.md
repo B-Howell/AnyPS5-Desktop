@@ -670,9 +670,17 @@ fixture and the game backend. The game backend accepted the story
 level entry and play requests. Offscreen frame receipts confirmed that
 the host cleared all three wall puzzles in Get a Grip and reached
 the second wooden steed. The host exited cleanly and the fixture
-released its transport. The updated scratch save has yet to be
-reloaded to confirm where the level resumes. The Gardens unlock and
-the two-player friend invite still need to be verified.
+released its transport. A cold restart preserved the level unlock and
+collected items but started Get a Grip at its entrance. Treat the
+checkpoint lamps as retries within a live run. The follow-up crossed
+the wedge by jumping from its high edge toward the back layer. It
+used the first steed as a platform to reach the checkpoint between
+the two steeds, then reached the next raised block before the fixture
+deadline. Both the worker and transport fixture exited cleanly. For
+the next run, bring the second steed to that block before advancing.
+The scratch runner now allows a bounded 20-minute attempt to finish
+the level in one session. The Gardens unlock and the two-player
+friend invite still need to be verified.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
