@@ -997,8 +997,28 @@ and the updated Dart kernel SHA-256 was
 `44a8c3404397b168016ac270810713f729caa79f1c3250123125146f81990406`.
 The DualShock probe checks the values supplied to both cores. The
 deterministic local loss pattern exercises retransmission without
-measuring real-network latency or jitter. A driven race, title-specific
-steering response and cross-network play are separate checks.
+measuring real-network latency or jitter.
+
+The [CTR axis-response replay](../tool/ps1_netplay/ctr_axis_response.py)
+uses the pinned USA disc, portable standard core, verified BIOS and the
+recorded Coco Park trace. All three headless runs reach frame 6,600 with
+matching RAM and pixels in the two-player race. From that frame, the
+button control keeps its original D-pad steering, the stick replay
+moves the same steering commands to each left stick, and the neutral
+control removes steering. At frame 6,660 the stick replay's rendered
+frame matches the button control and differs from the neutral frame.
+The cores read nonzero axes on both ports. This is a controlled,
+in-race visual response to the two sticks together.
+
+```powershell
+python -B tool/ps1_netplay/ctr_axis_response.py --core "path/to/swanstation_libretro.dll" --disc "path/to/CTR.cue" --bios "path/to/scph1001.bin" --output "path/to/new-probe-folder"
+```
+
+The button control reaches the game-owned finish and both placements.
+The converted stick trace and the neutral trace do not reach results
+by frame 13,706. The three cases use isolated local workers without
+WebRTC. A complete analog-driven race and play across separate networks
+remain separate gates.
 
 After a friend is selected, the launcher verifies the disc, BIOS and
 standard netplay core before making a room. If the
