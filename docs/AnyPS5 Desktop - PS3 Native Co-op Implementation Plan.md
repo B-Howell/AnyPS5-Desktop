@@ -401,10 +401,21 @@ D3D12 Gallium override and the WSL device and libraries available, GLX
 failed to create the software rendering screen. That route did not
 qualify as a hardware fixture.
 
-The Windows private-desktop log shows that its F12 messages arrived
-while LLVM was still compiling PPU modules at the stop deadline.
-The next Windows capture check should wait for the game to finish PPU
-compilation and use the existing native desktop and PID guards.
+The Windows private-desktop follow-up waited for the guest to open
+`lbpintro.bik` after PPU compilation. RPCS3 then wrote 16 native
+1280×720 captures. Window-targeted movement and jump advanced through
+the credits, the customization tutorial, and into the second
+controller tutorial. The six-minute run ended while that tutorial
+was playing. RPCS3 exited zero, and the desktop guard verified the
+active desktop stayed the same.
+
+The first attempt stopped when the log was locked. The successful
+run used a shared log reader and a separate PID-checked command
+helper. The original monitor still timed out because its glob omitted
+the game's serial prefix. The scratch harness now uses the shared
+reader and matches new serial-prefixed captures. The next comparison
+needs time to finish the second tutorial and observe the globe and
+Pod transition.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
