@@ -145,13 +145,13 @@ void main() {
           : null;
     });
     addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
-    Future<void> waitFor(bool Function() settled) async {
+    Future<void> waitFor(bool Function() settled, {Duration timeout = const Duration(seconds: 5)}) async {
       await Future.doWhile(() async {
         if (settled()) return false;
         await Future<void>.delayed(const Duration(milliseconds: 10));
         return true;
       }).timeout(
-        const Duration(seconds: 5),
+        timeout,
         onTimeout: () => throw StateError(
           '$mode did not settle: ${model.toast}, socket ${model.together.hub.socket.status.name}, '
           '${server?.calls.map((call) => call.path).toList()}',
@@ -485,10 +485,11 @@ void main() {
         expect(model.overlay, isNull);
         const path = 'game-sessions/$roomId';
         await waitFor(() => server!.callsTo('$path/invites', method: 'POST').length == 1);
-        await waitFor(() => model.together.ps3PartyRows().singleOrNull?.title == 'Leave AnyTogether Room');
+        PanelRow? leaveRow() => model.together.ps3PartyRows().where((row) => row.id == 'ps3-party-leave').singleOrNull;
+        await waitFor(() => leaveRow()?.title == 'Leave AnyTogether Room');
         const waiting = 'Waiting for your friend to join the AnyTogether room.';
         const gameMenu = "Use the game's online menu to meet your friend.";
-        String? roomDetail() => model.together.ps3PartyRows().singleOrNull?.detail;
+        String? roomDetail() => leaveRow()?.detail;
         await waitFor(() => roomDetail() == waiting);
         final validRoom = server!.answers['GET $path']!.$2 as Map<String, dynamic>;
         server.answers['GET $path'] = (
@@ -521,7 +522,46 @@ void main() {
         );
         server.push('game_session.updated', {'id': roomId, 'titleId': title});
         await waitFor(() => roomDetail() == 'Could not confirm who is in the AnyTogether room.');
+        final stalledRead = Completer<void>();
+        final lateReply = Completer<void>();
+        addTearDown(() {
+          if (!lateReply.isCompleted) lateReply.complete();
+        });
+        server.answers.remove('GET $path');
+        server.handlers.add((call) async {
+          if (call.method != 'GET' || call.path != path || stalledRead.isCompleted) return null;
+          stalledRead.complete();
+          await lateReply.future;
+          return (
+            200,
+            {
+              ...validRoom,
+              'members': [
+                {'userId': localId},
+                {'userId': friendId},
+              ],
+            },
+          );
+        });
+        model.open(Layer.quickMenu);
+        activate('ps3-party-refresh');
+        await stalledRead.future.timeout(const Duration(seconds: 5));
+        expect(roomDetail(), contains('Checking'));
+        expect(model.spot?.row, 'ps3-party-refresh');
+        model.handle(Command.select);
+        expect(model.overlay, Layer.quickMenu);
+        await waitFor(
+          () => roomDetail() == 'Could not confirm who is in the AnyTogether room.',
+          timeout: const Duration(seconds: 15),
+        );
         server.answers['GET $path'] = (200, validRoom);
+        activate('ps3-party-refresh');
+        await waitFor(() => roomDetail() == waiting);
+        lateReply.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        expect(roomDetail(), waiting);
+        expect(model.embeddedGame, same(worker));
+        expect(model.spot?.row, 'ps3-party-refresh');
         final sent = server.callsTo('game-sessions', method: 'POST').single.body;
         expect(sent['properties'], {'protocol': protocol, 'profileSha256': releases.single.partyFingerprint});
         expect(sent.toString(), isNot(contains('fake-token')));

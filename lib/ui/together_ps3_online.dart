@@ -192,6 +192,12 @@ extension TogetherPs3Online on TogetherModel {
     final playing = app.isPlayingPs3Party(attempt) || attempt.attached && attempt.runningWorker != null;
     final worker = attempt.runningWorker ?? app.embeddedGame;
     final provider = worker?.ps3ProviderStatus ?? Ps3ProviderStatus.unavailable;
+    bool canRefresh() =>
+        identical(_ps3Party, attempt) &&
+        !attempt.cancelled.isCompleted &&
+        worker?.ps3ProviderStatus == Ps3ProviderStatus.ready &&
+        hub.socket.status == SocketStatus.ready &&
+        attempt.membership != _Ps3PartyMembership.checking;
     return [
       PanelRow(
         id: 'ps3-party-leave',
@@ -208,6 +214,17 @@ extension TogetherPs3Online on TogetherModel {
           app.refresh();
         }, destructive: true),
       ),
+      if (playing)
+        if (attempt.refreshMembership case final refresh?)
+          PanelRow(
+            id: 'ps3-party-refresh',
+            title: T.text('ps3PartyRefreshRoom'),
+            kind: canRefresh()
+                ? ActionRow(() {
+                    if (canRefresh()) unawaited(refresh());
+                  })
+                : const InfoRow('', navigable: true),
+          ),
     ];
   }
 
@@ -294,7 +311,9 @@ extension TogetherPs3Online on TogetherModel {
       }
       var membership = _Ps3PartyMembership.unavailable;
       try {
-        final present = await rooms.hasInvitedMember(room, friendId ?? room.hostId);
+        final present = await rooms
+            .hasInvitedMember(room, friendId ?? room.hostId)
+            .timeout(const Duration(seconds: 12));
         membership = present ? _Ps3PartyMembership.present : _Ps3PartyMembership.waiting;
       } on Object {
         // A failed refresh is not evidence of who is in the room.

@@ -1343,7 +1343,15 @@ Admission is confirmed by account ID, so the host can see acceptance before
 the guest publishes its transport metadata. The instruction to meet in the
 game's online menu appears when the expected peer is present. If the core
 later reports a failure, the row shows that failure and keeps Leave
-available. The game still owns admission to its native lobby.
+available. Membership checks stop waiting after 12 seconds. If AnyTogether
+cannot confirm the room members, **Quick Menu → Refresh room status** checks
+the same room while the current game stays open. The action remains in
+place during the check so repeat Select cannot move focus to Close Game.
+Late replies from timed-out checks cannot replace a newer result. The
+[PS3 Quick Menu fixture](../test/ui/ps3_settings_test.dart) covers a failed
+check, timeout, retry, and late response on the same worker. The PS3
+settings and boot suites passed all 16 tests on Windows using fixture
+services. The game still owns admission to its native lobby.
 A running game with a reviewed release and a successful provider sign-in
 can also host from **Quick Menu → Invite a Friend to Online Play**. The
 picker binds to the running worker and its verified release. It resumes
