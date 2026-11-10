@@ -456,6 +456,20 @@ bool VerifyAudioQueueTiming() {
          playout.underruns() == 1;
 }
 
+static bool ReadProbePad(ps1_netplay::PadInput& pad, bool dualshock) {
+  unsigned buttons;
+  if (!(std::cin >> buttons) || buttons > UINT16_MAX) return false;
+  pad.buttons = static_cast<uint16_t>(buttons);
+  if (dualshock) {
+    for (auto& axis : pad.axes) {
+      int value;
+      if (!(std::cin >> value) || value < INT16_MIN || value > INT16_MAX) return false;
+      axis = static_cast<int16_t>(value);
+    }
+  }
+  return true;
+}
+
 int main(int argc, char** argv) {
   if (argc == 2 && std::string_view(argv[1]) == "audio-queue-test") {
     if (!VerifyAudioQueueTiming()) return 10;
@@ -502,7 +516,8 @@ int main(int argc, char** argv) {
   const bool dual = argc >= 7 && (mode == "rollback-dual" || mode == "rollback-dual-recompiler");
   const bool rollback = dual || mode == "rollback" || mode == "rollback-recompiler";
   const bool audio_control = argc == 6 && (mode == "audio-control" || mode == "audio-control-recompiler");
-  if (argc == 6 && !local_staging && !recompiler && !rollback && !audio_control) return 2;
+  const bool dualshock = argc == 6 && mode == "dualshock";
+  if (argc == 6 && !local_staging && !recompiler && !rollback && !audio_control && !dualshock) return 2;
   const bool ordinary = argc == 7 && std::string_view(argv[5]) == "ordinary";
   if (argc == 7 && !ordinary && !rollback) return 2;
   if (argc == 8 && !dual) return 2;
@@ -545,7 +560,8 @@ int main(int argc, char** argv) {
                            ordinary ? std::nullopt : std::optional<unsigned>(seat), argv[3], local_staging,
                            std::nullopt, std::nullopt, {},
                            match_cpu, {}, rollback,
-                           std::move(audio_sink), std::move(trace));
+                           std::move(audio_sink), std::move(trace), RetroCoreSession::CallbackSlot::kPrimary,
+                           std::nullopt, dualshock);
   if (dual && !session.AttachPresentationCore(std::make_unique<RetroCoreSession>(
       &spare_texture, argv[6], argv[2], "", "", "", std::map<std::string, std::string>{}, seat, argv[3],
       false, std::nullopt, std::nullopt, std::vector<std::string>{}, match_cpu,
@@ -634,7 +650,11 @@ int main(int argc, char** argv) {
       std::cout << frames.size();
       for (const auto& frame : frames) {
         const auto& ports = std::get<List>(frame);
-        for (const auto& pad : ports) std::cout << ' ' << std::get<int32_t>(std::get<List>(pad).front());
+        for (const auto& pad : ports) {
+          const auto& values = std::get<List>(pad);
+          for (size_t field = 0; field < (dualshock ? values.size() : 1); ++field)
+            std::cout << ' ' << std::get<int32_t>(values[field]);
+        }
       }
       std::cout << std::endl;
       continue;
@@ -826,9 +846,9 @@ int main(int argc, char** argv) {
       continue;
     }
     if (command == "pad") {
-      unsigned mask;
-      if (!(std::cin >> mask) || mask > UINT16_MAX) return 5;
-      session.SetInput(static_cast<uint16_t>(mask), {});
+      ps1_netplay::PadInput input;
+      if (!ReadProbePad(input, dualshock)) return 5;
+      session.SetInput(input.buttons, input.axes);
       std::cout << "pad" << std::endl;
       continue;
     }
@@ -857,9 +877,10 @@ int main(int argc, char** argv) {
         acknowledgement > ps1_netplay::Timeline::kMaxFrame || count > 32) return 5;
     std::vector<ps1_netplay::FrameInput> remote;
     for (unsigned index = 0; index < count; ++index) {
-      unsigned frame, buttons;
-      if (!(std::cin >> frame >> buttons) || buttons > UINT16_MAX) return 5;
-      remote.push_back({frame, {static_cast<uint16_t>(buttons), {}}});
+      unsigned frame;
+      ps1_netplay::PadInput input;
+      if (!(std::cin >> frame) || !ReadProbePad(input, dualshock)) return 5;
+      remote.push_back({frame, input});
     }
     const auto received = session.SyncNetplay(
         remote, acknowledgement < 0 ? std::nullopt
@@ -875,7 +896,8 @@ int main(int argc, char** argv) {
               << IntegerValue(state.at(Value("receivedFrame"))).value_or(-1) << ' ' << local.size();
     for (const auto& row : local) {
       const auto& input = std::get<List>(row);
-      std::cout << ' ' << *IntegerValue(input[0]) << ' ' << *IntegerValue(input[1]);
+      for (size_t field = 0; field < (dualshock ? input.size() : 2); ++field)
+        std::cout << ' ' << *IntegerValue(input[field]);
     }
     const auto& fingerprints = std::get<List>(state.at(Value("fingerprints")));
     std::cout << ' ' << fingerprints.size();

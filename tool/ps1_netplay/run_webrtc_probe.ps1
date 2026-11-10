@@ -5,15 +5,19 @@ param(
     [Parameter(Mandatory)][string]$Data,
     [string]$NativeFixture,
     [switch]$Ordinary,
+    [switch]$DualShock,
     [switch]$Lan
 )
 
 $ErrorActionPreference = 'Stop'
-if ($Lan -and ($Ordinary -or $NativeFixture)) {
+if ($Lan -and ($Ordinary -or $DualShock -or $NativeFixture)) {
     throw 'LAN mode uses its synthetic Ethernet fixture and cannot take a PS1 fixture.'
 }
-if ($Ordinary -and -not $NativeFixture) {
-    throw 'Ordinary mode needs a native fixture.'
+if ($Ordinary -and $DualShock) {
+    throw 'Ordinary and DualShock modes are mutually exclusive.'
+}
+if (($Ordinary -or $DualShock) -and -not $NativeFixture) {
+    throw 'This mode needs a native fixture.'
 }
 $runnerPath = (Resolve-Path -LiteralPath $Runner).ProviderPath
 $dataPath = (Resolve-Path -LiteralPath $Data).ProviderPath
@@ -32,6 +36,7 @@ try {
             TMP = $scratch
             ANYPS5_PS1_WEBRTC_NATIVE = $fixturePath
             ANYPS5_PS1_WEBRTC_ORDINARY = if ($Ordinary) { '1' } else { $null }
+            ANYPS5_PS1_WEBRTC_DUALSHOCK = if ($DualShock) { '1' } else { $null }
             ANYPS5_PS2_WEBRTC_LAN = if ($Lan) { '1' } else { $null }
         }
     if (-not $process.WaitForExit(75000)) { throw 'The headless WebRTC runner timed out.' }

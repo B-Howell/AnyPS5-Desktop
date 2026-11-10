@@ -30,10 +30,11 @@ final class WebRtcRoomFixture {
   Future<void> get invited => _invited.future;
   bool get released => _room == null && _members.isEmpty && _published.isEmpty;
 
-  RetroOnlineRooms client(String user, {String? expectedDigest}) => RetroOnlineRooms(
+  RetroOnlineRooms client(String user, {String? expectedDigest, String? expectedCore}) => RetroOnlineRooms(
     spec: spec,
     me: user,
     discDigest: expectedDigest,
+    coreDigest: expectedCore,
     call: (method, path, [body]) async {
       if (user == host && method == 'DELETE' && path == _path) await hostReleaseGate;
       return _call(user, method, path, body);

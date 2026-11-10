@@ -968,9 +968,32 @@ Separate headless input-callback probes on both pinned standard DLLs
 reported both button ports and all four signed axes on each port in
 DualShock mode. The digital control on each DLL queried buttons without
 axes. The launcher fixtures also exercised a new-room invite and the
-native launch arguments for both new and older rooms. The core probe
-checks callback requests through boot, with analog gameplay and
-cross-network synchronization still to be measured.
+native launch arguments for both new and older rooms.
+
+The [DualShock WebRTC probe](../tool/ps1_netplay/webrtc_dualshock_probe.dart)
+uses the same private room admission as the launcher and the real WebRTC
+plugin. It boots two fresh native cores, feeds each a distinct signed stick
+and button snapshot, and compares both ports in 16 consecutive confirmed
+frames of each native history. It also checks the three RAM fingerprints
+through frame 359 and releases the room after the guest leaves. Use the
+portable standard SwanStation DLL in the five-field native fixture and
+build the [native worker probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp)
+from the same checkout. Only the DualShock probe mode adds signed axes to
+the worker's existing [command pipe](../tool/ps1_netplay/webrtc_native_worker.dart).
+
+```powershell
+pwsh -File tool/ps1_netplay/run_webrtc_probe.ps1 -Runner "path/to/loopback.exe" -Data "path/to/data" -NativeFixture "path/to/fixture.json" -DualShock
+```
+
+The Windows D: runs passed for Crash Team Racing (`SCUS94426`) and
+Tekken 3 (`SLUS00402`). Both finished 360 confirmed frames with the exact
+per-seat input history and three matching RAM fingerprints. The native
+worker SHA-256 was
+`1b075048d0ffa95f9064239c71b68bcdcce017290dcc00ffd76f0e8fc430fc80`.
+The rebuilt worker also passed the older staged and ordinary CTR
+controls. The DualShock probe confirms the values supplied to both cores.
+It uses a fixed snapshot for each seat, leaving a driven race,
+title-specific steering response and cross-network play as separate tests.
 
 After a friend is selected, the launcher verifies the disc, BIOS and
 standard netplay core before making a room. If the

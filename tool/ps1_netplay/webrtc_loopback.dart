@@ -14,6 +14,7 @@ import 'package:anyps5_desktop/ui/online_webrtc.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import 'webrtc_dualshock_probe.dart';
 import 'webrtc_native_worker.dart';
 import 'webrtc_lan_probe.dart';
 import 'webrtc_ordinary_probe.dart';
@@ -26,7 +27,9 @@ Future<void> main() async {
     final config = Platform.environment['ANYPS5_PS1_WEBRTC_NATIVE'] ?? '';
     final lan = Platform.environment['ANYPS5_PS2_WEBRTC_LAN'] == '1';
     final ordinary = Platform.environment['ANYPS5_PS1_WEBRTC_ORDINARY'] == '1';
-    if (ordinary && config.isEmpty) throw StateError('The ordinary probe requires a native fixture.');
+    final dualShock = Platform.environment['ANYPS5_PS1_WEBRTC_DUALSHOCK'] == '1';
+    if ((ordinary || dualShock) && config.isEmpty) throw StateError('This probe requires a native fixture.');
+    if ((ordinary && dualShock) || (lan && config.isNotEmpty)) throw StateError('Conflicting WebRTC probe modes.');
     await report.invokeMethod<void>(
       'pass',
       lan
@@ -35,6 +38,8 @@ Future<void> main() async {
           ? '${await _exercise()} ${await _exercise(mismatchedDisc: true)}'
           : ordinary
           ? await verifyOrdinaryWebRtc(config)
+          : dualShock
+          ? await verifyDualShockWebRtc(config)
           : await _nativeExercise(config),
     );
   } on Object catch (error, stack) {

@@ -8,13 +8,15 @@ import 'package:anyps5_desktop/core/online/ps1_netplay_wire.dart';
 
 /// Drives the windowless Windows worker probe over its command pipes.
 final class WebRtcNativeWorker implements Ps1NetplayRunner {
-  WebRtcNativeWorker._(this._process, this._state)
+  WebRtcNativeWorker._(this._process, this._state, this._dualShock)
     : _output = StreamIterator(_process.stdout.transform(utf8.decoder).transform(const LineSplitter())) {
     unawaited(_process.stderr.drain<void>());
   }
 
   final Process _process;
   final File _state;
+  final bool _dualShock;
+  List<Ps1FrameInputs>? confirmedPads;
   final StreamIterator<String> _output;
   Future<String>? _pending;
   Future<void>? _stopping;
@@ -27,13 +29,15 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
     int seat, {
     bool local = false,
     bool recompiler = false,
+    bool dualShock = false,
   }) async {
+    if (dualShock && (local || recompiler)) throw ArgumentError('DualShock requires a fresh match worker.');
     final process = await Process.start(launch.first, [
       ...launch.skip(1),
       '$seat',
-      if (local) 'local' else if (recompiler) 'recompiler',
+      if (local) 'local' else if (recompiler) 'recompiler' else if (dualShock) 'dualshock',
     ]);
-    final worker = WebRtcNativeWorker._(process, state);
+    final worker = WebRtcNativeWorker._(process, state, dualShock);
     try {
       final ready = await worker._read();
       if (ready != 'ready') throw StateError('Unexpected worker greeting: $ready.');
@@ -95,7 +99,9 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
 
   Future<void> resume() => _expect('resume-local', 'resumed');
 
-  Future<void> setPad(int buttons) => _expect('pad $buttons', 'pad');
+  Future<void> setPad(int buttons) => setInput(_pad(buttons));
+
+  Future<void> setInput(Ps1PadInput pad) => _expect('pad ${_encodePad(pad).join(' ')}', 'pad');
 
   Future<int> picture() async => int.parse(await _command('published'));
 
@@ -109,12 +115,14 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
 
   Future<({int nextFrame, List<Ps1FrameInputs> frames})> readHistory(int first, int nextFrame) async {
     final fields = (await _command('history $first')).split(' ').map(int.parse).toList();
-    if (fields.first < 1 || fields.length != fields.first * 2 + 1) {
+    if (fields.first < 1 || fields.length != fields.first * (_dualShock ? 10 : 2) + 1) {
       throw StateError('Native input history is malformed.');
     }
+    var index = 1;
+    int next() => fields[index++];
     return (
       nextFrame: nextFrame,
-      frames: [for (var i = 1; i < fields.length; i += 2) (_pad(fields[i]), _pad(fields[i + 1]))],
+      frames: [for (var i = 0; i < fields.first; i++) (_decodePad(next), _decodePad(next))],
     );
   }
 
@@ -124,6 +132,14 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
   }
 
   static Ps1PadInput _pad(int buttons) => (buttons: buttons, leftX: 0, leftY: 0, rightX: 0, rightY: 0);
+
+  List<int> _encodePad(Ps1PadInput pad) => [
+    pad.buttons,
+    if (_dualShock) ...[pad.leftX, pad.leftY, pad.rightX, pad.rightY],
+  ];
+
+  Ps1PadInput _decodePad(int Function() next) =>
+      _dualShock ? (buttons: next(), leftX: next(), leftY: next(), rightX: next(), rightY: next()) : _pad(next());
 
   @override
   Future<void> prepare(int seat) async {}
@@ -136,7 +152,7 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
     final request = [
       acknowledgedFrame ?? -1,
       remote.length,
-      for (final input in remote) ...[input.frame, input.input.buttons],
+      for (final input in remote) ...[input.frame, ..._encodePad(input.input)],
     ];
     final fields = (await _command('sync ${request.join(' ')}')).split(' ');
     var index = 0;
@@ -144,12 +160,16 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
     final frame = next();
     final received = next();
     final count = next();
-    final local = <Ps1NetplayFrame>[for (var item = 0; item < count; item++) (frame: next(), input: _pad(next()))];
+    final local = <Ps1NetplayFrame>[for (var item = 0; item < count; item++) (frame: next(), input: _decodePad(next))];
     final hashes = next();
     final current = <int, String>{for (var item = 0; item < hashes; item++) next(): fields[index++]};
     if (index != fields.length) throw StateError('Native input packet is malformed.');
     fingerprints.addAll(current);
     sentButtons.addAll(local.map((sample) => sample.input.buttons));
+    if (_dualShock && frame >= 360 && confirmedPads == null) {
+      final history = await readHistory(344, frame);
+      confirmedPads = history.frames.take(16).toList();
+    }
     return (
       frame: frame,
       confirmedFrame: frame == 0 ? null : frame - 1,
