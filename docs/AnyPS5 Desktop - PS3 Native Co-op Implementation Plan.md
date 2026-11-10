@@ -372,9 +372,23 @@ integration from the shared emulator and game behavior.
 The matching standalone RPCS3 revision `ab412d5d` rendered the GOTY
 shader precompilation screen in an isolated WSL virtual X display with
 software Vulkan and networking restricted to loopback. The capture
-showed shader variant 1,311 of 6,550. A synthetic window qualified
-offscreen input. The game received no test input in this run and the
-standalone Pod comparison remains open.
+showed shader variant 1,311 of 6,550. The Linux kernel killed RPCS3
+during this stage at roughly 30 GiB of anonymous resident memory.
+A synthetic window qualified offscreen input. The game received no
+test input before it exited. The next comparison keeps Vulkan and
+Accurate XFloat and switches to the standalone build's async
+recompiler without the shader interpreter. That change is scoped to
+the software-rendered fixture. The retry capped LLVM compilation at
+three threads, shader compilation at two, and resident memory at
+5 GiB. It completed PPU compilation, played the opening movie, and
+rendered the first controllable scene. Captures before and after
+keyboard input show Sackboy moving right. Input targeted the game
+window by PID inside the fixture's private X display. The 100% scale
+software Vulkan run rendered that scene at about 1–2 FPS and stopped
+before the tutorials. RPCS3 did not exit on SIGTERM and required a
+forced stop. Both the game process and its private display were gone
+after cleanup. Comparing the final globe and Pod transition still
+requires a faster offscreen renderer or a longer controlled replay.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
