@@ -287,7 +287,7 @@ extension TogetherPs2Lan on TogetherModel {
       final invite = roomId == null
           ? null
           : await Future.any<RetroRoomInvite?>([
-              rooms().readInvite(roomId, expectedHost: expectedHost).timeout(const Duration(seconds: 12)),
+              rooms().readInvite(roomId, expectedHost: expectedHost),
               attempt.cancellation.future.then((_) => null),
             ]);
       if (!active()) return;
@@ -398,6 +398,8 @@ extension TogetherPs2Lan on TogetherModel {
       if (active()) app.show(T.text('ps2LanProfileInUse'));
     } on RetroRoomHostMismatch {
       if (active()) app.show(T.text('retroInviteHostChanged'));
+    } on RetroRoomLookupTimeout {
+      if (active()) app.show(T.text('retroInviteLookupTimeout'));
     } on Object {
       if (active()) {
         app.show(

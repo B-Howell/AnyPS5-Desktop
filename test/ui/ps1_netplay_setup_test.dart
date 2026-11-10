@@ -285,8 +285,14 @@ void main() {
       var joining = model.together.joinPs1Netplay(invite);
       await roomRequested.future.timeout(const Duration(seconds: 5));
       final stalled = model.together.gameRows().singleWhere((row) => row.id == 'ps1-netplay-cancel-verification');
-      (stalled.kind as ActionRow).run();
-      await joining.timeout(const Duration(seconds: 3));
+      if (version == '3') {
+        await joining.timeout(const Duration(seconds: 15));
+        expect(model.toast, contains('Try accepting the invite again'));
+        expect(model.together.ps1NetplayRows(), isEmpty);
+      } else {
+        (stalled.kind as ActionRow).run();
+        await joining.timeout(const Duration(seconds: 3));
+      }
       expect(picking.isCompleted, isFalse);
 
       server.answers['GET $roomPath'] = roomAnswer;

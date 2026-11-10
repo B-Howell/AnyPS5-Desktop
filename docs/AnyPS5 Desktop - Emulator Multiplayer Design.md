@@ -245,6 +245,15 @@ launcher with both sender-bearing and senderless invites. The
 rejects the replacement host after selecting the compatible core. The
 focused Windows runs passed 33 tests using a local fixture room service.
 
+The initial PS1 and PS2 room lookup has a 12-second deadline. The launcher
+releases the pending attempt and lets the player accept the same invite again.
+A late lookup response cannot launch the old attempt. The deadline applies to
+the read-only lookup. Room writes retain their existing cleanup path.
+The [PS1 handoff fixture](../test/ui/ps1_netplay_setup_test.dart) and
+[PS2 LAN fixture](../test/ui/ps2_lan_invite_test.dart) verify retry while the
+first response is still withheld. This update passed 33 focused tests on
+Windows with a local fixture room service.
+
 - On a clean AnyPS5 install, set up the needed emulator inside Settings,
   select user-supplied firmware and games, and start or accept a session
   from the dashboard or Quick Menu. Report incompatible media, missing

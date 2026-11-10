@@ -534,6 +534,8 @@ extension TogetherPs1Netplay on TogetherModel {
       }
     } on RetroRoomHostMismatch {
       if (opened != null || active()) app.show(T.text('retroInviteHostChanged'));
+    } on RetroRoomLookupTimeout {
+      if (active()) app.show(T.text('retroInviteLookupTimeout'));
     } on Object {
       if (opened != null || active()) app.show(T.text('ps1OnlineDisconnected'));
     } finally {

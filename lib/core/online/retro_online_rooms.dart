@@ -10,6 +10,10 @@ final class RetroRoomHostMismatch implements Exception {
   const RetroRoomHostMismatch();
 }
 
+final class RetroRoomLookupTimeout implements Exception {
+  const RetroRoomLookupTimeout();
+}
+
 enum RetroOnlineMode {
   synchronized('anyps5-ps1-netplay-v1'),
   lan('anyps5-retro-lan-v1'),
@@ -101,7 +105,10 @@ final class RetroOnlineRooms {
 
   /// Binds the host to the fingerprints used to choose the local disc and core.
   Future<RetroRoomInvite> readInvite(String id, {String? expectedHost}) async {
-    final json = await call('GET', _path(id));
+    final json = await call(
+      'GET',
+      _path(id),
+    ).timeout(const Duration(seconds: 12), onTimeout: () => throw const RetroRoomLookupTimeout());
     final room = _room(json, id: id);
     _checkInviteHost(room, expectedHost);
     final properties = json['properties'] as Map;

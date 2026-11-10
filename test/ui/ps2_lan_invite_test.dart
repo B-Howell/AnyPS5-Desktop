@@ -117,6 +117,7 @@ void main() {
     required bool expired,
     bool configureCard = false,
     bool cancelLookup = false,
+    bool timeoutLookup = false,
     bool cancelAdmission = false,
     bool hostChanged = false,
     bool omitInviteSender = false,
@@ -600,7 +601,7 @@ void main() {
       expect(model.running, isNull);
       return;
     }
-    if (cancelLookup) {
+    if (cancelLookup || timeoutLookup) {
       const roomPath = 'game-sessions/$roomId';
       final answer = server.answers.remove('GET $roomPath')!;
       final requested = Completer<void>();
@@ -616,10 +617,20 @@ void main() {
       });
       press(continueId);
       await requested.future.timeout(const Duration(seconds: 5));
-      press('ps2-lan-status');
+      if (timeoutLookup) {
+        expect(
+          await eventually(
+            () => model.toast?.contains('Try accepting the invite again') == true,
+            timeout: const Duration(seconds: 15),
+          ),
+          isTrue,
+        );
+      } else {
+        press('ps2-lan-status');
+      }
       await until(
         () => !model.panelCategories().single.rows.any((row) => row.id == 'ps2-lan-status'),
-        reason: 'Canceled lookup must release the attempt before the first room reply.',
+        reason: 'The attempt must be released before the first room reply.',
       );
       expect(server.callsTo('$roomPath/join'), isEmpty);
       expect(model.together.hub.games.invites.single.sessionId, roomId);
@@ -713,6 +724,11 @@ void main() {
   test(
     'canceling a stalled PS2 LAN lookup releases the invite for retry before the old reply',
     () => verifyBundledSetup(expired: false, cancelLookup: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'a stalled PS2 LAN lookup times out and can be retried before the old reply',
+    () => verifyBundledSetup(expired: false, timeoutLookup: true),
     skip: Abi.current() != Abi.windowsX64,
   );
   test(
