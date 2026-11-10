@@ -242,6 +242,50 @@ void main() {
     ]);
   });
 
+  for (final hosting in [true, false]) {
+    test('a stalled session check lets the player retry before ${hosting ? 'hosting' : 'joining'}', () {
+      fakeAsync((clock) {
+        final pending = Completer<Map<String, dynamic>>();
+        final calls = <(String, String)>[];
+        var reads = 0;
+        final rooms = RetroOnlineRooms(
+          spec: _spec,
+          me: hosting ? _host : _guest,
+          call: (method, path, [body]) async {
+            calls.add((method, path));
+            if (path == 'me/game-session') return ++reads == 1 ? pending.future : {'session': null};
+            return _view();
+          },
+          signal: (_, _, _, _, _) {},
+        );
+        Future<RetroRoom> enter() => hosting ? rooms.host() : rooms.join(_roomId, expectedHost: _host);
+
+        Object? failure;
+        unawaited(
+          enter().then<void>(
+            (_) => fail('The old attempt admitted the player.'),
+            onError: (Object e) {
+              failure = e;
+            },
+          ),
+        );
+        clock.elapse(const Duration(seconds: 11));
+        expect(failure, isNull);
+        clock.elapse(const Duration(seconds: 1));
+        expect(failure, isA<RetroRoomStatusTimeout>());
+        expect(calls, [('GET', 'me/game-session')]);
+
+        RetroRoom? opened;
+        unawaited(enter().then<void>((room) => opened = room));
+        clock.flushMicrotasks();
+        expect(opened, _room);
+        pending.complete({'session': null});
+        clock.flushMicrotasks();
+        expect(calls.where((call) => call.$1 == 'POST'), [('POST', hosting ? 'game-sessions' : '$_path/join')]);
+      });
+    });
+  }
+
   test('keeps another online session and rejects an incompatible invite before joining', () async {
     var busy = true;
     final requests = <String>[];
@@ -259,7 +303,7 @@ void main() {
       },
       signal: (_, _, _, _, _) {},
     );
-    await expectLater(rooms.join(_roomId), throwsStateError);
+    await expectLater(rooms.join(_roomId), throwsA(isA<RetroRoomOccupied>()));
     expect(requests, ['GET']);
     busy = false;
     await expectLater(rooms.join(_roomId), throwsStateError);

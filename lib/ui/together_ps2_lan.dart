@@ -405,6 +405,10 @@ extension TogetherPs2Lan on TogetherModel {
       if (active()) app.show(T.text('retroInviteHostChanged'));
     } on RetroInviteSendTimeout {
       if (active()) app.show(T.text('retroInviteSendTimeout'));
+    } on RetroRoomStatusTimeout {
+      if (active()) app.show(T.text('retroRoomStatusTimeout'));
+    } on RetroRoomOccupied {
+      if (active()) app.show(T.text('retroRoomOccupied'));
     } on RetroConnectionTimeout {
       if (active()) app.show(T.text(host ? 'retroConnectionTimeoutHost' : 'retroConnectionTimeoutGuest'));
     } on RetroRoomLookupTimeout {

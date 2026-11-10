@@ -304,6 +304,8 @@
   "retroConnectionTimeoutGuest": "Connecting took too long. Ask your friend to send a new invite.",
   "retroInviteLookupTimeout": "The room took too long to respond. Try accepting the invite again.",
   "retroInviteSendTimeout": "Could not confirm the invitation. Try inviting your friend again.",
+  "retroRoomStatusTimeout": "Could not check your current online session. Try again.",
+  "retroRoomOccupied": "Leave your current AnyTogether game before trying again.",
   "ps2LanInvite": "Invite to LAN Play · %@",
   "ps2LanInviteFromGame": "Invite a Friend to LAN Play",
   "ps2LanUnavailable": "Connect to AnyTogether before starting PS2 LAN Play.",

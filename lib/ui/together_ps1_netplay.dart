@@ -537,6 +537,10 @@ extension TogetherPs1Netplay on TogetherModel {
       if (opened != null || active()) app.show(T.text('retroInviteHostChanged'));
     } on RetroInviteSendTimeout {
       if (opened != null || active()) app.show(T.text('retroInviteSendTimeout'));
+    } on RetroRoomStatusTimeout {
+      if (opened != null || active()) app.show(T.text('retroRoomStatusTimeout'));
+    } on RetroRoomOccupied {
+      if (opened != null || active()) app.show(T.text('retroRoomOccupied'));
     } on RetroConnectionTimeout {
       if (opened != null || active()) app.show(T.text(timeoutMessage));
     } on RetroRoomLookupTimeout {

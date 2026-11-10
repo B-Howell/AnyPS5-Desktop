@@ -18,6 +18,14 @@ final class RetroInviteSendTimeout implements Exception {
   const RetroInviteSendTimeout();
 }
 
+final class RetroRoomStatusTimeout extends TimeoutException {
+  RetroRoomStatusTimeout(Duration duration) : super('The current online session check timed out.', duration);
+}
+
+final class RetroRoomOccupied implements Exception {
+  const RetroRoomOccupied();
+}
+
 /// A deadline while preparing the connection, before the game can start.
 final class RetroConnectionTimeout extends TimeoutException {
   RetroConnectionTimeout(Duration duration) : super('The multiplayer connection did not finish setting up.', duration);
@@ -227,8 +235,12 @@ final class RetroOnlineRooms {
   }
 
   Future<void> _requireIdle() async {
-    final current = await call('GET', 'me/game-session');
-    if (current['session'] != null) throw StateError('Leave your current online game before starting another.');
+    const deadline = Duration(seconds: 12);
+    final current = await call(
+      'GET',
+      'me/game-session',
+    ).timeout(deadline, onTimeout: () => throw RetroRoomStatusTimeout(deadline));
+    if (current['session'] != null) throw const RetroRoomOccupied();
   }
 
   // Stop waiting only for reads. Once a write is sent, the caller must

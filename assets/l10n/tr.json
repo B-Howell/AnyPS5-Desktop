@@ -304,6 +304,8 @@
   "retroConnectionTimeoutGuest": "Bağlantı zaman aşımına uğradı. Arkadaşınızdan yeni bir davet göndermesini isteyin.",
   "retroInviteLookupTimeout": "Oda zamanında yanıt vermedi. Daveti tekrar kabul etmeyi deneyin.",
   "retroInviteSendTimeout": "Davet doğrulanamadı. Arkadaşınızı tekrar davet etmeyi deneyin.",
+  "retroRoomStatusTimeout": "Mevcut çevrimiçi oturumunuz kontrol edilemedi. Tekrar deneyin.",
+  "retroRoomOccupied": "Tekrar denemeden önce mevcut AnyTogether oyununuzdan ayrılın.",
   "ps2LanInvite": "LAN Oyununa Davet Et · %@",
   "ps2LanInviteFromGame": "Bir Arkadaşını LAN Oyununa Davet Et",
   "ps2LanUnavailable": "PS2 LAN oyununu başlatmadan önce AnyTogether’a bağlanın.",

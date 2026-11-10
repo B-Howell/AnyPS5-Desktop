@@ -364,6 +364,10 @@ extension TogetherPs3Online on TogetherModel {
       }
     } on RetroRoomLookupTimeout {
       if (active()) app.show(T.text('retroInviteLookupTimeout'));
+    } on RetroRoomStatusTimeout {
+      if (active()) app.show(T.text('retroRoomStatusTimeout'));
+    } on RetroRoomOccupied {
+      if (active()) app.show(T.text('retroRoomOccupied'));
     } on RetroRoomHostMismatch {
       if (active()) app.show(T.text('retroInviteHostChanged'));
     } on Object {

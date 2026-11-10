@@ -250,6 +250,17 @@ releases the pending attempt and lets the player accept the same invite again.
 The PS1, PS2, and PS3 room recheck before admission shares that deadline.
 A late lookup response cannot launch the old attempt. Room creation and
 admission retain their existing cleanup path.
+Before hosting or joining, the shared room client also gives the
+current-session check 12 seconds. If that read stalls, the launcher
+can retry while the old response is still pending. If the service
+reports an existing session, the launcher tells the player to leave
+it first. It makes no room changes in either case. The
+[room tests](../test/core/online/ps1_netplay_rooms_test.dart) cover
+host and guest retries after a stalled read, and the
+[PS3 host fixture](../test/ui/ps3_settings_test.dart) verifies the
+occupied-session message and that the existing room is preserved.
+The focused Windows suite passed 71 tests. An existing session can be
+on another device. The launcher does not assume it owns that session.
 The [PS1 handoff fixture](../test/ui/ps1_netplay_setup_test.dart) and
 [PS2 LAN fixture](../test/ui/ps2_lan_invite_test.dart) verify retry while the
 first response is still withheld. This update passed 33 focused tests on

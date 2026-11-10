@@ -33,7 +33,8 @@ void main() {
   Future<void> verifySetup(String mode) async {
     final dashboardHost = mode == 'dashboard-host';
     final inviteTimeout = mode == 'host-invite-timeout';
-    final host = mode == 'host' || dashboardHost || mode == 'host-cancel-invite' || inviteTimeout;
+    final occupied = mode == 'host-occupied';
+    final host = mode == 'host' || dashboardHost || mode == 'host-cancel-invite' || inviteTimeout || occupied;
     final quickHost = mode == 'solo-quick-host';
     final quickGuest = mode == 'solo-quick-guest';
     const title = 'BCUS98208';
@@ -354,6 +355,21 @@ void main() {
         model.open(Layer.friends);
         activate('game-accept-$roomId');
       }
+    }
+    if (occupied) {
+      server!.answers['GET me/game-session'] = (
+        200,
+        {
+          'session': {'id': roomId},
+        },
+      );
+      activate('ps3-online-play');
+      await waitFor(() => model.toast == 'Leave your current AnyTogether game before trying again.');
+      await waitFor(() => model.together.ps3PartyRows().isEmpty);
+      expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
+      expect(server.callsTo('game-sessions/$roomId', method: 'DELETE'), isEmpty);
+      expect(start.isCompleted, isFalse);
+      return;
     }
     if (mode == 'host-cancel-invite' || inviteTimeout) {
       const path = 'game-sessions/$roomId';
@@ -741,6 +757,7 @@ void main() {
     'dashboard-host',
     'host-cancel-invite',
     'host-invite-timeout',
+    'host-occupied',
     'guest',
     'guest-room-timeout',
     'guest-ended',
