@@ -14,10 +14,12 @@ The offline emulator review slices remain upstream PRs #85, #86 and #87.
 The online branch also carries subsequent optimizer, disc-menu and
 console-artwork changes so local integration preserves those features.
 Its cumulative diff is broader than the networking adapters alone.
+The [fork draft](https://github.com/B-Howell/AnyPS5-Desktop/pull/1)
+tracks integration and qualification while the upstream slices are reviewed.
 
 | Requirement | Current evidence | Still required |
 | --- | --- | --- |
-| PS1 couch co-op from the Quick Menu or Game Settings | The launcher performs compatibility checks, transfers an isolated checkpoint, assigns the remote controller and returns to the local game afterward. Two native CTR copies completed a full race through the local TURN fixture with dropped input packets. | Hosted signaling, separate-network acceptance and current physical controller/video/audio checks. |
+| PS1 couch co-op from the Quick Menu or Game Settings | The launcher performs compatibility checks, transfers an isolated checkpoint, assigns the remote controller and returns to the local game afterward. Two native CTR copies completed a full race in confirmed-input mode through the local TURN fixture with dropped input packets. | Hosted signaling, separate-network acceptance, separate rollback qualification and current physical controller/video/audio checks. |
 | PS2 native LAN through AnyTogether | The virtual NIC and room bridge carry local and relayed Ethernet traffic. Two native TimeSplitters copies completed a round after a simulated route failure. | A complete GT4 race, active gameplay with the latest native queue-reset callback, physical network-loss tests and separate-network acceptance. |
 | PS3 native online handoff | The launcher verifies an isolated provider profile, prepares its firmware/update, handles invitations and shows provider/membership state. Core and launcher checks use local fixtures. | Approved provider profile and identities, qualified binaries, and a real private level with two clients. The public release catalog is empty. |
 | Couch co-op for PS2 and PS3 games without native LAN/online support | The current PS1 input-synchronization adapter is specific to the PS1 core. | An additional synchronization adapter for each core. The existing PS2 LAN and PS3 provider paths do not cover this requirement. |
