@@ -701,10 +701,28 @@ signed in to the private game backend and reached the introduction
 tutorial. Both exited with code zero and the fixture released its
 transport. The 0% seed still runs the introduction, so stage
 **All Levels, No Prizes** for the next native import from each Pod.
-The paired scratch runner can start from the preserved First Steps
-save with that backup present in both Save Data lists. Successful
-story unlock, actual invitation acceptance and shared gameplay
-remain separate checks.
+Both Windows clients imported **All Levels, No Prizes**, reached
+their Pods and showed 29 story levels completed and InfoMoon. A
+subsequent cold start retained the unlock. The host opened
+**Start → Friends**, saw the guest playing, and selected **Invite**.
+The guest displayed the native invitation from the host and selected
+**Accept**. The invitation prompt closed, but the two clients stayed
+in separate Pods. Both workers exited zero and released their
+listeners.
+
+The guest's Windows guard logged sends to its logical self address
+after acceptance. That trace is recorded before destination
+translation. For the guest, `127.0.0.1:3658` is translated to its
+own physical socket on 3659. The host trace showed no traffic with
+the guest's physical socket. The fixture advertises distinct peers
+for explicit RPCN signaling lookups but normalizes both startup
+public addresses to `127.0.0.1`. The next control must distinguish
+the actual destination after the game's invite from startup
+self-traffic. Preserve the successful boot path, measure the
+address the guest uses on acceptance, and test distinct advertised
+endpoints without removing the fixture's network isolation.
+The observed native invite delivery and acceptance input are
+verified. A shared Pod and two-player gameplay remain unverified.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
