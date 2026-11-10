@@ -491,8 +491,24 @@ Friends entry. Both workers stopped cleanly and released their
 listeners. This ties the observed loading failure to the alias
 configuration even without a concurrent sign-in. It does not isolate
 the guest-visible address, native socket bind, or advertised endpoint.
-The next control should separate those values in the test fixture and
-verify both clients can reach a playable Pod before testing invites.
+The next Windows control configured both cores for `127.0.0.1`.
+The scratch network guard remapped only the guest's native UDP bind
+on port 3658 to `127.0.0.3`. The bind self-check and the live Windows
+socket inventory confirmed the split. The host entered the playable
+intro, while the guest again stayed on the animated loading screen.
+
+A second control also normalized the guest's RPCN startup response
+to `127.0.0.1`. The preflight verified that signaling lookup still
+returned the distinct peer addresses and direct UDP worked both
+ways. In the real game, both accounts authenticated and the host
+again entered playable intro. The guest sent the accepted intro
+entry request but still showed loading about 55 seconds later.
+Both workers stopped cleanly and released the listeners in both
+controls. The configured and reported startup addresses alone did
+not clear the failure. A further fixture control can keep both
+native sockets on `127.0.0.1`, separate them by port, and translate
+the guest endpoint at send and receive boundaries while preserving
+distinct provider endpoints. The native invite remains unverified.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
