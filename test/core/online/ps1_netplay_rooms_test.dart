@@ -7,7 +7,11 @@ import 'package:anyps5_desktop/core/online/ps1_netplay_match.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_peer.dart';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_session.dart';
+import 'package:anyps5_desktop/core/online/retro_lan_match.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../support/online_fakes.dart';
 
 const _roomId = '00000000-0000-0000-0000-000000000001';
 const _host = '00000000-0000-0000-0000-000000000002';
@@ -341,6 +345,92 @@ void main() {
       ('DELETE', _path),
     ]);
   });
+
+  for (final mode in [RetroOnlineMode.synchronized, RetroOnlineMode.lan]) {
+    test('${mode.name} releases a room when connection settings stall', () {
+      fakeAsync((clock) {
+        final reply = Completer<Map<String, dynamic>>();
+        final network = FakeGameNetwork();
+        var settingsRequests = 0;
+        var released = 0;
+        var closed = false;
+        Object? failure;
+        final spec = (
+          titleId: mode == RetroOnlineMode.lan ? 'SLUS21148' : _spec.titleId,
+          gameVersion: _spec.gameVersion,
+          mode: mode,
+          capacity: 2,
+        );
+        final discDigest = 'a' * 64;
+        final rooms = RetroOnlineRooms(
+          spec: spec,
+          discDigest: discDigest,
+          me: _host,
+          call: (method, path, [body]) async {
+            if (path == 'me/game-session') return {'session': null};
+            if (path == '$_path/ice-servers') {
+              settingsRequests++;
+              return reply.future;
+            }
+            if (method == 'DELETE') released++;
+            return {
+              ..._view(),
+              'titleId': spec.titleId,
+              'engineBuild': mode.protocol,
+              'properties': {'protocol': mode.protocol, 'discSha256': discDigest},
+              'members': [
+                {'userId': _host},
+                {
+                  'userId': _guest,
+                  'device': _device,
+                  'properties': {'protocol': mode.protocol},
+                },
+              ],
+            };
+          },
+          signal: (_, _, _, _, _) {},
+        );
+        final Future<void> opening;
+        final Future<void> done;
+        if (mode == RetroOnlineMode.synchronized) {
+          final match = Ps1NetplayMatch(
+            rooms: rooms,
+            links: network.links,
+            identity: _identity(),
+            runner: _UnusedRunner(),
+          );
+          opening = match.host(_guest);
+          done = match.done;
+        } else {
+          final match = RetroLanMatch(
+            rooms: rooms,
+            links: network.links,
+            launch: (_) async => throw StateError('The timed-out attempt must not launch.'),
+          );
+          opening = match.host(_guest);
+          done = match.done;
+        }
+        unawaited(opening.then<void>((_) {}, onError: (Object error) => failure = error));
+        unawaited(done.then<void>((_) => closed = true));
+
+        clock.flushMicrotasks();
+        expect(settingsRequests, 1);
+        clock.elapse(const Duration(seconds: 11));
+        expect(released, 0);
+        clock.elapse(const Duration(seconds: 1));
+        expect(failure, isA<TimeoutException>());
+        expect(closed, isTrue);
+        expect(released, 1);
+
+        expect(network.made, isEmpty);
+        reply.complete({'iceServers': <Object>[]});
+        clock.flushMicrotasks();
+        expect(network.made, isEmpty);
+        expect(failure, isA<TimeoutException>());
+        expect(released, 1);
+      });
+    });
+  }
 
   test('cancel closes the room and completes startup even if a plugin open never returns', () async {
     var removed = false;

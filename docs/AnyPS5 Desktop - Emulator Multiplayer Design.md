@@ -254,6 +254,13 @@ The [PS1 handoff fixture](../test/ui/ps1_netplay_setup_test.dart) and
 first response is still withheld. This update passed 33 focused tests on
 Windows with a local fixture room service.
 
+PS1 netplay and PS2 LAN also bound the read-only WebRTC connection
+settings request to 12 seconds after a peer joins. If it stalls, the
+match takes the existing room cleanup and connection failure path.
+A response from the abandoned request cannot create a link or start
+the game. The [room regression tests](../test/core/online/ps1_netplay_rooms_test.dart)
+hold the response past the deadline in both modes and then deliver it late.
+
 - On a clean AnyPS5 install, set up the needed emulator inside Settings,
   select user-supplied firmware and games, and start or accept a session
   from the dashboard or Quick Menu. Report incompatible media, missing

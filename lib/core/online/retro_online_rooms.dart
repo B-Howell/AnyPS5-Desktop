@@ -184,7 +184,7 @@ final class RetroOnlineRooms {
   }
 
   Future<List<Map<String, dynamic>>> iceServers(RetroRoom room) async {
-    final response = await call('GET', '${_path(room.id)}/ice-servers');
+    final response = await call('GET', '${_path(room.id)}/ice-servers').timeout(const Duration(seconds: 12));
     final servers = response['iceServers'];
     if (servers is! List) throw StateError('The retro room returned invalid connection settings.');
     return [for (final server in servers) Map<String, dynamic>.from(server as Map)];
