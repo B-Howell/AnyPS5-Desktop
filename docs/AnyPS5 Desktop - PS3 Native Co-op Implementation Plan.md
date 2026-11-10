@@ -59,8 +59,16 @@ Matchmaking still needs a compatible RPCN server. The
 requires RPCN protocol 32. [RPCN 1.9.0 at `9a94d603`](https://github.com/RipleyTom/rpcn/blob/9a94d603efbd1d5b2e0704366f8abe7d2840109f/src/server.rs)
 advertises 32 and is a candidate for an isolated pilot.
 [RPCN 1.12.1 at `7a3c3c48`](https://github.com/RipleyTom/rpcn/blob/7a3c3c480d54d7b51a7a231655c778821097ee4e/src/server.rs)
-advertises 34, which the pinned client rejects. This comparison covers
-source versions. A hosted provider's live protocol still needs verification.
+advertises 34, which the pinned client rejects. A diagnostic connection to
+`np.rpcs3.net:31313`, the pinned client's default address, received a protocol
+34 greeting. The endpoint presented a self-signed certificate, which the
+system trust store rejected. The follow-up read only the unauthenticated
+greeting and sent no login. Treat this as a compatibility signal. Public
+qualification still requires a trusted provider identity and a compatible
+core. The [libretro branch source at `8bafcb27`](https://github.com/WizzardSK/rpcs3-libretro/blob/8bafcb27ae9cbb708ed05b89d5b1a62fe87cd0ce/rpcs3/Emu/NP/rpcn_client.cpp)
+also required protocol 32 when checked on November 10, 2026. A core
+package refresh to that revision would retain the mismatch. Keep the
+private protocol-32 fixture isolated.
 For private RPCN, also qualify ticket trust. The
 [Refresh authentication handler](https://github.com/LittleBigRefresh/Refresh/blob/v3.7.2/Refresh.Interfaces.Game/Endpoints/Handshake/AuthenticationEndpoints.cs)
 uses the library's RPCN signing key for verification, so a freshly
@@ -604,7 +612,15 @@ first wall, cleared the layer-switching hills and waterwheel,
 and used the game's retry action to pass the broken bridge. It
 reached the shirt-and-shoes sticker gate before the end of First
 Steps. The run ended at that gate and the worker exited zero.
-Neither the online menu unlock nor a native join has been verified.
+
+The follow-up added both right-stick axes and input receipts to the
+offscreen host fixture. It resized and placed the shirt and shoes,
+completed First Steps with a score of 2,118, and unlocked Get a Grip.
+The host could start Get a Grip, but its level menu still offered
+only solo Play and Manage Players remained disabled in the Pod.
+The worker exited zero after returning to the Pod. Keep this newer
+host scratch profile as the next progression seed. Completing First
+Steps alone did not expose native join controls in this fixture.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
