@@ -119,12 +119,7 @@ final class RetroOnlineRooms {
   }
 
   Future<List<RetroRoomMember>> peers(RetroRoom room, {String? expectedUser}) async {
-    final json = await call('GET', _path(room.id));
-    if (_room(json, id: room.id) != room) throw StateError('The retro room changed hosts.');
-    final members = json['members'];
-    if (members is! List || members.isEmpty || members.length > spec.capacity) {
-      throw StateError('This launcher is outside the retro room.');
-    }
+    final members = await _members(room);
     var own = false;
     final peers = <RetroRoomMember>[];
     for (final member in members) {
@@ -148,6 +143,32 @@ final class RetroOnlineRooms {
     }
     if (!own) throw StateError('This launcher left the retro room.');
     return peers;
+  }
+
+  /// Checks room admission without waiting for gameplay transport metadata.
+  Future<bool> hasInvitedMember(RetroRoom room, String expectedUser) async {
+    if (expectedUser == me || !_uuid.hasMatch(expectedUser)) {
+      throw ArgumentError('A retro room needs a distinct invited account.');
+    }
+    final users = <String>{};
+    for (final member in await _members(room)) {
+      final id = member is Map ? member['userId'] : null;
+      if (id is! String || (id != me && id != expectedUser) || !users.add(id)) {
+        throw StateError('The private retro room returned an unexpected member.');
+      }
+    }
+    if (!users.contains(me)) throw StateError('This launcher left the retro room.');
+    return users.contains(expectedUser);
+  }
+
+  Future<List<dynamic>> _members(RetroRoom room) async {
+    final json = await call('GET', _path(room.id));
+    if (_room(json, id: room.id) != room) throw StateError('The retro room changed hosts.');
+    final members = json['members'];
+    if (members is! List || members.isEmpty || members.length > spec.capacity) {
+      throw StateError('This launcher is outside the retro room.');
+    }
+    return members;
   }
 
   Future<List<Map<String, dynamic>>> iceServers(RetroRoom room) async {

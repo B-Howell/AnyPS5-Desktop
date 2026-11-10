@@ -1,5 +1,7 @@
 part of 'together_model.dart';
 
+enum _Ps3PartyMembership { checking, waiting, present, unavailable }
+
 final class _Ps3PartyAttempt {
   _Ps3PartyAttempt(this.runningWorker);
 
@@ -10,6 +12,9 @@ final class _Ps3PartyAttempt {
   bool roomEnded = false;
   bool disposed = false;
   bool attached = false;
+  _Ps3PartyMembership membership = _Ps3PartyMembership.checking;
+  Future<void> Function()? refreshMembership;
+  int membershipRequest = 0;
 
   void cancel() {
     if (!cancelled.isCompleted) cancelled.complete();
@@ -17,6 +22,35 @@ final class _Ps3PartyAttempt {
 }
 
 extension TogetherPs3Online on TogetherModel {
+  void _ps3PartyEvent(TogetherEvent event) {
+    final attempt = _ps3Party;
+    final roomId = attempt?.roomId;
+    if (attempt == null || roomId == null) return;
+    final data = event.json;
+    switch (event.type) {
+      case 'game_session.ended' when data['sessionId'] == roomId:
+        attempt.roomEnded = true;
+        attempt.cancel();
+        app.refresh();
+      case 'game_session.member_joined' || 'game_session.member_left' when data['sessionId'] == roomId:
+      case 'game_session.updated' when data['id'] == roomId:
+      case 'live.ready':
+        final refresh = attempt.refreshMembership;
+        if (refresh != null && !attempt.cancelled.isCompleted) unawaited(refresh());
+    }
+  }
+
+  String _ps3PartyHandoffKey(_Ps3PartyAttempt attempt, Ps3ProviderStatus provider) {
+    if (provider != Ps3ProviderStatus.ready) return provider.detailKey;
+    if (hub.socket.status != SocketStatus.ready) return 'ps3PartyMembershipUnavailable';
+    return switch (attempt.membership) {
+      _Ps3PartyMembership.checking => 'ps3PartyCheckingMembership',
+      _Ps3PartyMembership.waiting => 'ps3PartyWaitingForFriend',
+      _Ps3PartyMembership.present => 'ps3PartyGameMenu',
+      _Ps3PartyMembership.unavailable => 'ps3PartyMembershipUnavailable',
+    };
+  }
+
   void ps3ProviderFailed(Object? party) {
     final attempt = _ps3Party;
     if (attempt != null && identical(attempt, party)) attempt.cancel();
@@ -149,7 +183,7 @@ extension TogetherPs3Online on TogetherModel {
         title: T.text(playing ? 'ps3PartyLeave' : 'ps3PartyCancel'),
         detail: T.text(
           playing
-              ? (provider == Ps3ProviderStatus.ready ? 'ps3PartyGameMenu' : provider.detailKey)
+              ? _ps3PartyHandoffKey(attempt, provider)
               : app.isStartingPs3Party(attempt)
               ? 'ps3PartyBooting'
               : 'ps3PartyStarting',
@@ -231,7 +265,30 @@ extension TogetherPs3Online on TogetherModel {
     );
     final owner = app.currentProfile?.id;
     final attempt = _ps3Party = _Ps3PartyAttempt(runningWorker)..roomId = invite?.sessionId;
-    bool active() => !attempt.cancelled.isCompleted && account.user?.id == me && app.currentProfile?.id == owner;
+    bool active() =>
+        identical(_ps3Party, attempt) &&
+        !attempt.cancelled.isCompleted &&
+        account.user?.id == me &&
+        app.currentProfile?.id == owner;
+    Future<void> refreshMembership(RetroRoom room) async {
+      if (!active()) return;
+      final request = ++attempt.membershipRequest;
+      if (attempt.membership != _Ps3PartyMembership.checking) {
+        attempt.membership = _Ps3PartyMembership.checking;
+        app.refresh();
+      }
+      var membership = _Ps3PartyMembership.unavailable;
+      try {
+        final present = await rooms.hasInvitedMember(room, friendId ?? room.hostId);
+        membership = present ? _Ps3PartyMembership.present : _Ps3PartyMembership.waiting;
+      } on Object {
+        // A failed refresh is not evidence of who is in the room.
+      }
+      if (!active() || request != attempt.membershipRequest) return;
+      attempt.membership = membership;
+      app.refresh();
+    }
+
     RetroRoom? room;
     Future<void>? launch;
     final quickJoin = runningWorker != null && invite != null && app.overlay == Layer.quickMenu;
@@ -251,6 +308,9 @@ extension TogetherPs3Online on TogetherModel {
       if (!canStart()) return app.show(T.text('ps3PartyBusy'));
       if (friendId != null) await rooms.invite(room, friendId);
       if (!active()) return;
+      final admitted = room;
+      attempt.refreshMembership = () => refreshMembership(admitted);
+      unawaited(refreshMembership(admitted));
       if (runningWorker == null) {
         launch = app.playVerifiedPs3Online(game, profile!, canBoot: active, party: attempt);
         await Future.any<void>([launch, attempt.cancelled.future]);
@@ -258,7 +318,7 @@ extension TogetherPs3Online on TogetherModel {
         if (!canStart()) return app.show(T.text('ps3PartyBusy'));
         attempt.attached = true;
         if (invite != null && app.overlay == (quickJoin ? Layer.quickMenu : Layer.friends)) app.resumeGame();
-        app.show(T.text('ps3PartyGameMenu'));
+        app.show(T.text(_ps3PartyHandoffKey(attempt, Ps3ProviderStatus.ready)));
         await attempt.cancelled.future;
       }
     } on RetroRoomHostMismatch {

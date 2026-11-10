@@ -1407,14 +1407,7 @@ class TogetherModel {
   void _event(TogetherEvent event) {
     _ps1Match?.receive(event.type, event.json);
     _ps2Lan?.match?.receive(event.type, event.json);
-    if (_ps3Party case final attempt?
-        when event.type == 'game_session.ended' &&
-            attempt.roomId != null &&
-            attempt.roomId == event.json['sessionId']) {
-      attempt.roomEnded = true;
-      attempt.cancel();
-      app.refresh();
-    }
+    _ps3PartyEvent(event);
     // Online play follows the same game session: players joining, leaving, signalling.
     online.handle(event);
     // Share play: the one hosted, the one watched, the invites.

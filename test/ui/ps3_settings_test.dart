@@ -249,6 +249,15 @@ void main() {
         'capacity': 2,
         'joinable': false,
         'properties': {'protocol': protocol, 'profileSha256': releases.single.partyFingerprint},
+        'members': [
+          {'userId': localId},
+          if (mode != 'host' && !quickHost)
+            {
+              'userId': friendId,
+              'device': '12345678-1234-4234-8234-123456789ab3',
+              'properties': {'protocol': protocol},
+            },
+        ],
       };
       server.answers.addAll({
         'POST game-sessions': (201, room),
@@ -456,7 +465,43 @@ void main() {
         const path = 'game-sessions/$roomId';
         await waitFor(() => server!.callsTo('$path/invites', method: 'POST').length == 1);
         await waitFor(() => model.together.ps3PartyRows().singleOrNull?.title == 'Leave AnyTogether Room');
-        final sent = server!.callsTo('game-sessions', method: 'POST').single.body;
+        const waiting = 'Waiting for your friend to join the AnyTogether room.';
+        const gameMenu = "Use the game's online menu to meet your friend.";
+        String? roomDetail() => model.together.ps3PartyRows().singleOrNull?.detail;
+        await waitFor(() => roomDetail() == waiting);
+        final validRoom = server!.answers['GET $path']!.$2 as Map<String, dynamic>;
+        server.answers['GET $path'] = (
+          200,
+          {
+            ...validRoom,
+            'members': [
+              {'userId': localId},
+              {'userId': friendId},
+            ],
+          },
+        );
+        server.push('game_session.member_joined', {'sessionId': '12345678-1234-4234-8234-123456789fff'});
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        expect(roomDetail(), waiting);
+        server.push('game_session.member_joined', {'sessionId': roomId});
+        await waitFor(() => roomDetail() == gameMenu);
+        server.answers['GET $path'] = (200, validRoom);
+        server.push('game_session.member_left', {'sessionId': roomId});
+        await waitFor(() => roomDetail() == waiting);
+        server.answers['GET $path'] = (
+          200,
+          {
+            ...validRoom,
+            'members': [
+              {'userId': localId},
+              {'userId': '12345678-1234-4234-8234-123456789ab4'},
+            ],
+          },
+        );
+        server.push('game_session.updated', {'id': roomId, 'titleId': title});
+        await waitFor(() => roomDetail() == 'Could not confirm who is in the AnyTogether room.');
+        server.answers['GET $path'] = (200, validRoom);
+        final sent = server.callsTo('game-sessions', method: 'POST').single.body;
         expect(sent['properties'], {'protocol': protocol, 'profileSha256': releases.single.partyFingerprint});
         expect(sent.toString(), isNot(contains('fake-token')));
         model.open(Layer.quickMenu);
