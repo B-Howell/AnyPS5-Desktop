@@ -460,8 +460,26 @@ level 26374 entry and play requests. A captured response to movement
 shows the King dialogue. The worker exited zero, removed its
 disposable RPCN config, and released the relay listeners. This
 qualifies one signed-in game through the intro and into a level.
-The next test needs two signed-in games in the Pod and a completed
-native friend invite and join.
+The paired Windows fixture enrolled two disposable Refresh users and
+established mutual RPCN friendship. A transport probe verified each
+advertised loopback endpoint and sent direct UDP in both directions.
+Its first attempt misclassified an asynchronous friendship
+notification as a signaling reply. The corrected probe waits for the
+response matching the request ID.
+
+Two windowless LittleBigPlanet workers then signed in as those users
+with separate profiles and bound `127.0.0.2:3658` and
+`127.0.0.3:3658`. Both accepted the private EULA and Refresh accepted
+both intro entry requests. Both remained on the animated loading
+screen and neither opened the second tutorial or Pod movie. RPCN
+logged no CreateRoom or JoinRoom request. Both workers stopped on
+request with exit zero, removed their RPCN configs, and released the
+fixture listeners.
+
+The next control should advance one role on the paired backend
+before starting the second. This separates the changed endpoint and
+account fixture from simultaneous boot and friend presence. A native
+invite and join still requires two playable Pods.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
