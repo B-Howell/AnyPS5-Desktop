@@ -476,10 +476,23 @@ logged no CreateRoom or JoinRoom request. Both workers stopped on
 request with exit zero, removed their RPCN configs, and released the
 fixture listeners.
 
-The next control should advance one role on the paired backend
-before starting the second. This separates the changed endpoint and
-account fixture from simultaneous boot and friend presence. A native
-invite and join still requires two playable Pods.
+The staggered Windows control reproduced the intro stall with only
+the host signed in at `127.0.0.2`. Refresh accepted the intro entry,
+but the worker stayed on the animated loading screen for about two
+minutes afterward and never sent the intro play request.
+
+A fresh control on the same paired backend kept both accounts and
+their friendship, but moved the host's configured and relay addresses
+to `127.0.0.1`. The host sent the intro play request, reached the
+Pod, and started First Steps. When the guest signed in later at
+`127.0.0.3`, the host remained playable and the guest reproduced
+the intro stall. The host's first-visit Pod pause menu did not show a
+Friends entry. Both workers stopped cleanly and released their
+listeners. This ties the observed loading failure to the alias
+configuration even without a concurrent sign-in. It does not isolate
+the guest-visible address, native socket bind, or advertised endpoint.
+The next control should separate those values in the test fixture and
+verify both clients can reach a playable Pod before testing invites.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
