@@ -1303,7 +1303,13 @@ pause command, and an unlisted title has no Play Online action.
 The [PS3 Friends handoff](../lib/ui/together_ps3_online.dart) opens the
 [existing readiness page](../lib/ui/ps3_online_readiness_page.dart) for
 both the sender and the recipient. It verifies the local game and isolated
-profile before making room calls. The
+profile before making room calls. From a supported game's **Game Settings**,
+**Invite a Friend to Online Play** opens the same online friends list used
+in the Quick Menu. Selecting a friend opens readiness for that title.
+Back returns to the selected friend, then to the original game action.
+**Send Invite and Play** verifies the profile before creating the room,
+sending the invite and launching the game. Games without a reviewed
+release still show Online Readiness and omit the invite action. The
 [room protocol](../lib/core/online/retro_online_rooms.dart) checks title
 ID, update version and a [public profile fingerprint](../lib/core/ps3_online_profile.dart).
 The fingerprint covers the reviewed core, update, provider identity,
@@ -1368,7 +1374,8 @@ focus moves to account import. Back then returns to Home.
 The [existing PS5 flow](../lib/ui/together_play.dart) remains separate.
 
 The [PS3 settings integration tests](../test/ui/ps3_settings_test.dart)
-exercise host invite, guest acceptance, profile mismatch, isolated
+exercise host invites from Friends and Game Settings, back navigation,
+guest acceptance, profile mismatch, isolated
 emulator arguments, room cleanup and the native game's continued
 execution after leaving. They use local fake AnyTogether responses and
 a fake native channel. Hosted room behavior and native lobby entry

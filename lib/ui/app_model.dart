@@ -6236,6 +6236,7 @@ class AppModel extends ChangeNotifier {
               if (_canOptimizeBeforeLaunch(game) && running == null && starting == null)
                 _emulatorMenu.autoOptimizeLink(game),
               ..._gameRows(game),
+              ?together.ps3PartyDashboardLink(game, _emulatorMenu.openPage),
               if (managedRetroAvailable && game.retro?.platform == RetroPlatform.ps3) _ps3OnlineReadinessRow(game),
               if (game.retro case final RetroDisc disc)
                 PanelRow(

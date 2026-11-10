@@ -280,7 +280,7 @@ extension Ps3OnlineReadinessPage on AppModel {
               ),
       );
     };
-    _emulatorMenu.openPage(page);
+    _emulatorMenu.openChild(page);
   }
 
   Future<void> playVerifiedPs3Online(

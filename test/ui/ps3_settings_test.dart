@@ -31,6 +31,8 @@ void main() {
   setUpAll(T.load);
 
   Future<void> verifySetup(String mode) async {
+    final dashboardHost = mode == 'dashboard-host';
+    final host = mode == 'host' || dashboardHost;
     final quickHost = mode == 'solo-quick-host';
     final quickGuest = mode == 'solo-quick-guest';
     const title = 'BCUS98208';
@@ -241,7 +243,7 @@ void main() {
       final friend = model.together.hub.friends.friends.single;
       final room = {
         'id': roomId,
-        'host': {'userId': mode == 'host' || quickHost ? localId : friendId},
+        'host': {'userId': host || quickHost ? localId : friendId},
         'kind': 'online',
         'titleId': title,
         'gameVersion': '01.30',
@@ -251,7 +253,7 @@ void main() {
         'properties': {'protocol': protocol, 'profileSha256': releases.single.partyFingerprint},
         'members': [
           {'userId': localId},
-          if (mode != 'host' && !quickHost)
+          if (!host && !quickHost)
             {
               'userId': friendId,
               'device': '12345678-1234-4234-8234-123456789ab3',
@@ -268,9 +270,26 @@ void main() {
         'POST game-sessions/$roomId/leave': (204, null),
         'DELETE game-sessions/$roomId': (204, null),
       });
-      if (mode == 'host') {
-        model.together.openFriend(friend);
-        activate('ps3-party-invite');
+      if (host) {
+        if (dashboardHost) {
+          model.closeOverlay();
+          expect(model.overlay, Layer.gameSettings);
+          activate('ps3-party-dashboard-invite');
+          expect(model.panelCategories().single.title, 'Invite a friend');
+          activate('ps3-party-dashboard-$friendId');
+          expect(model.panelCategories().single.rows.any((row) => row.id == 'ps3-online-play'), isTrue);
+          model.closeOverlay();
+          expect(model.spot?.row, 'ps3-party-dashboard-$friendId');
+          model.closeOverlay();
+          expect(model.spot?.row, 'ps3-party-dashboard-invite');
+          activate('ps3-party-dashboard-invite');
+          activate('ps3-party-dashboard-$friendId');
+          expect(model.running, isNull);
+          expect(calls.where((call) => call.method == 'start'), isEmpty);
+        } else {
+          model.together.openFriend(friend);
+          activate('ps3-party-invite');
+        }
         expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
       } else if (!quickHost && !quickGuest) {
         final invite = {
@@ -379,9 +398,11 @@ void main() {
     expect(launch.toString(), isNot(contains('fake-token')));
     expect(launch.toString(), isNot(contains('test-only')));
     if (server != null && !quickHost && !quickGuest) {
-      final action = mode == 'host' ? 'invites' : 'join';
+      final action = host ? 'invites' : 'join';
       expect(server.callsTo('game-sessions/$roomId/$action', method: 'POST'), hasLength(1));
-      if (mode == 'host') {
+      if (host) {
+        final invitation = server.callsTo('game-sessions/$roomId/invites', method: 'POST').single.body;
+        expect(invitation['userIds'], [friendId]);
         final sent = server.callsTo('game-sessions', method: 'POST').single.body;
         expect(sent['properties'], {'protocol': protocol, 'profileSha256': releases.single.partyFingerprint});
         expect(sent.toString(), isNot(contains('fake-token')));
@@ -599,7 +620,7 @@ void main() {
         expect(model.embeddedGame?.isPs3Online, isTrue);
       }
     } finally {
-      if (mode == 'host') {
+      if (host) {
         expect(await model.prepareToQuit(), isTrue);
         expect(server!.callsTo('game-sessions/$roomId', method: 'DELETE'), hasLength(1));
       } else {
@@ -614,6 +635,7 @@ void main() {
     'solo-quick-host',
     'solo-quick-guest',
     'host',
+    'dashboard-host',
     'guest',
     'guest-ended',
     'guest-boot-cancel',
@@ -660,6 +682,7 @@ void main() {
     model.selected = 0;
     model.open(Layer.gameSettings);
     final gameRows = model.panelCategories().single.rows;
+    expect(gameRows.any((row) => row.id == 'ps3-party-dashboard-invite'), isFalse);
     final entry = gameRows.indexWhere((row) => row.id == 'ps3-online-readiness');
     expect(entry, isNonNegative);
     expect(gameRows[entry].title, 'Online Readiness');
