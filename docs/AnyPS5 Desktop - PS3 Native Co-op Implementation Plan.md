@@ -278,6 +278,20 @@ without recording their destination. The next Windows comparison needs
 destination-level evidence and a controlled local DNS response if the
 sends are DNS. The prior Linux renderer timeout was absent in this run.
 
+Destination logging identified the sampled blocked sends as UDP to
+127.0.0.1:3658, RPCS3's native peer port. Both Windows comparison profiles
+used the same in-core DNS mapping. The control that still blocked the
+peer port did not reach the intro during its observation window. The
+next run allowed sends to the loopback peer port and remained active
+longer. It reached Refresh network settings and made two authenticated
+intro-level requests. An offscreen capture showed Sackboy in the level,
+and fixture stick and Cross inputs moved him through multiple obstacles.
+The run rendered more than 8,800 frames without a Vulkan error and
+stopped at the harness deadline before reaching the Pod. The observation
+windows differed, so this comparison identifies a guard error and
+qualifies one Windows client's intro. It does not establish the cause
+of the long gaps between HTTP requests or qualify a shared lobby.
+
 The Quick Menu labels the current status **RPCN connection** and
 describes game sign-in and lobby handling separately. The
 [English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
