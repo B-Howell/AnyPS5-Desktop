@@ -261,6 +261,23 @@ for its emulated socket and DNS traffic, followed by authenticated
 in-game requests. The single-client signaling relay does not route
 peer gameplay packets or qualify a two-player lobby.
 
+The real Windows GOTY 1.30 client then ran at 1280×720 on the RTX 4080
+SUPER against that private backend, using the Windows v3 core and the
+attested 33-write patch. A test-only guard on the pinned core's Winsock
+imports rejected off-fixture destinations and redirected its initial
+UDP route probe to loopback. RPCN verified the certificate, reached
+Ready and supplied the ticket that the game used for Refresh login.
+Refresh returned HTTP 200 for the login and protected EULA, and the
+game rendered the private welcome screen. After accepting with the
+fixture controller, the game remained on Connecting to LittleBigPlanet
+online. Refresh served its announce request but recorded no intro
+entry. Vulkan continued reading frames, and the native host exited
+cleanly on request after 3,388 frames. The end-to-end fixture failed its
+intro-entry assertion. The guard observed repeated blocked UDP sends
+without recording their destination. The next Windows comparison needs
+destination-level evidence and a controlled local DNS response if the
+sends are DNS. The prior Linux renderer timeout was absent in this run.
+
 The Quick Menu labels the current status **RPCN connection** and
 describes game sign-in and lobby handling separately. The
 [English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
