@@ -682,6 +682,30 @@ The scratch runner now allows a bounded 20-minute attempt to finish
 the level in one session. The Gardens unlock and the two-player
 friend invite still need to be verified.
 
+The Windows scratch host then imported Genrist's **0% PSN Unlocked**
+practice backup through LittleBigPlanet's own **Settings → Profile
+Settings → Import Profile**. The GOTY build listed the European
+backup alongside the North American control. It accepted the
+unchanged backup, connected to the private provider, and opened
+**Friends**. The title warned that trophies are disabled for the
+imported profile. This seed is for the disposable test environment.
+Use the game's importer rather than putting the exported payload
+directly into the active game-data directory. [Practice save source](https://www.speedrun.com/lbp1/resources/aeii1)
+
+The first dual-client attempt exposed a separate startup failure.
+The guest's syscache expansion called `sys_fs_truncate` and Windows
+returned error `0x70` for insufficient disk space. The retry set
+only the guest fixture's `/dev_hdd1/` VFS entry to a separate
+scratch directory on a volume with enough space. Both clients then
+signed in to the private game backend and reached the introduction
+tutorial. Both exited with code zero and the fixture released its
+transport. The 0% seed still runs the introduction, so stage
+**All Levels, No Prizes** for the next native import from each Pod.
+The paired scratch runner can start from the preserved First Steps
+save with that backup present in both Save Data lists. Successful
+story unlock, actual invitation acceptance and shared gameplay
+remain separate checks.
+
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
 field. The guard terminated it before sending test input. A subsequent
