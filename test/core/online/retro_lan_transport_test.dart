@@ -70,6 +70,7 @@ void main() {
     var ready = false;
     final reply = _frame(_guest, _host);
     final bridge = RetroLanBridge(
+      peerRoute: () => 1,
       segment: host,
       send: (recipient, packet) => sent.add((recipient, packet)),
       exchange: (input) async {
@@ -106,6 +107,7 @@ void main() {
     final pending = Completer<List<Uint8List>?>();
     var calls = 0;
     final bridge = RetroLanBridge(
+      peerRoute: () => 1,
       segment: RetroLanTransport(epoch: 12, me: 'host', addresses: {'host': _host, 'guest': _guest}),
       send: (_, packet) => sent.add(packet),
       exchange: (_) {
@@ -122,5 +124,39 @@ void main() {
     expect(sent, isEmpty);
     await bridge.pump();
     expect(calls, 1);
+  });
+
+  test('a pending exchange cannot consume queued frames from the next route', () async {
+    final sent = <Uint8List>[];
+    final batches = <List<Uint8List>>[];
+    final pending = Completer<List<Uint8List>?>();
+    var route = 1;
+    final reply = _frame(_guest, _host);
+    final bridge = RetroLanBridge(
+      peerRoute: () => route,
+      segment: host,
+      send: (_, packet) => sent.add(packet),
+      exchange: (frames) async {
+        batches.add(frames);
+        return batches.length == 1 ? pending.future : [reply];
+      },
+    );
+    addTearDown(bridge.close);
+    final old = _frame(0xffffffffffff, _guest);
+    final fresh = _frame(_host, _guest);
+    bridge.receive('guest', guest.outbound(old)!.packet);
+    final exchange = bridge.pump();
+    bridge.receive('guest', guest.outbound(old)!.packet);
+    route++;
+    bridge.receive('guest', guest.outbound(fresh)!.packet);
+    pending.complete([reply]);
+    await exchange;
+    expect(sent, isEmpty);
+    await bridge.pump();
+    expect(batches, [
+      [old],
+      [fresh],
+    ]);
+    expect(guest.inbound('host', sent.single), reply);
   });
 }

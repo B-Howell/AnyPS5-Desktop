@@ -204,6 +204,7 @@ final class RetroLanMatch {
         addresses: {rooms.me: mac, peer.userId: peerMac},
       ),
       exchange: game.exchange,
+      peerRoute: () => mesh.gameRouteIdentity(peerAddress),
       send: (_, packet) {
         if (!mesh.canSendGame(peerAddress)) return;
         mesh.send(

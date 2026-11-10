@@ -73,12 +73,16 @@ void main() {
     final trafficAfterRouteRestart = Completer<void>();
     final reconnecting = Completer<void>();
     final reconnected = Completer<void>();
+    final exchangeBeforeOutage = Completer<Uint8List>();
+    final releaseOldExchange = Completer<List<Uint8List>>();
     final release = Completer<void>();
     final exchangeStarted = Completer<void>();
     final exchangeFinished = Completer<List<Uint8List>?>();
     var afterRenegotiate = false;
     var holdExchange = false;
     var expectRecovery = false;
+    var holdBeforeOutage = false;
+    var staleFrames = 0;
     var expectRouteRestart = false;
     var guestFrames = 0;
     final closed = <String>[];
@@ -100,7 +104,10 @@ void main() {
             exchange: (List<Uint8List> input) async {
               if (id == WebRtcRoomFixture.guest && input.isNotEmpty) {
                 guestFrames += input.length;
-                if (expectRecovery && !trafficAfterReconnect.isCompleted) trafficAfterReconnect.complete();
+                staleFrames += input.where((frame) => frame.length == 15).length;
+                if (expectRecovery && input.any((frame) => frame.length == 14) && !trafficAfterReconnect.isCompleted) {
+                  trafficAfterReconnect.complete();
+                }
                 if (expectRouteRestart && !trafficAfterRouteRestart.isCompleted) trafficAfterRouteRestart.complete();
               }
               if (id == WebRtcRoomFixture.guest && input.isNotEmpty && !received.isCompleted) {
@@ -113,6 +120,11 @@ void main() {
                 resumedTraffic.complete();
               }
               if (id != WebRtcRoomFixture.host) return <Uint8List>[];
+              if (holdBeforeOutage) {
+                holdBeforeOutage = false;
+                exchangeBeforeOutage.complete(Uint8List.fromList([255, 255, 255, 255, 255, 255, ...mac, 8, 6, 42]));
+                return releaseOldExchange.future;
+              }
               if (holdExchange) {
                 exchangeStarted.complete();
                 return exchangeFinished.future;
@@ -170,11 +182,16 @@ void main() {
     expect(host.closed, isFalse);
     expect(network.all, hasLength(2));
 
+    holdBeforeOutage = true;
+    final staleFrame = await exchangeBeforeOutage.future.timeout(const Duration(seconds: 2));
+    addTearDown(() {
+      if (!releaseOldExchange.isCompleted) releaseOldExchange.complete([]);
+    });
     for (final link in network.all) {
       expect(link.gameOpen, isTrue);
       link.reportState('disconnected');
     }
-    // The delayed status also lets the last native batch finish.
+    // Keep the previous native batch in flight until the route is usable again.
     await reconnecting.future.timeout(const Duration(seconds: 2));
     final beforeRecovery = guestFrames;
     await Future<void>.delayed(const Duration(milliseconds: 60));
@@ -185,8 +202,10 @@ void main() {
     for (final link in network.all) {
       link.reportState('connected');
     }
-    await trafficAfterReconnect.future.timeout(const Duration(seconds: 2));
     await reconnected.future.timeout(const Duration(seconds: 2));
+    releaseOldExchange.complete([staleFrame]);
+    await trafficAfterReconnect.future.timeout(const Duration(seconds: 2));
+    expect(staleFrames, 0);
     expect(network.all, hasLength(2));
 
     final beforeRestart = gateway.signals;

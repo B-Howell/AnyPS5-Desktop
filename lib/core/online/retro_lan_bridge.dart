@@ -12,11 +12,15 @@ final class RetroLanBridge {
     required RetroLanTransport this._segment,
     required void Function(String recipient, Uint8List packet) this._send,
     required this._exchange,
+    required Object? Function() this._peerRoute,
     this._dhcp,
   });
 
   /// Runs the guest's local network setup without a room or peer transport.
-  RetroLanBridge.local({required this._exchange, required RetroLanDhcp this._dhcp}) : _segment = null, _send = null;
+  RetroLanBridge.local({required this._exchange, required RetroLanDhcp this._dhcp})
+    : _segment = null,
+      _send = null,
+      _peerRoute = null;
 
   // Same bounds as the Windows DEV9 exchange. Drop excess traffic as a NIC
   // would rather than growing an unbounded queue while the core is booting.
@@ -27,14 +31,17 @@ final class RetroLanBridge {
   final RetroLanDhcp? _dhcp;
   final void Function(String recipient, Uint8List packet)? _send;
   final Future<List<Uint8List>?> Function(List<Uint8List> frames) _exchange;
+  final Object? Function()? _peerRoute;
   final _incoming = Queue<Uint8List>();
+  Object? _activePeerRoute;
+  int _peerRevision = 0;
   bool _closed = false;
   Completer<void>? _pendingExchange;
 
   Future<void>? get drained => _pendingExchange?.future;
 
   void receive(String user, Uint8List packet) {
-    if (_closed || _incoming.length >= _queueSize) return;
+    if (_closed || _refreshPeerRoute() == null || _incoming.length >= _queueSize) return;
     final frame = _segment?.inbound(user, packet);
     if (frame != null && (_dhcp == null || !RetroLanDhcp.isLocalService(frame))) _incoming.addLast(frame);
   }
@@ -43,11 +50,21 @@ final class RetroLanBridge {
     if (_closed || _pendingExchange != null) return;
     final pending = _pendingExchange = Completer<void>();
     try {
+      final route = _refreshPeerRoute();
+      final revision = _peerRevision;
       final input = _incoming.take(_batchSize).toList(growable: false);
       final output = await _exchange(input);
       if (_closed || output == null) return;
-      for (var index = 0; index < input.length; index++) {
-        _incoming.removeFirst();
+      _refreshPeerRoute();
+      final sameRoute = revision == _peerRevision;
+      for (final frame in input) {
+        if (sameRoute) {
+          _incoming.removeFirst();
+        } else {
+          // Some original inputs may have been dropped while the worker was
+          // busy. Retire delivered local replies without touching new frames.
+          _incoming.remove(frame);
+        }
       }
       for (final frame in output) {
         final dhcp = _dhcp;
@@ -59,6 +76,7 @@ final class RetroLanBridge {
           }
           continue;
         }
+        if (!sameRoute || route == null) continue;
         final routed = _segment?.outbound(frame);
         if (routed == null) continue;
         for (final recipient in routed.recipients) {
@@ -69,6 +87,17 @@ final class RetroLanBridge {
       _pendingExchange = null;
       pending.complete();
     }
+  }
+
+  Object? _refreshPeerRoute() {
+    final route = _peerRoute?.call();
+    if (route != _activePeerRoute) {
+      _activePeerRoute = route;
+      _peerRevision++;
+      // DHCP replies belong to the local NIC, regardless of the peer route.
+      _incoming.removeWhere((frame) => _dhcp == null || !RetroLanDhcp.isLocalService(frame));
+    }
+    return route;
   }
 
   void close() {

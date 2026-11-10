@@ -311,6 +311,13 @@ class OnlinePeerMesh implements OnlinePeerTransport {
 
   int gameRoute(int address) => _byAddress[address]?.route ?? 0;
 
+  /// Identifies the current usable connection, including reconnects on the same ICE route.
+  Object? gameRouteIdentity(int address) {
+    if (!canSendGame(address)) return null;
+    final peer = _byAddress[address]!;
+    return (peer.link, peer.route, peer.connectionRevision);
+  }
+
   Future<GamePathStats?> readGamePath(int address) async {
     final peer = _byAddress[address];
     final link = peer?.link;

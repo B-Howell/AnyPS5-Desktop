@@ -122,7 +122,9 @@ void main() {
     remote.setRange(6, 12, _request(_guest, 1), 6);
     final batches = <List<Uint8List>>[];
     final forwarded = <Uint8List>[];
+    int? route = 1;
     final bridge = RetroLanBridge(
+      peerRoute: () => route,
       segment: RetroLanTransport(epoch: 1, me: 'host', addresses: addresses),
       dhcp: const RetroLanDhcp(mac: _host, address: _hostIp),
       send: (_, data) => forwarded.add(data),
@@ -134,6 +136,7 @@ void main() {
     addTearDown(bridge.close);
     bridge.receive('guest', guest.outbound(remote)!.packet);
     await bridge.pump();
+    route = null;
     await bridge.pump();
     expect(forwarded, isEmpty);
     expect(batches.first, isEmpty);

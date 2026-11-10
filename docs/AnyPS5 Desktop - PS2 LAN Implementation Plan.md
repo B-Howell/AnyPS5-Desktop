@@ -609,6 +609,22 @@ when the probe closed. This probe uses simulated console interfaces
 and injects connection notifications in the test wrapper. The
 data channels, selected routes and relay are real and local.
 
+The [LAN bridge](../lib/core/online/retro_lan_bridge.dart) binds each
+native NIC exchange to the usable WebRTC connection that started it.
+If the peer disconnects or changes routes, pending inbound Ethernet
+frames for the retired connection are discarded and late peer output
+from that exchange is suppressed. Local DHCP and newly queued frames
+from the restored route survive the transition. The
+[match regression](../test/core/online/retro_lan_match_test.dart) holds
+a native exchange across a reconnect and verifies that fresh traffic
+resumes without sending the stale frame. The
+[queue test](../test/core/online/retro_lan_transport_test.dart) covers
+new input arriving before the old exchange finishes. The focused
+Windows suite passed 35 tests and the relay-only probe resumed traffic
+after ICE restart with zero relay allocations left at teardown. The
+bridge cannot retract frames already handed to the native NIC or
+WebRTC. This check did not run a native game.
+
 ### Full TimeSplitters round over Windows WebRTC
 
 At Desktop `d7f7911`, the same two native D3D11 workers ran the US disc
