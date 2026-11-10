@@ -1038,3 +1038,33 @@ unchanged role-card seeds. The private `gt4-steering-5c5406a` receipt
 keeps the steering probes, matching captures, and per-worker packet
 counts. This used local UDP and the production frame filter. A full
 race and hosted network qualification remain open.
+
+
+### High-Speed Ring analog steering calibration
+
+The next headless pair used the same verified GT4 US v2.00 disc
+(`67b6c0075837f3ae1132d608acf2858bf13b2dd62d6eae83dff76df02e4e824f`)
+and LRPS2 DEV9 core
+(`801af1211407964a4851839c3f4e90607f18353671dd1e427f56e12201d712a4`).
+The isolated worker now accepts signed left-stick X samples in its
+input script. This uses the same libretro axis as the launcher's
+[embedded worker](../windows/runner/retro_core_host.cpp). The private
+D: receipt `gt4-analog-race-e762e09` preserves the worker, calibration
+script, paired captures and packet logs.
+
+Both cars started the same race. With short samples of magnitude 8,192
+and 16,384 the steering indicator stayed near its neutral x-coordinate
+of 320. Full-scale opposing commands moved it to x=394 and x=241.
+The later 20,500 and 24,576 samples produced intermediate indications
+in both directions. These observations verify graded steering in both
+workers. The samples began from different driving states and do not
+establish an exact deadzone or steering curve. Full-scale pulses at
+speed sent the cars into opposite barriers. The next driver should use
+short intermediate corrections with road feedback and leave full-scale
+commands out of normal steering.
+
+At step 41 each peer recorded one DHCP lease. The host transmitted
+3,411 UDP/5000 packets and received 3,306. The guest transmitted 3,306 and
+received 3,408. Both worker processes exited zero with empty fault logs.
+The two role-card seed hashes were unchanged. This calibration used the
+local UDP fixture with the production frame filter. Neither car finished.
