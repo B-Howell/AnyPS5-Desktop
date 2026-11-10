@@ -4073,6 +4073,8 @@ class AppModel extends ChangeNotifier {
     required String bios,
     bool requireHandoff = false,
     Ps1NetplayExecution execution = Ps1NetplayExecution.standard,
+    String? expectedCore,
+    bool preferPortable = false,
     bool Function()? canContinue,
   }) async {
     final disc = game.retro;
@@ -4083,17 +4085,27 @@ class AppModel extends ChangeNotifier {
       profile: profile,
       disc: disc.path,
       bios: bios,
-      core: await resolvePs1NetplayCore(execution, requireHandoff: requireHandoff),
+      core: await resolvePs1NetplayCore(
+        execution,
+        requireHandoff: requireHandoff,
+        expectedCore: expectedCore,
+        preferPortable: preferPortable,
+      ),
       execution: execution,
       canContinue: canContinue,
     );
-    if (requireHandoff && !media.supportsHandoff) {
+    if ((requireHandoff && !media.supportsHandoff) || (expectedCore != null && media.coreDigest != expectedCore)) {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
     }
     return media;
   }
 
-  Future<String> resolvePs1NetplayCore(Ps1NetplayExecution execution, {required bool requireHandoff}) async {
+  Future<String> resolvePs1NetplayCore(
+    Ps1NetplayExecution execution, {
+    required bool requireHandoff,
+    String? expectedCore,
+    bool preferPortable = false,
+  }) async {
     final managed = _managedRetro;
     final override = retroCoreOverride;
     if (!execution.usesPresentationCore && override != null) {
@@ -4102,8 +4114,23 @@ class AppModel extends ChangeNotifier {
     try {
       if (execution == Ps1NetplayExecution.standard && !requireHandoff) {
         final existing = File(p.join(managed.root, ManagedRetro.libraryName(RetroPlatform.ps1)));
-        if (await existing.exists() && execution.coreDigests.contains(await AssetDownload.sha256Of(existing.path))) {
-          return existing.path;
+        if (await existing.exists()) {
+          final digest = await AssetDownload.sha256Of(existing.path);
+          if (execution.coreDigests.contains(digest) && (expectedCore == null || expectedCore == digest)) {
+            if (!preferPortable || expectedCore != null || digest == Ps1NetplayMedia.portableCorePin) {
+              return existing.path;
+            }
+            try {
+              return await managed.ensurePs1NetplayCore(execution: execution);
+            } on FormatException {
+              return existing.path;
+            } on FileSystemException {
+              return existing.path;
+            }
+          }
+        }
+        if (expectedCore != null && expectedCore != Ps1NetplayMedia.portableCorePin) {
+          throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
         }
       }
       return await managed.ensurePs1NetplayCore(execution: execution);

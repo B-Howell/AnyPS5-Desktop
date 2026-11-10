@@ -238,6 +238,33 @@ void main() {
     await expectLater(rooms().invitedDiscDigest(_roomId), throwsStateError);
   });
 
+  test('reads a fresh invite core fingerprint and rejects changed or malformed metadata', () async {
+    final digest = 'a' * 64;
+    final core = 'b' * 64;
+    Object? advertised = core;
+    var joined = false;
+    RetroOnlineRooms rooms({String? expectedCore}) => RetroOnlineRooms(
+      spec: _spec,
+      me: _guest,
+      coreDigest: expectedCore,
+      call: (method, path, [body]) async {
+        if (path == 'me/game-session') return {'session': null};
+        if (method == 'POST') joined = true;
+        return _view()
+          ..['properties'] = {'protocol': _spec.mode.protocol, 'discSha256': digest, 'coreSha256': ?advertised};
+      },
+      signal: (_, _, _, _, _) {},
+    );
+    expect(await rooms().invitedFingerprints(_roomId), (disc: digest, core: core));
+    advertised = 'c' * 64;
+    await expectLater(rooms(expectedCore: core).join(_roomId), throwsStateError);
+    expect(joined, isFalse);
+    advertised = 42;
+    await expectLater(rooms().invitedFingerprints(_roomId), throwsStateError);
+    advertised = null;
+    expect(await rooms().invitedFingerprints(_roomId), (disc: digest, core: null));
+  });
+
   test('removes an owned room when the provider drops the protocol marker', () async {
     final requests = <(String, String)>[];
     final rooms = RetroOnlineRooms(

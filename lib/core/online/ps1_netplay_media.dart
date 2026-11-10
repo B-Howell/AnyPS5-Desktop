@@ -97,7 +97,8 @@ final class Ps1NetplayMedia {
   final Ps1NetplayIdentity identity;
   final Ps1NetplayExecution execution;
   String get discDigest => identity.toJson()['disc'] as String;
-  bool get supportsHandoff => execution.usesRecompiler || identity.toJson()['core'] == portableCorePin;
+  String get coreDigest => identity.toJson()['core'] as String;
+  bool get supportsHandoff => execution.usesRecompiler || coreDigest == portableCorePin;
 
   static final _file = RegExp(r'^FILE\s+(?:"([^"]+)"|(\S+))\s+(\S+)\s*$', caseSensitive: false);
 

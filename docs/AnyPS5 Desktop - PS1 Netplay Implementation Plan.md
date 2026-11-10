@@ -935,17 +935,25 @@ couch co-op** opens the shared online friend picker. Back returns to the
 same game action. After a friend is selected, the launcher verifies the
 disc, BIOS and standard netplay core before making a room. If the
 reviewer build supplies the pinned standard package, the launcher can
-install it into the dedicated `PS1-Netplay` directory when no compatible
-offline core is installed. It prefers an existing offline core whose
-digest matches the standard execution policy. Both peers must use the
-same core digest, so a player on the dedicated package and a player
-on a different legacy core fail the existing compatibility check.
-Canceling BIOS selection sends no invitation.
+install it into the dedicated `PS1-Netplay` directory. New dashboard rooms
+prefer that portable core when available. If it is unavailable, the host can
+use an already installed compatible stock core and the guest must already
+have that same stock build. A fresh room advertises the verified disc and
+SwanStation fingerprints through [the room client](../lib/core/online/retro_online_rooms.dart). When the guest already has a different stock core,
+the guest can install the exact pinned portable package before joining. When
+the advertised core is unavailable, the launcher explains the version mismatch
+before admission. Older rooms without the optional fingerprint retain the
+existing selection and peer identity handshake. Canceling BIOS selection sends
+no invitation.
 
-The [dashboard test](../test/ui/ps1_netplay_setup_test.dart) uses the
-pinned core ZIP and verifies the original disc fingerprint and selected
-recipient at the room API. It also checks that canceling a pending
-room releases it. The peer and room service are fixtures in this test.
+The [room tests](../test/core/online/ps1_netplay_rooms_test.dart) check missing,
+malformed, and changed fingerprints. The
+[dashboard tests](../test/ui/ps1_netplay_setup_test.dart) verify the outbound
+fingerprints and recipient, portable package selection with a stock core
+already installed, and releasing a canceled room. The peer and room service
+are fixtures in these tests. The Windows run passed 36 PS1 room and setup
+tests plus 20 shared-room, PS2 LAN and PS3 boot regressions. This does not
+verify provider handling of the new metadata on a live AnyTogether room.
 
 The [Friends invite flow](../lib/ui/together_ps1_netplay.dart) offers a
 separate Rollback Preview invitation when both PS1 netplay and the rollback

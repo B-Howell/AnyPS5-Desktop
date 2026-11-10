@@ -302,7 +302,8 @@ extension TogetherPs1Netplay on TogetherModel {
         hostAvailable();
     Ps1NetplayMatch? opened;
     var holdingTransition = false;
-    RetroOnlineRooms rooms([String? discDigest]) => RetroOnlineRooms(
+    String? expectedCore;
+    RetroOnlineRooms rooms({String? discDigest, String? coreDigest}) => RetroOnlineRooms(
       call: (method, path, [body]) {
         if (account.user?.id != me) throw StateError('The AnyTogether account changed.');
         return account.call(method, path, body);
@@ -310,6 +311,7 @@ extension TogetherPs1Netplay on TogetherModel {
       me: me,
       spec: profile.roomFor(mode),
       discDigest: discDigest,
+      coreDigest: coreDigest,
       signal: (to, device, sessionId, kind, data) {
         if (!hub.socket.send(
           OnlinePeerSignal.frame(to: to, device: device, sessionId: sessionId, kind: kind, data: data),
@@ -322,13 +324,18 @@ extension TogetherPs1Netplay on TogetherModel {
       if (localWorker != null && roomId != null) app.resumeGame();
       app.refresh();
       if (!active()) return;
-      final invitedDigest = roomId == null
+      final fingerprints = roomId == null
           ? null
-          : await Future.any<String?>([
-              rooms().invitedDiscDigest(roomId, expectedHost: expectedHost),
+          : await Future.any<RetroRoomFingerprints?>([
+              rooms().invitedFingerprints(roomId, expectedHost: expectedHost),
               verification.canceled.future.then((_) => null),
             ]);
       if (!active()) return;
+      final invitedDigest = fingerprints?.disc;
+      if (mode == Ps1NetplayRoomMode.fresh) expectedCore = fingerprints?.core;
+      if (expectedCore != null && !mode.execution.coreDigests.contains(expectedCore)) {
+        return app.show(T.text('ps1OnlineMismatchCore'));
+      }
       if (roomId != null && invitedDigest == null) return app.show(T.text('ps1OnlineDisc'));
       final ordinaryWorker = roomId != null || mode.handoffFromOrdinary ? localWorker : null;
       final bios = ordinaryWorker != null
@@ -359,7 +366,11 @@ extension TogetherPs1Netplay on TogetherModel {
               mode == Ps1NetplayRoomMode.ordinary
                   ? sourceMedia
                   : await sourceMedia.withVerifiedCore(
-                      await app.resolvePs1NetplayCore(mode.execution, requireHandoff: mode.needsCheckpoint),
+                      await app.resolvePs1NetplayCore(
+                        mode.execution,
+                        requireHandoff: mode.needsCheckpoint,
+                        expectedCore: expectedCore,
+                      ),
                       mode.execution,
                       canContinue: active,
                     ),
@@ -375,13 +386,25 @@ extension TogetherPs1Netplay on TogetherModel {
                 bios: bios!,
                 execution: mode.execution,
                 requireHandoff: mode.needsCheckpoint,
+                preferPortable: mode == Ps1NetplayRoomMode.fresh && roomId == null,
                 canContinue: active,
               ),
             )
-          : await _verifiedPs1(profile, candidates, invitedDigest, bios: bios!, mode: mode, canContinue: active);
+          : await _verifiedPs1(
+              profile,
+              candidates,
+              invitedDigest,
+              bios: bios!,
+              mode: mode,
+              expectedCore: expectedCore,
+              canContinue: active,
+            );
       if (!active()) return;
       if (invitedDigest != null && media.discDigest != invitedDigest) {
         return app.show(T.text('ps1OnlineMismatchDisc'));
+      }
+      if (expectedCore != null && media.coreDigest != expectedCore) {
+        return app.show(T.text('ps1OnlineMismatchCore'));
       }
       if (mode.needsCheckpoint && !media.supportsHandoff) return app.show(T.text('ps1OnlineHandoffCore'));
       late final Ps1NetplayMatch match;
@@ -439,7 +462,10 @@ extension TogetherPs1Netplay on TogetherModel {
               },
             );
       match = Ps1NetplayMatch(
-        rooms: rooms(roomId == null ? media.discDigest : invitedDigest),
+        rooms: rooms(
+          discDigest: roomId == null ? media.discDigest : invitedDigest,
+          coreDigest: mode == Ps1NetplayRoomMode.fresh && roomId == null ? media.coreDigest : expectedCore,
+        ),
         links: app.services.gameLinks?.call() ?? WebRtcGameLinks(),
         identity: media.identity,
         runner: switching ?? borrowed ?? owned,
@@ -498,7 +524,9 @@ extension TogetherPs1Netplay on TogetherModel {
       }
     } on Ps1NetplayMediaFailure catch (error) {
       if (opened != null || active()) {
-        if (mode.execution.usesPresentationCore && error.problem == Ps1NetplayMediaProblem.core) {
+        if (expectedCore != null && error.problem == Ps1NetplayMediaProblem.core) {
+          app.show(T.text('ps1OnlineMismatchCore'));
+        } else if (mode.execution.usesPresentationCore && error.problem == Ps1NetplayMediaProblem.core) {
           app.show(T.text('ps1OnlineRollbackCore'));
         } else {
           _showPs1MediaError(error, handoff: mode.needsCheckpoint);
@@ -531,6 +559,7 @@ extension TogetherPs1Netplay on TogetherModel {
     String? invitedDigest, {
     required String bios,
     required Ps1NetplayRoomMode mode,
+    required String? expectedCore,
     required bool Function() canContinue,
   }) async {
     for (final game in candidates) {
@@ -541,6 +570,7 @@ extension TogetherPs1Netplay on TogetherModel {
           bios: bios,
           requireHandoff: mode.needsCheckpoint,
           execution: mode.execution,
+          expectedCore: expectedCore,
           canContinue: canContinue,
         );
         if (invitedDigest == null || media.discDigest == invitedDigest) return (game, media);

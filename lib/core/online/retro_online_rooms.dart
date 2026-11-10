@@ -4,6 +4,7 @@ import 'online_peer.dart';
 
 typedef RetroRoomMember = ({String userId, String device});
 typedef RetroRoom = ({String id, String hostId});
+typedef RetroRoomFingerprints = ({String? disc, String? core});
 
 final class RetroRoomHostMismatch implements Exception {
   const RetroRoomHostMismatch();
@@ -35,6 +36,7 @@ final class RetroOnlineRooms {
     required this.me,
     required this.spec,
     this.discDigest,
+    this.coreDigest,
     this.profileDigest,
   });
 
@@ -47,6 +49,7 @@ final class RetroOnlineRooms {
   final String me;
   final RetroRoomSpec spec;
   final String? discDigest;
+  final String? coreDigest;
   final String? profileDigest;
 
   Future<RetroRoom> host({Completer<void>? cancelBeforeAdmission}) async {
@@ -63,6 +66,7 @@ final class RetroOnlineRooms {
       'properties': {
         'protocol': protocol,
         if (discDigest != null) 'discSha256': discDigest,
+        if (coreDigest != null) 'coreSha256': coreDigest,
         if (profileDigest != null) 'profileSha256': profileDigest,
       },
     });
@@ -95,12 +99,16 @@ final class RetroOnlineRooms {
     return _publish(room);
   }
 
-  /// Reads an invited host's disc fingerprint before choosing a local copy.
-  Future<String?> invitedDiscDigest(String id, {String? expectedHost}) async {
+  Future<String?> invitedDiscDigest(String id, {String? expectedHost}) async =>
+      (await invitedFingerprints(id, expectedHost: expectedHost)).disc;
+
+  /// Reads the host's fingerprints before choosing the local disc and core.
+  Future<RetroRoomFingerprints> invitedFingerprints(String id, {String? expectedHost}) async {
     final json = await call('GET', _path(id));
     final room = _room(json, id: id);
     _checkInviteHost(room, expectedHost);
-    return (json['properties'] as Map)['discSha256'] as String?;
+    final properties = json['properties'] as Map;
+    return (disc: properties['discSha256'] as String?, core: properties['coreSha256'] as String?);
   }
 
   void _checkInviteHost(RetroRoom room, String? expectedHost) {
@@ -263,6 +271,9 @@ final class RetroOnlineRooms {
         (properties.containsKey('discSha256') &&
             (properties['discSha256'] is! String || !_digest.hasMatch(properties['discSha256'] as String))) ||
         (discDigest != null && properties['discSha256'] != discDigest) ||
+        (properties.containsKey('coreSha256') &&
+            (properties['coreSha256'] is! String || !_digest.hasMatch(properties['coreSha256'] as String))) ||
+        (coreDigest != null && properties['coreSha256'] != coreDigest) ||
         (spec.mode == RetroOnlineMode.nativeOnline &&
             (profileDigest == null ||
                 !_digest.hasMatch(profileDigest!) ||
