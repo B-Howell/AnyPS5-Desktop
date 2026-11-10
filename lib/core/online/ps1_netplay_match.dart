@@ -94,14 +94,12 @@ final class Ps1NetplayMatch {
     onStatusChanged?.call();
     final servers = await _untilClose(rooms.iceServers(room));
     if (servers == null || _closed) return;
-    final link = await Future.any<GameLink?>([
-      links.link(servers).then((link) async {
-        if (!_closed) return link;
-        await link.close();
-        return null;
-      }),
-      _closing.future.then((_) => null),
-    ]);
+    final openingLink = links.link(servers).then((link) async {
+      if (!_closed) return link;
+      await link.close();
+      return null;
+    });
+    final link = await _untilClose(openingLink).timeout(const Duration(seconds: 30));
     if (link == null) return;
     if (_closed) {
       await link.close();

@@ -44,6 +44,17 @@ final class _UnusedLinks implements GameLinks {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+final class _PendingLink implements GameLinks {
+  final result = Completer<GameLink>();
+  int requests = 0;
+
+  @override
+  Future<GameLink> link(List<Map<String, dynamic>> iceServers) {
+    requests++;
+    return result.future;
+  }
+}
+
 final class _OpeningLink implements GameLink, GameLinks {
   final opening = Completer<void>();
   final _blocked = Completer<void>();
@@ -427,6 +438,61 @@ void main() {
         clock.flushMicrotasks();
         expect(network.made, isEmpty);
         expect(failure, isA<TimeoutException>());
+        expect(released, 1);
+      });
+    });
+  }
+
+  for (final cancel in [false, true]) {
+    test('PS1 ${cancel ? 'cancel' : 'timeout'} closes a peer connection returned after startup ends', () {
+      fakeAsync((clock) {
+        var released = 0;
+        var completed = false;
+        Object? failure;
+        final pending = _PendingLink();
+        final network = FakeGameNetwork();
+        final rooms = RetroOnlineRooms(
+          spec: _spec,
+          me: _host,
+          call: (method, path, [body]) async {
+            if (method == 'DELETE') released++;
+            return {
+              ..._view(),
+              'iceServers': <Object>[],
+              'members': [
+                {'userId': _host},
+                {
+                  'userId': _guest,
+                  'device': _device,
+                  'properties': {'protocol': _spec.mode.protocol},
+                },
+              ],
+            };
+          },
+          signal: (_, _, _, _, _) => fail('An abandoned connection must not signal.'),
+        );
+        final match = Ps1NetplayMatch(rooms: rooms, links: pending, identity: _identity(), runner: _UnusedRunner());
+        unawaited(match.host(_guest).then<void>((_) => completed = true, onError: (Object error) => failure = error));
+        clock.flushMicrotasks();
+        expect(pending.requests, 1);
+
+        if (cancel) {
+          unawaited(match.leave());
+          clock.flushMicrotasks();
+          expect(completed, isTrue);
+        } else {
+          clock.elapse(const Duration(seconds: 29));
+          expect(match.closed, isFalse);
+          clock.elapse(const Duration(seconds: 1));
+          expect(failure, isA<TimeoutException>());
+        }
+        expect(match.closed, isTrue);
+        expect(released, 1);
+
+        unawaited(network.links.link([]).then(pending.result.complete));
+        clock.flushMicrotasks();
+        expect(network.all.single.closed, isTrue);
+        expect(match.session, isNull);
         expect(released, 1);
       });
     });

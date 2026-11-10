@@ -261,6 +261,15 @@ A response from the abandoned request cannot create a link or start
 the game. The [room regression tests](../test/core/online/ps1_netplay_rooms_test.dart)
 hold the response past the deadline in both modes and then deliver it late.
 
+PS1 also allows 30 seconds for the WebRTC plugin to create the peer
+connection before the existing signaling timer starts. If creation
+times out or the player cancels, the match takes its room cleanup path.
+If the plugin later returns a connection, the abandoned match closes
+it before it can signal, attach a controller, or start the game.
+The room tests cover both timeout and cancel with a late link. The
+headless CTR control also passed 360 confirmed frames through two
+local WebRTC peers after the change.
+
 - On a clean AnyPS5 install, set up the needed emulator inside Settings,
   select user-supplied firmware and games, and start or accept a session
   from the dashboard or Quick Menu. Report incompatible media, missing
