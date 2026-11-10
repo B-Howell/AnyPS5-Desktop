@@ -359,7 +359,12 @@ extension TogetherPs2Lan on TogetherModel {
           match.ending.then((_) {
             if (!owned()) return;
             if (match.gameContinues && identical(app.running?.$1, attempt.launchGame)) {
-              app.show(T.text('ps2LanGameContinues'));
+              final message = match.remoteEnded
+                  ? 'ps2LanRemoteGameContinues'
+                  : match.failure != null
+                  ? 'ps2LanConnectionGameContinues'
+                  : 'ps2LanGameContinues';
+              app.show(T.text(message));
             }
             app.refresh();
           }),

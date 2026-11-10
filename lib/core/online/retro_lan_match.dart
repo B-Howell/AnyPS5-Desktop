@@ -147,7 +147,7 @@ final class RetroLanMatch {
           if (to != peer.userId || device != peer.device || id != room.id) return;
           if (!_closed) {
             rooms.signal(to, device, id, kind, data);
-          } else if (kind == 'bye') {
+          } else if (kind == 'bye' && !remoteEnded) {
             try {
               rooms.signal(to, device, id, kind, data);
             } on Object {
@@ -166,7 +166,7 @@ final class RetroLanMatch {
             _bridge?.receive(peer.userId, datagram.data);
           }
         },
-        peerGone: (_) => _remoteEnded(),
+        peerGone: (_) => unawaited(_failed(StateError('The PS2 LAN game channel closed.'), preserveGame: true)),
       ),
     );
     mesh.update(
@@ -291,7 +291,11 @@ final class RetroLanMatch {
     final signal = OnlinePeerSignal.fromEvent(event);
     final peer = _peer;
     if (signal != null && peer != null && signal.from == peer.userId && signal.device == peer.device) {
-      _mesh?.receive(signal);
+      if (signal.kind == 'bye') {
+        _remoteEnded();
+      } else {
+        _mesh?.receive(signal);
+      }
     }
   }
 

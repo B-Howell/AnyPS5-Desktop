@@ -464,8 +464,13 @@ the game, then close it to release the card.
 After the room connects, open the game's LAN menu and choose the saved
 configuration from slot 1. The launcher does not declare the network ready
 just because a card file exists. **Leave LAN Play** in the Quick Menu
-closes the room and keeps the game open. Restart trials are unavailable
-while the LAN worker is active.
+closes the room and keeps the game open. The launcher distinguishes
+a local leave, a room ended by the other side, and a terminal transport
+failure. A transport closure or expired recovery window shows that the
+connection ended and confirms the local game is still open. A goodbye
+from the bound peer or a room end event shows that the other side
+closed the room. Restart trials are unavailable while the LAN worker
+is active.
 
 The [LAN invite test](../test/ui/ps2_lan_invite_test.dart) joins two rooms
 in sequence with the same guest worker and checks the queue reset.

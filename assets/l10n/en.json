@@ -443,6 +443,8 @@
   "ps2LanLaunchFailed": "The LAN connection is ready, but the PS2 game could not start.",
   "ps2LanRemoteEnded": "The PS2 LAN room closed on the other end.",
   "ps2LanGameContinues": "LAN Play ended. Your game is still open. You can connect to another room from the same seat.",
+  "ps2LanRemoteGameContinues": "The LAN room closed on the other end. Your game is still open.",
+  "ps2LanConnectionGameContinues": "The LAN connection ended. Your game is still open.",
   "ps2LanReconnecting": "LAN connection interrupted. Reconnecting…",
   "ps2LanReconnected": "LAN connection restored. If your game disconnected, regroup in its LAN menu.",
   "retroOnlineBusy": "Leave your current retro online game first.",

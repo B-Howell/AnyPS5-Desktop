@@ -126,6 +126,7 @@ void main() {
     bool failNativeBoot = false,
     bool quickBootCancel = false,
     bool quickMenuDuringPlay = false,
+    bool explainRoomEnd = false,
     bool hostRematch = false,
     bool dashboardHost = false,
   }) async {
@@ -530,14 +531,22 @@ void main() {
         );
         final worker = model.embeddedGame;
         expect(row('ps2-lan-status').title, 'Leave LAN Play');
-        press('ps2-lan-status');
+        if (explainRoomEnd) {
+          localLink.reportState('game-closed');
+        } else {
+          press('ps2-lan-status');
+        }
         await until(() => model.together.ps2LanRows().isEmpty);
         List<FakeCall> leaves(String path) =>
             hostRematch ? server.callsTo(path, method: 'DELETE') : server.callsTo('$path/leave');
         expect(leaves(path), hasLength(1));
         expect(model.embeddedGame, same(worker));
         expect(stopped, isFalse);
-        expect(model.toast, contains('Your game is still open'));
+        if (explainRoomEnd) {
+          expect(model.toast, 'The LAN connection ended. Your game is still open.');
+        } else {
+          expect(model.toast, contains('Your game is still open'));
+        }
         final afterLeave = exchanges;
         await Future<void>.delayed(const Duration(milliseconds: 40));
         expect(exchanges, afterLeave);
@@ -585,6 +594,14 @@ void main() {
         );
         expect(model.embeddedGame, same(worker));
         expect(resets, 1);
+        if (explainRoomEnd) {
+          server.push('game_session.ended', {'sessionId': nextRoom});
+          await until(() => model.together.ps2LanRows().isEmpty);
+          expect(model.toast, 'The LAN room closed on the other end. Your game is still open.');
+          expect(model.embeddedGame, same(worker));
+          expect(stopped, isFalse);
+          expect(leaves(nextPath), hasLength(1));
+        }
         await model.stopRunningGame();
         await until(() => stopped && model.running == null);
         expect(leaves(path), hasLength(1));
@@ -796,6 +813,11 @@ void main() {
   test(
     'PS2 LAN keeps exchanging frames while the Quick Menu is open',
     () => verifyBundledSetup(expired: false, quickMenuDuringPlay: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'PS2 LAN explains why a room ended and preserves the running game',
+    () => verifyBundledSetup(expired: false, quickMenuDuringPlay: true, explainRoomEnd: true),
     skip: Abi.current() != Abi.windowsX64,
   );
   test(

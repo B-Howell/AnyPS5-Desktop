@@ -443,6 +443,8 @@
   "ps2LanDisconnected": "Bağlantı sürdürülemediği için PS2 LAN oyunu sona erdi.",
   "ps2LanRemoteEnded": "PS2 LAN odası karşı tarafta kapandı.",
   "ps2LanGameContinues": "LAN oyunu sona erdi. Oyununuz hâlâ açık. Aynı rolle başka bir odaya bağlanabilirsiniz.",
+  "ps2LanRemoteGameContinues": "LAN odası karşı tarafta kapandı. Oyununuz hâlâ açık.",
+  "ps2LanConnectionGameContinues": "LAN bağlantısı sona erdi. Oyununuz hâlâ açık.",
   "ps2LanReconnecting": "LAN bağlantısı kesildi. Yeniden bağlanılıyor…",
   "ps2LanReconnected": "LAN bağlantısı yeniden kuruldu. Oyunun bağlantısı kesildiyse LAN menüsünde yeniden buluşun.",
   "retroOnlineBusy": "Önce mevcut retro çevrimiçi oyundan ayrıl.",

@@ -284,59 +284,75 @@ void main() {
     expect(gateway.released, isTrue);
   });
 
-  for (final terminal in [false, true]) {
-    test(
-      terminal
-          ? 'a closed data channel ends the room immediately and keeps both games open'
-          : 'an expired recovery window ends the room and keeps both games open',
-      () async {
-        final digest = 'c' * 64;
-        final gateway = WebRtcRoomFixture((
-          titleId: 'SLUS21148',
-          gameVersion: '1',
-          mode: RetroOnlineMode.lan,
-          capacity: 2,
-        ), digest);
-        final network = FakeGameNetwork();
-        final stopped = <Completer<void>>[];
-        RetroLanMatch match(String id) {
-          final done = Completer<void>();
-          stopped.add(done);
-          final match = RetroLanMatch(
-            rooms: gateway.client(id, expectedDigest: digest),
-            links: network.links,
-            recoveryWindow: terminal ? const Duration(seconds: 5) : const Duration(milliseconds: 200),
-            launch: (_) async =>
-                (exchange: (_) async => <Uint8List>[], close: () async => done.complete(), done: done.future),
-          );
-          gateway.events[id] = match.receive;
-          addTearDown(match.leave);
-          addTearDown(() {
-            if (!done.isCompleted) done.complete();
-          });
-          return match;
-        }
+  for (final (end, description) in [
+    ('channel', 'a closed data channel ends the room immediately'),
+    ('timeout', 'an expired recovery window ends the room'),
+    ('bye', 'only a goodbye from the bound peer ends the room'),
+  ]) {
+    test('$description and keeps both games open', () async {
+      final digest = 'c' * 64;
+      final gateway = WebRtcRoomFixture((
+        titleId: 'SLUS21148',
+        gameVersion: '1',
+        mode: RetroOnlineMode.lan,
+        capacity: 2,
+      ), digest);
+      final network = FakeGameNetwork();
+      final stopped = <Completer<void>>[];
+      RetroLanMatch match(String id) {
+        final done = Completer<void>();
+        stopped.add(done);
+        final match = RetroLanMatch(
+          rooms: gateway.client(id, expectedDigest: digest),
+          links: network.links,
+          recoveryWindow: end == 'timeout' ? const Duration(milliseconds: 200) : const Duration(seconds: 5),
+          launch: (_) async =>
+              (exchange: (_) async => <Uint8List>[], close: () async => done.complete(), done: done.future),
+        );
+        gateway.events[id] = match.receive;
+        addTearDown(match.leave);
+        addTearDown(() {
+          if (!done.isCompleted) done.complete();
+        });
+        return match;
+      }
 
-        final host = match(WebRtcRoomFixture.host);
-        final guest = match(WebRtcRoomFixture.guest);
-        final hosting = host.host(WebRtcRoomFixture.guest);
-        await gateway.invited.timeout(const Duration(seconds: 5));
-        await Future.wait([hosting, guest.join(WebRtcRoomFixture.roomId)]).timeout(const Duration(seconds: 5));
-        if (terminal) {
-          network.all.first.reportState('game-closed');
-        } else {
-          network.gameChannelReady = false;
-          await Future<void>.delayed(const Duration(milliseconds: 35));
-          expect(host.closed || guest.closed, isFalse);
-        }
-        await Future.wait([host.done, guest.done]).timeout(const Duration(seconds: 2));
+      final host = match(WebRtcRoomFixture.host);
+      final guest = match(WebRtcRoomFixture.guest);
+      final hosting = host.host(WebRtcRoomFixture.guest);
+      await gateway.invited.timeout(const Duration(seconds: 5));
+      await Future.wait([hosting, guest.join(WebRtcRoomFixture.roomId)]).timeout(const Duration(seconds: 5));
+      if (end == 'channel') {
+        network.all.first.reportState('game-closed');
+      } else if (end == 'bye') {
+        host.receive('game_session.signal', {
+          'sessionId': WebRtcRoomFixture.roomId,
+          'from': WebRtcRoomFixture.guest,
+          'device': WebRtcRoomFixture.hostDevice,
+          'kind': 'bye',
+        });
+        expect(host.closed, isFalse);
+        gateway
+            .client(WebRtcRoomFixture.guest)
+            .signal(WebRtcRoomFixture.host, WebRtcRoomFixture.hostDevice, WebRtcRoomFixture.roomId, 'bye', null);
+      } else {
+        network.gameChannelReady = false;
+        await Future<void>.delayed(const Duration(milliseconds: 35));
+        expect(host.closed || guest.closed, isFalse);
+      }
+      await Future.wait([host.done, guest.done]).timeout(const Duration(seconds: 2));
 
-        expect(host.gameContinues, isTrue);
-        expect(guest.gameContinues, isTrue);
-        expect(stopped.any((game) => game.isCompleted), isFalse);
-        expect(gateway.released, isTrue);
-      },
-    );
+      expect(host.gameContinues, isTrue);
+      expect(guest.gameContinues, isTrue);
+      if (end == 'bye') {
+        expect(host.remoteEnded, isTrue);
+        expect(host.failure, isNull);
+      } else {
+        expect([host, guest].any((match) => match.failure != null && !match.remoteEnded), isTrue);
+      }
+      expect(stopped.any((game) => game.isCompleted), isFalse);
+      expect(gateway.released, isTrue);
+    });
   }
 
   Future<void> cancelStartup({required bool fromNotification}) async {
