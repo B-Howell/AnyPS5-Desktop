@@ -579,9 +579,23 @@ through its Pod Computer. The first-visit level page offered
 **Play!**, and the level pause menu showed **Manage Players**. The
 fixture deadline elapsed before testing that menu. Both workers
 exited zero and the backend and disposable configs were released.
-The next run can test restoring each role's own scratch
-`dev_hdd0/game/BCUS98148_USER1` data to bypass the completed intro.
-Shared gameplay and the native invite remain unverified.
+The next run restored each role's own scratch
+`dev_hdd0/game/BCUS98148_USER1` data. Both games signed in and
+skipped the playable intro on the way to their Pods. On these
+profiles the Pod Computer offered Story only. The host could
+highlight the crossed-out **Manage Players** entry, but pressing
+Cross did not open it. Both entered First Steps again. The host
+cleared the first wall and reached the layer-switching tutorial,
+but neither player finished the level before the fixture deadline.
+Both workers exited zero and released the backend. The unlock
+condition for the online controls and the native invite remain
+unverified.
+
+The test worker sampled offscreen frames every five seconds, which
+could show the state before the last input. A scratch build now
+accepts a numbered capture request and acknowledges it after
+publishing a frame. The build passed compilation. Use a live
+capture receipt before relying on it for progression input.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
