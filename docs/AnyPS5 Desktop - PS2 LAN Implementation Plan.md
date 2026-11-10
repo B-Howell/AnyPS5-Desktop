@@ -1240,3 +1240,48 @@ each edge is clipped. Record the raw and filtered targets around the
 reversal. The minimap's route bends right near the failure and can
 serve as an independent check when the car marker is visible. The
 remaining local race gate is a full two-player results screen.
+
+#### Tsukuba hairpin and off-road visibility
+
+At Desktop `9626059`, the private driver recorded all candidate road
+spans, the selected span and clipped edges on each sampled row, and
+both raw and filtered steering targets. The only driving change in
+`gt4-road-edge-9626059` was raising the asphalt brightness limit from
+112 to 135. In the previous run's step-176 host capture, the raw target
+changed from x=0 to x=524. The new trace shows the wide right-hand road
+span at y=242 and y=254. A narrow fence still appears as a candidate
+at y=230. Nine labeled controls and three hairpin captures passed.
+
+Both headless clients reached the exit straight at 36.216 seconds.
+The test continued to 1:08.700 on lap one, when the guest left the
+road and the driver stopped rather than guessing which way to steer.
+At the stop the host was still moving at 17 mph. The guest's asphalt
+edge was visible only in the lower-left corner, below the normal scan
+rows. The host transmitted 11,684 UDP/5000 frames and received 11,030.
+The guest transmitted 11,030 and received 11,682. Both workers exited
+zero, recorded one DHCP lease and no faults, and left the role-card
+seed hashes unchanged. This used the local UDP fixture with the
+[production frame filter](../lib/core/online/retro_lan_transport.dart).
+
+The recovery variant checks the lower corners only when the normal
+scan loses the road. It requires consistent support on one side across
+several rows outside the instrument cluster. The offline check found
+the left road edge in the new guest capture and the right road edge in
+the earlier host capture. The two barrier controls still returned no
+road. These are changes to the private test driver.
+
+The live recovery variant (`gt4-road-edge-recovery-9626059`) stopped
+earlier, near the first hairpin exit at 36.766 seconds. The guest
+stopped on grass beside a red-and-gray curb. A right-side guardrail
+produced an isolated candidate on one normal scan row, so the driver
+had no usable road estimate and did not check the lower corners.
+Both workers exited zero with empty fault logs and preserved seed
+hashes. Each obtained one DHCP lease. The host sent 6,782 UDP/5000
+frames and received 6,945. The guest sent 6,948 and received 6,782.
+
+The offline `road_curb_candidate.py` tries lower-corner recovery when
+the main scan cannot select a road. It checks for several bands of
+asphalt or alternating curb colors, with weak evidence on the
+opposite side. It chose left in both saved grass excursions and
+abstained in both saved barrier controls. This candidate has not run
+in a live race. Neither of these trials reached the finish.
