@@ -105,8 +105,8 @@ Future<String> verifyOrdinaryWebRtc(String config) async {
     final waitStart = await pictures();
     await _waitUntil(() async => await pictures() >= waitStart + 15);
     if (handoff.detaching) throw StateError('The local worker detached before the guest joined.');
-    final advertised = await gateway.client(WebRtcRoomFixture.guest).invitedDiscDigest(WebRtcRoomFixture.roomId);
-    if (advertised != media.discDigest) throw StateError('The invite did not preserve the disc fingerprint.');
+    final advertised = await gateway.client(WebRtcRoomFixture.guest).readInvite(WebRtcRoomFixture.roomId);
+    if (advertised.disc != media.discDigest) throw StateError('The invite did not preserve the disc fingerprint.');
 
     final guestCore = guest = await WebRtcNativeWorker.spawn(
       [args.first, media.core, media.disc, media.bios],
@@ -118,7 +118,7 @@ Future<String> verifyOrdinaryWebRtc(String config) async {
     final guestInputs = _MeasuredRunner(guestCore);
     Object? restoreFailure;
     final guestRoom = receiver = Ps1NetplayMatch(
-      rooms: gateway.client(WebRtcRoomFixture.guest, expectedDigest: advertised),
+      rooms: gateway.client(WebRtcRoomFixture.guest, expectedDigest: advertised.disc),
       links: links,
       identity: media.identity,
       runner: guestInputs,
@@ -132,7 +132,8 @@ Future<String> verifyOrdinaryWebRtc(String config) async {
       },
     );
     gateway.events[WebRtcRoomFixture.guest] = guestRoom.receive;
-    await Future.wait([hosting, guestRoom.join(WebRtcRoomFixture.roomId)]).timeout(const Duration(seconds: 8));
+    await Future.wait([hosting, guestRoom.join(advertised.room.id, expectedHost: advertised.room.hostId)])
+        .timeout(const Duration(seconds: 8));
     final card = p.join(work.path, 'saves', 'ps1', '${p.basenameWithoutExtension(media.disc)}.srm');
     await _waitUntil(() async => matchGame != null);
     final cardHash = await AssetDownload.sha256Of(card);

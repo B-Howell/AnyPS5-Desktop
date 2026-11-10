@@ -717,7 +717,25 @@ pwsh -File tool/ps1_netplay/run_webrtc_probe.ps1 -Runner "path/to/loopback.exe" 
 The [probe launcher](../tool/ps1_netplay/run_webrtc_probe.ps1) gives the
 headless runner and its job-contained children a private temporary root
 and removes it after exit. Omit `-Ordinary` for the staged native control.
-Omit both fixture options for the synthetic WebRTC control.
+Omit both fixture options for the synthetic WebRTC control. Use `-Lan` with
+neither fixture option to exercise DHCP, Ethernet forwarding and route
+recovery over real local WebRTC with synthetic PS2 NICs.
+
+The current Dart bundle rebuilds all probe modes against the same room lookup
+used by the launcher. The staged and ordinary PS1 probes and the PS2 LAN
+probe verify the disc fingerprint and keep the host from that lookup through
+admission. A Windows D: run reused the existing headless runner and pinned
+native workers with a newly compiled Dart bundle. The runner SHA-256 was
+`0faab8b790f6275be84e603e940b05197be9edfbdfde4244eda1262e94a65ea1`
+and the Dart kernel SHA-256 was
+`48e40cc1a5a17f754c3977480e81d9547e8cad721484a1c2b6ff85ee18c04788`.
+The synthetic PS1 control, PS2 LAN transport, staged CTR, and in-progress
+CTR and Tekken 3 handoffs all passed. Both in-progress games reached 360
+confirmed frames with three matching RAM fingerprints, fresh ICE credentials
+after simulated route failure, an unchanged local card, and resumed hardware
+playback. Room and signaling events came from the local fixture service.
+The PS2 result verifies transport and recovery, with a native race and WAN
+qualification separate.
 
 The [Windows worker](../windows/runner/retro_core_host.cpp) starts with
 isolated storage, the full BIOS boot and two digital pads. It holds until both inputs for a

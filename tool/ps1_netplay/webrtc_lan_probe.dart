@@ -42,7 +42,10 @@ Future<String> verifyWebRtcLanBridge() async {
       gateway.invited,
       hosting.then((_) => throw StateError('The host closed before inviting its guest.')),
     ]).timeout(const Duration(seconds: 5));
-    await Future.wait([hosting, right.join(WebRtcRoomFixture.roomId)]).timeout(const Duration(seconds: 10));
+    final invite = await gateway.client(WebRtcRoomFixture.guest).readInvite(WebRtcRoomFixture.roomId);
+    if (invite.disc != digest) throw StateError('The LAN invite did not preserve the disc fingerprint.');
+    await Future.wait([hosting, right.join(invite.room.id, expectedHost: invite.room.hostId)])
+        .timeout(const Duration(seconds: 10));
     await Future.wait([host.received.future, guest.received.future]).timeout(const Duration(seconds: 8));
     for (final link in links.opened) {
       link.reportState('disconnected');

@@ -92,12 +92,12 @@ Future<String> _nativeExercise(String config) async {
     gateway.events[WebRtcRoomFixture.host] = sender.receive;
     final hosting = sender.host(WebRtcRoomFixture.guest);
     final advertised = await Future.any([
-      gateway.invited.then((_) => gateway.client(WebRtcRoomFixture.guest).invitedDiscDigest(WebRtcRoomFixture.roomId)),
+      gateway.invited.then((_) => gateway.client(WebRtcRoomFixture.guest).readInvite(WebRtcRoomFixture.roomId)),
       hosting.then((_) => throw StateError('The host closed before inviting its guest.')),
     ]).timeout(const Duration(seconds: 5));
-    if (advertised != media.discDigest) throw StateError('The invite did not preserve the disc fingerprint.');
+    if (advertised.disc != media.discDigest) throw StateError('The invite did not preserve the disc fingerprint.');
     final receiver = guestMatch = Ps1NetplayMatch(
-      rooms: gateway.client(WebRtcRoomFixture.guest, expectedDigest: advertised),
+      rooms: gateway.client(WebRtcRoomFixture.guest, expectedDigest: advertised.disc),
       links: links,
       identity: media.identity,
       runner: guest,
@@ -112,7 +112,8 @@ Future<String> _nativeExercise(String config) async {
       },
     );
     gateway.events[WebRtcRoomFixture.guest] = receiver.receive;
-    await Future.wait([hosting, receiver.join(WebRtcRoomFixture.roomId)]).timeout(const Duration(seconds: 8));
+    await Future.wait([hosting, receiver.join(advertised.room.id, expectedHost: advertised.room.hostId)])
+        .timeout(const Duration(seconds: 8));
     final elapsed = Stopwatch()..start();
     while ((sender.session?.confirmedFrame ?? -1) < 359 || (receiver.session?.confirmedFrame ?? -1) < 359) {
       if (elapsed.elapsed > const Duration(seconds: 17) || sender.closed || receiver.closed) {

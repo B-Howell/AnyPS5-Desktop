@@ -4,10 +4,14 @@ param(
     [Parameter(Mandatory)][string]$Runner,
     [Parameter(Mandatory)][string]$Data,
     [string]$NativeFixture,
-    [switch]$Ordinary
+    [switch]$Ordinary,
+    [switch]$Lan
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Lan -and ($Ordinary -or $NativeFixture)) {
+    throw 'LAN mode uses its synthetic Ethernet fixture and cannot take a PS1 fixture.'
+}
 if ($Ordinary -and -not $NativeFixture) {
     throw 'Ordinary mode needs a native fixture.'
 }
@@ -28,7 +32,7 @@ try {
             TMP = $scratch
             ANYPS5_PS1_WEBRTC_NATIVE = $fixturePath
             ANYPS5_PS1_WEBRTC_ORDINARY = if ($Ordinary) { '1' } else { $null }
-            ANYPS5_PS2_WEBRTC_LAN = $null
+            ANYPS5_PS2_WEBRTC_LAN = if ($Lan) { '1' } else { $null }
         }
     if (-not $process.WaitForExit(75000)) { throw 'The headless WebRTC runner timed out.' }
     Get-Content -LiteralPath $stdout | Where-Object { $_ -notmatch '^The Dart VM service is listening' }
