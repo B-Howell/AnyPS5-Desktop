@@ -369,6 +369,19 @@ sequence was insufficient to clear the stall. A matching standalone
 offline control is the next comparison to separate the embedded
 integration from the shared emulator and game behavior.
 
+The matching standalone RPCS3 revision `ab412d5d` rendered the GOTY
+shader precompilation screen in an isolated WSL virtual X display with
+software Vulkan and networking restricted to loopback. The capture
+showed shader variant 1,311 of 6,550. A synthetic window qualified
+offscreen input. The game received no test input in this run and the
+standalone Pod comparison remains open.
+
+The first Windows standalone launch briefly appeared on the active
+desktop because the subprocess wrapper dropped the private desktop
+field. The guard terminated it before sending test input. A subsequent
+native launch kept the window on the private desktop, but produced no
+readable screenshot. The virtual X display supplied the capture above.
+
 The Quick Menu labels the current status **RPCN connection** and
 describes game sign-in and lobby handling separately. The
 [English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
