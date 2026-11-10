@@ -116,9 +116,21 @@ void main() {
         '3',
         '4',
         '5',
+        '6',
       });
     }
     expect(Ps1NetplayProfile.tryRead('Not a disc serial'), isNull);
+  });
+
+  test('fresh DualShock rooms use a distinct execution fingerprint without changing core pins', () {
+    const digital = Ps1NetplayRoomMode.fresh;
+    const analog = Ps1NetplayRoomMode.freshAnalog;
+    expect(Ps1NetplayRoomMode.tryRead('6'), analog);
+    expect(analog.needsCheckpoint, isFalse);
+    expect(analog.execution.usesDualShock, isTrue);
+    expect(digital.execution.usesDualShock, isFalse);
+    expect(analog.execution.coreDigests, digital.execution.coreDigests);
+    expect(analog.execution.digest, isNot(digital.execution.digest));
   });
 
   test('rollback rooms boot from disc with a distinct core and execution identity', () {

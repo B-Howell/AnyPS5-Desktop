@@ -12,26 +12,28 @@ enum Ps1NetplayMediaProblem { disc, bios, core }
 
 enum Ps1NetplayExecution {
   standard('CachedInterpreter'),
+  standardAnalog('CachedInterpreter'),
   ordinaryHandoff('Recompiler'),
   rollbackPreview('CachedInterpreter'),
   rollbackHandoff('Recompiler');
 
   const Ps1NetplayExecution(this.cpu);
   final String cpu;
+  bool get usesDualShock => this == standardAnalog;
+  bool get usesStandardCore => this == standard || this == standardAnalog;
   bool get usesPresentationCore => this == rollbackPreview || this == rollbackHandoff;
   bool get usesRecompiler => this == ordinaryHandoff || this == rollbackHandoff;
 
   String get digest {
     final rollback = usesPresentationCore ? ';rollback=16;presentation-core=1' : '';
+    final pads = usesDualShock ? 'two-dualshock-pads' : 'two-digital-pads';
     return sha256
-        .convert(
-          utf8.encode('Software;1x;$cpu;block-linking=0;gpu-thread=0;fast-boot=0;two-digital-pads;delay=2$rollback'),
-        )
+        .convert(utf8.encode('Software;1x;$cpu;block-linking=0;gpu-thread=0;fast-boot=0;$pads;delay=2$rollback'))
         .toString();
   }
 
   Set<String> get coreDigests => switch (this) {
-    standard => const {Ps1NetplayMedia.corePin, Ps1NetplayMedia.portableCorePin},
+    standard || standardAnalog => const {Ps1NetplayMedia.corePin, Ps1NetplayMedia.portableCorePin},
     ordinaryHandoff || rollbackHandoff => const {Ps1NetplayMedia.ordinaryHandoffCorePin},
     rollbackPreview => const {Ps1NetplayMedia.rollbackCorePin},
   };
@@ -42,17 +44,20 @@ enum Ps1NetplayRoomMode {
   staged('2'),
   ordinary('3'),
   rollbackPreview('4'),
-  rollbackHandoff('5');
+  rollbackHandoff('5'),
+  freshAnalog('6');
 
   const Ps1NetplayRoomMode(this.version);
   final String version;
 
   static Ps1NetplayRoomMode? tryRead(String version) => values.where((mode) => mode.version == version).singleOrNull;
 
+  bool get freshFromDisc => this == fresh || this == freshAnalog;
   bool get needsCheckpoint => this == staged || handoffFromOrdinary;
   bool get handoffFromOrdinary => this == ordinary || this == rollbackHandoff;
   Ps1NetplayExecution get execution => switch (this) {
     fresh || staged => Ps1NetplayExecution.standard,
+    freshAnalog => Ps1NetplayExecution.standardAnalog,
     ordinary => Ps1NetplayExecution.ordinaryHandoff,
     rollbackPreview => Ps1NetplayExecution.rollbackPreview,
     rollbackHandoff => Ps1NetplayExecution.rollbackHandoff,

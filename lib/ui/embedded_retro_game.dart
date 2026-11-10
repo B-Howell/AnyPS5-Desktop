@@ -225,6 +225,7 @@ class EmbeddedRetroGame extends RunningGame {
             } else ...{
               'ps1NetplaySeat': netplay.seat,
               'ps1NetplayBios': netplay.media.bios,
+              if (netplay.media.execution.usesDualShock) 'ps1NetplayDualShock': true,
               if (netplay.media.execution.usesRecompiler) 'ps1NetplayCpu': netplay.media.execution.cpu,
               if (netplay.media.execution.usesPresentationCore)
                 'ps1PresentationCore': Ps1NetplayMedia.presentationCorePath(core),

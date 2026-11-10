@@ -180,11 +180,9 @@ extension TogetherPs1Netplay on TogetherModel {
     final profile = Ps1NetplayProfile.tryRead(selected?.retroSerial);
     if (selected == null || profile == null) return const [];
     return [
-      for (final mode in [Ps1NetplayRoomMode.fresh, if (_ps1RollbackEnabled) Ps1NetplayRoomMode.rollbackPreview])
+      for (final mode in [Ps1NetplayRoomMode.freshAnalog, if (_ps1RollbackEnabled) Ps1NetplayRoomMode.rollbackPreview])
         PanelRow(
-          id: mode == Ps1NetplayRoomMode.fresh
-              ? 'ps1-netplay-host-${profile.titleId}'
-              : 'ps1-netplay-rollback-${profile.titleId}',
+          id: mode.freshFromDisc ? 'ps1-netplay-host-${profile.titleId}' : 'ps1-netplay-rollback-${profile.titleId}',
           title: T.format(mode == Ps1NetplayRoomMode.rollbackPreview ? 'ps1OnlineRollbackInvite' : 'ps1OnlineInvite', [
             selected.name,
           ]),
@@ -275,7 +273,7 @@ extension TogetherPs1Netplay on TogetherModel {
     String? expectedHost,
     EmbeddedRetroGame? localWorker,
     Game? selectedGame,
-    Ps1NetplayRoomMode mode = Ps1NetplayRoomMode.fresh,
+    Ps1NetplayRoomMode mode = Ps1NetplayRoomMode.freshAnalog,
   }) async {
     final me = account.user?.id;
     final owner = app.currentProfile?.id;
@@ -332,7 +330,7 @@ extension TogetherPs1Netplay on TogetherModel {
             ]);
       if (!active()) return;
       final invitedDigest = invite?.disc;
-      if (mode == Ps1NetplayRoomMode.fresh) expectedCore = invite?.core;
+      if (mode.freshFromDisc) expectedCore = invite?.core;
       if (expectedCore != null && !mode.execution.coreDigests.contains(expectedCore)) {
         return app.show(T.text('ps1OnlineMismatchCore'));
       }
@@ -386,7 +384,7 @@ extension TogetherPs1Netplay on TogetherModel {
                 bios: bios!,
                 execution: mode.execution,
                 requireHandoff: mode.needsCheckpoint,
-                preferPortable: mode == Ps1NetplayRoomMode.fresh && roomId == null,
+                preferPortable: mode.freshFromDisc && roomId == null,
                 canContinue: active,
               ),
             )
@@ -464,7 +462,7 @@ extension TogetherPs1Netplay on TogetherModel {
       match = Ps1NetplayMatch(
         rooms: rooms(
           discDigest: roomId == null ? media.discDigest : invitedDigest,
-          coreDigest: mode == Ps1NetplayRoomMode.fresh && roomId == null ? media.coreDigest : expectedCore,
+          coreDigest: mode.freshFromDisc && roomId == null ? media.coreDigest : expectedCore,
         ),
         links: app.services.gameLinks?.call() ?? WebRtcGameLinks(),
         identity: media.identity,

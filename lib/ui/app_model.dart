@@ -4112,7 +4112,7 @@ class AppModel extends ChangeNotifier {
       return p.join(override, ManagedRetro.libraryName(RetroPlatform.ps1));
     }
     try {
-      if (execution == Ps1NetplayExecution.standard && !requireHandoff) {
+      if (execution.usesStandardCore && !requireHandoff) {
         final existing = File(p.join(managed.root, ManagedRetro.libraryName(RetroPlatform.ps1)));
         if (await existing.exists()) {
           final digest = await AssetDownload.sha256Of(existing.path);

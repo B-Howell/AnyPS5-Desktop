@@ -225,6 +225,8 @@ constexpr std::pair<std::string_view, std::string_view> kPs1NetplayOptions[] = {
 };
 
 enum class Ps1MatchCpu { kCachedInterpreter, kRecompiler };
+// SwanStation's RETRO_DEVICE_PS_DUALSHOCK (first analog subclass).
+constexpr unsigned kPs1DualShockDevice = (1u << 8) | 5u;
 
 class Ps1MatchStorage {
  public:
@@ -713,7 +715,7 @@ class RetroCoreSession {
                    bool rollback = false, AudioSink audio_sink = {},
                    std::vector<uint16_t> input_trace = {},
                    CallbackSlot callback_slot = CallbackSlot::kPrimary,
-                   std::optional<InitialDisc> boot_disc = std::nullopt)
+                   std::optional<InitialDisc> boot_disc = std::nullopt, bool netplay_dualshock = false)
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
         netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(
                                    *netplay_seat, rollback ? ps1_netplay::Timeline::kStandardPrediction : 0)
@@ -738,6 +740,7 @@ class RetroCoreSession {
         ps3_(std::filesystem::u8path(core_).filename() == L"rpcs3_libretro.dll"),
         local_staging_(local_staging),
         match_cpu_(match_cpu),
+        netplay_dualshock_(netplay_dualshock),
         returning_(std::move(returning)),
         recovery_accepted_(!returning_),
         texture_(flutter::PixelBufferTexture([this](size_t, size_t) { return CopyFrame(); })) {
@@ -2541,7 +2544,8 @@ class RetroCoreSession {
         lan_ready_ = lan_ && loaded;
         if (loaded && netplay_) {
           const auto controller = Symbol<void (*)(unsigned, unsigned)>(dll, "retro_set_controller_port_device");
-          for (unsigned port = 0; port < 2; ++port) controller(port, 1);
+          const unsigned device = netplay_dualshock_ ? kPs1DualShockDevice : 1u;
+          for (unsigned port = 0; port < 2; ++port) controller(port, device);
         }
         if (loaded && ps3_) {
           if (!vulkan_.Open()) throw std::runtime_error("The PS3 Vulkan device could not be initialized.");
@@ -2770,6 +2774,7 @@ class RetroCoreSession {
   const bool ps3_;
   const bool local_staging_;
   const Ps1MatchCpu match_cpu_;
+  const bool netplay_dualshock_;
   std::shared_ptr<const Ps1OrdinaryRecovery> returning_;
   std::atomic<bool> recovery_accepted_;
   std::atomic<int64_t> recovered_source_{0};
@@ -3002,6 +3007,15 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
           return result->Error("argument", "The Recompiler profile requires an isolated PS1 match seat.");
         match_cpu = Ps1MatchCpu::kRecompiler;
       }
+      bool netplay_dualshock = false;
+      if (const auto pad = fields->find(Value("ps1NetplayDualShock")); pad != fields->end()) {
+        const auto* enabled = std::get_if<bool>(&pad->second);
+        if (!enabled || !netplay_seat || (local_staging && *local_staging) ||
+            match_cpu != Ps1MatchCpu::kCachedInterpreter || fields->count(Value("ps1PresentationCore"))) {
+          return result->Error("argument", "DualShock input requires a fresh PS1 match.");
+        }
+        netplay_dualshock = *enabled;
+      }
       const std::string* presentation = nullptr;
       if (const auto found = fields->find(Value("ps1PresentationCore")); found != fields->end()) {
         presentation = std::get_if<std::string>(&found->second);
@@ -3108,7 +3122,7 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
                                                    std::vector<std::string>{}, match_cpu, nullptr,
                                                    presentation != nullptr, RetroCoreSession::AudioSink{},
                                                    std::vector<uint16_t>{}, RetroCoreSession::CallbackSlot::kPrimary,
-                                                   std::move(boot_disc));
+                                                   std::move(boot_disc), netplay_dualshock);
       if (presentation) {
         auto spare = std::make_unique<RetroCoreSession>(
             textures_, *presentation, *disc, *system, *saves, std::string{},

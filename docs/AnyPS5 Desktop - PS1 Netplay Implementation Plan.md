@@ -950,8 +950,30 @@ remains unverified.
 
 For a PS1 CUE game with a readable boot serial, **Game Settings → Online
 couch co-op** opens the shared online friend picker. Back returns to the
-same game action. After a friend is selected, the launcher verifies the
-disc, BIOS and standard netplay core before making a room. If the
+same game action. New fresh rooms from Game Settings or Friends use room
+version `6` and a DualShock execution fingerprint. The
+[execution profile](../lib/core/online/ps1_netplay_media.dart) binds controller
+type into the compatibility handshake. The
+[Windows worker](../windows/runner/retro_core_host.cpp) selects SwanStation's
+DualShock device on both ports, with the existing
+[signed stick and button snapshots](../lib/core/online/ps1_netplay_wire.dart).
+Games that support analog input can use the sticks. Both players need a
+build that recognizes version `6`. Existing version `1` invitations still
+join as digital matches, and existing checkpoint and rollback modes keep
+their original controller type and fingerprint. This includes hosting
+from a running game through the Quick Menu.
+
+The Windows headless runner compiled against the changed native worker.
+Separate headless input-callback probes on both pinned standard DLLs
+reported both button ports and all four signed axes on each port in
+DualShock mode. The digital control on each DLL queried buttons without
+axes. The launcher fixtures also exercised a new-room invite and the
+native launch arguments for both new and older rooms. The core probe
+checks callback requests through boot, with analog gameplay and
+cross-network synchronization still to be measured.
+
+After a friend is selected, the launcher verifies the disc, BIOS and
+standard netplay core before making a room. If the
 reviewer build supplies the pinned standard package, the launcher can
 install it into the dedicated `PS1-Netplay` directory. New dashboard rooms
 prefer that portable core when available. If it is unavailable, the host can

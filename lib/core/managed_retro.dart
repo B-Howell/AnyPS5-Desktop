@@ -99,7 +99,7 @@ class ManagedRetro {
   /// Checkpoint handoff has its own core. Never upgrade the offline PS1 DLL.
   Future<String> ensurePs1NetplayCore({Ps1NetplayExecution execution = Ps1NetplayExecution.standard}) async {
     final (directory, archiveName, archivePin, corePin) = switch (execution) {
-      Ps1NetplayExecution.standard => (
+      Ps1NetplayExecution.standard || Ps1NetplayExecution.standardAnalog => (
         'PS1-Netplay',
         'swanstation-netplay.zip',
         _ps1NetplayArchive,
@@ -145,7 +145,7 @@ class ManagedRetro {
     }
     if (missing.isEmpty) return installed.path;
     final legacy = File(p.join(resolvedHome, name));
-    if (execution == Ps1NetplayExecution.standard && await pinned(legacy)) return legacy.path;
+    if (execution.usesStandardCore && await pinned(legacy)) return legacy.path;
 
     final packages = packageDirectory;
     if (packages == null || !p.isAbsolute(packages)) {

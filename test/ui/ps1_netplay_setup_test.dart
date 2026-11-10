@@ -445,7 +445,7 @@ void main() {
       'host': {'userId': me},
       'kind': 'online',
       'titleId': 'SCUS94426',
-      'gameVersion': Ps1NetplayRoomMode.fresh.version,
+      'gameVersion': Ps1NetplayRoomMode.freshAnalog.version,
       'engineBuild': RetroOnlineMode.synchronized.protocol,
       'capacity': 2,
       'joinable': false,
@@ -537,7 +537,7 @@ void main() {
       reason: 'Expected invite after media verification. Status: ${model.toast}',
     );
     final sent = server.callsTo('game-sessions', method: 'POST').single.body;
-    expect(sent['gameVersion'], Ps1NetplayRoomMode.fresh.version);
+    expect(sent['gameVersion'], Ps1NetplayRoomMode.freshAnalog.version);
     expect(sent['properties'], {
       'protocol': RetroOnlineMode.synchronized.protocol,
       'discSha256': digest,
@@ -627,7 +627,7 @@ void main() {
       Ps1NetplayRoomMode.rollbackHandoff => await managed.ensurePs1NetplayCore(execution: mode.execution),
       Ps1NetplayRoomMode.rollbackPreview => throw StateError('Rollback preview requires a fresh game.'),
       Ps1NetplayRoomMode.staged => p.join(home, 'PS1-Netplay', ManagedRetro.libraryName(RetroPlatform.ps1)),
-      Ps1NetplayRoomMode.fresh => (await File(
+      Ps1NetplayRoomMode.fresh || Ps1NetplayRoomMode.freshAnalog => (await File(
         stockCore!,
       ).copy(p.join(home, ManagedRetro.libraryName(RetroPlatform.ps1)))).path,
     };
@@ -672,6 +672,7 @@ void main() {
           } else {
             expect(worker, 2);
             expect(arguments['ps1NetplaySeat'], guestMode ? 1 : 0);
+            expect(arguments['ps1NetplayDualShock'], mode.execution.usesDualShock ? true : isNull);
             expect(arguments['ps1NetplayCpu'], mode.handoffFromOrdinary ? mode.execution.cpu : isNull);
             expect(
               arguments['ps1PresentationCore'],
@@ -1119,7 +1120,7 @@ void main() {
     skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null,
     timeout: handoffFixtureTimeout,
   );
-  for (final mode in [Ps1NetplayRoomMode.fresh, Ps1NetplayRoomMode.staged]) {
+  for (final mode in [Ps1NetplayRoomMode.fresh, Ps1NetplayRoomMode.freshAnalog, Ps1NetplayRoomMode.staged]) {
     test(
       'Quick Menu joins a ${mode.name} PS1 invite and returns to the original session',
       () => verifyOrdinaryHandoff(guestMode: true, mode: mode),
