@@ -594,8 +594,17 @@ unverified.
 The test worker sampled offscreen frames every five seconds, which
 could show the state before the last input. A scratch build now
 accepts a numbered capture request and acknowledges it after
-publishing a frame. The build passed compilation. Use a live
-capture receipt before relying on it for progression input.
+publishing a frame. The restored host verified this live through
+request 68 at frame 23,628. On Windows, replacing the open request
+file could time out. Writing the next sequence into the existing
+file let the worker acknowledge it.
+
+With those captures, the host activated the checkpoint beyond the
+first wall, cleared the layer-switching hills and waterwheel,
+and used the game's retry action to pass the broken bridge. It
+reached the shirt-and-shoes sticker gate before the end of First
+Steps. The run ended at that gate and the worker exited zero.
+Neither the online menu unlock nor a native join has been verified.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
