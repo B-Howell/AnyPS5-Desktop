@@ -330,6 +330,22 @@ address and exchanged direct UDP with the peer. This verifies the
 one-PC endpoint layout. A paired game run still needs two Pod-ready
 profiles and a real native join.
 
+A disconnected Windows control replayed both tutorials with the same
+GOTY update, pinned v3-capable DLL and hardware renderer. It used
+policy v2 in disconnected mode with the shared 26-write patch and
+started no RPCN or Refresh services. It reproduced the globe scene
+with continued rendering and controller response but no Pod before
+the normal stop. The network path is therefore unnecessary to
+reproduce the symptom. The remaining comparison removes the shared
+patch while keeping the same title update, core and renderer.
+
+The pinned core can request the libretro sensor interface and collect
+samples, but its libretro pad handler does not copy the samples into
+the guest's pad state. The host also has no sensor callback. A motion
+experiment must cover both boundaries and observe guest-visible
+samples. The offline progression result establishes no causal link
+between the missing samples and the Pod transition.
+
 The Quick Menu labels the current status **RPCN connection** and
 describes game sign-in and lobby handling separately. The
 [English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
