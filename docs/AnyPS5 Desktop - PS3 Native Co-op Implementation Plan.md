@@ -69,6 +69,36 @@ core. The [libretro branch source at `8bafcb27`](https://github.com/WizzardSK/rp
 also required protocol 32 when checked on November 10, 2026. A core
 package refresh to that revision would retain the mismatch. Keep the
 private protocol-32 fixture isolated.
+
+The standalone [RPCS3 protocol-34 change at `6c72e710`](https://github.com/RPCS3/rpcs3/commit/6c72e7105d8d3ffa710e747dbcf5c5a5c780a730)
+adds the `GetTss` Title Small Storage request with a slot and timestamp.
+Its ten-file diff applies to the pinned libretro source and to the
+scratch source with the AnyPS5 network, patch-attestation and certificate
+checks applied. RPCN 1.12 moved its server, world and lobby registry out
+of SQLite. The protocol-32 and protocol-34 server pins have identical
+`np2_structs.proto` files.
+
+The RPCN 1.12.1 server built with `cargo build --release --locked -j3`.
+Its Linux x64 SHA-256 was
+`e9f73b8e4ee09d7c4eb561931ef34f5e3b9c4a6222649a2e09f67b51a2479dca`.
+The loopback-only wire probe rejected the protocol-32 greeting and passed
+against 34. It verified the local TLS certificate, rejected an unknown
+login, authenticated two disposable users, registered and resolved both
+UDP signaling endpoints, and verified a signed ticket against the fixture
+key. The upstream key rejected that ticket. Shutdown released both
+listeners. This test covers server-side account, signaling and ticket
+behavior. Native room admission requires separate game-level evidence.
+
+The scratch Linux core also compiled with the upstream change, using the
+same pinned core and private provider patches. Its unstripped library
+SHA-256 was
+`e7f9bee166f55e60b65882ba76f5e5b4537137fce34b772680a9e1dcd275d277`.
+The source diff, build and wire logs are in WSL under
+`/tmp/anyps5-rpcn-v34-6a9Df5`. The next gate is to boot LittleBigPlanet
+against the isolated protocol-34 RPCN and Refresh pair and verify game
+authentication before qualifying room entry. This library remains a local
+test artifact.
+
 For private RPCN, also qualify ticket trust. The
 [Refresh authentication handler](https://github.com/LittleBigRefresh/Refresh/blob/v3.7.2/Refresh.Interfaces.Game/Endpoints/Handshake/AuthenticationEndpoints.cs)
 uses the library's RPCN signing key for verification, so a freshly
