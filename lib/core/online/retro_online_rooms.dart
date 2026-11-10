@@ -101,7 +101,7 @@ final class RetroOnlineRooms {
   Future<RetroRoom> join(String id, {String? expectedHost, Completer<void>? cancelBeforeAdmission}) async {
     final path = _path(id);
     await _admissionRead(_requireIdle, cancelBeforeAdmission);
-    final room = _room(await _admissionRead(() => call('GET', path), cancelBeforeAdmission), id: id);
+    final room = _room(await _admissionRead(() => _readRoomView(path), cancelBeforeAdmission), id: id);
     _checkInviteHost(room, expectedHost);
     _checkAdmission(cancelBeforeAdmission);
     await call('POST', '$path/join', {'gameVersion': spec.gameVersion, 'engineBuild': protocol});
@@ -110,15 +110,15 @@ final class RetroOnlineRooms {
 
   /// Binds the host to the fingerprints used to choose the local disc and core.
   Future<RetroRoomInvite> readInvite(String id, {String? expectedHost}) async {
-    final json = await call(
-      'GET',
-      _path(id),
-    ).timeout(const Duration(seconds: 12), onTimeout: () => throw const RetroRoomLookupTimeout());
+    final json = await _readRoomView(_path(id));
     final room = _room(json, id: id);
     _checkInviteHost(room, expectedHost);
     final properties = json['properties'] as Map;
     return (room: room, disc: properties['discSha256'] as String?, core: properties['coreSha256'] as String?);
   }
+
+  Future<Map<String, dynamic>> _readRoomView(String path) =>
+      call('GET', path).timeout(const Duration(seconds: 12), onTimeout: () => throw const RetroRoomLookupTimeout());
 
   void _checkInviteHost(RetroRoom room, String? expectedHost) {
     if (room.hostId == me || (expectedHost != null && room.hostId != expectedHost)) {

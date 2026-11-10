@@ -355,6 +355,8 @@ extension TogetherPs3Online on TogetherModel {
         app.show(T.text(_ps3PartyHandoffKey(attempt, Ps3ProviderStatus.ready)));
         await attempt.cancelled.future;
       }
+    } on RetroRoomLookupTimeout {
+      if (active()) app.show(T.text('retroInviteLookupTimeout'));
     } on RetroRoomHostMismatch {
       if (active()) app.show(T.text('retroInviteHostChanged'));
     } on Object {

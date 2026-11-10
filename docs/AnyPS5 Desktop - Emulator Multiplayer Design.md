@@ -247,6 +247,7 @@ focused Windows runs passed 33 tests using a local fixture room service.
 
 The initial PS1 and PS2 room lookup has a 12-second deadline. The launcher
 releases the pending attempt and lets the player accept the same invite again.
+The PS1, PS2, and PS3 room recheck before admission shares that deadline.
 A late lookup response cannot launch the old attempt. The deadline applies to
 the read-only lookup. Room writes retain their existing cleanup path.
 The [PS1 handoff fixture](../test/ui/ps1_netplay_setup_test.dart) and

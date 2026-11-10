@@ -1326,7 +1326,10 @@ Signing out or closing the launcher gives the handoff time to release
 the room while the account is still available.
 While the launcher opens the room, Friends focuses **Cancel PS3
 invite**. Cancel releases pending read-only room checks so the player
-can retry without waiting for a stale reply. Once a create or join
+can retry without waiting for a stale reply. The read that rechecks an
+invite before admission also expires after 12 seconds. Friends asks the
+guest to accept the invite again, and a late reply cannot admit or
+launch the abandoned attempt. Once a create or join
 request has been sent, the launcher waits for its result and releases
 any room it acquired before allowing another attempt. Friends shows
 the closing status during that cleanup.

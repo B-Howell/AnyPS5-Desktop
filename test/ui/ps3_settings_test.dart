@@ -304,7 +304,7 @@ void main() {
         model.open(Layer.friends);
         activate('game-accept-$roomId');
         expect(server.callsTo('game-sessions/$roomId/join'), isEmpty);
-        if (mode == 'guest') {
+        if (mode == 'guest' || mode == 'guest-room-timeout') {
           const path = 'game-sessions/$roomId';
           final answer = server.answers.remove('GET $path')!;
           final requested = Completer<void>();
@@ -322,8 +322,14 @@ void main() {
           await requested.future.timeout(const Duration(seconds: 5));
           expect(model.overlay, Layer.friends);
           expect(model.spot?.row, 'ps3-party-leave');
-          activate('ps3-party-leave');
-          await waitFor(() => model.together.ps3PartyRows().isEmpty);
+          if (mode == 'guest-room-timeout') {
+            await Future<void>.delayed(const Duration(seconds: 12));
+            await waitFor(() => model.together.ps3PartyRows().isEmpty);
+            expect(model.toast, 'The room took too long to respond. Try accepting the invite again.');
+          } else {
+            activate('ps3-party-leave');
+            await waitFor(() => model.together.ps3PartyRows().isEmpty);
+          }
           expect(server.callsTo('$path/join'), isEmpty);
           expect(start.isCompleted, isFalse);
           server.answers['GET $path'] = answer;
@@ -667,6 +673,10 @@ void main() {
         await model.stopRunningGame();
       }
       await waitFor(() => model.running == null && model.starting == null);
+      if (mode == 'guest-room-timeout') {
+        expect(server!.callsTo('game-sessions/$roomId/join', method: 'POST'), hasLength(1));
+        expect(calls.where((call) => call.method == 'start'), hasLength(1));
+      }
     }
   }
 
@@ -677,6 +687,7 @@ void main() {
     'host',
     'dashboard-host',
     'guest',
+    'guest-room-timeout',
     'guest-ended',
     'guest-boot-cancel',
     'guest-first-frame-cancel',
