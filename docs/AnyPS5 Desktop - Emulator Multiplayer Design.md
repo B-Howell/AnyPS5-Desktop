@@ -273,8 +273,12 @@ local WebRTC peers after the change.
 When a PS1 or PS2 connection setup deadline expires, the launcher gives the
 host a prompt to invite their friend again and tells the guest to ask for
 a new invite. This covers the connection settings request, PS1 peer
-connection creation, and PS2 peer channel setup. A disconnect after
+connection creation, PS1 signaling and preparation, and PS2 peer
+channel setup. A timeout or disconnect after
 play starts keeps its separate message.
+The PS1 peer keeps the local timeout reason if a pending plugin call
+fails while the connection closes. The wire protocol still sends its
+existing leave message to the other peer.
 
 - On a clean AnyPS5 install, set up the needed emulator inside Settings,
   select user-supplied firmware and games, and start or accept a session

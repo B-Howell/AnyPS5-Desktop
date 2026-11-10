@@ -31,7 +31,7 @@ abstract interface class Ps1NetplayRunner {
 
 enum Ps1NetplayPhase { idle, preparing, running, closed }
 
-enum Ps1NetplayEnd { left, peerLeft, disconnected, timedOut, mismatch, desync, protocol, runner }
+enum Ps1NetplayEnd { left, peerLeft, disconnected, startupTimedOut, timedOut, mismatch, desync, protocol, runner }
 
 /// One match between two already authenticated peers. The caller owns the links and calls [pump]
 /// on its polling cadence. Only [sendControl] requires reliable ordered delivery.
@@ -504,9 +504,14 @@ final class Ps1NetplaySession {
 
   void disconnect() => _close(Ps1NetplayEnd.disconnected);
 
+  void connectionTimedOut() => _close(Ps1NetplayEnd.startupTimedOut);
+
   void _touch() {
     _watchdog?.cancel();
-    _watchdog = Timer(timeout, () => _close(Ps1NetplayEnd.timedOut, notify: true));
+    _watchdog = Timer(timeout, () {
+      final reason = _phase == Ps1NetplayPhase.running ? Ps1NetplayEnd.timedOut : Ps1NetplayEnd.startupTimedOut;
+      _close(reason, notify: true);
+    });
     _stallTimer?.cancel();
     if (_phase == Ps1NetplayPhase.running && timeout > _stallDelay) {
       _stallTimer = Timer(_stallDelay, () => _setProgressStalled(true));

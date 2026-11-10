@@ -58,7 +58,14 @@ final class _PendingLink implements GameLinks {
 final class _OpeningLink implements GameLink, GameLinks {
   final opening = Completer<void>();
   final _blocked = Completer<void>();
+  final closeGate = Completer<void>();
+  bool holdClose = false;
   bool closed = false;
+
+  @override
+  bool get streamOpen => false;
+
+  void rejectOpen() => _blocked.completeError(StateError('Plugin closed while opening.'));
 
   @override
   Future<GameLink> link(List<Map<String, dynamic>> iceServers) async => this;
@@ -70,7 +77,10 @@ final class _OpeningLink implements GameLink, GameLinks {
   }
 
   @override
-  Future<void> close() async => closed = true;
+  Future<void> close() async {
+    closed = true;
+    if (holdClose) await closeGate.future;
+  }
 
   @override
   set onStreamMessage(void Function(Uint8List) handler) {}
@@ -527,6 +537,40 @@ void main() {
     await Future.wait([match.leave(), opening]).timeout(const Duration(seconds: 1));
     expect(link.closed, isTrue);
     expect(removed, isTrue);
+  });
+
+  test('late plugin rejection keeps the startup timeout while the link closes', () {
+    fakeAsync((clock) {
+      final link = _OpeningLink()..holdClose = true;
+      final peer = Ps1NetplayPeer(
+        link: link,
+        identity: _identity(),
+        runner: _UnusedRunner(),
+        seat: 0,
+        hostEpoch: 1,
+        sendSignal: (_) async {},
+        timeout: const Duration(milliseconds: 30),
+      );
+      Object? failure;
+      var opened = false;
+      var done = false;
+      unawaited(peer.open().then<void>((_) => opened = true, onError: (Object error) => failure = error));
+      unawaited(peer.done.then<void>((_) => done = true));
+      clock.elapse(const Duration(milliseconds: 30));
+      expect(peer.session.ended, Ps1NetplayEnd.startupTimedOut);
+      expect(link.closed, isTrue);
+      expect(done, isFalse);
+
+      link.rejectOpen();
+      clock.flushMicrotasks();
+      expect(failure, isNull);
+      expect(opened, isTrue);
+      expect(peer.session.ended, Ps1NetplayEnd.startupTimedOut);
+
+      link.closeGate.complete();
+      clock.flushMicrotasks();
+      expect(done, isTrue);
+    });
   });
 
   test('host rejects an uninvited room member before that member publishes a marker', () async {

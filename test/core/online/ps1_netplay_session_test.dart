@@ -589,7 +589,7 @@ void main() {
     addTearDown(p.close);
     p.host.open();
     await p.host.done.timeout(const Duration(seconds: 1));
-    expect(p.host.ended, Ps1NetplayEnd.timedOut);
+    expect(p.host.ended, Ps1NetplayEnd.startupTimedOut);
     expect(p.h.prepareCalls, 0);
     expect(p.host.open, throwsStateError);
   });

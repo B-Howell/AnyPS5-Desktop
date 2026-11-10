@@ -162,7 +162,7 @@ final class Ps1NetplayPeer {
       };
     _poll = Timer.periodic(_pollInterval, (_) => _tick());
     _connectTimeout = Timer(_timeout, () {
-      if (!_link.streamOpen) session.disconnect();
+      if (!_link.streamOpen) session.connectionTimedOut();
     });
 
     if (!_host) {
@@ -181,6 +181,7 @@ final class Ps1NetplayPeer {
       _offerSet = true;
       unawaited(_drain());
     } on Object {
+      if (_finished) return;
       session.disconnect();
       rethrow;
     }

@@ -298,6 +298,7 @@ extension TogetherPs1Netplay on TogetherModel {
         account.user?.id == me &&
         app.currentProfile?.id == owner &&
         hostAvailable();
+    final timeoutMessage = roomId == null ? 'retroConnectionTimeoutHost' : 'retroConnectionTimeoutGuest';
     Ps1NetplayMatch? opened;
     var holdingTransition = false;
     String? expectedCore;
@@ -513,6 +514,8 @@ extension TogetherPs1Netplay on TogetherModel {
               null => 'ps1OnlineMismatch',
             }),
           );
+        case Ps1NetplayEnd.startupTimedOut:
+          app.show(T.text(timeoutMessage));
         case Ps1NetplayEnd.desync:
           app.show(T.text('ps1OnlineDesync'));
         case Ps1NetplayEnd.runner || Ps1NetplayEnd.protocol || Ps1NetplayEnd.disconnected || Ps1NetplayEnd.timedOut:
@@ -533,9 +536,7 @@ extension TogetherPs1Netplay on TogetherModel {
     } on RetroRoomHostMismatch {
       if (opened != null || active()) app.show(T.text('retroInviteHostChanged'));
     } on RetroConnectionTimeout {
-      if (opened != null || active()) {
-        app.show(T.text(roomId == null ? 'retroConnectionTimeoutHost' : 'retroConnectionTimeoutGuest'));
-      }
+      if (opened != null || active()) app.show(T.text(timeoutMessage));
     } on RetroRoomLookupTimeout {
       if (active()) app.show(T.text('retroInviteLookupTimeout'));
     } on Object {

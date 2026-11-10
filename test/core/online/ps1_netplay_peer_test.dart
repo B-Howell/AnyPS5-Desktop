@@ -142,24 +142,26 @@ void main() {
     expect(network.all.every((link) => link.closed), isTrue);
   });
 
-  test('a missing peer closes the connection without starting the runner', () async {
-    final network = FakeGameNetwork();
-    final runner = _Runner();
-    final peer = Ps1NetplayPeer(
-      link: await network.links.link([]),
-      identity: identity,
-      runner: runner,
-      seat: 0,
-      hostEpoch: 1,
-      sendSignal: (_) async {},
-      timeout: const Duration(milliseconds: 30),
-    );
-    await peer.open();
-    await peer.done.timeout(const Duration(seconds: 2));
-    expect(network.all.single.closed, isTrue);
-    expect(runner.seat, isNull);
-    expect(peer.session.phase, Ps1NetplayPhase.closed);
-  });
+  for (final seat in [0, 1]) {
+    test('seat $seat reports a startup timeout when the peer channel never opens', () async {
+      final network = FakeGameNetwork();
+      final runner = _Runner();
+      final peer = Ps1NetplayPeer(
+        link: await network.links.link([]),
+        identity: identity,
+        runner: runner,
+        seat: seat,
+        hostEpoch: seat == 0 ? 1 : null,
+        sendSignal: (_) async {},
+        timeout: const Duration(milliseconds: 30),
+      );
+      await peer.open();
+      await peer.done.timeout(const Duration(seconds: 2));
+      expect(network.all.single.closed, isTrue);
+      expect(runner.seat, isNull);
+      expect(peer.session.ended, Ps1NetplayEnd.startupTimedOut);
+    });
+  }
 
   test('a failed guest route retries signaling and keeps both runners in the same match', () async {
     final network = FakeGameNetwork();
