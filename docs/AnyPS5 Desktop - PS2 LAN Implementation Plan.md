@@ -8,6 +8,104 @@
 
 **Stack:** Windows x64, pinned LRPS2, DEV9, the embedded runner, AnyTogether game sessions and WebRTC data channels.
 
+## PS2 couch co-op checkpoint qualification
+
+Native LAN and synchronized couch co-op are different paths. A LAN-capable
+game exchanges its own network messages. Sharing controller seats in a game
+without LAN requires repeatable emulation and checkpoint replay, as in the
+PS1 design. The current PS2 LAN implementation does not provide that adapter.
+
+The [checkpoint probe](../tool/ps2_netplay/checkpoint.py) is the first bounded
+gate for that adapter. It reuses the [headless Libretro ABI](../tool/ps1_netplay/headless_core.py)
+but uses PS2 firmware paths, RAM limits and core options. Its software renderer
+separates CPU-visible replay from the hardware renderer's retained GPU state.
+This is a diagnostic tool, not a new launcher multiplayer option.
+
+The pinned ParaLLEl PS2 source `da5b07ebebc18016e1ca5b401188a283971a0e8d`
+implements full serialization and two restore paths. Normal mode clears
+execution caches and reloads serialized GS state. Same-instance mode can
+retain compiled code and GPU targets keyed by the saved EE cycle. Those
+retained GPU targets cannot be transferred to a second process. Therefore a
+same-instance pass alone cannot qualify guest admission or resynchronization.
+
+### Probe contract and execution
+
+The fixture JSON supplies absolute `core`, `disc`, `bios` and `card` paths,
+each with a corresponding lowercase `<key>Sha256` pin. All four are verified
+before native loading and again after the worker exits. Use a disposable card
+seed, not progression data. The probe copies the BIOS and card into a new D:
+profile and confines core writes there. Its parent launches one hidden, Idle
+priority Python worker with a deadline and kills/reaps that owned worker on
+timeout or cancellation. It opens no window and plays no audio. Existing
+output directories are refused; C: must have at least 310 GiB free and D:
+at least 15 GiB free under the current machine's storage guard.
+
+The default trace boots 3,100 ticks, captures a memory-only checkpoint, runs
+eight 60-tick input blocks, restores and repeats. Both controller ports receive
+the same scripted masks on both passes. The receipt records the sequence,
+source and ABI hashes, fixture hashes, effective options and timings. It hashes
+every nonduplicate software video callback and all delivered audio, compares
+callback counts, and samples full main RAM every 60 ticks. Neutral input is
+valid; both ports must have read nonzero input by the end. Input callback reads
+prove delivery to the core, not that the game accepted the input or entered
+multiplayer. RAM sampling can miss an intermediate divergence that reconverges.
+The process receipt and progress file also preserve failed/timeout attempts.
+
+```powershell
+python -B -m unittest discover -s tool/ps2_netplay -p test_checkpoint.py
+python -B tool/ps2_netplay/checkpoint.py --fixture D:/scratch/fixture.json --output D:/scratch/normal-run --context normal
+python -B tool/ps2_netplay/checkpoint.py --fixture D:/scratch/fixture.json --output D:/scratch/local-run --context same-instance
+```
+
+The [probe tests](../tool/ps2_netplay/test_checkpoint.py) cover mismatch and
+missing-data detection, neutral input, transient video differences, audio/video
+enable flags, and owned-process cleanup on success, timeout and interruption.
+Exit 0 means this bounded trace matched; 3 means a replay mismatch; 124 means
+the native worker timed out. Other errors are failures, not successful tests.
+
+### Current evidence and remaining gate
+
+The local Windows core SHA-256 is
+`801af1211407964a4851839c3f4e90607f18353671dd1e427f56e12201d712a4`.
+The TimeSplitters Future Perfect USA disc hash is
+`db9b6d86e8006caee69f1f7b6e21d7bf61c4ae66afb6757a8dad9843dfcadc34`.
+The final normal-mode software probe (`ps2-checkpoint-qualified-normal-v4`)
+restored RAM exactly at load, then diverged at six of eight RAM samples.
+The entire emitted software video and audio streams and both controller-read
+counts matched at all eight checkpoints. Capture took 10.02 ms and restore
+21.88 ms in this single run. These are diagnostic observations, not frame-budget
+guarantees. The original fixture hashes were unchanged and the worker exited 3.
+
+The matching software same-instance control
+(`ps2-checkpoint-qualified-same-v4`) exited 0. RAM matched immediately after
+restore and at all eight samples; the complete emitted video/audio streams
+matched, with 480 video callbacks, 384,391 audio frames and 180 nonzero input
+reads from each port. Capture took 7.24 ms and restore 4.97 ms. Both tests used
+probe source SHA-256 `b57d4f7cc51eb673ebe8b5c46dad39a7c73e75455358f70f00594a4036058fa1`.
+The 14 unit tests passed. A separate one-second native timeout exited 124,
+reaped the worker and preserved fixture hashes.
+
+The probe must query checkpoint size **after boot**, at capture time. This
+core reports 46,456,052 bytes before GS initialization and 50,650,586 afterward.
+Caching the startup value caused the initial reusable same-instance test to
+take the core's normal restore fallback. Refreshing the size restored the
+intended fast path. The regression tests cover growth and its allocation bound.
+The normal-mode mismatch persisted with the corrected size.
+
+Earlier private D3D11 same-instance testing matched eight RAM/video/audio
+samples over 480 replay ticks. The normal D3D11 run diverged in RAM and video.
+Switching to software removed the observed video differences but reproduced
+the same RAM difference pattern. An EE Interpreter software control reduced
+the RAM failures to one sample, rather than eliminating them. That rules out
+GPU readback as the sole source of RAM divergence; it does not establish a
+specific CPU-cache bug. These runs reached the game's initial setup menu,
+not a completed match. Do not describe them as PS2 gameplay synchronization.
+
+Next, isolate the first differing emulated state at a fixed tick in the
+software restore control. Then qualify portable transfer between two processes,
+repeat through actual multiplayer gameplay, and measure rollback cost. Keep
+PS2 couch co-op unavailable until those gates pass; native LAN remains separate.
+
 ## Test titles
 
 Use Gran Turismo 4 first. Its two-player split-screen mode checks both
