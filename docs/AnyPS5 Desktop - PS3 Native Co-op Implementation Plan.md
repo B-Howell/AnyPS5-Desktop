@@ -716,13 +716,27 @@ translation. For the guest, `127.0.0.1:3658` is translated to its
 own physical socket on 3659. The host trace showed no traffic with
 the guest's physical socket. The fixture advertises distinct peers
 for explicit RPCN signaling lookups but normalizes both startup
-public addresses to `127.0.0.1`. The next control must distinguish
-the actual destination after the game's invite from startup
-self-traffic. Preserve the successful boot path, measure the
-address the guest uses on acceptance, and test distinct advertised
-endpoints without removing the fixture's network isolation.
-The observed native invite delivery and acceptance input are
-verified. A shared Pod and two-player gameplay remain unverified.
+public addresses to `127.0.0.1`. The first accept was about 74
+seconds after the invite. A follow-up used the rendered guest
+prompt to accept in 1.297 seconds with the same address
+normalization. Both clients still remained in separate Pods.
+
+The next isolated control kept the physical binds, logical self
+routes, core and game patch. The signaling relay stopped rewriting
+the RPCN startup public addresses, so the host retained
+`127.0.0.2:3658` and the guest retained `127.0.0.3:3658`. Both
+reached their Pods. After the guest accepted in 1.375 seconds, the
+trace showed bidirectional datagrams between the two physical
+sockets on 3658 and 3659. Both rendered two characters in the host's
+Pod. Guest-only movement moved the second character to the right
+on both clients while the host's character stayed at the Pod
+computer. The host selected **The Meerkat Kingdom** and both
+displayed that level loading. The backend received the host's
+entry and play requests before the fixture deadline. Both workers
+exited zero and the fixture released its transport. This verifies
+native invite, acceptance, shared Pod and guest input on one PC.
+Level gameplay, completion and a two-network run remain separate
+checks.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
