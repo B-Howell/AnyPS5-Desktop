@@ -120,18 +120,19 @@ void main() {
     start = null;
     final stopping = stopRequested = Completer<void>();
     final failed = expectLater(
-      app.preparePs2Lan(game, mac, canBoot: () {
-        if (start != null) throw StateError('Launch interrupted after native startup');
-        return true;
-      }),
+      app.preparePs2Lan(
+        game,
+        mac,
+        canBoot: () {
+          if (start != null) throw StateError('Launch interrupted after native startup');
+          return true;
+        },
+      ),
       throwsStateError,
     );
     try {
       await stopping.future.timeout(const Duration(seconds: 3));
-      await expectLater(
-        app.preparePs2Lan(game, mac, canBoot: () => true),
-        throwsA(isA<Ps2LanProfileInUse>()),
-      );
+      await expectLater(app.preparePs2Lan(game, mac, canBoot: () => true), throwsA(isA<Ps2LanProfileInUse>()));
     } finally {
       stopRequested = null;
       stopped = true;
@@ -171,8 +172,9 @@ void main() {
           home: Center(child: ConsoleBadge(console: expected)),
         ),
       );
-      final badge = tester.widget<Text>(find.text(expected.name.toUpperCase()));
-      expect(badge.semanticsLabel, expected.label);
+      final badge = tester.widget<Image>(find.byType(Image));
+      expect(badge.semanticLabel, expected.label);
+      expect((badge.image as AssetImage).assetName, 'assets/retro/console-${expected.name}.png');
     }
   });
 
@@ -231,7 +233,12 @@ void main() {
     expect(tester.getRect(cover), coverRect);
     expect(tester.getRect(bar), barRect);
 
-    status = {'presented': true, 'startupVisible': false, 'progressLabel': 'Compiling PPU modules', 'progressPercent': 43};
+    status = {
+      'presented': true,
+      'startupVisible': false,
+      'progressLabel': 'Compiling PPU modules',
+      'progressPercent': 43,
+    };
     await tester.pump(const Duration(milliseconds: 150));
     expect(model.starting, game);
     expect(bar, findsOneWidget);
@@ -311,6 +318,7 @@ void main() {
               'presented': true,
               'ended': ended,
               'aspect': 4 / 3,
+              'hardware': true,
               'error': ended ? saveError : '',
               if (progress != null) 'progressLabel': 'Compiling modules',
               'progressPercent': ?progress,
@@ -329,6 +337,9 @@ void main() {
             graphicsPending = true;
             selected = 1;
             return true;
+          case 'tuningOptions':
+            selected = scales.indexOf(call.arguments['values'][resolution] as String);
+            return selected >= 0;
           case 'stop':
             ended = true;
         }
@@ -362,23 +373,48 @@ void main() {
       model.setActive(true);
       final graphics = model.panelCategories().single.rows.singleWhere((row) => row.id == 'retroGraphics');
       (graphics.kind as ActionRow).run();
+      expect(model.panelCategories().single.rows.map((row) => row.title), ['Auto Optimize', 'Advanced']);
+      PanelRow row(String id) => model.panelCategories().single.rows.singleWhere((row) => row.id == id);
+      void choose(String id) => (row(id).kind as ActionRow).run();
+      choose('emulator-auto-optimize');
+      await tester.pump();
+      expect(row('auto-setting-$resolution').kind, isA<InfoRow>());
+      expect(calls.where((call) => call.method == 'tuningOptions'), isEmpty);
+      expect(model.preferences.retroInternalResolution, isEmpty);
+      model.handle(Command.back);
+      if (isPs1) {
+        choose('emulator-auto-optimize');
+        await tester.pump();
+        choose('tuning-preset-apply');
+        await tester.pump(const Duration(milliseconds: 150));
+        expect(model.preferences.retroInternalResolution[title.id], '3');
+        expect(Preferences.fromJson(model.preferences.toJson()).retroAutoOptimized, contains(title.id));
+        model.handle(Command.back);
+        expect(row('emulator-auto-optimize').title, 'Auto Optimize ✓');
+      }
+      choose('embedded-graphics-advanced');
+      choose('emulator-tune-game');
+      model.handle(Command.back);
+      expect(row('embedded-apply-advanced').kind, isA<InfoRow>());
       final filter = model.panelCategories().single.rows.first.kind as ChoiceRow;
       filter.set(1);
-      expect(model.embeddedGame?.filter, 1);
+      expect(model.embeddedGame?.filter, 0);
       final internalResolution = model.panelCategories().single.rows.singleWhere((row) => row.id == resolution);
       expect(internalResolution.title, 'Internal resolution');
       final choice = internalResolution.kind as ChoiceRow;
       expect(choice.options[1], '2x');
+      if (isPs1) expect(choice.selected, 2);
       choice.set(1);
+      choose('embedded-apply-advanced');
       await tester.pump();
-      expect(model.preferences.retroInternalResolution, isEmpty);
+      expect(model.preferences.retroInternalResolution[title.id], isPs1 ? '3' : null);
       graphicsPending = false;
       await tester.pump(const Duration(milliseconds: 150));
       expect(model.embeddedGame?.options[resolution]?.selected, 1);
-      choice.set(scales.length - 1);
-      await tester.pump();
+      expect(model.embeddedGame?.filter, 1);
       expect(model.preferences.retroInternalResolution, {title.id: scales[1]});
-      model.closeOverlay();
+      expect(model.preferences.retroAutoOptimized, isNot(contains(title.id)));
+      model.resumeGame();
       await tester.pump();
       expect(model.overlay, isNull);
       expect(calls.where((call) => call.method == 'pause').last.arguments, false);

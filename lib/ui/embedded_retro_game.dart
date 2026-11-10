@@ -95,6 +95,7 @@ class EmbeddedRetroGame extends RunningGame {
   String resolutionError = '';
   bool hardwareRendering = false;
   bool presented = false;
+  void Function()? _onManualOptionAccepted;
   bool _startupVisible = false;
   bool get startupVisible => _startupVisible;
   ({String label, int? percent})? progress;
@@ -152,6 +153,8 @@ class EmbeddedRetroGame extends RunningGame {
     required Map<String, String> graphics,
     required void Function(String, String) onGraphicsSelected,
     RetroTuningPersist? onTuningApplied,
+    RetroTuningPersist? onAutoOptimizeApplied,
+    void Function()? onManualOptionAccepted,
     required PadState Function() readPad,
     required void Function() changed,
     ({Ps1NetplayMedia media, int seat})? netplay,
@@ -225,6 +228,7 @@ class EmbeddedRetroGame extends RunningGame {
       (core: core, disc: p.absolute(disc.path), system: p.join(folder, 'system')),
       ordinaryRecovery,
     );
+    session._onManualOptionAccepted = onManualOptionAccepted;
     session.tuning = RetroGameTuning(
       platform: disc.platform,
       options: session.options,
@@ -235,6 +239,8 @@ class EmbeddedRetroGame extends RunningGame {
           session.presented &&
           session.hardwareRendering &&
           !session._closing,
+      queueReady: () =>
+          !session.isPs3Online && !session._netplay && !session._ps2Lan && session.presented && !session._closing,
       writeOptions: (expected, values) async {
         if (onlineProfile != null || session._closing) return false;
         final accepted = await _channel.invokeMethod<bool>('tuningOptions', {'expected': expected, 'values': values});
@@ -252,6 +258,7 @@ class EmbeddedRetroGame extends RunningGame {
               }
             }
           },
+      persistAuto: onAutoOptimizeApplied,
       changed: changed,
     );
     session._watch = Timer.periodic(const Duration(milliseconds: 125), (_) => unawaited(session._poll(changed)));
@@ -421,17 +428,29 @@ class EmbeddedRetroGame extends RunningGame {
     }
   }
 
-  Future<void> setOption(String key, String value) async {
-    if (isPs3Online || _netplay || _closing || tuning.updating) return;
+  Future<bool> setOption(String key, String value) async {
+    if (isPs3Online || _netplay || _closing || tuning.updating) return false;
     if (tuning.canCancel) await tuning.cancel();
-    if (_closing || tuning.updating) return;
-    final accepted = await _channel.invokeMethod<bool>('option', {'key': key, 'value': value});
+    if (_closing || tuning.updating) return false;
+    final changed = tuning.selectedValue(key) != value;
+    final bool? accepted;
+    try {
+      accepted = await _channel.invokeMethod<bool>('option', {'key': key, 'value': value});
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
     if (accepted == true && _usesGraphicsCheckpoint(key) && !await _waitForGraphics({key: value})) {
-      return;
+      return false;
+    }
+    if (accepted == true && changed) {
+      tuning.manualSelection(key);
+      _onManualOptionAccepted?.call();
     }
     if (accepted == true && (key == 'swanstation_GPU_ResolutionScale' || key == 'pcsx2_upscale_multiplier')) {
       _onResolutionSelected(value);
-      return;
+      return true;
     }
     if (accepted == true &&
         (options[key]?.restart == true ||
@@ -444,6 +463,7 @@ class EmbeddedRetroGame extends RunningGame {
             }.contains(key))) {
       _onGraphicsSelected(key, value);
     }
+    return accepted == true;
   }
 
   Future<void> startNetplayFrames() async {

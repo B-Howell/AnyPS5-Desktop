@@ -126,16 +126,20 @@ class RetroGameTuning {
     required this.platform,
     required this.options,
     required this.ready,
+    this.queueReady,
     required this.writeOptions,
     required this.persist,
+    this.persistAuto,
     required this.changed,
   });
 
   final RetroPlatform platform;
   final Map<String, EmbeddedOption> options;
   final bool Function() ready;
+  final bool Function()? queueReady;
   final RetroTuningWrite writeOptions;
   final RetroTuningPersist persist;
+  final RetroTuningPersist? persistAuto;
   final void Function() changed;
 
   RetroTuningSample? baseline;
@@ -146,6 +150,8 @@ class RetroGameTuning {
   int? _warmupFrom;
   bool _busy = false;
   bool _applied = false;
+  bool _autoApplied = false;
+  final _queuedAuto = <String, String>{};
   bool _observed = false;
   String? _message;
   Map<String, String> _before = {};
@@ -155,7 +161,6 @@ class RetroGameTuning {
       _observed &&
       ready() &&
       !_busy &&
-      !_applied &&
       _trial == null &&
       (_plan(headroom: true).isNotEmpty || _plan(headroom: false).isNotEmpty);
   bool get canStartCandidate =>
@@ -173,9 +178,122 @@ class RetroGameTuning {
         (!before.needsHeadroom || result.improvesHeadroom(before));
   }
 
+  bool canApplyPreset(Map<String, String> preset) =>
+      !_busy &&
+      _trial == null &&
+      (ready() ||
+          ((queueReady?.call() ?? false) &&
+              preset.isNotEmpty &&
+              preset.keys.every((key) => options[key]?.restart == true)));
+
+  EmbeddedOption effectiveOption(String key, EmbeddedOption option) {
+    final queued = _queuedAuto[key];
+    final selected = queued == null ? -1 : option.values.indexOf(queued);
+    if (selected < 0) return option;
+    return (
+      values: option.values,
+      labels: option.labels,
+      title: option.title,
+      restart: option.restart,
+      selected: selected,
+    );
+  }
+
+  String? selectedValue(String key) {
+    final option = options[key];
+    if (option == null) return null;
+    final selected = effectiveOption(key, option).selected;
+    return selected >= 0 && selected < option.values.length ? option.values[selected] : null;
+  }
+
+  void manualSelection(String key) {
+    _queuedAuto.remove(key);
+    _applied = false;
+    _autoApplied = false;
+  }
+
+  Map<String, String> previewPreset(int maximum, {required bool quality}) {
+    final resolution = switch (platform) {
+      RetroPlatform.ps1 => 'swanstation_GPU_ResolutionScale',
+      RetroPlatform.ps2 => 'pcsx2_upscale_multiplier',
+      RetroPlatform.ps3 => 'rpcs3_resolution_scale',
+    };
+    final plan = <String, String>{};
+    final choices = <int, String>{
+      for (final value in options[resolution]?.values ?? const <String>[])
+        if (int.tryParse(RegExp(r'^\d+').stringMatch(value) ?? '') case final int scale)
+          if (scale > 0 && scale <= maximum) scale: value,
+    };
+    if (choices.isNotEmpty) plan[resolution] = choices[choices.keys.reduce(math.max)]!;
+    final policies = switch (platform) {
+      RetroPlatform.ps1 => {
+        'swanstation_GPU_TextureFilter': [quality ? 'BilinearBinAlpha' : 'Nearest'],
+        'swanstation_GPU_Renderer': ['D3D11'],
+        'swanstation_CPU_ExecutionMode': ['Recompiler'],
+        'swanstation_CDROM_ReadThread': ['true'],
+      },
+      RetroPlatform.ps2 => {
+        'pcsx2_anisotropic_filtering': [quality ? '4x' : 'disabled'],
+        'pcsx2_trilinear_filtering': ['Trilinear (PS2)', 'Automatic'],
+        'pcsx2_renderer': ['D3D11'],
+        'pcsx2_disable_shader_cache': ['disabled', 'false'],
+      },
+      RetroPlatform.ps3 => {
+        'rpcs3_anisotropic_filter': [quality ? '4' : '2'],
+        'rpcs3_ppu_decoder': ['LLVM', 'Recompiler (LLVM)'],
+        'rpcs3_spu_decoder': ['LLVM', 'Recompiler (LLVM)'],
+        'rpcs3_llvm_precompilation': ['true', 'enabled'],
+        'rpcs3_spu_cache': ['true', 'enabled'],
+      },
+    };
+    for (final entry in policies.entries) {
+      final option = options[entry.key];
+      if (option == null) continue;
+      final value = option.values
+          .where((value) => entry.value.any((target) => value.toLowerCase() == target.toLowerCase()))
+          .firstOrNull;
+      if (value != null) plan[entry.key] = value;
+    }
+    return {
+      for (final entry in plan.entries)
+        if (selectedValue(entry.key) case final String before when before != entry.value) entry.key: entry.value,
+    };
+  }
+
+  String optionName(String key) => _name(key);
+  String optionLabel(String key, String value) {
+    if (key == 'swanstation_GPU_ResolutionScale' || key == 'pcsx2_upscale_multiplier') {
+      return double.tryParse(value) == null ? _label(key, value) : '$value×';
+    }
+    if (key == 'rpcs3_resolution_scale' && int.tryParse(value) != null) return '$value%';
+    if (key == 'swanstation_GPU_TextureFilter' && value == 'BilinearBinAlpha') return 'Bilinear (sharp alpha edges)';
+    return _label(key, value);
+  }
+
+  Future<bool> applyPreset(Map<String, String> expected, Map<String, String> preset) async {
+    if (!canApplyPreset(preset) ||
+        preset.isEmpty ||
+        expected.length != preset.length ||
+        preset.entries.any(
+          (entry) =>
+              selectedValue(entry.key) != expected[entry.key] ||
+              !(options[entry.key]?.values.contains(entry.value) ?? false),
+        )) {
+      return false;
+    }
+    if (!await _commit(expected, preset, applied: true, auto: true)) return false;
+    _before = expected;
+    _candidate = preset;
+    _autoApplied = true;
+    baseline = null;
+    candidate = null;
+    changed();
+    return true;
+  }
+
   bool get recording => _trial != null;
   bool get updating => _busy;
-  bool get canUndo => !_busy && _applied && ready() && _trial == null;
+  bool get canUndo => _applied && (_autoApplied ? canApplyPreset(_before) : !_busy && ready() && _trial == null);
   bool get canCancel => !_busy && (_trial != null || (baseline != null && !_applied));
 
   List<String> get changes => [
@@ -219,6 +337,8 @@ class RetroGameTuning {
     if (!canStartBaseline) return false;
     baseline = null;
     candidate = null;
+    _applied = false;
+    _autoApplied = false;
     _before = {};
     _candidate = {};
     _message = null;
@@ -336,19 +456,34 @@ class RetroGameTuning {
 
   Future<void> undo() async {
     if (!canUndo) return;
-    await _commit(_candidate, _before, applied: false);
+    await _commit(_candidate, _before, applied: false, auto: _autoApplied);
   }
 
-  Future<void> _commit(Map<String, String> from, Map<String, String> to, {required bool applied}) async {
+  Future<bool> _commit(
+    Map<String, String> from,
+    Map<String, String> to, {
+    required bool applied,
+    bool auto = false,
+  }) async {
     _busy = true;
+    var committed = false;
+    final live = {
+      for (final entry in to.entries)
+        if (options[entry.key]?.restart != true) entry.key: entry.value,
+    };
+    final before = {for (final key in live.keys) key: from[key]!};
     changed();
-    if (await _write(from, to)) {
+    if (live.isEmpty || await _write(before, live)) {
       try {
-        persist(from, to, undo: !applied);
+        (auto ? persistAuto ?? persist : persist)(from, to, undo: !applied);
+        for (final entry in to.entries) {
+          if (options[entry.key]?.restart == true) _queuedAuto[entry.key] = entry.value;
+        }
         _applied = applied;
+        committed = true;
         _message = applied ? 'Applied to this game.' : 'Restored the previous settings for this game.';
       } on Exception {
-        final restored = await _write(to, from);
+        final restored = live.isEmpty || await _write(live, before);
         _message = restored
             ? 'The settings could not be saved. The previous values were restored.'
             : 'The settings could not be saved. Reopen the game to reload its saved settings.';
@@ -358,6 +493,7 @@ class RetroGameTuning {
     }
     _busy = false;
     changed();
+    return committed;
   }
 
   Future<bool> _write(Map<String, String> from, Map<String, String> to) async {
@@ -398,6 +534,14 @@ class RetroGameTuning {
       'pcsx2_upscale_multiplier' ||
       'rpcs3_resolution_scale' => 'Internal resolution',
       'swanstation_GPU_TextureFilter' => 'Texture filtering',
+      'swanstation_GPU_Renderer' || 'pcsx2_renderer' => 'Renderer',
+      'swanstation_CPU_ExecutionMode' => 'CPU mode',
+      'swanstation_CDROM_ReadThread' => 'Asynchronous disc reads',
+      'pcsx2_disable_shader_cache' => 'Shader cache disabled',
+      'rpcs3_ppu_decoder' => 'PPU decoder',
+      'rpcs3_spu_decoder' => 'SPU decoder',
+      'rpcs3_llvm_precompilation' => 'LLVM precompilation',
+      'rpcs3_spu_cache' => 'SPU cache',
       'pcsx2_trilinear_filtering' => 'Trilinear filtering',
       _ => 'Anisotropic filtering',
     };

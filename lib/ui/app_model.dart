@@ -248,6 +248,11 @@ class Preferences {
     ..retroPs3Defaults = _readRetroOptions(json['retroPs3Defaults'])
     ..retroPs3Graphics = _readRetroGraphics(json['retroPs3Graphics'])
     ..retroEmbeddedGraphics = _readRetroGraphics(json['retroEmbeddedGraphics'])
+    ..retroAutoOptimized = {
+      if (json['retroAutoOptimized'] case final List<dynamic> games)
+        for (final game in games)
+          if (game is String) game,
+    }
     ..lastPlayed = {
       for (final entry in (json['lastPlayed'] as Map<String, dynamic>? ?? const {}).entries)
         entry.key: entry.value as String,
@@ -341,6 +346,7 @@ class Preferences {
   /// silent, null is 100. Games keep their own volume.
   int? launcherVolume;
   Map<String, String> lastPlayed = {};
+  Set<String> retroAutoOptimized = {};
   Map<String, String> retroInternalResolution = {};
   bool showRetroFolders = false;
   Map<String, String> retroPs3Defaults = {};
@@ -508,6 +514,7 @@ class Preferences {
     'musicVolume': musicVolume,
     if (launcherVolume != null) 'launcherVolume': launcherVolume,
     'lastPlayed': lastPlayed,
+    if (retroAutoOptimized.isNotEmpty) 'retroAutoOptimized': retroAutoOptimized.toList(),
     if (retroInternalResolution.isNotEmpty) 'retroInternalResolution': retroInternalResolution,
     if (showRetroFolders) 'showRetroFolders': true,
     if (retroPs3Defaults.isNotEmpty) 'retroPs3Defaults': retroPs3Defaults,
@@ -4430,6 +4437,70 @@ class AppModel extends ChangeNotifier {
         final graphicsId = ps3 ? game.titleId : game.id;
         final tuningOriginals = <String, String?>{};
         const tuningResolutionKeys = {'swanstation_GPU_ResolutionScale', 'pcsx2_upscale_multiplier'};
+        void saveTuning(
+          Map<String, String> previous,
+          Map<String, String> values, {
+          required bool undo,
+          required bool auto,
+        }) {
+          if (trialOptions.isNotEmpty) throw StateError('Finish the restart trial first.');
+          final priorOptions = graphics[graphicsId];
+          final priorResolution = preferences.retroInternalResolution[game.id];
+          final options = {...?priorOptions};
+          final originals = {...tuningOriginals};
+          var resolution = priorResolution;
+          for (final entry in values.entries) {
+            final key = entry.key;
+            final isResolution = tuningResolutionKeys.contains(key);
+            final current = isResolution ? resolution : options[key];
+            if (undo && current != previous[key]) continue;
+            final next = undo ? originals.remove(key) : entry.value;
+            if (!undo) originals[key] = current;
+            if (isResolution) {
+              resolution = next;
+            } else if (next == null) {
+              options.remove(key);
+            } else {
+              options[key] = next;
+            }
+          }
+          void write(Map<String, String>? settings, String? scale) {
+            if (settings == null || settings.isEmpty) {
+              graphics.remove(graphicsId);
+            } else {
+              graphics[graphicsId] = settings;
+            }
+            if (scale == null) {
+              preferences.retroInternalResolution.remove(game.id);
+            } else {
+              preferences.retroInternalResolution[game.id] = scale;
+            }
+          }
+
+          final wasOptimized = preferences.retroAutoOptimized.contains(game.id);
+          if (auto && !undo) {
+            preferences.retroAutoOptimized.add(game.id);
+          } else {
+            preferences.retroAutoOptimized.remove(game.id);
+          }
+          write(options, resolution);
+          try {
+            if (persist) preferences._saveTuning(paths.preferencesFile);
+          } on FileSystemException {
+            write(priorOptions, priorResolution);
+            if (wasOptimized) {
+              preferences.retroAutoOptimized.add(game.id);
+            } else {
+              preferences.retroAutoOptimized.remove(game.id);
+            }
+            rethrow;
+          }
+          tuningOriginals
+            ..clear()
+            ..addAll(originals);
+          _changed();
+        }
+
         run = await EmbeddedRetroGame.start(
           embeddedHome,
           disc,
@@ -4442,53 +4513,10 @@ class AppModel extends ChangeNotifier {
             options[key] = value;
             savePreferences();
           },
-          onTuningApplied: (previous, values, {required undo}) {
-            if (trialOptions.isNotEmpty) throw StateError('Finish the restart trial first.');
-            final priorOptions = graphics[graphicsId];
-            final priorResolution = preferences.retroInternalResolution[game.id];
-            final options = {...?priorOptions};
-            final originals = {...tuningOriginals};
-            var resolution = priorResolution;
-            for (final entry in values.entries) {
-              final key = entry.key;
-              final isResolution = tuningResolutionKeys.contains(key);
-              final current = isResolution ? resolution : options[key];
-              if (undo && current != previous[key]) continue;
-              final next = undo ? originals.remove(key) : entry.value;
-              if (!undo) originals[key] = current;
-              if (isResolution) {
-                resolution = next;
-              } else if (next == null) {
-                options.remove(key);
-              } else {
-                options[key] = next;
-              }
-            }
-            void write(Map<String, String>? settings, String? scale) {
-              if (settings == null || settings.isEmpty) {
-                graphics.remove(graphicsId);
-              } else {
-                graphics[graphicsId] = settings;
-              }
-              if (scale == null) {
-                preferences.retroInternalResolution.remove(game.id);
-              } else {
-                preferences.retroInternalResolution[game.id] = scale;
-              }
-            }
-
-            write(options, resolution);
-            try {
-              if (persist) preferences._saveTuning(paths.preferencesFile);
-            } on FileSystemException {
-              write(priorOptions, priorResolution);
-              rethrow;
-            }
-            tuningOriginals
-              ..clear()
-              ..addAll(originals);
-            _changed();
-          },
+          onTuningApplied: (before, values, {required undo}) => saveTuning(before, values, undo: undo, auto: false),
+          onAutoOptimizeApplied: (before, values, {required undo}) =>
+              saveTuning(before, values, undo: undo, auto: true),
+          onManualOptionAccepted: () => _clearRetroAutoOptimize(game.id),
           onResolutionSelected: (value) {
             if (trialOptions.isNotEmpty) return;
             if (preferences.retroInternalResolution[game.id] == value) return;
@@ -5931,25 +5959,48 @@ class AppModel extends ChangeNotifier {
 
   // Panels.
 
-  PanelCategory _embeddedGraphics(EmbeddedRetroGame game) => PanelCategory(
+  void _clearRetroAutoOptimize(String gameId) {
+    if (preferences.retroAutoOptimized.remove(gameId)) savePreferences();
+  }
+
+  PanelCategory _embeddedGraphics(Game title, EmbeddedRetroGame session) => PanelCategory(
     id: 'embedded-graphics',
     title: 'Graphics',
+    rows: [
+      _emulatorMenu.autoOptimizeLink(title, session),
+      PanelRow(
+        id: 'embedded-graphics-advanced',
+        title: 'Advanced',
+        detail: 'Set resolution, textures, and other graphics options yourself.',
+        kind: ActionRow(
+          () => _emulatorMenu.openAdvanced(
+            () => title.retro?.platform == RetroPlatform.ps3
+                ? _embeddedPs3Graphics(session)
+                : _embeddedPs12AdvancedGraphics(session),
+          ),
+        ),
+      ),
+    ],
+  );
+
+  PanelCategory _embeddedPs12AdvancedGraphics(EmbeddedRetroGame game) => PanelCategory(
+    id: 'embedded-graphics-advanced',
+    title: 'Advanced graphics',
     rows: [
       PanelRow(
         id: 'embedded-filter',
         title: 'Display filtering',
-        kind: ChoiceRow(['Sharp', 'Smooth'], game.filter, (choice) {
-          game.filter = choice;
-          _changed();
-        }),
+        kind: _emulatorMenu.advancedChoice('embedded-filter', ['Sharp', 'Smooth'], game.filter),
       ),
       PanelRow(
         id: 'embedded-framing',
         title: 'Display aspect ratio',
-        kind: ChoiceRow(['Original', '4:3', '16:9', 'Fill window'], game.framing, (choice) {
-          game.framing = choice;
-          _changed();
-        }),
+        kind: _emulatorMenu.advancedChoice('embedded-framing', [
+          'Original',
+          '4:3',
+          '16:9',
+          'Fill window',
+        ], game.framing),
       ),
       for (final option in game.options.entries.where((entry) => !entry.value.restart))
         PanelRow(
@@ -5961,12 +6012,12 @@ class AppModel extends ChangeNotifier {
             'swanstation_GPU_TextureFilter' => 'Texture filtering',
             _ => option.value.title.isEmpty ? option.key : option.value.title,
           },
-          kind: ChoiceRow(
+          kind: _emulatorMenu.advancedChoice(
+            option.key,
             option.key == 'swanstation_GPU_ResolutionScale'
                 ? option.value.values.map((value) => '${value}x').toList()
                 : option.value.values,
-            option.value.selected,
-            (choice) => unawaited(game.setOption(option.key, option.value.values[choice])),
+            game.tuning.effectiveOption(option.key, option.value).selected,
           ),
         ),
       if (game.options.values.any((option) => option.restart))
@@ -5974,9 +6025,10 @@ class AppModel extends ChangeNotifier {
           id: 'embedded-startup-options',
           title: 'Startup Options',
           detail: 'Changes apply the next time you start this game.',
-          kind: ActionRow(() => _emulatorMenu.openPage(() => _embeddedStartupOptions(game))),
+          kind: ActionRow(() => _emulatorMenu.openChild(() => _embeddedStartupOptions(game))),
         ),
       _emulatorMenu.tuningLink(game),
+      ..._emulatorMenu.advancedActions(game),
       if (game.resolutionError.isNotEmpty)
         PanelRow(id: 'embedded-resolution-error', title: 'Internal resolution', kind: InfoRow(game.resolutionError)),
     ],
@@ -5988,6 +6040,7 @@ class AppModel extends ChangeNotifier {
     rows: [
       for (final option in game.options.entries)
         if (option.value.restart) _ps3GraphicsRow(game, option.key, option.value),
+      ..._emulatorMenu.advancedActions(game),
     ],
   );
 
@@ -6025,8 +6078,8 @@ class AppModel extends ChangeNotifier {
       }
     }
     return PanelCategory(
-      id: 'embedded-graphics',
-      title: 'Graphics',
+      id: 'embedded-graphics-advanced',
+      title: 'Advanced graphics',
       rows: [
         const PanelRow(id: 'ps3-renderer', title: 'Renderer', kind: InfoRow('Vulkan')),
         for (final key in primary)
@@ -6037,18 +6090,20 @@ class AppModel extends ChangeNotifier {
             id: 'ps3-graphics-${entry.key}',
             title: entry.key,
             kind: ActionRow(
-              () => _emulatorMenu.openPage(
+              () => _emulatorMenu.openChild(
                 () => PanelCategory(
                   id: 'ps3-graphics-section',
                   title: 'PS3 › Graphics › ${entry.key}',
                   rows: [
                     for (final key in entry.value)
                       if (game.options[key] case final option?) _ps3GraphicsRow(game, key, option),
+                    ..._emulatorMenu.advancedActions(game),
                   ],
                 ),
               ),
             ),
           ),
+        ..._emulatorMenu.advancedActions(game),
       ],
     );
   }
@@ -6057,10 +6112,10 @@ class AppModel extends ChangeNotifier {
     id: key,
     title: option.title,
     detail: option.restart ? 'Applies on next launch.' : 'Applies when you resume.',
-    kind: ChoiceRow(
+    kind: _emulatorMenu.advancedChoice(
+      key,
       option.labels.length == option.values.length ? option.labels : option.values,
-      option.selected,
-      (choice) => unawaited(game.setOption(key, option.values[choice])),
+      game.tuning.effectiveOption(key, option).selected,
     ),
   );
 
@@ -6096,8 +6151,7 @@ class AppModel extends ChangeNotifier {
               PanelCategory(id: 'embedded-restart-trial', title: 'Graphics', rows: [_emulatorMenu.tuningLink(session)]),
             ];
           }
-          if (running!.$1.retro!.platform == RetroPlatform.ps3) return [_embeddedPs3Graphics(session)];
-          return [_embeddedGraphics(session)];
+          return [_embeddedGraphics(running!.$1, session)];
         }
         return [retroSettings.graphicsCategory(running!.$1.retro!.platform)];
       case Layer.controls when game != null:

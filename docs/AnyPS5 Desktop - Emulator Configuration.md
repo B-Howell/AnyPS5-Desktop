@@ -65,13 +65,18 @@ local WAV for looping selection music. The
 [selection audio player](../lib/core/audio/theme_music.dart)
 can also play one optional local WAV per console from ConsoleAudio in the
 launcher config folder, using ps1-startup.wav, ps2-startup.wav and
-ps3-startup.wav. Moving into the game row selects the game's usual music.
+ps3-startup.wav. Each preview profile has its own config folder. Copy the
+same three local cues into the profile you want to test. Moving into the
+game row selects the game's usual music.
 
 **Settings → Emulators → Show as folders** puts each installed console
 after the regular games on Home. Highlight a console to preview its
 titles, then press Down to enter the row or Up to return. Before a core is
 installed, its games remain individual tiles so First Play can offer
-setup. The [folder projection](../lib/ui/retro_home_folders.dart) uses real
+setup. Each highlighted console uses its bundled wallpaper and
+[console logo](../lib/ui/console_badge.dart). Moving down changes the
+[backdrop](../lib/ui/home.dart) to the selected game's artwork. The
+[folder projection](../lib/ui/retro_home_folders.dart) uses real
 library titles and preserves their IDs. Console indicators in this
 submission use text labels. Experiment artwork stays in its local profile.
 
@@ -129,7 +134,17 @@ behind the same Flutter texture. The launcher saves a selected resolution
 after the new frame is available. RPCS3's tested live options use its
 existing Vulkan device.
 
-[Tune This Game](../lib/ui/retro_game_tuning.dart) measures a baseline and
+**Graphics → Auto Optimize** opens a before-and-after preview for the
+current game. Apply saves the recommendations and displays a check mark.
+Backing out of the preview leaves the settings alone. Changes marked
+**In this session** use the existing live update path. **Next launch**
+changes are saved for the next boot. **Advanced** displays the effective
+values and applies manual edits only when you select **Apply changes**.
+Applying a manual edit clears the Auto Optimize check mark.
+The online preview keeps its existing restrictions on changing core
+settings during an active multiplayer session.
+
+[Compare gameplay performance](../lib/ui/retro_game_tuning.dart) measures a baseline and
 a temporary candidate while the player repeats the same section. It
 restores the baseline before offering Apply. The comparison uses frame
 pacing and audio telemetry. Check the image yourself before applying a

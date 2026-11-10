@@ -99,7 +99,7 @@ void main() {
     expect(model.homeTiles, hasLength(5));
   }, skip: !supportsManagedCores);
 
-  testWidgets('folder selection uses the theme and its game row shows the game wallpaper', (tester) async {
+  testWidgets('console folders use bundled photos and the game row uses its own wallpaper', (tester) async {
     final fixture = makeFixture(system: HostSystem.windows);
     final model = fixture.model;
     addTearDown(() {
@@ -120,22 +120,23 @@ void main() {
     model.preferences.gameArtwork = true;
     await pumpLauncher(tester, model);
     final artwork = find.byType(GameArtwork);
-    expect(artwork, findsNothing);
-    expect(artwork, findsNothing);
+    expect(tester.widget<GameArtwork>(artwork).path, 'assets/retro/folder-wallpaper-ps1.png');
+    expect(tester.widget<GameArtwork>(artwork).asset, isTrue);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await settle(tester);
     expect(tester.widget<GameArtwork>(artwork).path, gameWallpaper.path);
+    expect(tester.widget<GameArtwork>(artwork).asset, isFalse);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
     await settle(tester);
-    expect(artwork, findsNothing);
+    expect(tester.widget<GameArtwork>(artwork).asset, isTrue);
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await settle(tester);
-    expect(artwork, findsNothing);
+    expect(tester.widget<GameArtwork>(artwork).path, 'assets/retro/folder-wallpaper-ps2.png');
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await settle(tester);
-    expect(artwork, findsNothing);
+    expect(tester.widget<GameArtwork>(artwork).path, 'assets/retro/folder-wallpaper-ps3.png');
   }, skip: !supportsManagedCores);
 
   testWidgets('hover reveals games below the folder and Down and Up keep both rows visible', (tester) async {

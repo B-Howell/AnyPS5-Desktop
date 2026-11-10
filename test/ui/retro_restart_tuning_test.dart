@@ -123,6 +123,10 @@ void main() {
       fixture.dispose();
     });
     void selectRow(String id) {
+      final rows = app.panelCategories().single.rows;
+      if (id == 'emulator-tune-game' && rows.any((row) => row.id == 'embedded-graphics-advanced')) {
+        selectRow('embedded-graphics-advanced');
+      }
       final row = app.panelCategories().single.rows.singleWhere((row) => row.id == id);
       (row.kind as ActionRow).run();
     }
