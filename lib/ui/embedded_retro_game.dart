@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
@@ -47,6 +48,10 @@ enum Ps3ProviderStatus {
   };
 }
 
+typedef EmbeddedDiscs = ({List<String> labels, int? inserted, String? path, bool busy, bool failed});
+
+enum _DiscRequest { sending, queued }
+
 class EmbeddedRetroGame extends RunningGame {
   EmbeddedRetroGame._(
     this.textureId,
@@ -89,12 +94,19 @@ class EmbeddedRetroGame extends RunningGame {
   bool _acceptsInput = true;
   bool _closing = false;
   bool _awaitNeutral = true;
+  bool _swapCrossCircle = false;
   bool _portableCheckpoint = false;
   int? _ordinaryCheckpointSource;
   String error = '';
   String resolutionError = '';
   bool hardwareRendering = false;
   bool presented = false;
+  EmbeddedDiscs? _discs;
+  EmbeddedDiscs? get discs => _discs;
+  _DiscRequest? _discRequest;
+  String? _lastPlayedDisc;
+  bool get changingDisc => _discRequest != null || _discs?.busy == true;
+
   void Function()? _onManualOptionAccepted;
   bool _startupVisible = false;
   bool get startupVisible => _startupVisible;
@@ -157,6 +169,9 @@ class EmbeddedRetroGame extends RunningGame {
     void Function()? onManualOptionAccepted,
     required PadState Function() readPad,
     required void Function() changed,
+    ({int index, String path})? initialDisc,
+    void Function(String)? onDiscPlayed,
+    bool swapCrossCircle = false,
     ({Ps1NetplayMedia media, int seat})? netplay,
     bool localNetplayStaging = false,
     ({Uint8List mac, String system, String saves})? ps2Lan,
@@ -198,6 +213,8 @@ class EmbeddedRetroGame extends RunningGame {
         : await _channel.invokeMethod<int>('start', {
             'core': core,
             'disc': netplay?.media.disc ?? onlineProfile?.disc ?? disc.path,
+            if (initialDisc != null) 'initialDiscIndex': initialDisc.index,
+            if (initialDisc != null) 'initialDiscPath': initialDisc.path,
             'system': ps2Lan?.system ?? onlineProfile?.systemRoot ?? p.join(folder, 'system'),
             'saves': saveRoot,
             if (ps2Lan != null) 'ps2LanMac': ps2Lan.mac,
@@ -228,6 +245,7 @@ class EmbeddedRetroGame extends RunningGame {
       (core: core, disc: p.absolute(disc.path), system: p.join(folder, 'system')),
       ordinaryRecovery,
     );
+    session._swapCrossCircle = swapCrossCircle;
     session._onManualOptionAccepted = onManualOptionAccepted;
     session.tuning = RetroGameTuning(
       platform: disc.platform,
@@ -261,7 +279,10 @@ class EmbeddedRetroGame extends RunningGame {
       persistAuto: onAutoOptimizeApplied,
       changed: changed,
     );
-    session._watch = Timer.periodic(const Duration(milliseconds: 125), (_) => unawaited(session._poll(changed)));
+    session._watch = Timer.periodic(
+      const Duration(milliseconds: 125),
+      (_) => unawaited(session._poll(changed, onDiscPlayed)),
+    );
     session._input = Timer.periodic(const Duration(milliseconds: 16), (_) {
       if (session._acceptsInput && !session._closing && session._ordinaryRecovery == null) {
         session._sendInput(readPad());
@@ -270,9 +291,10 @@ class EmbeddedRetroGame extends RunningGame {
     return session;
   }
 
-  Future<void> _poll(void Function() changed) async {
+  Future<void> _poll(void Function() changed, void Function(String)? onDiscPlayed) async {
     if (_reading) return;
     _reading = true;
+    final acknowledgeDiscRequest = _discRequest == _DiscRequest.queued;
     try {
       final status = await _channel.invokeMapMethod<String, Object?>('status');
       if (_finished.isCompleted) return;
@@ -288,7 +310,8 @@ class EmbeddedRetroGame extends RunningGame {
         if (_playing && !_closing) await _channel.invokeMethod<void>('pause', false);
       }
       final updatedAspect = status['aspect'];
-      var updated = false;
+      if (acknowledgeDiscRequest) _discRequest = null;
+      var updated = acknowledgeDiscRequest;
       if (isPs3Online) {
         final providerStatus = Ps3ProviderStatus.fromNative(status['ps3ProviderStatus']);
         if (!_initialProviderFailure.isCompleted &&
@@ -344,6 +367,21 @@ class EmbeddedRetroGame extends RunningGame {
       if (updatedAspect is double && updatedAspect != aspect) {
         aspect = updatedAspect;
         updated = true;
+      }
+      final discStatus = status['discs'];
+      final newDiscs = _readDiscs(discStatus);
+      if (!listEquals(_discs?.labels, newDiscs?.labels) ||
+          _discs?.inserted != newDiscs?.inserted ||
+          _discs?.path != newDiscs?.path ||
+          _discs?.busy != newDiscs?.busy ||
+          _discs?.failed != newDiscs?.failed) {
+        _discs = newDiscs;
+        updated = true;
+      }
+      final played = discStatus is Map ? discStatus['playedDiscPath'] : null;
+      if (presented && played is String && played.isNotEmpty && played != _lastPlayedDisc) {
+        _lastPlayedDisc = played;
+        onDiscPlayed?.call(played);
       }
       final values = status['options'];
       if (values is Map) {
@@ -701,6 +739,53 @@ class EmbeddedRetroGame extends RunningGame {
     return false;
   }
 
+  static EmbeddedDiscs? _readDiscs(Object? value) {
+    if (value is! Map || value['labels'] is! List) return null;
+    final labels = value['labels'] as List;
+    if (labels.length < 2 || labels.any((label) => label is! String)) return null;
+    final index = value['inserted'];
+    return (
+      labels: List<String>.unmodifiable(labels),
+      inserted: index is int && index >= 0 && index < labels.length ? index : null,
+      path: value['insertedDiscPath'] as String?,
+      busy: value['busy'] == true,
+      failed: value['failed'] == true,
+    );
+  }
+
+  Future<bool> changeDisc(int index) async {
+    final current = discs;
+    if (_closing ||
+        current == null ||
+        changingDisc ||
+        index == current.inserted ||
+        index < 0 ||
+        index >= current.labels.length) {
+      return false;
+    }
+    _discRequest = _DiscRequest.sending;
+    var accepted = false;
+    try {
+      accepted = await _channel.invokeMethod<bool>('changeDisc', index) == true;
+      return accepted;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    } finally {
+      _discRequest = accepted ? _DiscRequest.queued : null;
+    }
+  }
+
+  void setSwapCrossCircle(bool enabled) {
+    if (_closing || _swapCrossCircle == enabled) return;
+    _swapCrossCircle = enabled;
+    _keys.clear();
+    _awaitNeutral = true;
+    _lastInput = const [];
+    if (_acceptsInput) unawaited(_channel.invokeMethod<void>('input', const [0, 0, 0, 0, 0]));
+  }
+
   void key(PadButton button, bool down) {
     if (!_acceptsInput || _ordinaryRecovery != null) return;
     if (down) {
@@ -718,7 +803,15 @@ class EmbeddedRetroGame extends RunningGame {
     }
     var mask = 0;
     for (final button in {...held, ..._keys}) {
-      final bit = _buttonCodes[button];
+      final mapped = !_swapCrossCircle
+          ? button
+          : switch (button) {
+              PadButton.south => PadButton.east,
+              PadButton.east => PadButton.south,
+              _ => button,
+            };
+      final bit = _buttonCodes[mapped];
+
       if (bit != null) mask |= 1 << bit;
     }
     final input = [

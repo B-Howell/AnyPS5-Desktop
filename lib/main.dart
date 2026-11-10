@@ -145,7 +145,11 @@ Future<void> main(List<String> arguments) async {
       retroHardware: () async {
         final view = PlatformDispatcher.instance.implicitView;
         if (!Platform.isWindows || view == null) return null;
-        return RetroHardware(displayHeight: view.display.size.height.round(), adapters: await window.retroAdapters());
+        return RetroHardware(
+          displayHeight: view.display.size.height.round(),
+          adapters: await window.retroAdapters(),
+          logicalProcessors: Platform.numberOfProcessors,
+        );
       },
       displays: window.displays,
       moveToDisplay: window.moveToDisplay,

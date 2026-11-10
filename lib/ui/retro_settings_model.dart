@@ -268,6 +268,7 @@ class RetroSettingsModel {
         } else {
           settings[key] = value;
         }
+        if (titleId != null) app.preferences.retroAutoOptimized.remove(game!.id);
         app.savePreferences();
       },
     );

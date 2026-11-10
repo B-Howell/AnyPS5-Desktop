@@ -134,15 +134,27 @@ behind the same Flutter texture. The launcher saves a selected resolution
 after the new frame is available. RPCS3's tested live options use its
 existing Vulkan device.
 
-**Graphics → Auto Optimize** opens a before-and-after preview for the
-current game. Apply saves the recommendations and displays a check mark.
-Backing out of the preview leaves the settings alone. Changes marked
-**In this session** use the existing live update path. **Next launch**
-changes are saved for the next boot. **Advanced** displays the effective
-values and applies manual edits only when you select **Apply changes**.
-Applying a manual edit clears the Auto Optimize check mark.
-The online preview keeps its existing restrictions on changing core
-settings during an active multiplayer session.
+From a game's tile, open **Game Settings → Auto Optimize**. The launcher
+reads the graphics adapter, display height, and logical CPU count without
+booting the game. It compares one recommendation against the title's
+effective settings, including inherited PS3 defaults. **Apply** stays at the
+bottom of the review and appears only when there are changes to save.
+Backing out discards the preview. Saving writes the selected game's settings
+for the next launch and displays a check mark.
+
+The [recommendation policy](../lib/core/retro_launch_optimizer.dart) uses
+the embedded cores' advertised settings for resolution, filtering,
+rendering, CPU execution, and I/O where applicable. It preserves
+compatibility-sensitive choices such as PS2 MTVU and fast CD/DVD. The
+recommendation is an estimate based on hardware, media and current title
+settings. It does not sample gameplay before launch. The
+[preview](../lib/ui/retro_tuning_panel.dart) and
+[per-game save path](../lib/ui/retro_launch_optimization.dart) share the
+same review layout with **Quick Menu → Graphics → Auto Optimize**.
+**In this session** uses the core's live update path. **Next launch**
+queues the setting. **Advanced** shows effective values and applies manual
+edits when you select **Apply changes**, which clears the check mark.
+The online preview restricts changes during active multiplayer.
 
 [Compare gameplay performance](../lib/ui/retro_game_tuning.dart) measures a baseline and
 a temporary candidate while the player repeats the same section. It
@@ -151,6 +163,15 @@ pacing and audio telemetry. Check the image yourself before applying a
 candidate. [Restart Trials](../lib/ui/retro_restart_workflow.dart) are a
 separate path for startup settings such as CPU or renderer selection.
 Save in-game first for those trials. The menu marks startup-only settings.
+
+For multi-disc PS1 titles, Play opens the [disc picker](../lib/ui/retro_disc_menu.dart)
+and marks the last played disc. **Quick Menu → Change disc** changes media
+inside the same game surface. An inserted disc becomes last played after
+the emulation advances. The offscreen Windows SwanStation check booted Metal
+Gear Solid on Disc 2 and Final Fantasy VII on Disc 3, swapped both to Disc 1
+while paused, then resumed each on its original texture. The
+[per-game face-button toggle](../lib/ui/retro_embedded_controls.dart) swaps
+Cross and Circle while keeping Start and the stick axes unchanged.
 
 ## RPCS3 preview and release gates
 

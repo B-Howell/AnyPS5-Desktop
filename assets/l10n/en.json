@@ -2309,5 +2309,15 @@
   "sharePlayMaxViewersServerDetail": "Up to 4 get a stream from your computer. With more, viewers watch through the media server and players keep a direct link.",
   "shareCodeMakeDetail": "Anyone with the code can ask to watch. You still say yes to each one.",
   "joinCodeMade": "New code: %@",
-  "joinCodeStopped": "The code no longer works"
+  "joinCodeStopped": "The code no longer works",
+  "retroSwapCrossCircle": "Swap Cross and Circle",
+  "retroSwapCrossCircleDetail": "Swap these buttons everywhere in this game, including gameplay.",
+  "retroChangeDisc": "Change disc",
+  "retroSelectDisc": "Select disc",
+  "retroLastDiscPlayed": "Last played",
+  "retroDiscNumber": "Disc %@",
+  "retroDiscInserted": "Inserted",
+  "retroDiscChanging": "Changing disc…",
+  "retroDiscEmpty": "Disc tray open",
+  "retroDiscChangeFailed": "Could not change discs"
 }

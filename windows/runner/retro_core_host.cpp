@@ -102,6 +102,21 @@ struct GameInfo {
   size_t size;
   const char* meta;
 };
+struct DiskControlCallbacks {
+  bool (*set_eject_state)(bool);
+  bool (*get_eject_state)();
+  unsigned (*get_image_index)();
+  bool (*set_image_index)(unsigned);
+  unsigned (*get_num_images)();
+  bool (*replace_image_index)(unsigned, const GameInfo*);
+  bool (*add_image_index)();
+};
+struct DiskControlExtCallbacks {
+  DiskControlCallbacks basic;
+  bool (*set_initial_image)(unsigned, const char*);
+  bool (*get_image_path)(unsigned, char*, std::size_t);
+  bool (*get_image_label)(unsigned, char*, std::size_t);
+};
 struct Variable {
   const char* key;
   const char* value;
@@ -173,15 +188,27 @@ constexpr uint32_t kPs1CatchupBatch = 120;
 using Ps1DiscHash = std::array<uint8_t, 32>;
 using CheckpointBytes = std::vector<uint8_t>;
 using Ps1Ports = std::array<ps1_netplay::PadInput, 2>;
+struct InitialDisc {
+  unsigned index;
+  std::string path;
+};
+
+struct DiscStatus {
+  std::vector<std::string> labels;
+  std::optional<unsigned> inserted;
+  std::string inserted_path;
+  bool busy = false, failed = false;
+};
+
 enum EnvironmentCommand {
   kCanDupe = 3, kShutdown = 7, kSystemDirectory = 9, kPixelFormat = 10,
-  kInputDescriptors = 11, kGetVariable = 15, kSetVariables = 16,
+  kInputDescriptors = 11, kSetDiskControl = 13, kGetVariable = 15, kSetVariables = 16,
   kVariableUpdate = 17, kSupportNoGame = 18, kCorePath = 19,
   kContentDirectory = 30, kSaveDirectory = 31, kSetAv = 32,
   kSetGeometry = 37, kAudioVideoEnable = 47, kFastForward = 49,
   kCoreOptionsVersion = 52, kSetHardware = 14, kHardwareInterface = 41 | 0x10000,
   kHardwareNegotiation = 43 | 0x10000,
-  kPreferredHardware = 56, kSetCoreOptionsV2 = 67, kSetCoreOptionsV2Intl = 68,
+  kPreferredHardware = 56, kDiskControlVersion = 57, kSetDiskControlExt = 58, kSetCoreOptionsV2 = 67, kSetCoreOptionsV2Intl = 68,
   kMessageVersion = 59, kExtendedMessage = 60,
   kFrontendCompileProgress = 0x20000 | 0x4150,
   kGetInputBitmasks = 51 | 0x10000,
@@ -685,7 +712,8 @@ class RetroCoreSession {
                    std::shared_ptr<const Ps1OrdinaryRecovery> returning = {},
                    bool rollback = false, AudioSink audio_sink = {},
                    std::vector<uint16_t> input_trace = {},
-                   CallbackSlot callback_slot = CallbackSlot::kPrimary)
+                   CallbackSlot callback_slot = CallbackSlot::kPrimary,
+                   std::optional<InitialDisc> boot_disc = std::nullopt)
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
         netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(
                                    *netplay_seat, rollback ? ps1_netplay::Timeline::kStandardPrediction : 0)
@@ -705,6 +733,8 @@ class RetroCoreSession {
         initial_graphics_(std::move(initial_graphics)),
         online_(std::move(online)),
         packages_(std::move(packages)),
+        ps1_(std::filesystem::u8path(core_).filename() == L"swanstation_libretro.dll"),
+        boot_disc_(std::move(boot_disc)),
         ps3_(std::filesystem::u8path(core_).filename() == L"rpcs3_libretro.dll"),
         local_staging_(local_staging),
         match_cpu_(match_cpu),
@@ -815,6 +845,18 @@ class RetroCoreSession {
       std::lock_guard<std::mutex> lock(telemetry_mutex_);
       last_frame_at_ = {};
     }
+  }
+
+  bool ChangeDisc(unsigned index) {
+    std::lock_guard<std::mutex> lock(settings_mutex_);
+    if (netplay_ || !recovery_accepted_ || ordinary_settings_frozen_ ||
+        graphics_queued_ || graphics_applying_ || stop_ || ended_ || !discs_ || discs_->busy ||
+        index >= discs_->labels.size() || discs_->inserted == index)
+      return false;
+    discs_->busy = true;
+    discs_->failed = false;
+    pending_disc_ = index;
+    return true;
   }
 
   void SetInput(uint16_t buttons, const std::array<int16_t, 4>& axes) {
@@ -1078,6 +1120,18 @@ class RetroCoreSession {
         {Value("options"), Value(std::move(options))},
         {Value("tuningTelemetry"), Value(TuningTelemetry())},
     };
+    if (discs_) {
+      const auto& discs = *discs_;
+      const bool played = discs.inserted && steps_ > disc_inserted_at_step_;
+      status.emplace(Value("discs"), Value(Map{
+          {Value("labels"), Value(List(discs.labels.begin(), discs.labels.end()))},
+          {Value("inserted"), discs.inserted ? Value(static_cast<int32_t>(*discs.inserted)) : Value()},
+          {Value("insertedDiscPath"), discs.inserted_path.empty() ? Value() : Value(discs.inserted_path)},
+          {Value("playedDiscPath"), Value(played ? discs.inserted_path : std::string{})},
+          {Value("busy"), Value(discs.busy)},
+          {Value("failed"), Value(discs.failed)},
+      }));
+    }
     if (netplay_) status.emplace(Value("netplayReady"), Value(netplay_ready_.load()));
     if (netplay_) status.emplace(Value("portableCheckpoint"), Value(checkpoint_supported_.load()));
     if (LocalBlankCardCheckpointReady()) {
@@ -1096,7 +1150,7 @@ class RetroCoreSession {
   bool SetOption(const std::string& key, const std::string& value) {
     if (!recovery_accepted_ || online_ || netplay_ || (lan_ && key == kPs2Resolution)) return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (ordinary_settings_frozen_) return false;
+    if (ordinary_settings_frozen_ || (discs_ && (discs_->busy || !discs_->inserted))) return false;
     const auto option = options_.find(key);
     if (option == options_.end() ||
         (!option->second.graphics && !option->second.boot && !LiveCoreOption(key, hardware_frame_))) return false;
@@ -1123,7 +1177,8 @@ class RetroCoreSession {
         values.empty() || expected.size() != values.size())
       return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (ordinary_settings_frozen_ || graphics_applying_ || graphics_queued_) return false;
+    if (ordinary_settings_frozen_ || graphics_applying_ || graphics_queued_ ||
+        (discs_ && (discs_->busy || !discs_->inserted))) return false;
     std::vector<std::pair<Option*, size_t>> changes;
     bool checkpoint = false;
     for (const auto& entry : values) {
@@ -1454,6 +1509,79 @@ class RetroCoreSession {
     }
   }
 
+  std::string DiscPath(unsigned index) const {
+    std::array<char, 16384> path{};
+    if (!disk_callbacks_.get_image_path ||
+        !disk_callbacks_.get_image_path(index, path.data(), path.size())) return {};
+    return {path.begin(), std::find(path.begin(), path.end(), '\0')};
+  }
+
+  void RefreshDiscs(bool failed = false) {
+    const auto& disk = disk_callbacks_.basic;
+    std::optional<DiscStatus> updated;
+    if (disk.set_eject_state && disk.get_eject_state && disk.get_image_index &&
+        disk.set_image_index && disk.get_num_images && disk_callbacks_.get_image_path &&
+        disk_callbacks_.set_initial_image) {
+      const auto count = disk.get_num_images();
+      if (count >= 2 && count <= 128) {
+        updated.emplace();
+        updated->labels.resize(count);
+        if (disk_callbacks_.get_image_label) {
+          for (unsigned index = 0; index < count; ++index) {
+            std::array<char, 1024> label{};
+            if (disk_callbacks_.get_image_label(index, label.data(), label.size()))
+              updated->labels[index].assign(label.begin(), std::find(label.begin(), label.end(), '\0'));
+          }
+        }
+        const auto index = disk.get_image_index();
+        if (!disk.get_eject_state() && index < count) {
+          updated->inserted = index;
+          updated->inserted_path = DiscPath(index);
+        }
+        updated->failed = failed;
+      }
+    }
+    std::lock_guard<std::mutex> lock(settings_mutex_);
+    // Preserve a request queued while the core was refreshing its state.
+    if (updated) updated->busy = pending_disc_.has_value();
+    if (updated && (!discs_ || updated->inserted != discs_->inserted ||
+                    updated->inserted_path != discs_->inserted_path)) {
+      disc_inserted_at_step_ = steps_;
+    }
+    discs_ = std::move(updated);
+  }
+
+  void ApplyDiscChange() {
+    std::optional<unsigned> requested;
+    {
+      std::lock_guard<std::mutex> lock(settings_mutex_);
+      requested = std::exchange(pending_disc_, std::nullopt);
+    }
+    if (!requested) return;
+    const auto& disk = disk_callbacks_.basic;
+    if (!disk.get_eject_state || !disk.get_image_index || !disk.set_eject_state ||
+        !disk.set_image_index || !disk.get_num_images || *requested >= disk.get_num_images()) {
+      RefreshDiscs(true);
+      return;
+    }
+    const bool was_open = disk.get_eject_state();
+    const auto previous = disk.get_image_index();
+    const auto requested_path = DiscPath(*requested);
+    const bool changed = !requested_path.empty() && (was_open || disk.set_eject_state(true)) &&
+        disk.set_image_index(*requested) && disk.set_eject_state(false) &&
+        !disk.get_eject_state() && disk.get_image_index() == *requested;
+    if (!changed && (disk.get_eject_state() != was_open || disk.get_image_index() != previous)) {
+      // Restore the previous disc only when its index is known to be selected.
+      if (disk.get_image_index() != previous &&
+          (disk.get_eject_state() || disk.set_eject_state(true)))
+        disk.set_image_index(previous);
+      if (disk.get_image_index() == previous && disk.get_eject_state() != was_open)
+        disk.set_eject_state(was_open);
+    }
+    if (changed) boot_disc_ = InitialDisc{*requested, requested_path};
+    RefreshDiscs(!changed);
+  }
+
   bool Environment(unsigned command, void* data) {
     if (command == kSavestateContext) {
       const auto context = rollback_context_.load();
@@ -1475,6 +1603,19 @@ class RetroCoreSession {
     if (command == kGetInputBitmasks) return netplay_ != nullptr;
     if (!data) return false;
     switch (command) {
+      case kDiskControlVersion:
+        if (!ps1_ || netplay_) return false;
+        *static_cast<unsigned*>(data) = 1;
+        return true;
+      case kSetDiskControl:
+        if (!ps1_ || netplay_) return false;
+        disk_callbacks_ = {};
+        disk_callbacks_.basic = *static_cast<const DiskControlCallbacks*>(data);
+        return true;
+      case kSetDiskControlExt:
+        if (!ps1_ || netplay_) return false;
+        disk_callbacks_ = *static_cast<const DiskControlExtCallbacks*>(data);
+        return true;
       case kMessageVersion:
         *static_cast<unsigned*>(data) = 1;
         return true;
@@ -2360,6 +2501,7 @@ class RetroCoreSession {
         BindGameplayCallbacks<0>(dll);
       }
       const GameInfo game{disc_.c_str(), nullptr, 0, nullptr};
+      const auto initial_disk_callbacks = disk_callbacks_;
       const auto reopen = [&] {
         lan_ready_ = false;
         if (loaded) unload();
@@ -2368,6 +2510,7 @@ class RetroCoreSession {
         if (initialized) deinit();
         hardware_.Clear();
         hardware_callbacks_ = {};
+        disk_callbacks_ = initial_disk_callbacks;
         init();
         initialized = true;
         if (ps3_ && hardware_callbacks_.context_type != kVulkan)
@@ -2378,7 +2521,23 @@ class RetroCoreSession {
           for (unsigned port = 1; port < 7; ++port) controller(port, 0);
         }
         if (lan_ && !lan_->Attach(bind_lan)) throw std::runtime_error("Could not attach the private PS2 network.");
+        const auto& initial_disc = boot_disc_;
+        if (initial_disc &&
+            (!disk_callbacks_.set_initial_image ||
+             !disk_callbacks_.set_initial_image(initial_disc->index, initial_disc->path.c_str()))) {
+          throw std::runtime_error("The core cannot boot the selected disc.");
+        }
         loaded = load(&game);
+        if (loaded && initial_disc) {
+          const auto& disk = disk_callbacks_.basic;
+          std::error_code error;
+          if (!disk.get_image_index || disk.get_image_index() != initial_disc->index ||
+              !disk.get_eject_state || disk.get_eject_state() ||
+              !std::filesystem::equivalent(std::filesystem::u8path(DiscPath(initial_disc->index)),
+                                           std::filesystem::u8path(initial_disc->path), error)) {
+            throw std::runtime_error("The core did not boot the selected disc.");
+          }
+        }
         lan_ready_ = lan_ && loaded;
         if (loaded && netplay_) {
           const auto controller = Symbol<void (*)(unsigned, unsigned)>(dll, "retro_set_controller_port_device");
@@ -2388,6 +2547,7 @@ class RetroCoreSession {
           if (!vulkan_.Open()) throw std::runtime_error("The PS3 Vulkan device could not be initialized.");
         }
         if (loaded && hardware_callbacks_.reset) hardware_callbacks_.reset();
+        if (loaded && ps1_ && !netplay_) RefreshDiscs();
         return loaded;
       };
       const bool ps2 = path.filename() == L"pcsx2_libretro.dll";
@@ -2479,6 +2639,7 @@ class RetroCoreSession {
       auto hardware_deadline = next + std::chrono::seconds(8);
       Clock::time_point recovery_deadline{};
       while (!netplay_ && !stop_) {
+        if (ps1 && !ordinary_parked_) ApplyDiscChange();
         if (recovered_source() && !startup_visible_ && !paused_) {
           const auto now = Clock::now();
           if (recovery_deadline == Clock::time_point{}) recovery_deadline = now + std::chrono::seconds(8);
@@ -2600,6 +2761,12 @@ class RetroCoreSession {
   const std::vector<std::string> packages_;
   std::atomic<int32_t> package_completed_{0};
   std::atomic<bool> package_rejected_{false};
+  const bool ps1_;
+  std::optional<InitialDisc> boot_disc_;
+  DiskControlExtCallbacks disk_callbacks_{};
+  std::optional<unsigned> pending_disc_;
+  std::optional<DiscStatus> discs_;
+  int64_t disc_inserted_at_step_ = 0;
   const bool ps3_;
   const bool local_staging_;
   const Ps1MatchCpu match_cpu_;
@@ -2922,12 +3089,26 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
           }
         }
       }
+      std::optional<InitialDisc> boot_disc;
+      const auto initial_index = fields->find(Value("initialDiscIndex"));
+      const auto* initial_path = StringField(*fields, "initialDiscPath");
+      if (initial_index != fields->end() || fields->count(Value("initialDiscPath"))) {
+        const auto index = initial_index == fields->end() ? std::nullopt : IntegerValue(initial_index->second);
+        if (netplay_seat || lan_mac || online || std::filesystem::u8path(*core).filename() != L"swanstation_libretro.dll" ||
+            !index || *index < 0 || *index >= 128 || !initial_path || initial_path->find('\0') != std::string::npos ||
+            !std::filesystem::u8path(*initial_path).is_absolute()) {
+          throw std::runtime_error("Invalid initial PS1 disc.");
+        }
+        boot_disc = InitialDisc{static_cast<unsigned>(*index), *initial_path};
+      }
       session_ = std::make_shared<RetroCoreSession>(textures_, *core, *disc, *system, *saves,
                                                    resolution ? *resolution : "", std::move(graphics),
                                                    netplay_seat, netplay_bios ? *netplay_bios : "",
                                                    local_staging && *local_staging, lan_mac, std::move(online),
                                                    std::vector<std::string>{}, match_cpu, nullptr,
-                                                   presentation != nullptr);
+                                                   presentation != nullptr, RetroCoreSession::AudioSink{},
+                                                   std::vector<uint16_t>{}, RetroCoreSession::CallbackSlot::kPrimary,
+                                                   std::move(boot_disc));
       if (presentation) {
         auto spare = std::make_unique<RetroCoreSession>(
             textures_, *presentation, *disc, *system, *saves, std::string{},
@@ -3178,6 +3359,10 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
       }
     }
     result->Success();
+  } else if (method == "changeDisc") {
+    const auto index = arguments ? IntegerValue(*arguments) : std::nullopt;
+    result->Success(Value(index && *index >= 0 && *index < 128 &&
+                          session_->ChangeDisc(static_cast<unsigned>(*index))));
   } else if (method == "tuningOptions") {
     const auto* fields = std::get_if<Map>(arguments);
     if (!fields) {

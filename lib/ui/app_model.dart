@@ -57,6 +57,7 @@ import '../core/remote/remote_server.dart';
 import '../core/remote/usb_tunnel.dart';
 import '../core/replay_buffer.dart';
 import '../core/retro_optimizer.dart';
+import '../core/retro_launch_optimizer.dart';
 import '../core/managed_retro.dart';
 import '../core/save_backup.dart';
 import '../core/steam/steam_launch.dart';
@@ -120,6 +121,9 @@ import 'update_model.dart';
 import 'trophy_card.dart';
 
 part 'emulator_menu.dart';
+part 'retro_disc_menu.dart';
+part 'retro_embedded_controls.dart';
+part 'retro_launch_optimization.dart';
 part 'ps3_online_readiness_page.dart';
 part 'ps3_update_panel.dart';
 part 'retro_home_folders.dart';
@@ -253,6 +257,16 @@ class Preferences {
         for (final game in games)
           if (game is String) game,
     }
+    ..retroSwapCrossCircle = {
+      if (json['retroSwapCrossCircle'] case final List<dynamic> games)
+        for (final id in games)
+          if (id is String) id,
+    }
+    ..retroLastDisc = {
+      if (json['retroLastDisc'] case final Map<dynamic, dynamic> discs)
+        for (final entry in discs.entries)
+          if (entry.key is String && entry.value is String) entry.key as String: entry.value as String,
+    }
     ..lastPlayed = {
       for (final entry in (json['lastPlayed'] as Map<String, dynamic>? ?? const {}).entries)
         entry.key: entry.value as String,
@@ -346,6 +360,8 @@ class Preferences {
   /// silent, null is 100. Games keep their own volume.
   int? launcherVolume;
   Map<String, String> lastPlayed = {};
+  Map<String, String> retroLastDisc = {};
+  Set<String> retroSwapCrossCircle = {};
   Set<String> retroAutoOptimized = {};
   Map<String, String> retroInternalResolution = {};
   bool showRetroFolders = false;
@@ -514,6 +530,8 @@ class Preferences {
     'musicVolume': musicVolume,
     if (launcherVolume != null) 'launcherVolume': launcherVolume,
     'lastPlayed': lastPlayed,
+    if (retroLastDisc.isNotEmpty) 'retroLastDisc': retroLastDisc,
+    if (retroSwapCrossCircle.isNotEmpty) 'retroSwapCrossCircle': retroSwapCrossCircle.toList(),
     if (retroAutoOptimized.isNotEmpty) 'retroAutoOptimized': retroAutoOptimized.toList(),
     if (retroInternalResolution.isNotEmpty) 'retroInternalResolution': retroInternalResolution,
     if (showRetroFolders) 'showRetroFolders': true,
@@ -824,6 +842,8 @@ enum Layer {
   settings,
   gameSettings,
   retroGraphics,
+  retroDiscs,
+  retroStartDisc,
   emulatorMenu,
   controls,
 
@@ -4323,10 +4343,13 @@ class AppModel extends ChangeNotifier {
       _managedRetro.biosPath(RetroPlatform.ps2) ??
       ManagedRetro(retroCoreOverride ?? _managedRetro.root).biosPath(RetroPlatform.ps2);
 
+  ({Game game, List<String> paths, Completer<String?> selection})? _retroDiscLaunch;
+
   Future<void> _playRetro(
     Game game,
     RetroDisc disc, {
     Map<String, String> trialOptions = const {},
+    String? restartDisc,
     Completer<EmbeddedRetroGame?>? booted,
     bool Function()? canBoot,
     ({Ps1NetplayMedia media, int seat})? netplay,
@@ -4336,9 +4359,20 @@ class AppModel extends ChangeNotifier {
     Object? ps3Party,
     ({int ticket, String core, String home})? ordinaryRecovery,
   }) async {
-    if (managedSetupConsole != null || starting != null || running != null || canBoot?.call() == false) return;
+    if (_disposed ||
+        _retroDiscLaunch != null ||
+        managedSetupConsole != null ||
+        starting != null ||
+        running != null ||
+        canBoot?.call() == false) {
+      return;
+    }
+    final launchPreferences = preferences;
     final allowed = together.family.beforePlay(game);
     if (!(allowed is bool ? allowed : await allowed) ||
+        _disposed ||
+        _retroDiscLaunch != null ||
+        !identical(preferences, launchPreferences) ||
         managedSetupConsole != null ||
         starting != null ||
         running != null ||
@@ -4384,6 +4418,46 @@ class AppModel extends ChangeNotifier {
     }
     if (!File(disc.path).existsSync()) {
       show(T.text('dumpMoved'));
+      return;
+    }
+
+    ({int index, String path})? initialDisc;
+    if (netplay == null &&
+        ordinaryRecovery == null &&
+        embeddedHome != null &&
+        disc.platform == RetroPlatform.ps1 &&
+        p.extension(disc.path).toLowerCase() == '.m3u') {
+      try {
+        final playlist = GameLibrary.ps1PlaylistDiscs(disc.path);
+        if (playlist.isEmpty) {
+          show(T.text('dumpMoved'));
+          return;
+        }
+        if (playlist.length > 1) {
+          final last = preferences.retroLastDisc[game.id];
+          final chosen = booted == null
+              ? await _pickRetroLaunchDisc(game, disc, playlist)
+              : restartDisc ??
+                    playlist.firstWhere((path) => _retroDiscKey(disc, path) == last, orElse: () => playlist.first);
+          if (chosen == null || _disposed || !identical(preferences, launchPreferences)) return;
+          final index = GameLibrary.ps1PlaylistDiscs(disc.path).indexWhere((path) => p.equals(path, chosen));
+          if (index < 0) {
+            show(T.text('dumpMoved'));
+            return;
+          }
+          initialDisc = (index: index, path: chosen);
+        }
+      } on FileSystemException {
+        show(T.text('dumpMoved'));
+        return;
+      }
+    }
+    if (_disposed ||
+        managedSetupConsole != null ||
+        starting != null ||
+        running != null ||
+        !identical(preferences, launchPreferences) ||
+        canBoot?.call() == false) {
       return;
     }
 
@@ -4506,6 +4580,17 @@ class AppModel extends ChangeNotifier {
           disc,
           internalResolution: preferences.retroInternalResolution[game.id],
           graphics: {if (ps3) ...preferences.retroPs3Defaults, ...?graphics[graphicsId], ...trialOptions},
+          initialDisc: initialDisc,
+          swapCrossCircle: disc.platform == RetroPlatform.ps1 && preferences.retroSwapCrossCircle.contains(game.id),
+          onDiscPlayed: initialDisc == null || trialOptions.isNotEmpty
+              ? null
+              : (path) {
+                  if (_disposed || !identical(preferences, launchPreferences)) return;
+                  final key = _retroDiscKey(disc, path);
+                  if (preferences.retroLastDisc[game.id] == key) return;
+                  preferences.retroLastDisc[game.id] = key;
+                  savePreferences();
+                },
           onGraphicsSelected: (key, value) {
             if (trialOptions.isNotEmpty) return;
             final options = graphics.putIfAbsent(graphicsId, () => {});
@@ -4630,6 +4715,7 @@ class AppModel extends ChangeNotifier {
       if (overlay == Layer.quickMenu ||
           overlay == Layer.closeGame ||
           overlay == Layer.retroGraphics ||
+          overlay == Layer.retroDiscs ||
           overlay == Layer.retroOnlineFriends ||
           (overlay == Layer.emulatorMenu && _emulatorMenu.fromGraphics)) {
         overlay = null;
@@ -4947,6 +5033,7 @@ class AppModel extends ChangeNotifier {
 
   /// Opens a layer with the select sound, or [cue] (going back to the panel before).
   void open(Layer next, {Cue cue = Cue.select}) {
+    if (next != Layer.retroStartDisc) _cancelRetroDiscPicker();
     sounds.play(cue);
     if (overlay != next) together.askingRow = null;
     overlay = next;
@@ -5056,6 +5143,10 @@ class AppModel extends ChangeNotifier {
   }
 
   void closeOverlay() {
+    if (overlay == Layer.retroDiscs && embeddedGame != null) {
+      open(Layer.quickMenu, cue: Cue.back);
+      return;
+    }
     if (overlay == Layer.emulatorMenu && _emulatorMenu.back()) return;
     if (_returnsToGame) {
       resumeGame();
@@ -5068,7 +5159,7 @@ class AppModel extends ChangeNotifier {
     final playing = running?.$1;
     if (playing == null) return false;
     return switch (overlay) {
-      Layer.quickMenu || Layer.closeGame || Layer.retroGraphics || Layer.retroOnlineFriends => true,
+      Layer.quickMenu || Layer.closeGame || Layer.retroGraphics || Layer.retroDiscs || Layer.retroOnlineFriends => true,
       Layer.emulatorMenu => _emulatorMenu.fromGraphics || _emulatorMenu.fromQuickMenu,
       Layer.gameSettings => playing.retro != null && selectedGame?.id == playing.id,
       _ => false,
@@ -5076,6 +5167,7 @@ class AppModel extends ChangeNotifier {
   }
 
   void _dismissOverlay() {
+    _cancelRetroDiscPicker();
     overlay = null;
     // A crop closed some other way (PS) keeps nothing.
     pictureCrop?.image.dispose();
@@ -5320,6 +5412,9 @@ class AppModel extends ChangeNotifier {
       case Layer.shareWatch:
         // Taken above; here only for the switch's sake.
         return sharePlay.watchCommand(command);
+      case Layer.retroDiscs when command == Command.back || command == Command.options:
+        closeOverlay();
+        return;
       case Layer.quickMenu || Layer.closeGame when command == Command.back || command == Command.options:
         resumeGame();
         return;
@@ -5362,6 +5457,8 @@ class AppModel extends ChangeNotifier {
       case Layer.settings ||
           Layer.gameSettings ||
           Layer.retroGraphics ||
+          Layer.retroDiscs ||
+          Layer.retroStartDisc ||
           Layer.emulatorMenu ||
           Layer.confirmUninstall ||
           Layer.copyWarning ||
@@ -6132,6 +6229,8 @@ class AppModel extends ChangeNotifier {
             id: 'game',
             title: game.name,
             rows: [
+              if (_canOptimizeBeforeLaunch(game) && running == null && starting == null)
+                _emulatorMenu.autoOptimizeLink(game),
               ..._gameRows(game),
               if (managedRetroAvailable && game.retro?.platform == RetroPlatform.ps3) _ps3OnlineReadinessRow(game),
               if (game.retro case final RetroDisc disc)
@@ -6255,6 +6354,10 @@ class AppModel extends ChangeNotifier {
             ],
           ),
         ];
+      case Layer.retroStartDisc:
+        return [PanelCategory(id: 'retroStartDisc', title: T.text('retroSelectDisc'), rows: _retroLaunchDiscRows())];
+      case Layer.retroDiscs:
+        return [PanelCategory(id: 'retroDiscs', title: T.text('retroChangeDisc'), rows: _embeddedDiscRows())];
       case Layer.quickMenu when running != null:
         return [
           PanelCategory(
@@ -6283,6 +6386,17 @@ class AppModel extends ChangeNotifier {
                   title: 'Graphics',
                   detail: embeddedGame == null ? 'Queue changes for the next launch.' : 'Adjust the running game.',
                   kind: ActionRow(() => open(Layer.retroGraphics)),
+                ),
+              if (embeddedGame != null && running!.$1.retro?.platform == RetroPlatform.ps1)
+                _retroSwapCrossCircleRow(running!.$1),
+              if (embeddedGame?.discs case final EmbeddedDiscs discs)
+                PanelRow(
+                  id: 'retro-disc-menu',
+                  title: T.text('retroChangeDisc'),
+                  detail: discs.inserted == null
+                      ? T.text('retroDiscEmpty')
+                      : _embeddedDiscLabel(discs, discs.inserted!),
+                  kind: ActionRow(() => open(Layer.retroDiscs)),
                 ),
               if (embeddedGame == null) ...media.gameRows(),
               if (embeddedGame == null) ...sharePlay.rows(),
@@ -8482,6 +8596,7 @@ class AppModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _cancelRetroDiscPicker();
     saveSync.dispose();
     powerWatch.stop();
     for (final watcher in _libraries.values) {

@@ -6,6 +6,7 @@ import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/online/ps2_lan_profile.dart';
+import 'package:anyps5_desktop/core/retro_optimizer.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/components.dart';
 import 'package:anyps5_desktop/ui/console_badge.dart';
@@ -20,6 +21,121 @@ import 'desktop_features_test.dart' show FakePads;
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('anyps5/retro_core');
+
+  testWidgets('PS1 picker boots chosen media and tracks only played discs through Quick Menu', (tester) async {
+    final env = <String, String>{};
+    final fixture = makeFixture(environment: env);
+    final model = fixture.model;
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(channel, null);
+      model.dispose();
+      fixture.dispose();
+    });
+    env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
+    File(p.join(fixture.temp.path, 'swanstation_libretro.dll')).createSync();
+    final folder = Directory(p.join(model.root!, 'Multi'))..createSync();
+    final playlist = File(p.join(folder.path, 'multi.m3u'))..writeAsStringSync('One.cue\nTwo.cue\n');
+    for (final name in ['One.cue', 'Two.cue']) {
+      File(p.join(folder.path, name)).createSync();
+    }
+    File(
+      p.join(folder.path, 'retro.json'),
+    ).writeAsStringSync(jsonEncode({'platform': 'ps1', 'titleId': 'MULTI12345', 'name': 'Multi', 'disc': 'multi.m3u'}));
+    final calls = <MethodCall>[];
+    var ended = false;
+    var inserted = 1;
+    var played = 'Two.cue';
+    const resolution = 'swanstation_GPU_ResolutionScale';
+    const filtering = 'swanstation_GPU_TextureFilter';
+    const resolutions = ['1', '2', '3', '4'];
+    const filters = ['Nearest', 'BilinearBinAlpha'];
+    var scale = '1';
+    var filter = 'Nearest';
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      switch (call.method) {
+        case 'start':
+          return 123;
+        case 'status':
+          return {
+            'presented': true,
+            'ended': ended,
+            'hardware': true,
+            'options': {
+              resolution: {'values': resolutions, 'selected': resolutions.indexOf(scale), 'activeValue': scale},
+              filtering: {'values': filters, 'selected': filters.indexOf(filter), 'activeValue': filter},
+            },
+            'discs': {
+              'labels': ['Disc One', 'Disc Two'],
+              'inserted': inserted,
+              'insertedDiscPath': p.join(folder.path, inserted == 1 ? 'Two.cue' : 'One.cue'),
+              'playedDiscPath': played.isEmpty ? '' : p.join(folder.path, played),
+            },
+          };
+        case 'option':
+          final key = call.arguments['key'];
+          if (key == resolution) scale = call.arguments['value'] as String;
+          return true;
+        case 'tuningOptions':
+          final values = call.arguments['values'] as Map;
+          scale = values[resolution] as String? ?? scale;
+          filter = values[filtering] as String? ?? filter;
+          return true;
+        case 'changeDisc':
+          inserted = 0;
+          played = '';
+          return true;
+        case 'stop':
+          ended = true;
+      }
+      return null;
+    });
+    model.rescan();
+    final game = model.games.singleWhere((game) => game.name == 'Multi');
+    final play = model.play(game);
+    await tester.pump();
+    expect(model.overlay, Layer.retroStartDisc);
+    expect(calls, isEmpty);
+    (model.panelCategories().single.rows[1].kind as ActionRow).run();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    final start = calls.singleWhere((call) => call.method == 'start');
+    expect(start.arguments['disc'], playlist.path);
+    expect(start.arguments['initialDiscIndex'], 1);
+    expect(start.arguments['initialDiscPath'], p.join(folder.path, 'Two.cue'));
+    expect(calls.where((call) => call.method == 'status'), isNotEmpty, reason: model.toast);
+    expect(model.preferences.retroLastDisc[game.id], 'Two.cue');
+
+    model.open(Layer.quickMenu);
+    final rows = model.panelCategories().single.rows;
+    expect(rows.any((row) => row.id == 'retroGraphics'), isTrue);
+    (rows.singleWhere((row) => row.id == 'retro-disc-menu').kind as ActionRow).run();
+    expect(model.overlay, Layer.retroDiscs);
+    (model.panelCategories().single.rows.first.kind as ActionRow).run();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(calls.singleWhere((call) => call.method == 'changeDisc').arguments, 0);
+    expect(model.preferences.retroLastDisc[game.id], 'Two.cue');
+    model.closeOverlay();
+    expect(model.overlay, Layer.quickMenu);
+    model.resumeGame();
+    played = 'One.cue';
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(model.preferences.retroLastDisc[game.id], 'One.cue');
+    expect(calls.where((call) => call.method == 'start'), hasLength(1));
+
+    ended = true;
+    await tester.pump(const Duration(milliseconds: 150));
+    await play;
+    final next = model.play(game);
+    await tester.pump();
+    expect(model.panelCategories().single.rows.first.detail, 'Last played');
+    model.closeOverlay();
+    await next;
+    await tester.pump(const Duration(seconds: 5));
+    expect(calls.where((call) => call.method == 'start'), hasLength(1));
+  });
 
   test('PS2 LAN keeps a private network memory card and saves across rooms', () async {
     final environment = <String, String>{};
@@ -274,7 +390,14 @@ void main() {
     ) async {
       final env = <String, String>{};
       final pads = FakePads();
-      final fixture = makeFixture(environment: env, pads: () => pads);
+      final fixture = makeFixture(
+        environment: env,
+        pads: () => pads,
+        retroHardware: () async => const RetroHardware(
+          displayHeight: 720,
+          adapters: [RetroAdapter(name: 'Test GPU', dedicatedBytes: 4 << 30)],
+        ),
+      );
       final model = fixture.model;
       model.startPads();
       addTearDown(() {

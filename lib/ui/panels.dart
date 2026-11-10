@@ -182,6 +182,8 @@ class PanelView extends StatelessWidget {
       Layer.copyWarning,
       Layer.gameFiles,
       Layer.quickMenu,
+      Layer.retroDiscs,
+      Layer.retroStartDisc,
       Layer.retroOnlineFriends,
       Layer.homeMenu,
       Layer.launcherReport,

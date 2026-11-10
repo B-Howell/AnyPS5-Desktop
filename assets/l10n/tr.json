@@ -2309,5 +2309,15 @@
   "sharePlayMaxViewersServerDetail": "En fazla 4 kişi yayını doğrudan bilgisayarından alır. Daha fazlasında izleyenler medya sunucusundan izler, oyuncuların doğrudan bağlantısı kalır.",
   "shareCodeMakeDetail": "Kodu olan herkes izlemek isteyebilir. Her birine yine sen karar verirsin.",
   "joinCodeMade": "Yeni kod: %@",
-  "joinCodeStopped": "Kod artık çalışmıyor"
+  "joinCodeStopped": "Kod artık çalışmıyor",
+  "retroSwapCrossCircle": "Çarpı ve Daire düğmelerini değiştir",
+  "retroSwapCrossCircleDetail": "Oyun sırasında da bu iki düğmenin işlevini değiştir.",
+  "retroChangeDisc": "Diski değiştir",
+  "retroSelectDisc": "Disk seç",
+  "retroLastDiscPlayed": "Son oynanan",
+  "retroDiscNumber": "Disk %@",
+  "retroDiscInserted": "Takılı",
+  "retroDiscChanging": "Disk değiştiriliyor…",
+  "retroDiscEmpty": "Disk tepsisi açık",
+  "retroDiscChangeFailed": "Disk değiştirilemedi"
 }

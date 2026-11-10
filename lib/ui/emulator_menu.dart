@@ -368,17 +368,22 @@ class _EmulatorMenu {
     }
   }
 
-  PanelRow autoOptimizeLink(Game game, EmbeddedRetroGame session) => PanelRow(
+  PanelRow autoOptimizeLink(Game game, [EmbeddedRetroGame? session]) => PanelRow(
     id: 'emulator-auto-optimize',
     title: 'Auto Optimize${app.preferences.retroAutoOptimized.contains(game.id) ? ' ✓' : ''}',
-    detail: 'Review recommended settings for this game and your PC.',
-    kind: session.isPs2Lan || session.isNetplay || session.isPs3Online
+    detail: session == null
+        ? 'Detect your PC and review settings for the next launch.'
+        : 'Review recommended settings for this game and your PC.',
+    kind: session != null && (session.isPs2Lan || session.isNetplay || session.isPs3Online)
         ? const InfoRow('Available outside an online session.')
         : ActionRow(() {
             final panel = RetroAutoOptimizePanel(
-              session,
               gameName: game.name,
+              platform: game.retro!.platform,
               readHardware: app.services.retroHardware,
+              prepare: (hardware) => session == null
+                  ? app._prepareLaunchOptimization(game, hardware)
+                  : liveRetroOptimizePlan(session, game.retro!, hardware),
               refresh: () {
                 if (!app._disposed) app._changed();
               },
@@ -428,7 +433,7 @@ class _EmulatorMenu {
         id: 'emulator-group',
         title: title,
         rows: [
-          if (session != null)
+          if (session != null || app._canOptimizeBeforeLaunch(game))
             autoOptimizeLink(game, session)
           else
             const PanelRow(

@@ -282,6 +282,10 @@ class _RetroRestartTrials {
 
     final settled = app._retroSettled;
     if (previous.isPs3Online || app.embeddedGame != previous || settled == null) return null;
+    final discs = previous.discs;
+    if (previous.changingDisc || (discs != null && discs.inserted == null)) {
+      throw StateError('Insert a disc before changing startup settings.');
+    }
     unawaited(app.stopRunningGame());
     await settled.future.timeout(
       const Duration(seconds: 30),
@@ -292,9 +296,18 @@ class _RetroRestartTrials {
 
     final booted = Completer<EmbeddedRetroGame?>();
     unawaited(
-      app._playRetro(game, game.retro!, trialOptions: trialOptions, booted: booted, canBoot: current).whenComplete(() {
-        if (!booted.isCompleted) booted.complete(null);
-      }),
+      app
+          ._playRetro(
+            game,
+            game.retro!,
+            trialOptions: trialOptions,
+            booted: booted,
+            canBoot: current,
+            restartDisc: discs?.path,
+          )
+          .whenComplete(() {
+            if (!booted.isCompleted) booted.complete(null);
+          }),
     );
     final result = await booted.future;
     return current() ? result : null;

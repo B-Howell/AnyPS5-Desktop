@@ -21,6 +21,7 @@ import 'package:anyps5_desktop/core/power.dart';
 import 'package:anyps5_desktop/core/ps3_online_profile.dart';
 import 'package:anyps5_desktop/core/release_signing.dart';
 import 'package:anyps5_desktop/core/replay_buffer.dart';
+import 'package:anyps5_desktop/core/retro_optimizer.dart';
 import 'package:anyps5_desktop/core/trophies.dart';
 import 'package:anyps5_desktop/core/installer.dart';
 import 'package:anyps5_desktop/core/toolkit_download.dart';
@@ -178,6 +179,7 @@ Fixture makeFixture({
   void Function(int code)? quit,
   Map<String, String> environment = const {},
   bool prepareNewGames = false,
+  Future<RetroHardware?> Function()? retroHardware,
   int? Function(String folder)? freeSpace,
   LauncherWindow? window,
   ReplayBuffer? Function(int seconds)? replay,
@@ -229,6 +231,7 @@ Fixture makeFixture({
     system: system,
     persist: false,
     services: LauncherServices(
+      retroHardware: retroHardware,
       ps3OnlineReleases: ps3OnlineReleases,
       computerName: 'Desk',
       pickFolder: pickFolder ?? (_) async => root,
