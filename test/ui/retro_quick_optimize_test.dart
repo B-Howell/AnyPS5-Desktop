@@ -11,6 +11,43 @@ import 'package:path/path.dart' as p;
 import '../support/ui_support.dart';
 
 void main() {
+  test('unavailable hardware cannot replace a saved game configuration', () async {
+    final fixture = makeFixture();
+    final game = Game(
+      folder: fixture.temp.path,
+      titleId: 'SCUS94426',
+      name: 'Crash Team Racing',
+      names: const {},
+      defaultLanguage: 'en',
+      version: '',
+      executable: ExecutableKind.disc,
+      retro: (platform: RetroPlatform.ps1, path: p.join(fixture.temp.path, 'game.chd')),
+    );
+    final preferences = Preferences()
+      ..onboarded = true
+      ..retroInternalResolution[game.id] = '3';
+    final app = AppModel(
+      paths: fixture.model.paths,
+      system: HostSystem.windows,
+      persist: false,
+      preferences: preferences,
+    );
+    addTearDown(() {
+      app.dispose();
+      fixture.model.dispose();
+      fixture.dispose();
+    });
+    app.games = [game];
+    app.select(0);
+    app.open(Layer.gameSettings);
+    final optimize = app.panelCategories().single.rows.firstWhere((row) => row.id == 'emulator-auto-optimize');
+    (optimize.kind as ActionRow).run();
+    await pumpEventQueue();
+    final rows = app.panelCategories().single.rows;
+    expect((rows.single.kind as InfoRow).text, contains('hardware'));
+    expect(preferences.retroInternalResolution[game.id], '3');
+  });
+
   for (final (platform, key, change, saved) in [
     (RetroPlatform.ps1, 'swanstation_GPU_ResolutionScale', '1× → 4×', '4'),
     (RetroPlatform.ps2, 'pcsx2_upscale_multiplier', '1x (Native) → 4x', '4x'),
@@ -66,6 +103,11 @@ void main() {
       openOptimizer();
       await pumpEventQueue();
       expect(row('tuning-preset-apply').pinToBottom, isTrue);
+      final rows = app.panelCategories().single.rows;
+      for (final setting in rows.where((row) => row.id.startsWith('auto-setting-'))) {
+        app.handle(Command.down);
+        expect(rows[app.panelRow].id, setting.id);
+      }
       app.handle(Command.down);
       expect(app.panelCategories().single.rows[app.panelRow].id, 'tuning-preset-apply');
       app.handle(Command.select);

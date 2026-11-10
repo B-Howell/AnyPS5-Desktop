@@ -1004,7 +1004,10 @@ class PanelRow {
   final List<Game> previewGames;
   final bool pinToBottom;
 
-  bool get focusable => kind is! InfoRow;
+  bool get focusable => switch (kind) {
+    InfoRow(:final navigable) => navigable,
+    _ => true,
+  };
 }
 
 sealed class RowKind {
@@ -1083,8 +1086,9 @@ class ActionRow extends RowKind {
 }
 
 class InfoRow extends RowKind {
-  const InfoRow(this.text);
+  const InfoRow(this.text, {this.navigable = false});
   final String text;
+  final bool navigable;
 }
 
 /// A field to type in: choosing the row puts the cursor in it; Enter sends [submit].

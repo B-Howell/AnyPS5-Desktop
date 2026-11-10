@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:path/path.dart' as p;
 
 import 'game_library.dart';
@@ -13,19 +15,18 @@ abstract final class RetroLaunchOptimizer {
 
   static List<RetroLaunchSetting> recommend(RetroDisc disc, RetroHardware? hardware) {
     final adapter = RetroOptimizer.detectedAdapter(disc.platform, hardware);
-    final height = hardware?.displayHeight ?? 0;
-    final cores = hardware?.logicalProcessors ?? 0;
-    final vram = adapter?.dedicatedBytes ?? 0;
-    final scale = hardware == null || adapter == null || disc.platform == RetroPlatform.ps3
-        ? 1
-        : RetroOptimizer.recommend(
-                platform: disc.platform,
-                mode: RetroOptimizationMode.quality,
-                hardware: hardware,
-                renderer: null,
-                adapter: adapter.name,
-              )?.scale.clamp(1, 4) ??
-              1;
+    if (hardware == null ||
+        hardware.displayHeight <= 0 ||
+        adapter == null ||
+        adapter.name.trim().isEmpty ||
+        adapter.dedicatedBytes <= 0) {
+      return const [];
+    }
+    final height = hardware.displayHeight;
+    final threads = hardware.logicalProcessors;
+    final memory = adapter.dedicatedBytes;
+    const gib = 1 << 30;
+    final ps1Scale = disc.platform == RetroPlatform.ps1 ? _ps1ScaleFor(height, memory) : 1;
     RetroLaunchSetting graphics(String key, String name, String baseline, String value) =>
         (key: key, name: name, group: 'Graphics', baseline: baseline, value: value);
     RetroLaunchSetting cpu(String key, String name, String baseline, String value) =>
@@ -35,28 +36,28 @@ abstract final class RetroLaunchOptimizer {
 
     return switch (disc.platform) {
       RetroPlatform.ps1 => [
-        if (adapter != null) graphics('swanstation_GPU_Renderer', 'Renderer', 'D3D11', 'D3D11'),
-        graphics(ps1Scale, 'Internal resolution', '1', '$scale'),
+        graphics('swanstation_GPU_Renderer', 'Renderer', 'D3D11', 'D3D11'),
+        graphics(RetroLaunchOptimizer.ps1Scale, 'Internal resolution', '1', '$ps1Scale'),
         graphics(
           'swanstation_GPU_TextureFilter',
           'Texture filtering',
           'Nearest',
-          scale > 1 ? 'BilinearBinAlpha' : 'Nearest',
+          ps1Scale > 1 ? 'BilinearBinAlpha' : 'Nearest',
         ),
         cpu('swanstation_CPU_ExecutionMode', 'CPU execution', 'Recompiler', 'Recompiler'),
         io('swanstation_CDROM_ReadThread', 'Disc read thread', 'true', 'true'),
-        if (p.extension(disc.path).toLowerCase() == '.chd' && cores >= 8)
+        if (threads >= 8 && _hasCompressedPs1Disc(disc.path))
           io('swanstation_CDROM_ReadaheadSectors', 'Compressed disc read-ahead', '8', '16'),
       ],
       RetroPlatform.ps2 => [
-        if (adapter != null) graphics('pcsx2_renderer', 'Renderer', 'D3D11', 'D3D11'),
+        graphics('pcsx2_renderer', 'Renderer', 'D3D11', 'D3D11'),
         graphics(
           ps2Scale,
           'Internal resolution',
           '1x (Native)',
-          scale >= 4
+          height >= 1440 && memory >= 8 * gib && threads >= 6
               ? '4x'
-              : scale >= 2
+              : height >= 720 && memory >= 2 * gib
               ? '2x'
               : '1x (Native)',
         ),
@@ -64,9 +65,9 @@ abstract final class RetroLaunchOptimizer {
           'pcsx2_anisotropic_filtering',
           'Anisotropic filtering',
           'disabled',
-          scale >= 4
+          memory >= 8 * gib
               ? '8x'
-              : scale >= 2
+              : memory >= 2 * gib
               ? '4x'
               : 'disabled',
         ),
@@ -79,15 +80,19 @@ abstract final class RetroLaunchOptimizer {
           'rpcs3_resolution_scale',
           'Internal resolution',
           '100',
-          height >= 1440 && vram >= (8 << 30) && cores >= 8 ? '150' : '100',
+          height >= 1440 && memory >= 12 * gib && threads >= 12
+              ? '200'
+              : height >= 1080 && memory >= 8 * gib && threads >= 8
+              ? '150'
+              : '100',
         ),
         graphics(
           'rpcs3_anisotropic_filter',
           'Anisotropic filtering',
           'auto',
-          vram >= (8 << 30)
+          memory >= 8 * gib
               ? '8'
-              : vram >= (4 << 30)
+              : memory >= 4 * gib
               ? '4'
               : 'auto',
         ),
@@ -97,6 +102,29 @@ abstract final class RetroLaunchOptimizer {
         io('rpcs3_spu_cache', 'SPU cache', 'enabled', 'enabled'),
       ],
     };
+  }
+
+  static bool _hasCompressedPs1Disc(String path) {
+    final extension = p.extension(path).toLowerCase();
+    if (extension == '.chd') return true;
+    if (extension != '.m3u') return false;
+    try {
+      return GameLibrary.ps1PlaylistDiscs(path).any((disc) => p.extension(disc).toLowerCase() == '.chd');
+    } on FileSystemException {
+      return false;
+    }
+  }
+
+  static int _ps1ScaleFor(int height, int memory) {
+    const gib = 1 << 30;
+    final memoryLimit = memory >= 8 * gib
+        ? 4
+        : memory >= 4 * gib
+        ? 3
+        : memory >= 2 * gib
+        ? 2
+        : 1;
+    return ((height + 239) ~/ 240).clamp(1, memoryLimit);
   }
 
   static String label(String key, String value) => switch ((key, value)) {

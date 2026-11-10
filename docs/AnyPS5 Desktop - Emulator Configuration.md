@@ -136,25 +136,36 @@ existing Vulkan device.
 
 From a game's tile, open **Game Settings → Auto Optimize**. The launcher
 reads the graphics adapter, display height, and logical CPU count without
-booting the game. It compares one recommendation against the title's
+booting the game. It computes a recommendation directly from those inputs and
+the game's media. It compares the recommendation against the title's
 effective settings, including inherited PS3 defaults. **Apply** stays at the
 bottom of the review and appears only when there are changes to save.
-Backing out discards the preview. Saving writes the selected game's settings
+Up and Down move through each change and scroll it into view. Backing out
+discards the preview. Saving writes the selected game's settings
 for the next launch and displays a check mark.
 
 The [recommendation policy](../lib/core/retro_launch_optimizer.dart) uses
 the embedded cores' advertised settings for resolution, filtering,
-rendering, CPU execution, and I/O where applicable. It preserves
-compatibility-sensitive choices such as PS2 MTVU and fast CD/DVD. The
-recommendation is an estimate based on hardware, media and current title
-settings. It does not sample gameplay before launch. The
-[preview](../lib/ui/retro_tuning_panel.dart) and
+rendering, CPU execution, and I/O where applicable. PS2 checks CPU headroom
+before recommending 4×. PS3 allows up to 200% on a 1440p or larger display
+with at least 12 GiB dedicated video memory and 12 logical CPU threads.
+SwanStation uses a longer disc read-ahead for CHD media, including playlists
+with CHD discs, when there are at least eight logical threads. Compatibility
+choices such as PS2 MTVU and fast CD/DVD stay at their configured values.
+If adapter detection fails or the PS3 adapter is ambiguous, the preview
+explains why it cannot recommend changes and offers no Apply action.
+These are hardware and media estimates made before gameplay can be measured.
+The [preview](../lib/ui/retro_tuning_panel.dart) and
 [per-game save path](../lib/ui/retro_launch_optimization.dart) share the
 same review layout with **Quick Menu → Graphics → Auto Optimize**.
 **In this session** uses the core's live update path. **Next launch**
 queues the setting. **Advanced** shows effective values and applies manual
 edits when you select **Apply changes**, which clears the check mark.
 The online preview restricts changes during active multiplayer.
+The [optimizer policy tests](../test/core/retro_optimizer_test.dart) cover
+hardware and disc-media variation. The
+[prelaunch workflow tests](../test/ui/retro_quick_optimize_test.dart) cover
+controller navigation, dismissal, failed detection, and save on Apply.
 
 [Compare gameplay performance](../lib/ui/retro_game_tuning.dart) measures a baseline and
 a temporary candidate while the player repeats the same section. It

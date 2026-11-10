@@ -929,7 +929,7 @@ class _RowView extends StatelessWidget {
     );
 
     return Pressable(
-      onTap: row.focusable ? onTap : null,
+      onTap: row.focusable && kind is! InfoRow ? onTap : null,
       onHover: row.focusable ? onHover : null,
       pressScale: 0.99,
       builder: (context, hovering) => TweenAnimationBuilder<double>(

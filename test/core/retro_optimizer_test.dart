@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:anyps5_desktop/core/game_library.dart';
+import 'package:anyps5_desktop/core/retro_launch_optimizer.dart';
 import 'package:anyps5_desktop/core/retro_optimizer.dart';
 import 'package:test/test.dart';
 
@@ -22,6 +25,34 @@ RetroOptimizationRecommendation? _recommend({
 );
 
 void main() {
+  test('prelaunch recommendations respond to the emulator, hardware and selected disc media', () {
+    final folder = Directory.systemTemp.createTempSync('anyps5-optimize-');
+    addTearDown(() => folder.deleteSync(recursive: true));
+    final compressed = File.fromUri(folder.uri.resolve('first.chd'))..createSync();
+    final playlist = File.fromUri(folder.uri.resolve('game.m3u'))..writeAsStringSync('first.chd\n');
+    final cue = File.fromUri(folder.uri.resolve('other.cue'));
+    Map<String, String> settings(RetroPlatform platform, String path, int threads, RetroAdapter adapter) => {
+      for (final setting in RetroLaunchOptimizer.recommend((
+        platform: platform,
+        path: path,
+      ), RetroHardware(displayHeight: 1440, adapters: [adapter], logicalProcessors: threads)))
+        setting.key: setting.value,
+    };
+    const readAhead = 'swanstation_CDROM_ReadaheadSectors';
+    expect(settings(RetroPlatform.ps1, compressed.path, 12, _discrete)[readAhead], '16');
+    expect(settings(RetroPlatform.ps1, playlist.path, 12, _discrete)[readAhead], '16');
+    expect(settings(RetroPlatform.ps1, cue.path, 12, _discrete)[readAhead], isNull);
+    expect(settings(RetroPlatform.ps1, playlist.path, 4, _discrete)[readAhead], isNull);
+    expect(
+      settings(RetroPlatform.ps1, cue.path, 12, const RetroAdapter(name: 'Unknown memory', dedicatedBytes: 0)),
+      isEmpty,
+    );
+    expect(settings(RetroPlatform.ps2, '', 4, _discrete)[RetroLaunchOptimizer.ps2Scale], '2x');
+    expect(settings(RetroPlatform.ps2, '', 12, _discrete)[RetroLaunchOptimizer.ps2Scale], '4x');
+    expect(settings(RetroPlatform.ps3, '', 12, _discrete)['rpcs3_resolution_scale'], '200');
+    expect(settings(RetroPlatform.ps3, '', 12, _integrated)['rpcs3_resolution_scale'], '100');
+  });
+
   test('balanced uses the unique discrete adapter and writes the platform’s native scale key', () {
     final ps2 = _recommend()!;
     expect(ps2.adapter, same(_discrete));

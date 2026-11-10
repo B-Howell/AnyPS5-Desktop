@@ -39,7 +39,9 @@ extension RetroLaunchOptimization on AppModel {
             nextLaunch: true,
           ),
       ],
-      emptyReason: null,
+      emptyReason: settings.isEmpty
+          ? 'Could not identify the hardware used by this emulator. Your settings are unchanged.'
+          : null,
       undo: null,
       canApply: available,
       apply: () async {

@@ -41,11 +41,11 @@ class RetroAutoOptimizePanel {
     try {
       hardware = await readHardware?.call();
     } on Exception {
-      // Conservative settings still work when adapter detection fails.
+      // The preview can explain why it cannot recommend settings.
     }
     final adapter = RetroOptimizer.detectedAdapter(platform, hardware);
     _hardwareSummary = [
-      if (adapter != null) adapter.name else 'Graphics adapter unavailable. Using conservative settings.',
+      if (adapter != null) adapter.name,
       if (hardware != null && hardware.displayHeight > 0) '${hardware.displayHeight}p',
       if (hardware != null && hardware.logicalProcessors > 0) '${hardware.logicalProcessors} CPU threads',
     ].join(' · ');
@@ -65,7 +65,7 @@ class RetroAutoOptimizePanel {
         PanelRow(
           id: 'tuning-preset-preview',
           title: gameName,
-          detail: _hardwareSummary,
+          detail: _hardwareSummary?.isEmpty == true ? null : _hardwareSummary,
           kind: InfoRow(
             _detecting
                 ? 'Detecting your PC…'
@@ -85,7 +85,10 @@ class RetroAutoOptimizePanel {
               id: 'auto-setting-${change.key}',
               title: change.name,
               detail: '${change.before} → ${change.after}',
-              kind: InfoRow('${change.group} · ${change.nextLaunch ? 'Next launch' : 'In this session'}'),
+              kind: InfoRow(
+                '${change.group} · ${change.nextLaunch ? 'Next launch' : 'In this session'}',
+                navigable: true,
+              ),
             ),
         if (canApply)
           PanelRow(
@@ -142,10 +145,10 @@ class RetroAutoOptimizePanel {
 
 RetroOptimizePlan liveRetroOptimizePlan(EmbeddedRetroGame session, RetroDisc disc, RetroHardware? hardware) {
   final tuning = session.tuning;
-  final supported = RetroLaunchOptimizer.recommend(
-    disc,
-    hardware,
-  ).where((option) => tuning.options[option.key]?.values.contains(option.value) ?? false).toList();
+  final recommendation = RetroLaunchOptimizer.recommend(disc, hardware);
+  final supported = recommendation.where(
+    (option) => tuning.options[option.key]?.values.contains(option.value) ?? false,
+  );
   final changes = <RetroOptimizeChange>[];
   final before = <String, String>{};
   final recommended = <String, String>{};
@@ -165,7 +168,11 @@ RetroOptimizePlan liveRetroOptimizePlan(EmbeddedRetroGame session, RetroDisc dis
   }
   return (
     changes: changes,
-    emptyReason: supported.isEmpty ? 'The running emulator has not exposed settings to optimize.' : null,
+    emptyReason: recommendation.isEmpty
+        ? 'Could not identify the hardware used by this emulator. Your settings are unchanged.'
+        : supported.isEmpty
+        ? 'The running emulator has not exposed settings to optimize.'
+        : null,
     canApply: () => tuning.canApplyPreset(recommended),
     apply: () => tuning.applyPreset(before, recommended),
     undo: () async {
