@@ -707,6 +707,33 @@ PC. Physical network loss, hosted signaling, direct and relayed play
 across separate networks, and the installed launcher's UI still need
 qualification.
 
+#### Relay-only recovery after the bridge fix
+
+At Desktop `063cf83`, two native D3D11 TimeSplitters workers completed
+Vietnam Deathmatch through the local TURN fixture. The probe checked
+that both WebRTC links used a relay before and after ICE restart. Both
+captures showed active gameplay before the guest connection-state
+failure was injected. The room fixture rejected the first restart
+request, offer and answer. The original links stayed in the room and
+negotiated one offer with fresh ICE credentials. The guest reported
+recovery after 2,529 ms and both seats received fresh traffic by
+2,873 ms.
+
+Both consoles reached Results and displayed the same 0–0 score table.
+The host adapter sent 4,418 frames and received 1,852. The guest sent
+1,878 and received 4,368. Each obtained one DHCP lease, and neither
+reported queue overflow. Both workers and the room exited zero with
+empty fault logs, the original scratch-card seed kept its hash, and the
+local relay process stopped. The D: receipt
+`timesplitters-reconnect-063cf83-rerun` retains the compiled bundle,
+driver, recovery timings and paired screenshots. The bundle SHA-256 was
+`a837ea97cf1ff6ff3af6b1d88bc08eeef8970832ccaa682ee67163c5718e0215`.
+An initial run stopped at an overly strict whole-frame image comparison
+before the disconnect. The rerun used visual confirmation of both
+gameplay captures because the camera positions vary between runs.
+The failure was simulated on one PC. Physical network loss, hosted
+signaling and play across separate networks remain unverified.
+
 ### Persistent card reopen on the native core
 
 Two sequential headless TimeSplitters launches used the Windows D3D11
