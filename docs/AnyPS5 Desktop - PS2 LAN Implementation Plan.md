@@ -580,6 +580,30 @@ rules over one-PC UDP loopback. Local evidence beside the Windows DLL
 package includes captured frames, logs, input steps and the diagnostic
 source under `timesplitters-lan/renderer-control`.
 
+### Local TURN transport and recovery
+
+The [headless PS2 LAN probe](../tool/ps1_netplay/webrtc_lan_probe.dart)
+can run with relay-only ICE. Use the [local TURN fixture](../tool/ps1_netplay/turn_fixture/main.go)
+on the Windows WSL virtual adapter, following the build and address
+checks in the [PS1 netplay plan](<AnyPS5 Desktop - PS1 Netplay Implementation Plan.md>).
+
+```powershell
+pwsh -File tool/ps1_netplay/run_webrtc_probe.ps1 -Runner "path/to/loopback.exe" -Data "path/to/data" -Lan -TurnAddress $adapterAddress -TurnPort $printedPort
+```
+
+The Windows direct and relay-only controls both passed. The
+[room fixture](../tool/ps1_netplay/webrtc_room_fixture.dart) verifies the
+selected relay route on both links before the interruption and after
+the ICE restart. The PS2 probe checks both DHCP leases and bidirectional
+Ethernet forwarding, then checks that forwarding pauses during an
+injected disconnect and resumes on the original links. It rejects
+the first restart request, offer and answer to exercise signaling
+retries. The new offer has fresh ICE credentials. The guest can leave
+while the host game stays open. The relay released its allocations
+when the probe closed. This probe uses simulated console interfaces
+and injects connection notifications in the test wrapper. The
+data channels, selected routes and relay are real and local.
+
 ### Full TimeSplitters round over Windows WebRTC
 
 At Desktop `d7f7911`, the same two native D3D11 workers ran the US disc
@@ -612,6 +636,28 @@ PC. Hosted AnyTogether signaling, WAN or TURN, and the shipping launcher
 UI are separate gates. The workers used preconfigured scratch cards. This
 run predates the persistent PS2 LAN profile and does not qualify the first
 in-game network setup on a blank card.
+
+### Full TimeSplitters round over local TURN
+
+The native replay reused the same headless Windows D3D11 workers and
+scratch-card seed, with both WebRTC peers restricted to TURN on the
+private WSL adapter. The room verified the selected relay routes before
+launching the workers and again before room release. Both consoles
+received one DHCP lease, entered the shared Vietnam Deathmatch round,
+and reached its results and score tables. Both score tables listed
+A and B tied at 0–0.
+
+The host adapter queued 4,420 outbound frames and received 1,880.
+The guest queued 1,881 and received 4,419. Both reported zero adapter
+queue overflows. Both native workers and the room exited zero with
+empty fault logs, and the original scratch-card seed was unchanged.
+The private D: receipt `timesplitters-turn-517bc89-rerun` retains
+the pinned runner, driver, relay log, native room output, and paired
+captures. The Dart bundle SHA-256 was
+`d5d0fd1b2bff5720b30cf7b7d71ff5cd85174058fcbc49b1d6d20aef213c335a`.
+The two native games, room signaling and TURN ran on the same PC.
+Hosted signaling, play across separate networks and a complete GT4
+LAN race remain separate qualification gates.
 
 ### Full TimeSplitters round with a simulated outage
 

@@ -52,13 +52,7 @@ Future<String> verifyDualShockWebRtc(String config, {String? raceTrace, String? 
       if (race == null) await worker.setInput(driver.initial);
     }
 
-    final gateway = WebRtcRoomFixture(
-      profile.roomFor(mode),
-      media.discDigest,
-      iceServers: [
-        if (turnUrl != null) {'urls': turnUrl, 'username': 'anyps5-probe', 'credential': 'loopback-fixture'},
-      ],
-    );
+    final gateway = WebRtcRoomFixture(profile.roomFor(mode), media.discDigest, turnUrl: turnUrl);
     final links = WebRtcProbeLinks(dropGamePacket: (packetNumber) => packetNumber % 5 == 0, relayOnly: turnUrl != null);
     Ps1NetplayMatch match(String user, WebRtcNativeWorker worker) {
       final match = Ps1NetplayMatch(
@@ -125,12 +119,7 @@ Future<String> verifyDualShockWebRtc(String config, {String? raceTrace, String? 
         throw StateError('DualShock RAM fingerprints differ at frame $frame.');
       }
     }
-    if (turnUrl != null) {
-      final paths = await Future.wait(links.opened.map((link) => link.readPath())).timeout(const Duration(seconds: 3));
-      if (paths.any((path) => path?.relayed != true)) {
-        throw StateError('Both peers must report a selected TURN relay route: $paths');
-      }
-    }
+    if (turnUrl != null) await links.verifyRelay();
     await guest.leave();
     await host.done.timeout(const Duration(seconds: 6));
     if (!gateway.released || gateway.signals < 2) throw StateError('The DualShock room did not release.');

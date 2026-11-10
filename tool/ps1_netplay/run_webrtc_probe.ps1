@@ -16,8 +16,8 @@ $ErrorActionPreference = 'Stop'
 if ($RaceTrace -and -not $DualShock) {
     throw 'Race traces require DualShock mode.'
 }
-if ($TurnPort -and -not $DualShock) {
-    throw 'The local TURN fixture requires DualShock mode.'
+if ($TurnPort -and -not ($DualShock -or $Lan)) {
+    throw 'The local TURN fixture requires DualShock or LAN mode.'
 }
 if ($PSBoundParameters.ContainsKey('TurnAddress') -and -not $TurnPort) {
     throw 'A TURN address requires a TURN port.'

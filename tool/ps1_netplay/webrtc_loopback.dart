@@ -35,13 +35,13 @@ Future<void> main() async {
     final turnAddress = InternetAddress.tryParse(Platform.environment['ANYPS5_TEST_TURN_ADDRESS'] ?? '');
     String? turnUrl;
     if (port.isNotEmpty) {
-      if (!dualShock ||
+      if (!(dualShock || lan) ||
           turnPort == null ||
           turnPort < 1024 ||
           turnPort > 65535 ||
           turnAddress?.type != InternetAddressType.IPv4 ||
           turnAddress!.address == '0.0.0.0') {
-        throw StateError('A local TURN endpoint requires an IPv4 address, valid port and DualShock mode.');
+        throw StateError('A local TURN endpoint requires an IPv4 address, valid port and DualShock or LAN mode.');
       }
       turnUrl = 'turn:${turnAddress.address}:$turnPort?transport=udp';
     }
@@ -51,7 +51,7 @@ Future<void> main() async {
     await report.invokeMethod<void>(
       'pass',
       lan
-          ? await verifyWebRtcLanBridge()
+          ? await verifyWebRtcLanBridge(turnUrl: turnUrl)
           : config.isEmpty
           ? '${await _exercise()} ${await _exercise(mismatchedDisc: true)}'
           : ordinary

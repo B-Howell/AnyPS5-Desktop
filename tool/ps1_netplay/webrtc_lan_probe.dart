@@ -6,18 +6,17 @@ import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 
 import 'webrtc_room_fixture.dart';
 
-Future<String> verifyWebRtcLanBridge() async {
-  final links = WebRtcProbeLinks();
+Future<String> verifyWebRtcLanBridge({String? turnUrl}) async {
+  final links = WebRtcProbeLinks(relayOnly: turnUrl != null);
   var reconnecting = Completer<void>();
   var reconnected = Completer<void>();
   var recoveryUser = WebRtcRoomFixture.host;
   final digest = 'a' * 64;
-  final gateway = WebRtcRoomFixture((
-    titleId: 'SLUS21148',
-    gameVersion: '1',
-    mode: RetroOnlineMode.lan,
-    capacity: 2,
-  ), digest);
+  final gateway = WebRtcRoomFixture(
+    (titleId: 'SLUS21148', gameVersion: '1', mode: RetroOnlineMode.lan, capacity: 2),
+    digest,
+    turnUrl: turnUrl,
+  );
   final host = _FixtureNic(0x020000000001, 0x020000000002, 0x0ae70065, broadcast: true);
   final guest = _FixtureNic(0x020000000002, 0x020000000001, 0x0ae70066, broadcast: false);
   RetroLanMatch match(String user, _FixtureNic nic) {
@@ -47,6 +46,7 @@ Future<String> verifyWebRtcLanBridge() async {
     await Future.wait([hosting, right.join(invite.room.id, expectedHost: invite.room.hostId)])
         .timeout(const Duration(seconds: 10));
     await Future.wait([host.received.future, guest.received.future]).timeout(const Duration(seconds: 8));
+    if (turnUrl != null) await links.verifyRelay();
     for (final link in links.opened) {
       link.reportState('disconnected');
     }
@@ -93,6 +93,7 @@ Future<String> verifyWebRtcLanBridge() async {
         'room closed ${left.closed || right.closed}.',
       );
     }
+    if (turnUrl != null) await links.verifyRelay();
     gateway.hostReleaseGate = releaseHost.future;
     final guestLeaving = right.leave();
     await left.ending.timeout(const Duration(seconds: 5));
@@ -106,7 +107,8 @@ Future<String> verifyWebRtcLanBridge() async {
     if (!gateway.released || !left.gameContinues || host.done.isCompleted || !guest.done.isCompleted) {
       throw StateError('The PS2 LAN room did not close while keeping the host game open.');
     }
-    return 'Windows WebRTC PS2 LAN passed with DHCP, signaling retries, fresh ICE credentials and resumed frames.';
+    final route = turnUrl == null ? 'WebRTC' : 'relay-only WebRTC';
+    return 'Windows $route PS2 LAN passed with DHCP, signaling retries, fresh ICE credentials and resumed frames.';
   } finally {
     if (!releaseHost.isCompleted) releaseHost.complete();
     await Future.wait([left.leave(), right.leave()]).timeout(const Duration(seconds: 4));

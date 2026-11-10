@@ -7,7 +7,10 @@ import 'package:anyps5_desktop/ui/online_webrtc.dart';
 
 /// Local stand-in for the room API and directed gateway events.
 final class WebRtcRoomFixture {
-  WebRtcRoomFixture(this.spec, this.digest, {this.iceServers = const []});
+  WebRtcRoomFixture(this.spec, this.digest, {String? turnUrl})
+    : _iceServers = [
+        if (turnUrl != null) {'urls': turnUrl, 'username': 'anyps5-probe', 'credential': 'loopback-fixture'},
+      ];
 
   static const roomId = '00000000-0000-0000-0000-000000000001';
   static const host = '00000000-0000-0000-0000-000000000002';
@@ -18,7 +21,7 @@ final class WebRtcRoomFixture {
 
   final RetroRoomSpec spec;
   final String digest;
-  final List<Map<String, dynamic>> iceServers;
+  final List<Map<String, dynamic>> _iceServers;
   final _invited = Completer<void>();
   final _members = <String>{};
   final _published = <String>{};
@@ -122,7 +125,7 @@ final class WebRtcRoomFixture {
       return _view();
     }
     if (method == 'GET' && path == '$_path/ice-servers' && _published.contains(user)) {
-      return {'iceServers': iceServers};
+      return {'iceServers': _iceServers};
     }
     throw StateError('Unexpected fixture room request: $method $path.');
   }
@@ -148,6 +151,13 @@ final class WebRtcProbeLinks implements GameLinks {
   final bool Function(int packetNumber)? dropGamePacket;
   final WebRtcGameLinks _delegate;
   final opened = <WebRtcProbeLink>[];
+
+  Future<void> verifyRelay() async {
+    final paths = await Future.wait(opened.map((link) => link.readPath())).timeout(const Duration(seconds: 3));
+    if (paths.length != 2 || paths.any((path) => path?.relayed != true)) {
+      throw StateError('Both peers must report a selected TURN relay route: $paths');
+    }
+  }
 
   @override
   Future<GameLink> link(List<Map<String, dynamic>> iceServers) async {
