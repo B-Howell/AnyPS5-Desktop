@@ -520,9 +520,35 @@ and the disposable credential files were gone after cleanup.
 The same guest account then ran alone on `127.0.0.1:3658` using the
 paired backend. Refresh accepted intro entry and play, and the
 captured guest responded to movement. It stopped with exit zero.
-This rules out the guest account as a sufficient cause. Compare
-the first divergent guest network call in these two receipts before
-changing the fixture again. The native invite remains unverified.
+This rules out the guest account as a sufficient cause.
+
+In the two Windows guest traces, align the first
+`sceNpBasicSetPresenceDetails` call with options `0x1`. The following
+NP Basic read returns event 1 (same-title presence, 57 bytes) in the
+paired run and event 0 (offline) in the solo run. The pinned
+[NP handler](https://github.com/WizzardSK/rpcs3-libretro/blob/74b3fa37beb294418230b1f039bab4de97f18479/rpcs3/Emu/NP/np_handler.cpp)
+leaves the caller's size unchanged for the offline event, so the
+logged 512 is not an offline payload. Both guests then replace their
+game host thread and call the same `sys_net_infoctl` stub. The first
+raw receive marker follows the presence update after 30.422 seconds
+in the pair and 0.253 seconds solo. The raw receive is also a stub,
+and the timing is an observation of when the game called it.
+The paired host consumed the guest's online presence after its own
+intro had already started, so this comparison cannot show that online
+presence alone causes the guest stall.
+
+The guest-only control then retained the port-control guard and relay,
+including the physical `127.0.0.1:3659` bind and the guest bootstrap
+rewrite. Windows socket inventory confirmed 3659. RPCN returned an
+offline friend event, yet the raw receive marker again followed the
+presence update after 30.023 seconds. Refresh accepted intro entry
+and the game remained on the animated loading screen. The failure
+can occur with the host disconnected. The remaining difference from
+the working solo run is the fixture's bind and signaling relay route,
+which should be traced separately from the in-game invite. Compare
+the destination and receipt of the game's own UDP traffic at
+`sendto` and `recvfrom` across the two solo runs, without logging
+payloads. The native invite remains unverified.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
