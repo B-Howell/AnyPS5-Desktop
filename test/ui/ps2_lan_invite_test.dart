@@ -511,11 +511,14 @@ void main() {
         };
         await readingOldPath.future.timeout(const Duration(seconds: 5));
         final localLink = network.all.last;
+        final beforeDisconnectResets = resets;
         localLink.reportState('disconnected');
         await until(
           () => row('ps2-lan-status').detail == 'LAN connection interrupted. Reconnecting…',
           reason: 'A disconnected link should show Reconnecting.',
         );
+        expect(resets, greaterThan(beforeDisconnectResets));
+        final beforeReconnectResets = resets;
         network.readPath = () async => (relayed: true, roundTripMs: 65);
         localLink.reportState('connected');
         await until(
@@ -529,6 +532,7 @@ void main() {
           () => row('ps2-lan-status').detail?.endsWith(' · Through the relay · 65 ms') == true,
           reason: 'The restored route should report the new relay latency.',
         );
+        expect(resets, greaterThan(beforeReconnectResets));
         final worker = model.embeddedGame;
         expect(row('ps2-lan-status').title, 'Leave LAN Play');
         if (explainRoomEnd) {
@@ -548,6 +552,7 @@ void main() {
           expect(model.toast, contains('Your game is still open'));
         }
         final afterLeave = exchanges;
+        final resetsAfterLeave = resets;
         await Future<void>.delayed(const Duration(milliseconds: 40));
         expect(exchanges, afterLeave);
         model.padCommand(PadCommand.home);
@@ -593,7 +598,7 @@ void main() {
           reason: 'The second room should resume exchange and return from Friends to the same game.',
         );
         expect(model.embeddedGame, same(worker));
-        expect(resets, 1);
+        expect(resets, resetsAfterLeave + 1);
         if (explainRoomEnd) {
           server.push('game_session.ended', {'sessionId': nextRoom});
           await until(() => model.together.ps2LanRows().isEmpty);

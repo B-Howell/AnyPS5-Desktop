@@ -315,7 +315,12 @@ extension TogetherPs2Lan on TogetherModel {
         if (reuse != null && digest != reuse.digest) continue;
         if (expected != null && digest != expected) continue;
 
+        EmbeddedRetroGame? lanWorker = reuse?.session;
         final match = attempt.match = RetroLanMatch(
+          resetPeerFrames: () async {
+            final worker = lanWorker;
+            return worker != null && identical(app.embeddedGame, worker) && await worker.resetPs2LanFrames();
+          },
           ownsGame: reuse == null,
           onStartupChanged: () {
             if (active()) app.refresh();
@@ -342,6 +347,7 @@ extension TogetherPs2Lan on TogetherModel {
             attempt.launchGame = game;
             final run = await app.preparePs2Lan(game, mac, canBoot: () => active() && attempt.match?.closed == false);
             if (app.embeddedGame case final session? when active() && identical(app.running?.$1, game)) {
+              lanWorker = session;
               final started = _ps2LanWorker = _Ps2LanWorker(game, session, run, digest, me, profile, host: host);
               void forgetWorker() {
                 if (!identical(_ps2LanWorker, started)) return;

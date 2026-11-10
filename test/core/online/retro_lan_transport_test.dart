@@ -159,4 +159,93 @@ void main() {
     ]);
     expect(guest.inbound('host', sent.single), reply);
   });
+
+  test('native queues reset before a restored route exchanges fresh frames', () async {
+    final resetting = Completer<bool>();
+    final batches = <List<Uint8List>>[];
+    final sent = <Uint8List>[];
+    final nativeOutput = <Uint8List>[];
+    var resets = 0;
+    int? route = 1;
+    final bridge = RetroLanBridge(
+      segment: host,
+      peerRoute: () => route,
+      resetPeerFrames: () async {
+        resets++;
+        nativeOutput.clear();
+        return resets == 1 ? resetting.future : true;
+      },
+      exchange: (input) async {
+        batches.add(input);
+        final output = List<Uint8List>.of(nativeOutput);
+        nativeOutput.clear();
+        return output;
+      },
+      send: (_, packet) => sent.add(packet),
+    );
+    addTearDown(bridge.close);
+    await bridge.pump();
+    expect(resets, 0, reason: 'A fresh worker has no retired native queue.');
+    nativeOutput.add(_frame(_guest, _host));
+    route = null;
+    final interrupted = bridge.pump();
+    expect(resets, 1);
+    route = 2;
+    final fresh = _frame(_host, _guest);
+    bridge.receive('guest', guest.outbound(fresh)!.packet);
+    nativeOutput.add(_frame(_guest, _host));
+    resetting.complete(true);
+    await interrupted;
+    expect(batches, hasLength(1), reason: 'A route changed while the native reset was pending.');
+    await bridge.pump();
+    expect(resets, 2);
+    expect(batches.last, [fresh]);
+    expect(sent, isEmpty, reason: 'Neither retired native output may reach the restored peer.');
+  });
+
+  test('a worker not ready for queue reset retries without exchanging peer frames', () async {
+    int? route = 1;
+    var ready = false;
+    var exchanges = 0;
+    final bridge = RetroLanBridge(
+      segment: host,
+      peerRoute: () => route,
+      resetPeerFrames: () async => ready,
+      exchange: (_) async {
+        exchanges++;
+        return [];
+      },
+      send: (_, _) {},
+    );
+    addTearDown(bridge.close);
+    await bridge.pump();
+    route = 2;
+    await bridge.pump();
+    expect(exchanges, 1);
+    ready = true;
+    await bridge.pump();
+    expect(exchanges, 2);
+  });
+
+  test('a native queue that never becomes ready ends the reset wait', () async {
+    var route = 1;
+    var exchanges = 0;
+    final bridge = RetroLanBridge(
+      segment: host,
+      peerRoute: () => route,
+      resetRetryWindow: Duration.zero,
+      resetPeerFrames: () async => false,
+      exchange: (_) async {
+        exchanges++;
+        return [];
+      },
+      send: (_, _) {},
+    );
+    addTearDown(bridge.close);
+    await bridge.pump();
+    route++;
+    await expectLater(bridge.pump(), throwsA(isA<TimeoutException>()));
+    expect(exchanges, 1);
+    expect(bridge.drained, isNull);
+  });
 }

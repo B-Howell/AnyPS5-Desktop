@@ -307,6 +307,7 @@ void main() {
     ('channel', 'a closed data channel ends the room immediately'),
     ('timeout', 'an expired recovery window ends the room'),
     ('bye', 'only a goodbye from the bound peer ends the room'),
+    ('native', 'a failed native queue reset ends the room'),
   ]) {
     test('$description and keeps both games open', () async {
       final digest = 'c' * 64;
@@ -324,6 +325,7 @@ void main() {
         final match = RetroLanMatch(
           rooms: gateway.client(id, expectedDigest: digest),
           links: network.links,
+          resetPeerFrames: end == 'native' ? () async => throw StateError('Native queue reset failed.') : null,
           recoveryWindow: end == 'timeout' ? const Duration(milliseconds: 200) : const Duration(seconds: 5),
           launch: (_) async =>
               (exchange: (_) async => <Uint8List>[], close: () async => done.complete(), done: done.future),
@@ -343,6 +345,8 @@ void main() {
       await Future.wait([hosting, guest.join(WebRtcRoomFixture.roomId)]).timeout(const Duration(seconds: 5));
       if (end == 'channel') {
         network.all.first.reportState('game-closed');
+      } else if (end == 'native') {
+        network.all.first.reportState('disconnected');
       } else if (end == 'bye') {
         host.receive('game_session.signal', {
           'sessionId': WebRtcRoomFixture.roomId,

@@ -24,6 +24,7 @@ Future<String> verifyWebRtcLanBridge({String? turnUrl}) async {
       rooms: gateway.client(user, expectedDigest: digest),
       links: links,
       launch: nic.launch,
+      resetPeerFrames: nic.resetPeerFrames,
       onRecoveryChanged: (recovering) {
         if (user == recoveryUser) (recovering ? reconnecting : reconnected).complete();
       },
@@ -71,6 +72,8 @@ Future<String> verifyWebRtcLanBridge({String? turnUrl}) async {
     reconnected = Completer<void>();
     recoveryUser = WebRtcRoomFixture.guest;
     final unavailable = {'renegotiate', 'offer', 'answer'};
+    final beforeHostReset = host.resets;
+    final beforeGuestReset = guest.resets;
     gateway.rejectSignal = (_, kind, data) => data is Map && data['iceRoute'] == 1 && unavailable.remove(kind);
     links.opened.last.reportState('failed');
     await reconnecting.future.timeout(const Duration(seconds: 4));
@@ -84,6 +87,8 @@ Future<String> verifyWebRtcLanBridge({String? turnUrl}) async {
     if (left.closed ||
         right.closed ||
         guest.framesReceived == beforeRestart ||
+        host.resets <= beforeHostReset ||
+        guest.resets <= beforeGuestReset ||
         links.opened.length != 2 ||
         unavailable.isNotEmpty ||
         offers.length != 2 ||
@@ -108,7 +113,10 @@ Future<String> verifyWebRtcLanBridge({String? turnUrl}) async {
       throw StateError('The PS2 LAN room did not close while keeping the host game open.');
     }
     final route = turnUrl == null ? 'WebRTC' : 'relay-only WebRTC';
-    return 'Windows $route PS2 LAN passed with DHCP, signaling retries, fresh ICE credentials and resumed frames.';
+    if (host.resets < 2 || guest.resets < 2) {
+      throw StateError('A restored peer route did not reset its native queue.');
+    }
+    return 'Windows $route PS2 LAN passed with DHCP, signaling retries, fresh ICE credentials, native queue resets and resumed frames.';
   } finally {
     if (!releaseHost.isCompleted) releaseHost.complete();
     await Future.wait([left.leave(), right.leave()]).timeout(const Duration(seconds: 4));
@@ -126,6 +134,12 @@ final class _FixtureNic {
   final received = Completer<void>();
   final done = Completer<void>();
   int framesReceived = 0;
+  int resets = 0;
+
+  Future<bool> resetPeerFrames() async {
+    resets++;
+    return true;
+  }
 
   Future<RetroLanGame> launch(Uint8List assigned) async {
     if (!_same(assigned, _address(mac))) throw StateError('The PS2 room supplied the wrong virtual MAC.');

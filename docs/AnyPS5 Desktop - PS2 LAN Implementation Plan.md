@@ -625,6 +625,33 @@ after ICE restart with zero relay allocations left at teardown. The
 bridge cannot retract frames already handed to the native NIC or
 WebRTC. This check did not run a native game.
 
+The launcher also resets both native NIC queues after it
+observes an interrupted or restored peer route. The reset runs after
+the previous exchange finishes and before another exchange can submit
+fresh peer frames. If the route changes during reset, the next pump
+resets again. A worker whose NIC is still opening retries reset before
+exchanging traffic. If repeated resets report that the NIC is not ready
+for eight seconds, the bridge raises a reset timeout. That timeout or
+a reset exception ends the room through the connection-failure path
+and preserves the game. An in-flight reset is still awaited before the
+worker can be reused.
+This uses the existing
+[native queue reset](../windows/runner/ps2_virtual_lan.h), wired through
+the [PS2 launcher](../lib/ui/together_ps2_lan.dart). The bridge retains
+its local DHCP replies. Native queued DHCP packets can be dropped by
+the reset and follow the console's usual retransmission path.
+
+The Windows regression reproduced zero native resets before the fix.
+Afterward the full focused suite passed 38 tests, and a follow-up
+22-test core run included the new reset-readiness timeout. The native
+[NIC test](../windows/runner/tests/ps2_virtual_lan_test.cpp) passed
+after rebuilding with assertions enabled. The relay-only probe verified
+that each seat's reset counter advanced across ICE restart and traffic
+resumed. That probe uses simulated console interfaces. The launcher
+integration test checks the actual `ps2LanReset` method call on the
+same worker texture. A native game recovery run with this new reset
+callback remains a separate acceptance check.
+
 ### Full TimeSplitters round over Windows WebRTC
 
 At Desktop `d7f7911`, the same two native D3D11 workers ran the US disc

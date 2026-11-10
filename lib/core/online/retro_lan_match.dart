@@ -26,6 +26,7 @@ final class RetroLanMatch {
     required this.rooms,
     required this.links,
     required this.launch,
+    this.resetPeerFrames,
     this.ownsGame = true,
     this.onStartupChanged,
     this.onRecoveryChanged,
@@ -40,6 +41,7 @@ final class RetroLanMatch {
   final RetroOnlineRooms rooms;
   final GameLinks links;
   final Future<RetroLanGame> Function(Uint8List mac) launch;
+  final Future<bool> Function()? resetPeerFrames;
   final bool ownsGame;
   final void Function()? onStartupChanged;
   final void Function(bool recovering)? onRecoveryChanged;
@@ -204,6 +206,7 @@ final class RetroLanMatch {
         addresses: {rooms.me: mac, peer.userId: peerMac},
       ),
       exchange: game.exchange,
+      resetPeerFrames: resetPeerFrames,
       peerRoute: () => mesh.gameRouteIdentity(peerAddress),
       send: (_, packet) {
         if (!mesh.canSendGame(peerAddress)) return;
@@ -259,7 +262,7 @@ final class RetroLanMatch {
           onRecoveryChanged?.call(false);
         }
       }
-      unawaited(bridge.pump().catchError((Object error) => _failed(error)));
+      unawaited(bridge.pump().catchError((Object error) => _failed(error, preserveGame: true)));
     });
   }
 

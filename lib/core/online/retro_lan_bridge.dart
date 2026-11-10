@@ -13,6 +13,8 @@ final class RetroLanBridge {
     required void Function(String recipient, Uint8List packet) this._send,
     required this._exchange,
     required Object? Function() this._peerRoute,
+    this._resetPeerFrames,
+    this.resetRetryWindow = const Duration(seconds: 8),
     this._dhcp,
   });
 
@@ -20,7 +22,9 @@ final class RetroLanBridge {
   RetroLanBridge.local({required this._exchange, required RetroLanDhcp this._dhcp})
     : _segment = null,
       _send = null,
-      _peerRoute = null;
+      _peerRoute = null,
+      _resetPeerFrames = null,
+      resetRetryWindow = Duration.zero;
 
   // Same bounds as the Windows DEV9 exchange. Drop excess traffic as a NIC
   // would rather than growing an unbounded queue while the core is booting.
@@ -32,9 +36,14 @@ final class RetroLanBridge {
   final void Function(String recipient, Uint8List packet)? _send;
   final Future<List<Uint8List>?> Function(List<Uint8List> frames) _exchange;
   final Object? Function()? _peerRoute;
+  final Future<bool> Function()? _resetPeerFrames;
+  final Duration resetRetryWindow;
   final _incoming = Queue<Uint8List>();
   Object? _activePeerRoute;
   int _peerRevision = 0;
+  bool _peerRouteObserved = false;
+  bool _peerResetPending = false;
+  Stopwatch? _resetWait;
   bool _closed = false;
   Completer<void>? _pendingExchange;
 
@@ -50,6 +59,25 @@ final class RetroLanBridge {
     if (_closed || _pendingExchange != null) return;
     final pending = _pendingExchange = Completer<void>();
     try {
+      _refreshPeerRoute();
+      if (_peerResetPending) {
+        final revision = _peerRevision;
+        final reset = _resetPeerFrames;
+        if (reset != null) {
+          final waiting = _resetWait ??= Stopwatch()..start();
+          if (!await reset()) {
+            if (waiting.elapsed >= resetRetryWindow) {
+              throw TimeoutException('The PS2 native network queues did not become ready.', resetRetryWindow);
+            }
+            return;
+          }
+        }
+        if (_closed) return;
+        _refreshPeerRoute();
+        if (revision != _peerRevision) return;
+        _peerResetPending = false;
+        _resetWait = null;
+      }
       final route = _refreshPeerRoute();
       final revision = _peerRevision;
       final input = _incoming.take(_batchSize).toList(growable: false);
@@ -92,11 +120,13 @@ final class RetroLanBridge {
   Object? _refreshPeerRoute() {
     final route = _peerRoute?.call();
     if (route != _activePeerRoute) {
+      if (_peerRouteObserved) _peerResetPending = true;
       _activePeerRoute = route;
       _peerRevision++;
       // DHCP replies belong to the local NIC, regardless of the peer route.
       _incoming.removeWhere((frame) => _dhcp == null || !RetroLanDhcp.isLocalService(frame));
     }
+    _peerRouteObserved = true;
     return route;
   }
 
