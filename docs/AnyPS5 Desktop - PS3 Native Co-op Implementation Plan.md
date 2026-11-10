@@ -431,6 +431,22 @@ embedded offline control used Accurate. Match that setting and trace
 the tutorial close and Pod movie open in the embedded run before
 attributing the progression difference to the integration.
 
+The offline embedded replay matched standalone on BCUS98208 update
+`01.30`, Vulkan, async shader recompiler and Approximate XFloat. It
+ran the pinned Windows core with no selected patch. The earlier
+Accurate run closed `acting_and_emoting.bik` and never opened the Pod
+movie. The Approximate replay closed the tutorial at 7:31.810 and
+opened `new_podintro.bik` from the disc at 7:43.805 after a right
+movement input. It closed the Pod movie at 8:10.051. Captures show
+Sackboy moving in the Pod, opening its controller interface with
+Square, and selecting Story with Cross to display The Gardens.
+The worker exited zero on request. This qualifies an offline embedded
+path through the intro.
+The earlier Accurate run used a different input sequence, so this
+comparison does not isolate XFloat as the cause. Reuse this replay
+sequence and capture the same movie markers with the private
+provider enabled before testing a native friend invite.
+
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
 field. The guard terminated it before sending test input. A subsequent
