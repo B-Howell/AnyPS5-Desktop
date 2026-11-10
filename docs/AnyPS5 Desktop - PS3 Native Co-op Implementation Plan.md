@@ -559,11 +559,29 @@ accepted intro entry and play, and captured frames verified that
 the guest moved in the playable intro. Both workers ran serially
 offscreen and exited zero.
 
-This resolves the loading stall in the guest-only fixture. For a
-two-core run, preserve each game's logical self route and assign
-distinct advertised RPCN peer endpoints. Verify both direct
-directions and both self routes before booting the pair. The native
-invite remains unverified.
+This resolves the loading stall in the guest-only fixture. The
+two-core fixture preserves the logical self route at
+`127.0.0.1:3658` in both games and advertises distinct RPCN endpoints
+for the host and guest at `127.0.0.2:3658` and `127.0.0.3:3658`.
+The Windows guard translates those peer addresses to the two
+physical loopback sockets. A Winsock test using the same guard
+verified payload delivery and logical source addresses for both
+self routes and both directions between peers. A separate RPCN
+preflight verified both advertised endpoints and direct datagrams
+between the physical sockets.
+
+In the offscreen paired run, both game instances signed in
+and Refresh accepted both intro play requests. The raw receive
+marker followed the first presence update by 0.231 seconds for the
+host and 0.269 seconds for the guest. Both players completed the
+intro and reached their own Pods. Each then entered First Steps
+through its Pod Computer. The first-visit level page offered
+**Play!**, and the level pause menu showed **Manage Players**. The
+fixture deadline elapsed before testing that menu. Both workers
+exited zero and the backend and disposable configs were released.
+The next run can test restoring each role's own scratch
+`dev_hdd0/game/BCUS98148_USER1` data to bypass the completed intro.
+Shared gameplay and the native invite remain unverified.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
