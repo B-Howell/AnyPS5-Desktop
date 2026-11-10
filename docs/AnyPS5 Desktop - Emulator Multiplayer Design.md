@@ -7,6 +7,29 @@ Every player launches a compatible local copy, renders locally, and plays
 through their own controller. The session exchanges game traffic or frame
 inputs. The streaming path is outside this design.
 
+## Integration status
+
+The online experiment is implemented on the Windows preview branch.
+The offline emulator review slices remain upstream PRs #85, #86 and #87.
+The online branch also carries subsequent optimizer, disc-menu and
+console-artwork changes so local integration preserves those features.
+Its cumulative diff is broader than the networking adapters alone.
+
+| Requirement | Current evidence | Still required |
+| --- | --- | --- |
+| PS1 couch co-op from the Quick Menu or Game Settings | The launcher performs compatibility checks, transfers an isolated checkpoint, assigns the remote controller and returns to the local game afterward. Two native CTR copies completed a full race through the local TURN fixture with dropped input packets. | Hosted signaling, separate-network acceptance and current physical controller/video/audio checks. |
+| PS2 native LAN through AnyTogether | The virtual NIC and room bridge carry local and relayed Ethernet traffic. Two native TimeSplitters copies completed a round after a simulated route failure. | A complete GT4 race, active gameplay with the latest native queue-reset callback, physical network-loss tests and separate-network acceptance. |
+| PS3 native online handoff | The launcher verifies an isolated provider profile, prepares its firmware/update, handles invitations and shows provider/membership state. Core and launcher checks use local fixtures. | Approved provider profile and identities, qualified binaries, and a real private level with two clients. The public release catalog is empty. |
+| Couch co-op for PS2 and PS3 games without native LAN/online support | The current PS1 input-synchronization adapter is specific to the PS1 core. | An additional synchronization adapter for each core. The existing PS2 LAN and PS3 provider paths do not cover this requirement. |
+| Linux and macOS online gameplay | The upstream offline emulator slices have separate platform work. | Online adapter ports and matching native/launcher acceptance on those platforms. Windows online qualification does not cover them. |
+| Fresh installation and ordinary-user operation | Managed package verification, missing-setup recovery, in-game invites, cancellation, retry messages and isolated storage have focused regression coverage. | Approved immutable online-core distribution and a fresh-profile end-to-end run with the production room service. |
+
+Detailed evidence and constraints belong to the
+[PS1 plan](<AnyPS5 Desktop - PS1 Netplay Implementation Plan.md>),
+[PS2 plan](<AnyPS5 Desktop - PS2 LAN Implementation Plan.md>) and
+[PS3 plan](<AnyPS5 Desktop - PS3 Native Co-op Implementation Plan.md>).
+Passing one adapter or a one-PC fixture does not close the other rows.
+
 Ordinary online-gaming connections are the target. Measure real
 round-trip delay, jitter and packet loss on direct and relayed routes
 before publishing connection requirements. PS1 couch co-op exchanges
@@ -114,8 +137,9 @@ adapters are being qualified.
 Implement the shared flow against [fake peer transport](../test/support/online_fakes.dart)
 and [fake party service](../test/support/fake_together.dart) when one mode
 passes its local technical gate. Add the other modes as they qualify rather
-than waiting for all three. The plans require no hosted service, build or live
-test during design. Keep multiplayer work separate from PR #84.
+than waiting for all three. The initial design required no hosted service,
+build or live test. Implementation now has local native and transport
+evidence in the per-console plans. Keep multiplayer work separate from PR #84.
 
 ## What we can reuse
 
@@ -142,8 +166,8 @@ two isolated processes, with separate profiles and distinct endpoints, to
 exercise compatibility checks, replay determinism and synthetic packet delay
 or loss. A local pass cannot establish WAN matchmaking, NAT traversal or the
 performance of two independent machines. Schedule that acceptance check when
-a second tester is available. Keep this as a design until implementation is
-requested.
+a second tester is available. Implementation is underway. The integration
+status above records the remaining gates.
 
 ## Multiplayer paths
 
