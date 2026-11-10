@@ -443,9 +443,25 @@ Square, and selecting Story with Cross to display The Gardens.
 The worker exited zero on request. This qualifies an offline embedded
 path through the intro.
 The earlier Accurate run used a different input sequence, so this
-comparison does not isolate XFloat as the cause. Reuse this replay
-sequence and capture the same movie markers with the private
-provider enabled before testing a native friend invite.
+comparison does not isolate XFloat as the cause.
+
+The Windows private-provider replay used the same pinned core and
+Approximate XFloat, with the authorized 33-write patch and the
+loopback RPCN and Refresh fixtures. The first attempt showed that
+the fixture's native policy overrides per-title YAML. The rebuilt
+fixture requested Approximate through the policy API and confirmed
+it in the effective config. It authenticated, accepted the fixture
+EULA, and entered the intro. It closed `acting_and_emoting.bik` at
+6:05.598, opened `new_podintro.bik` at 6:17.925, and closed it at
+6:44.146. The RPCN connection remained established in the Pod.
+The game opened its Pod computer, navigated to The Gardens and
+started First Steps. Refresh returned HTTP 200 for the developer
+level 26374 entry and play requests. A captured response to movement
+shows the King dialogue. The worker exited zero, removed its
+disposable RPCN config, and released the relay listeners. This
+qualifies one signed-in game through the intro and into a level.
+The next test needs two signed-in games in the Pod and a completed
+native friend invite and join.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
