@@ -346,6 +346,18 @@ experiment must cover both boundaries and observe guest-visible
 samples. The offline progression result establishes no causal link
 between the missing samples and the Pod transition.
 
+The unpatched disconnected Windows control used the same GOTY 1.30
+update, core, hardware renderer, and Accurate XFloat as the preceding
+control. Its patch selection was empty. It reproduced the globe scene
+for more than a minute before a normal stop. The shared patch is
+therefore unnecessary to reproduce the symptom. Guest controller
+trace recorded cellPadSetPortSetting on port 0 with mask 0x6, which
+enables pressure and sensor reporting. It was requested during
+startup, so the trace confirms the game asks for sensor data but
+does not establish that its absence causes the Pod stall. The next
+controlled test can vary guest-visible motion while leaving the
+network and patches out of the comparison.
+
 The Quick Menu labels the current status **RPCN connection** and
 describes game sign-in and lobby handling separately. The
 [English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
