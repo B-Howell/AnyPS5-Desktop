@@ -32,7 +32,7 @@ void main() {
 
   Future<void> verifySetup(String mode) async {
     final dashboardHost = mode == 'dashboard-host';
-    final host = mode == 'host' || dashboardHost;
+    final host = mode == 'host' || dashboardHost || mode == 'host-cancel-invite';
     final quickHost = mode == 'solo-quick-host';
     final quickGuest = mode == 'solo-quick-guest';
     const title = 'BCUS98208';
@@ -353,6 +353,55 @@ void main() {
         model.open(Layer.friends);
         activate('game-accept-$roomId');
       }
+    }
+    if (mode == 'host-cancel-invite') {
+      const path = 'game-sessions/$roomId';
+      final sending = Completer<void>();
+      final reply = Completer<void>();
+      final responding = Completer<void>();
+      final deleting = Completer<void>();
+      final deleted = Completer<void>();
+      server!.answers.remove('POST $path/invites');
+      server.answers.remove('DELETE $path');
+      server.handlers.add((call) async {
+        if (call.method == 'POST' && call.path == '$path/invites') {
+          sending.complete();
+          await reply.future;
+          responding.complete();
+          return (500, {'code': 'late_invite_failure'});
+        }
+        if (call.method == 'DELETE' && call.path == path) {
+          deleting.complete();
+          await deleted.future;
+          return (204, null);
+        }
+        return null;
+      });
+      addTearDown(() {
+        if (!reply.isCompleted) reply.complete();
+        if (!deleted.isCompleted) deleted.complete();
+      });
+      activate('ps3-online-play');
+      await sending.future.timeout(const Duration(seconds: 5));
+      expect(model.spot?.row, 'ps3-party-leave');
+      activate('ps3-party-leave');
+      await deleting.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => fail('Cancel never requested room deletion while the invite response was held.'),
+      );
+      expect(model.together.ps3PartyRows().single.title, 'Closing the AnyTogether room…');
+      expect(start.isCompleted, isFalse);
+      deleted.complete();
+      await waitFor(() => model.together.ps3PartyRows().isEmpty);
+      final toastBeforeReply = model.toast;
+      reply.complete();
+      await responding.future.timeout(const Duration(seconds: 5));
+      await Future<void>.delayed(Duration.zero);
+      expect(model.together.ps3PartyRows(), isEmpty);
+      expect(server.callsTo(path, method: 'DELETE'), hasLength(1));
+      expect(calls.where((call) => call.method == 'start'), isEmpty);
+      expect(model.toast, toastBeforeReply);
+      return;
     }
     activate('ps3-online-play');
     final launch = await start.future.timeout(
@@ -686,6 +735,7 @@ void main() {
     'solo-quick-guest',
     'host',
     'dashboard-host',
+    'host-cancel-invite',
     'guest',
     'guest-room-timeout',
     'guest-ended',

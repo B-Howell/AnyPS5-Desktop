@@ -1332,7 +1332,10 @@ guest to accept the invite again, and a late reply cannot admit or
 launch the abandoned attempt. Once a create or join
 request has been sent, the launcher waits for its result and releases
 any room it acquired before allowing another attempt. Friends shows
-the closing status during that cleanup.
+the closing status during that cleanup. Once the host owns a room,
+Cancel can release it while the invitation response is still pending.
+Friends shows Closing until the release completes. A late invite
+response cannot launch the canceled game or replace the current status.
 Guide opens the PS3 Quick Menu while the party's game is starting.
 **Cancel PS3 invite** is available through texture allocation and until
 the embedded worker reports its first presented frame. Cancel releases

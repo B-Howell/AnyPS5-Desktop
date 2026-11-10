@@ -340,7 +340,9 @@ extension TogetherPs3Online on TogetherModel {
       attempt.roomId = room.id;
       if (!active()) return;
       if (!canStart()) return app.show(T.text('ps3PartyBusy'));
-      if (friendId != null) await rooms.invite(room, friendId);
+      if (friendId != null) {
+        await Future.any<void>([rooms.invite(room, friendId), attempt.cancelled.future]);
+      }
       if (!active()) return;
       final admitted = room;
       attempt.refreshMembership = () => refreshMembership(admitted);
