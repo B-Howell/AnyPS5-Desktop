@@ -358,6 +358,17 @@ does not establish that its absence causes the Pod stall. The next
 controlled test can vary guest-visible motion while leaving the
 network and patches out of the comparison.
 
+A test-only Windows core injected neutral and opposing tilt samples into
+the guest's port-0 sensor report. The baseline report contained zeros.
+The diagnostic verified neutral, left, right, and a clean return to
+stock at the guest boundary, then held valid neutral or tilt throughout
+the intro. Offscreen frames showed Sackboy visibly tilt in response,
+including at the globe scene. The Pod still did not appear during
+an observation longer than the unmodified control. The tested motion
+sequence was insufficient to clear the stall. A matching standalone
+offline control is the next comparison to separate the embedded
+integration from the shared emulator and game behavior.
+
 The Quick Menu labels the current status **RPCN connection** and
 describes game sign-in and lobby handling separately. The
 [English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
