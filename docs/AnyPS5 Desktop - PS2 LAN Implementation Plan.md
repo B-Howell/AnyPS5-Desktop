@@ -652,6 +652,28 @@ integration test checks the actual `ps2LanReset` method call on the
 same worker texture. A native game recovery run with this new reset
 callback remains a separate acceptance check.
 
+The [native reset probe](../tool/ps1_netplay/ps2_native_reset_probe.dart)
+uses the windowless Windows runner with its real `RetroCoreHost`,
+one LRPS2 game and one synthetic WebRTC peer. Compile it as the Dart
+entry point in place of `webrtc_loopback.dart`, then set
+`ANYPS5_PS2_NATIVE_RESET` to a fixture JSON file. Supply absolute
+`core`, `disc`, `bios`, `card` paths, each file's SHA-256 in
+`coreSha256`, `discSha256`, `biosSha256`, `cardSha256`, and a
+fresh absolute `work` directory. It copies the BIOS and card into
+that isolated directory and verifies all file hashes before launch.
+The runner should inherit a scratch `TEMP` and `TMP` on the test drive.
+
+At Desktop `dfe945e` with the new probe entry point, the pinned
+TimeSplitters disc completed two native resets on texture 1. Published
+frames advanced from 1 to 49 across the injected disconnect and
+reconnect, then to 66 after leaving the room. The native host stopped
+normally and the seed card kept its hash. The D: receipt
+`ps2-native-reset-dfe945e` contains the fixture, bundle and runner
+output. This verifies actual method-channel queue resets while the
+core renders through the launcher's native host. The peer is synthetic
+and the game had only just begun rendering. An active two-console LAN
+match with the new callback remains unverified.
+
 ### Full TimeSplitters round over Windows WebRTC
 
 At Desktop `d7f7911`, the same two native D3D11 workers ran the US disc
