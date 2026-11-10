@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:anyps5_desktop/core/online/ps1_checkpoint_transfer.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_session.dart';
@@ -30,13 +31,16 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
     bool local = false,
     bool recompiler = false,
     bool dualShock = false,
+    File? trace,
     Future<void> Function(WebRtcNativeWorker worker, int frame)? onSync,
   }) async {
     if (dualShock && (local || recompiler)) throw ArgumentError('DualShock requires a fresh match worker.');
+    if (trace != null && !dualShock) throw ArgumentError('Signed traces require DualShock mode.');
     final process = await Process.start(launch.first, [
       ...launch.skip(1),
       '$seat',
       if (local) 'local' else if (recompiler) 'recompiler' else if (dualShock) 'dualshock',
+      if (trace != null) trace.path,
     ]);
     final worker = WebRtcNativeWorker._(process, state, dualShock, onSync);
     try {
@@ -103,6 +107,16 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
   Future<void> setPad(int buttons) => setInput(_pad(buttons));
 
   Future<void> setInput(Ps1PadInput pad) => _expect('pad ${_encodePad(pad).join(' ')}', 'pad');
+
+  Future<String> readFingerprint() => _command('fingerprint');
+
+  Future<Uint8List> readRam(int address, int length) async {
+    final bytes = await _command('read $address $length');
+    if (bytes.length != length * 2) throw StateError('The native RAM reply has an unexpected length.');
+    return Uint8List.fromList([
+      for (var i = 0; i < bytes.length; i += 2) int.parse(bytes.substring(i, i + 2), radix: 16),
+    ]);
+  }
 
   Future<int> picture() async => int.parse(await _command('published'));
 

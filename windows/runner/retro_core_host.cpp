@@ -713,7 +713,7 @@ class RetroCoreSession {
                    Ps1MatchCpu match_cpu = Ps1MatchCpu::kCachedInterpreter,
                    std::shared_ptr<const Ps1OrdinaryRecovery> returning = {},
                    bool rollback = false, AudioSink audio_sink = {},
-                   std::vector<uint16_t> input_trace = {},
+                   std::vector<ps1_netplay::PadInput> input_trace = {},
                    CallbackSlot callback_slot = CallbackSlot::kPrimary,
                    std::optional<InitialDisc> boot_disc = std::nullopt, bool netplay_dualshock = false)
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
@@ -748,8 +748,8 @@ class RetroCoreSession {
       throw std::invalid_argument("Only the PS1 host can start in local play.");
     if (rollback_ && (!netplay_ || local_staging_))
       throw std::invalid_argument("PS1 rollback requires an isolated match.");
-    if (!input_trace_.empty() && !rollback_)
-      throw std::invalid_argument("PS1 input traces require the headless rollback worker.");
+    if (!input_trace_.empty() && !rollback_ && !netplay_dualshock_)
+      throw std::invalid_argument("PS1 input traces require a headless rollback or DualShock match worker.");
     if (callback_slot_ == CallbackSlot::kPresentation && (!rollback_ || installing_packages()))
       throw std::invalid_argument("The presentation callback slot requires an isolated PS1 rollback worker.");
     if (returning_) paused_ = true;
@@ -2183,7 +2183,7 @@ class RetroCoreSession {
               auto sample = local;
               if (!input_trace_.empty()) {
                 const auto target = frame + ps1_netplay::Timeline::kDelay;
-                sample = {target < input_trace_.size() ? input_trace_[target] : uint16_t{0}, {}};
+                sample = target < input_trace_.size() ? input_trace_[target] : ps1_netplay::PadInput{};
               }
               render = netplay_->Preview(frame, sample, ports);
             }
@@ -2241,7 +2241,7 @@ class RetroCoreSession {
         } else if (input_trace_.empty() || frame < input_trace_.size()) {
           if (!input_trace_.empty()) {
             const auto sample_frame = frame + ps1_netplay::Timeline::kDelay;
-            local = {sample_frame < input_trace_.size() ? input_trace_[sample_frame] : uint16_t{0}, {}};
+            local = sample_frame < input_trace_.size() ? input_trace_[sample_frame] : ps1_netplay::PadInput{};
           }
           advance = netplay_->Prepare(local, netplay_ports_);
           checkpoint_needed = netplay_->needs_checkpoint();
@@ -2736,7 +2736,7 @@ class RetroCoreSession {
   const bool rollback_;
   const bool netplay_host_;
   const AudioSink audio_sink_;
-  const std::vector<uint16_t> input_trace_;
+  const std::vector<ps1_netplay::PadInput> input_trace_;
   const CallbackSlot callback_slot_;
   std::unique_ptr<RetroCoreSession> presentation_core_;
   RetroCoreSession* presentation_target_ = nullptr;
@@ -3121,14 +3121,14 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
                                                    local_staging && *local_staging, lan_mac, std::move(online),
                                                    std::vector<std::string>{}, match_cpu, nullptr,
                                                    presentation != nullptr, RetroCoreSession::AudioSink{},
-                                                   std::vector<uint16_t>{}, RetroCoreSession::CallbackSlot::kPrimary,
+                                                   std::vector<ps1_netplay::PadInput>{}, RetroCoreSession::CallbackSlot::kPrimary,
                                                    std::move(boot_disc), netplay_dualshock);
       if (presentation) {
         auto spare = std::make_unique<RetroCoreSession>(
             textures_, *presentation, *disc, *system, *saves, std::string{},
             std::map<std::string, std::string>{}, netplay_seat, *netplay_bios, false, std::nullopt, std::nullopt,
             std::vector<std::string>{}, match_cpu, nullptr, true, RetroCoreSession::AudioSink{},
-            std::vector<uint16_t>{}, RetroCoreSession::CallbackSlot::kPresentation);
+            std::vector<ps1_netplay::PadInput>{}, RetroCoreSession::CallbackSlot::kPresentation);
         if (!session_->AttachPresentationCore(std::move(spare)))
           throw std::runtime_error("Could not attach the PS1 rollback presentation core.");
       }

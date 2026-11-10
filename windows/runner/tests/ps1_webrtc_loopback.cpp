@@ -52,7 +52,9 @@ int wmain(int argc, wchar_t** argv) {
     result->Success();
   });
 
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(65);
+  const bool race = GetEnvironmentVariableW(L"ANYPS5_PS1_WEBRTC_RACE_TRACE", nullptr, 0) > 1;
+  const auto timeout = std::chrono::seconds(race ? 420 : 65);
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (!status && std::chrono::steady_clock::now() < deadline) {
     MSG message;
     while (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE)) {
@@ -62,7 +64,7 @@ int wmain(int argc, wchar_t** argv) {
     engine.ProcessMessages();
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
-  if (!status) std::cerr << "PS1 WebRTC loopback did not finish in 65 seconds.\n";
+  if (!status) std::cerr << "PS1 WebRTC loopback did not finish in " << timeout.count() << " seconds.\n";
   report.SetMethodCallHandler(nullptr);
   return status.value_or(4);
 }

@@ -6,10 +6,11 @@ import 'package:anyps5_desktop/core/online/ps1_netplay_match.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_wire.dart';
 
+import 'webrtc_ctr_race.dart';
 import 'webrtc_native_worker.dart';
 import 'webrtc_room_fixture.dart';
 
-Future<String> verifyDualShockWebRtc(String config) async {
+Future<String> verifyDualShockWebRtc(String config, {String? raceTrace}) async {
   final args = (jsonDecode(await File(config).readAsString()) as List).cast<String>();
   if (args.length != 5) throw const FormatException('Expected a worker, core, CUE, BIOS and disc serial.');
   final profile = Ps1NetplayProfile.tryRead(args[4]);
@@ -24,6 +25,8 @@ Future<String> verifyDualShockWebRtc(String config) async {
   );
   if (!media.supportsHandoff) throw StateError('The test needs the portable core to read confirmed input history.');
 
+  final race = raceTrace == null ? null : await WebRtcCtrRace.load(raceTrace, media.discDigest);
+  final targetFrames = race?.frames.length ?? 360;
   final work = await Directory.systemTemp.createTemp('anyps5-ps1-dualshock-');
   final workers = <WebRtcNativeWorker>[];
   final matches = <Ps1NetplayMatch>[];
@@ -31,6 +34,10 @@ Future<String> verifyDualShockWebRtc(String config) async {
     const hostPad = (buttons: 8, leftX: -19000, leftY: 14000, rightX: 24000, rightY: -12000);
     const guestPad = (buttons: 256, leftX: 21000, leftY: -16000, rightX: -25000, rightY: 13000);
     final drivers = [_DualShockTrace(hostPad), _DualShockTrace(guestPad)];
+    final raceReceipts = [
+      if (race != null)
+        for (var i = 0; i < 2; i++) race.receipt(),
+    ];
     final launch = [args.first, media.core, media.disc, media.bios];
     for (final (seat, driver) in drivers.indexed) {
       final worker = await WebRtcNativeWorker.spawn(
@@ -38,10 +45,11 @@ Future<String> verifyDualShockWebRtc(String config) async {
         File('${work.path}/seat-$seat.state'),
         seat,
         dualShock: true,
-        onSync: driver.record,
+        trace: await race?.writeSeat(work, seat),
+        onSync: race == null ? driver.record : raceReceipts[seat].record,
       );
       workers.add(worker);
-      await worker.setInput(driver.initial);
+      if (race == null) await worker.setInput(driver.initial);
     }
 
     final gateway = WebRtcRoomFixture(profile.roomFor(mode), media.discDigest);
@@ -72,28 +80,40 @@ Future<String> verifyDualShockWebRtc(String config) async {
     await Future.wait([hosting, guest.join(invite.room.id, expectedHost: invite.room.hostId)])
         .timeout(const Duration(seconds: 8));
 
+    bool recorded() => race == null
+        ? drivers.every((driver) => driver.history != null)
+        : raceReceipts.every((receipt) => receipt.finish != null);
     final deadline = Stopwatch()..start();
-    while (drivers.any((driver) => driver.history == null) ||
-        matches.any((match) => (match.session?.confirmedFrame ?? -1) < 359)) {
-      if (deadline.elapsed > const Duration(seconds: 16) || matches.any((match) => match.closed)) {
-        throw StateError('DualShock match stalled before recording confirmed input history.');
+    final budget = Duration(seconds: race == null ? 16 : 390);
+    while (!recorded() || matches.any((match) => (match.session?.confirmedFrame ?? -1) < targetFrames - 1)) {
+      if (deadline.elapsed > budget || matches.any((match) => match.closed)) {
+        throw StateError(
+          'DualShock match ended before verification: '
+          '${matches.map((match) => (match.session?.confirmedFrame, match.session?.ended)).toList()}.',
+        );
       }
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
-    final hostHistory = drivers.first.history!;
-    final guestHistory = drivers.last.history!;
-    for (var frame = 0; frame < hostHistory.length; frame++) {
-      if (hostHistory[frame] != guestHistory[frame]) {
-        throw StateError('Confirmed DualShock snapshots differ at frame $frame.');
+    if (race == null) {
+      final hostHistory = drivers.first.history!;
+      final guestHistory = drivers.last.history!;
+      for (var frame = 0; frame < hostHistory.length; frame++) {
+        if (hostHistory[frame] != guestHistory[frame]) {
+          throw StateError('Confirmed DualShock snapshots differ at frame $frame.');
+        }
       }
-    }
-    for (final (seat, driver) in drivers.indexed) {
-      driver.verify(hostHistory.map((pair) => seat == 0 ? pair.$1 : pair.$2).toList());
+      for (final (seat, driver) in drivers.indexed) {
+        driver.verify(hostHistory.map((pair) => seat == 0 ? pair.$1 : pair.$2).toList());
+      }
+    } else if (raceReceipts.first.finish != raceReceipts.last.finish) {
+      throw StateError('CTR placements differ between peers.');
+    } else if (raceReceipts.first.finalFingerprint != raceReceipts.last.finalFingerprint) {
+      throw StateError('CTR final RAM fingerprints differ between peers.');
     }
     if (links.opened.length != 2 || links.opened.any((link) => link.droppedGamePackets == 0)) {
       throw StateError('The probe did not drop input packets from both peers.');
     }
-    for (final frame in [119, 239, 359]) {
+    for (var frame = 119; frame < targetFrames; frame += 120) {
       final hash = workers.first.fingerprints[frame];
       if (hash == null || hash != workers.last.fingerprints[frame]) {
         throw StateError('DualShock RAM fingerprints differ at frame $frame.');
@@ -103,6 +123,11 @@ Future<String> verifyDualShockWebRtc(String config) async {
     await host.done.timeout(const Duration(seconds: 6));
     if (!gateway.released || gateway.signals < 2) throw StateError('The DualShock room did not release.');
     final drops = links.opened.map((link) => link.droppedGamePackets).join('/');
+    if (race != null) {
+      return 'DualShock CTR WebRTC finished $targetFrames frames with ${targetFrames ~/ 120} matching '
+          'interval RAM fingerprints and matching final RAM, 60 matching stick-steered frames, $drops dropped input packets and '
+          '${raceReceipts.first.finish}.';
+    }
     return 'DualShock WebRTC passed for ${profile.titleId}: 360 matching two-port inputs, '
         'both stick reversals and releases, three matching RAM fingerprints, and $drops dropped input packets.';
   } finally {
@@ -112,7 +137,7 @@ Future<String> verifyDualShockWebRtc(String config) async {
       try {
         await Future.wait(workers.map((worker) => worker.stop()));
       } finally {
-        await work.delete();
+        await work.delete(recursive: race != null);
       }
     }
   }

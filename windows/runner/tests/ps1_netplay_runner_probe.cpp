@@ -277,8 +277,8 @@ void VerifyIsolatedCores(char** argv) {
   std::atomic<size_t> audio_frames[2]{};
   const auto make = [&](ProbeTexture& texture, const char* core, Slot slot, uint16_t mask,
                         uint32_t limit) {
-    std::vector<uint16_t> trace(limit, mask);
-    trace[0] = trace[1] = 0;
+    std::vector<ps1_netplay::PadInput> trace(limit, {mask, {}});
+    trace[0] = trace[1] = {};
     return std::make_unique<RetroCoreSession>(
         &texture, core, argv[2], "", "", "", std::map<std::string, std::string>{}, 0u,
         argv[3], false, std::nullopt, std::nullopt, std::vector<std::string>{},
@@ -456,14 +456,14 @@ bool VerifyAudioQueueTiming() {
          playout.underruns() == 1;
 }
 
-static bool ReadProbePad(ps1_netplay::PadInput& pad, bool dualshock) {
+static bool ReadProbePad(std::istream& stream, ps1_netplay::PadInput& pad, bool dualshock) {
   unsigned buttons;
-  if (!(std::cin >> buttons) || buttons > UINT16_MAX) return false;
+  if (!(stream >> buttons) || buttons > UINT16_MAX) return false;
   pad.buttons = static_cast<uint16_t>(buttons);
   if (dualshock) {
     for (auto& axis : pad.axes) {
       int value;
-      if (!(std::cin >> value) || value < INT16_MIN || value > INT16_MAX) return false;
+      if (!(stream >> value) || value < INT16_MIN || value > INT16_MAX) return false;
       axis = static_cast<int16_t>(value);
     }
   }
@@ -516,20 +516,21 @@ int main(int argc, char** argv) {
   const bool dual = argc >= 7 && (mode == "rollback-dual" || mode == "rollback-dual-recompiler");
   const bool rollback = dual || mode == "rollback" || mode == "rollback-recompiler";
   const bool audio_control = argc == 6 && (mode == "audio-control" || mode == "audio-control-recompiler");
-  const bool dualshock = argc == 6 && mode == "dualshock";
+  const bool dualshock = mode == "dualshock";
   if (argc == 6 && !local_staging && !recompiler && !rollback && !audio_control && !dualshock) return 2;
   const bool ordinary = argc == 7 && std::string_view(argv[5]) == "ordinary";
-  if (argc == 7 && !ordinary && !rollback) return 2;
+  if (argc == 7 && !ordinary && !rollback && !dualshock) return 2;
   if (argc == 8 && !dual) return 2;
-  std::vector<uint16_t> trace;
-  if (rollback && argc == (dual ? 8 : 7)) {
+  std::vector<ps1_netplay::PadInput> trace;
+  if ((rollback && argc == (dual ? 8 : 7)) || (dualshock && argc == 7)) {
     std::ifstream input(std::filesystem::u8path(argv[dual ? 7 : 6]));
-    unsigned value;
-    while (input >> value) {
-      if (value > UINT16_MAX || trace.size() >= 60000) return 2;
-      trace.push_back(static_cast<uint16_t>(value));
+    while (input >> std::ws && input.peek() != std::char_traits<char>::eof()) {
+      ps1_netplay::PadInput sample;
+      if (trace.size() >= 60000 || !ReadProbePad(input, sample, dualshock)) return 2;
+      trace.push_back(sample);
     }
-    if (input.bad() || !input.eof() || trace.size() < 2 || trace[0] || trace[1]) return 2;
+    if (input.bad() || !input.eof() || trace.size() < 2 ||
+        !(trace[0] == ps1_netplay::PadInput{}) || !(trace[1] == ps1_netplay::PadInput{})) return 2;
   }
   const auto bios_directory = std::filesystem::u8path(argv[3]).parent_path().u8string();
   std::mutex audio_mutex;
@@ -565,7 +566,7 @@ int main(int argc, char** argv) {
   if (dual && !session.AttachPresentationCore(std::make_unique<RetroCoreSession>(
       &spare_texture, argv[6], argv[2], "", "", "", std::map<std::string, std::string>{}, seat, argv[3],
       false, std::nullopt, std::nullopt, std::vector<std::string>{}, match_cpu,
-      nullptr, true, [](const int16_t*, size_t) {}, std::vector<uint16_t>{},
+      nullptr, true, [](const int16_t*, size_t) {}, std::vector<ps1_netplay::PadInput>{},
       RetroCoreSession::CallbackSlot::kPresentation))) return 3;
   if (!session.Start()) return 3;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
@@ -847,7 +848,7 @@ int main(int argc, char** argv) {
     }
     if (command == "pad") {
       ps1_netplay::PadInput input;
-      if (!ReadProbePad(input, dualshock)) return 5;
+      if (!ReadProbePad(std::cin, input, dualshock)) return 5;
       session.SetInput(input.buttons, input.axes);
       std::cout << "pad" << std::endl;
       continue;
@@ -879,7 +880,7 @@ int main(int argc, char** argv) {
     for (unsigned index = 0; index < count; ++index) {
       unsigned frame;
       ps1_netplay::PadInput input;
-      if (!(std::cin >> frame) || !ReadProbePad(input, dualshock)) return 5;
+      if (!(std::cin >> frame) || !ReadProbePad(std::cin, input, dualshock)) return 5;
       remote.push_back({frame, input});
     }
     const auto received = session.SyncNetplay(

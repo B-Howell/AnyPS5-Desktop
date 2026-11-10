@@ -28,6 +28,9 @@ Future<void> main() async {
     final lan = Platform.environment['ANYPS5_PS2_WEBRTC_LAN'] == '1';
     final ordinary = Platform.environment['ANYPS5_PS1_WEBRTC_ORDINARY'] == '1';
     final dualShock = Platform.environment['ANYPS5_PS1_WEBRTC_DUALSHOCK'] == '1';
+    final tracePath = Platform.environment['ANYPS5_PS1_WEBRTC_RACE_TRACE'] ?? '';
+    final raceTrace = tracePath.isEmpty ? null : tracePath;
+    if (raceTrace != null && !dualShock) throw StateError('A race trace requires DualShock mode.');
     if ((ordinary || dualShock) && config.isEmpty) throw StateError('This probe requires a native fixture.');
     if ((ordinary && dualShock) || (lan && config.isNotEmpty)) throw StateError('Conflicting WebRTC probe modes.');
     await report.invokeMethod<void>(
@@ -39,7 +42,7 @@ Future<void> main() async {
           : ordinary
           ? await verifyOrdinaryWebRtc(config)
           : dualShock
-          ? await verifyDualShockWebRtc(config)
+          ? await verifyDualShockWebRtc(config, raceTrace: raceTrace)
           : await _nativeExercise(config),
     );
   } on Object catch (error, stack) {

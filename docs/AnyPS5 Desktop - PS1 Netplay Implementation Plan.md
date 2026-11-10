@@ -53,6 +53,16 @@ Scope the first release to two invited players, one verified disc revision,
 one core build and one tested configuration. Public lobbies, spectators,
 mid-match joins, host migration, and sync across arbitrary settings can wait.
 
+### Local test storage
+
+Choose an explicit scratch drive before building or running a probe. Keep the
+worktree, build output, Dart and native temporary directories, and isolated
+emulator profiles on that drive. Set TEMP and TMP for the whole process tree.
+Pass explicit scratch paths for saves, firmware copies, shader caches, and
+captures because some runners otherwise use LocalAppData. Check free space
+before a run and keep only the output needed to reproduce or verify its result.
+Archive unique evidence and discard generated staging from completed runs.
+
 ## 1. Pin the fixture and prove determinism on one PC
 
 The [PS1 determinism harness](<AnyPS5 Desktop - PS1 Determinism Harness.md>) records the local proof and its limits.
@@ -1019,6 +1029,33 @@ The converted stick trace and the neutral trace do not reach results
 by frame 13,706. The three cases use isolated local workers without
 WebRTC. A complete analog-driven race and play across separate networks
 remain separate gates.
+
+The [full Coco Park WebRTC probe](../tool/ps1_netplay/webrtc_ctr_race.dart)
+uses the same pinned recording from boot to results, converting only
+frames 6,600 through 6,659 from D-pad steering to left-stick input. Each
+peer replays one seat through the fresh DualShock room. The probe checks
+both cores' input histories during that segment, compares periodic and
+final RAM fingerprints, and reads the placements from the game itself.
+It uses two frames of input delay, real local WebRTC data channels,
+in-process room signaling, and drops every fifth input datagram on each
+link.
+
+```powershell
+pwsh -File tool/ps1_netplay/run_webrtc_probe.ps1 -Runner "path/to/loopback.exe" -Data "path/to/data" -NativeFixture "path/to/fixture.json" -DualShock -RaceTrace "tool/ps1_netplay/fixtures/ctr_usa_coco_park_versus.json"
+```
+
+On Windows x64, both peers completed all 13,706 frames with 114 matching
+interval RAM fingerprints and matching final RAM. Both native histories
+matched the 60-frame steering segment, and each link dropped 5,725 input
+datagrams. The game marked both placements finished. The host placed first
+after three laps, and the guest placed second with zero completed laps.
+The native worker SHA-256 was
+`44a8288871838ad706445482b15f8995da8d00ef5aa35ea894ebf33700b96198`,
+and the Dart kernel SHA-256 was
+`cb326a101b55781eba64eea5e75842deeb3e6285b7f26c24747c9f1c17bf8639`.
+The run covers a hybrid input trace on one PC. It does not measure WAN
+latency, jitter, rollback cost, or two independently completed three-lap
+races.
 
 After a friend is selected, the launcher verifies the disc, BIOS and
 standard netplay core before making a room. If the

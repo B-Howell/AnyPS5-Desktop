@@ -4,12 +4,16 @@ param(
     [Parameter(Mandatory)][string]$Runner,
     [Parameter(Mandatory)][string]$Data,
     [string]$NativeFixture,
+    [string]$RaceTrace,
     [switch]$Ordinary,
     [switch]$DualShock,
     [switch]$Lan
 )
 
 $ErrorActionPreference = 'Stop'
+if ($RaceTrace -and -not $DualShock) {
+    throw 'Race traces require DualShock mode.'
+}
 if ($Lan -and ($Ordinary -or $DualShock -or $NativeFixture)) {
     throw 'LAN mode uses its synthetic Ethernet fixture and cannot take a PS1 fixture.'
 }
@@ -22,6 +26,7 @@ if (($Ordinary -or $DualShock) -and -not $NativeFixture) {
 $runnerPath = (Resolve-Path -LiteralPath $Runner).ProviderPath
 $dataPath = (Resolve-Path -LiteralPath $Data).ProviderPath
 $fixturePath = if ($NativeFixture) { (Resolve-Path -LiteralPath $NativeFixture).ProviderPath }
+$tracePath = if ($RaceTrace) { (Resolve-Path -LiteralPath $RaceTrace).ProviderPath }
 $parent = [IO.Path]::TrimEndingDirectorySeparator((Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).ProviderPath)
 $scratch = Join-Path $parent ("anyps5-webrtc-" + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $scratch
@@ -36,10 +41,12 @@ try {
             TMP = $scratch
             ANYPS5_PS1_WEBRTC_NATIVE = $fixturePath
             ANYPS5_PS1_WEBRTC_ORDINARY = if ($Ordinary) { '1' } else { $null }
+            ANYPS5_PS1_WEBRTC_RACE_TRACE = $tracePath
             ANYPS5_PS1_WEBRTC_DUALSHOCK = if ($DualShock) { '1' } else { $null }
             ANYPS5_PS2_WEBRTC_LAN = if ($Lan) { '1' } else { $null }
         }
-    if (-not $process.WaitForExit(75000)) { throw 'The headless WebRTC runner timed out.' }
+    $timeoutMs = if ($RaceTrace) { 430000 } else { 75000 }
+    if (-not $process.WaitForExit($timeoutMs)) { throw 'The headless WebRTC runner timed out.' }
     Get-Content -LiteralPath $stdout | Where-Object { $_ -notmatch '^The Dart VM service is listening' }
     if ($process.ExitCode -ne 0) {
         Get-Content -LiteralPath $stderr -Tail 12
