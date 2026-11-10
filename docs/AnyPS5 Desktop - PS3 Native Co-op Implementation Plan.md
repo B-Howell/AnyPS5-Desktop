@@ -292,6 +292,27 @@ windows differed, so this comparison identifies a guard error and
 qualifies one Windows client's intro. It does not establish the cause
 of the long gaps between HTTP requests or qualify a shared lobby.
 
+The next Windows run traced the test relay around the long HTTP gaps.
+Refresh replied to announce after 157 ms and to telemetry after 110 ms.
+The responses advertised connection close without a content length.
+In each case, the game closed its end approximately 30 seconds after
+the response arrived, and the relay exposed upstream EOF only after
+that. The relay's subprocess kept stdout open while it awaited input,
+which delayed the game receiving the server's close. A separate
+Windows-to-WSL control reproduced the stall with a close-delimited
+response. An explicit downstream EOF record delivered the body and
+close in approximately 125 ms while the client's write side stayed
+open. This fix applies to the isolated test relay. A real game run
+through the corrected relay remains a separate verification step.
+
+The longer baseline game run advanced through both controller tutorials
+to the globe scene and rendered more than 18,000 frames. The Pod did
+not appear during the run. The fixture requested a normal shutdown at
+its deadline, the game sent goodbye, and the relay released its
+listeners. The next runtime comparison should keep the test game and
+core pins and use the corrected relay to test whether it reaches the
+Pod with close-delimited notifications and bootstrap responses intact.
+
 The Quick Menu labels the current status **RPCN connection** and
 describes game sign-in and lobby handling separately. The
 [English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
