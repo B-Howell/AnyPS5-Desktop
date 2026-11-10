@@ -313,6 +313,23 @@ listeners. The next runtime comparison should keep the test game and
 core pins and use the corrected relay to test whether it reaches the
 Pod with close-delimited notifications and bootstrap responses intact.
 
+The corrected relay passed the real Windows game check. It forwarded
+the announce close at 140 ms and telemetry close at 156 ms, and the game
+continued through authenticated intro entry without the two 30-second
+gaps. The same run finished the controller videos and reached the globe
+scene. The game still did not transition to the Pod during the
+observation window, even though rendering and online notifications
+continued. This separates the Pod progression issue from the relay
+close bug. The game and backend shut down normally.
+
+The paired transport preflight used two Windows fixture clients and
+the real isolated RPCN service. Each client bound UDP 3658 on its own
+loopback address. The two signaling relay paths presented matching
+addresses and ports to RPCN. Each client queried the other's advertised
+address and exchanged direct UDP with the peer. This verifies the
+one-PC endpoint layout. A paired game run still needs two Pod-ready
+profiles and a real native join.
+
 The Quick Menu labels the current status **RPCN connection** and
 describes game sign-in and lobby handling separately. The
 [English](../assets/l10n/en.json) and [Turkish](../assets/l10n/tr.json)
