@@ -93,11 +93,17 @@ The scratch Linux core also compiled with the upstream change, using the
 same pinned core and private provider patches. Its unstripped library
 SHA-256 was
 `e7f9bee166f55e60b65882ba76f5e5b4537137fce34b772680a9e1dcd275d277`.
-The source diff, build and wire logs are in WSL under
-`/tmp/anyps5-rpcn-v34-6a9Df5`. The next gate is to boot LittleBigPlanet
-against the isolated protocol-34 RPCN and Refresh pair and verify game
-authentication before qualifying room entry. This library remains a local
-test artifact.
+The source diff, build, wire and game-run logs are in WSL under
+`/tmp/anyps5-rpcn-v34-6a9Df5`. The headless LittleBigPlanet GOTY run used
+that library and RPCN 1.12.1 with Refresh 3.7.2. The game applied the
+33-write fixture patch, verified the private RPCN certificate, reached
+provider Ready and called `sceNpManagerRequestTicket2` for
+`UP9000-BCUS98148_00`. Refresh accepted the game's signed ticket once.
+The game exited zero and the backends left zero listeners. The run used
+disposable credentials and a scratch profile, with the original disc
+mounted read-only. This qualifies game authentication with protocol 34.
+The library remains a local test artifact, and the two-client room still
+needs a gameplay test.
 
 For private RPCN, also qualify ticket trust. The
 [Refresh authentication handler](https://github.com/LittleBigRefresh/Refresh/blob/v3.7.2/Refresh.Interfaces.Game/Endpoints/Handshake/AuthenticationEndpoints.cs)
@@ -649,8 +655,14 @@ completed First Steps with a score of 2,118, and unlocked Get a Grip.
 The host could start Get a Grip, but its level menu still offered
 only solo Play and Manage Players remained disabled in the Pod.
 The worker exited zero after returning to the Pod. Keep this newer
-host scratch profile as the next progression seed. Completing First
-Steps alone did not expose native join controls in this fixture.
+host scratch profile as the next progression seed. The [LittleBigPlanet
+game manual](https://www.brewology.com/downloads/get.php?id=1157) puts the
+online unlock after the first three Gardens levels and describes
+**Manage Players** as a control for the current group. Complete the
+remaining two Gardens levels in both scratch profiles, verify InfoMoon
+or the Friends menu, then use the friend's Info Page to invite or join.
+Keep both profiles on the same private lobby key as described in the
+[Bonsai setup guide](https://docs.lbpbonsai.com/rpcs3.html).
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
