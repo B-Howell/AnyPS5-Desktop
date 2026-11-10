@@ -99,7 +99,9 @@ final class Ps1NetplayMatch {
       await link.close();
       return null;
     });
-    final link = await _untilClose(openingLink).timeout(const Duration(seconds: 30));
+    const linkDeadline = Duration(seconds: 30);
+    final link = await _untilClose(openingLink)
+        .timeout(linkDeadline, onTimeout: () => throw RetroConnectionTimeout(linkDeadline));
     if (link == null) return;
     if (_closed) {
       await link.close();

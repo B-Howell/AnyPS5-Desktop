@@ -300,6 +300,8 @@
   "ps1OnlineDisconnected": "The online game lost the connection.",
   "retroOnlineUnavailable": "This build does not support the game's online mode.",
   "retroInviteHostChanged": "The room host has changed. Ask your friend to send a new invite.",
+  "retroConnectionTimeoutHost": "Connecting took too long. Invite your friend again.",
+  "retroConnectionTimeoutGuest": "Connecting took too long. Ask your friend to send a new invite.",
   "retroInviteLookupTimeout": "The room took too long to respond. Try accepting the invite again.",
   "ps2LanInvite": "Invite to LAN Play · %@",
   "ps2LanInviteFromGame": "Invite a Friend to LAN Play",

@@ -183,8 +183,9 @@ final class RetroLanMatch {
     _early.clear();
 
     final timer = Stopwatch()..start();
+    const deadline = Duration(seconds: 30);
     while (!_closed && !mesh.canSendGame(peerAddress)) {
-      if (timer.elapsed > const Duration(seconds: 30)) throw StateError('The PS2 peer did not connect.');
+      if (timer.elapsed > deadline) throw RetroConnectionTimeout(deadline);
       await _untilClose(Future<void>.delayed(const Duration(milliseconds: 12)));
     }
     if (_closed) return;

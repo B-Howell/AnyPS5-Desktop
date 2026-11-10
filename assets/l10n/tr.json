@@ -300,6 +300,8 @@
   "ps1OnlineDisconnected": "Çevrimiçi oyun bağlantısı kesildi.",
   "retroOnlineUnavailable": "Bu sürüm oyunun çevrimiçi modunu desteklemiyor.",
   "retroInviteHostChanged": "Oda sahibi değişti. Arkadaşınızdan yeni bir davet göndermesini isteyin.",
+  "retroConnectionTimeoutHost": "Bağlantı zaman aşımına uğradı. Arkadaşınızı tekrar davet edin.",
+  "retroConnectionTimeoutGuest": "Bağlantı zaman aşımına uğradı. Arkadaşınızdan yeni bir davet göndermesini isteyin.",
   "retroInviteLookupTimeout": "Oda zamanında yanıt vermedi. Daveti tekrar kabul etmeyi deneyin.",
   "ps2LanInvite": "LAN Oyununa Davet Et · %@",
   "ps2LanInviteFromGame": "Bir Arkadaşını LAN Oyununa Davet Et",

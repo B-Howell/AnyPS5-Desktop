@@ -398,6 +398,8 @@ extension TogetherPs2Lan on TogetherModel {
       if (active()) app.show(T.text('ps2LanProfileInUse'));
     } on RetroRoomHostMismatch {
       if (active()) app.show(T.text('retroInviteHostChanged'));
+    } on RetroConnectionTimeout {
+      if (active()) app.show(T.text(host ? 'retroConnectionTimeoutHost' : 'retroConnectionTimeoutGuest'));
     } on RetroRoomLookupTimeout {
       if (active()) app.show(T.text('retroInviteLookupTimeout'));
     } on Object {

@@ -429,7 +429,7 @@ void main() {
         clock.elapse(const Duration(seconds: 11));
         expect(released, 0);
         clock.elapse(const Duration(seconds: 1));
-        expect(failure, isA<TimeoutException>());
+        expect(failure, isA<RetroConnectionTimeout>());
         expect(closed, isTrue);
         expect(released, 1);
 
@@ -437,7 +437,7 @@ void main() {
         reply.complete({'iceServers': <Object>[]});
         clock.flushMicrotasks();
         expect(network.made, isEmpty);
-        expect(failure, isA<TimeoutException>());
+        expect(failure, isA<RetroConnectionTimeout>());
         expect(released, 1);
       });
     });
@@ -484,7 +484,7 @@ void main() {
           clock.elapse(const Duration(seconds: 29));
           expect(match.closed, isFalse);
           clock.elapse(const Duration(seconds: 1));
-          expect(failure, isA<TimeoutException>());
+          expect(failure, isA<RetroConnectionTimeout>());
         }
         expect(match.closed, isTrue);
         expect(released, 1);

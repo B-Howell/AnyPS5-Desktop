@@ -270,6 +270,12 @@ The room tests cover both timeout and cancel with a late link. The
 headless CTR control also passed 360 confirmed frames through two
 local WebRTC peers after the change.
 
+When a PS1 or PS2 connection setup deadline expires, the launcher gives the
+host a prompt to invite their friend again and tells the guest to ask for
+a new invite. This covers the connection settings request, PS1 peer
+connection creation, and PS2 peer channel setup. A disconnect after
+play starts keeps its separate message.
+
 - On a clean AnyPS5 install, set up the needed emulator inside Settings,
   select user-supplied firmware and games, and start or accept a session
   from the dashboard or Quick Menu. Report incompatible media, missing

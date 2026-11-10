@@ -431,7 +431,7 @@ void main() {
   }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null);
 
   final standardFixture = Platform.environment['ANYPS5_TEST_PS1_STANDARD_FIXTURE'];
-  test('PS1 Game Settings prefers the portable core when inviting the selected friend', () async {
+  Future<void> verifyDashboardInvite({bool timeoutIce = false}) async {
     final [_, disc, bios] = (jsonDecode(await File(ordinaryFixture!).readAsString()) as List).cast<String>();
     final [package, stockCore] = (jsonDecode(await File(standardFixture!).readAsString()) as List).cast<String>();
     final server = await FakeTogether.start();
@@ -547,10 +547,65 @@ void main() {
     expect(File(p.join(home, 'PS1-Netplay', 'swanstation_libretro.dll')).existsSync(), isTrue);
     expect(offline.readAsBytesSync(), File(stockCore).readAsBytesSync());
     expect(model.running, isNull);
+    if (timeoutIce) {
+      final requested = Completer<void>();
+      final release = Completer<void>();
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+      });
+      server.handlers.add((call) async {
+        if (call.method != 'GET' || call.path != '$path/ice-servers') return null;
+        requested.complete();
+        await release.future;
+        return (200, {'iceServers': []});
+      });
+      server.answers['GET $path'] = (
+        200,
+        {
+          ...room,
+          'members': [
+            {'userId': me},
+            {
+              'userId': friendId,
+              'device': '12345678-1234-4234-8234-123456789ab3',
+              'properties': {'protocol': RetroOnlineMode.synchronized.protocol},
+            },
+          ],
+        },
+      );
+      await requested.future.timeout(const Duration(seconds: 5));
+      expect(
+        await eventually(
+          () =>
+              model.toast == 'Connecting took too long. Invite your friend again.' &&
+              model.together.ps1NetplayRows().isEmpty,
+          timeout: const Duration(seconds: 16),
+        ),
+        isTrue,
+      );
+      expect(model.toast, 'Connecting took too long. Invite your friend again.');
+      expect(server.callsTo(path, method: 'DELETE'), hasLength(1));
+      expect(model.running, isNull);
+      release.complete();
+      return;
+    }
     (model.together.ps1NetplayRows().single.kind as ActionRow).run();
     expect(await eventually(() => model.together.ps1NetplayRows().isEmpty), isTrue);
     expect(server.callsTo(path, method: 'DELETE'), hasLength(1));
-  }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null || standardFixture == null);
+  }
+
+  final skipDashboardInvite = Abi.current() != Abi.windowsX64 || ordinaryFixture == null || standardFixture == null;
+  test(
+    'PS1 Game Settings prefers the portable core when inviting the selected friend',
+    verifyDashboardInvite,
+    skip: skipDashboardInvite,
+  );
+  test(
+    'PS1 Game Settings explains a connection settings timeout to the host',
+    () => verifyDashboardInvite(timeoutIce: true),
+    timeout: const Timeout(Duration(seconds: 60)),
+    skip: skipDashboardInvite,
+  );
 
   Future<void> verifyOrdinaryHandoff({
     required bool guestMode,

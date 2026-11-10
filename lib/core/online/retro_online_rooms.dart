@@ -14,6 +14,11 @@ final class RetroRoomLookupTimeout implements Exception {
   const RetroRoomLookupTimeout();
 }
 
+/// A deadline while preparing the connection, before the game can start.
+final class RetroConnectionTimeout extends TimeoutException {
+  RetroConnectionTimeout(Duration duration) : super('The multiplayer connection did not finish setting up.', duration);
+}
+
 enum RetroOnlineMode {
   synchronized('anyps5-ps1-netplay-v1'),
   lan('anyps5-retro-lan-v1'),
@@ -184,7 +189,11 @@ final class RetroOnlineRooms {
   }
 
   Future<List<Map<String, dynamic>>> iceServers(RetroRoom room) async {
-    final response = await call('GET', '${_path(room.id)}/ice-servers').timeout(const Duration(seconds: 12));
+    const deadline = Duration(seconds: 12);
+    final response = await call(
+      'GET',
+      '${_path(room.id)}/ice-servers',
+    ).timeout(deadline, onTimeout: () => throw RetroConnectionTimeout(deadline));
     final servers = response['iceServers'];
     if (servers is! List) throw StateError('The retro room returned invalid connection settings.');
     return [for (final server in servers) Map<String, dynamic>.from(server as Map)];

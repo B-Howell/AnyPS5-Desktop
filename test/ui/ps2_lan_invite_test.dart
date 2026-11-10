@@ -122,6 +122,7 @@ void main() {
     bool hostChanged = false,
     bool omitInviteSender = false,
     bool failIce = false,
+    bool timeoutIce = false,
     bool failNativeBoot = false,
     bool quickBootCancel = false,
     bool quickMenuDuringPlay = false,
@@ -198,7 +199,7 @@ void main() {
     const local = '12345678-1234-4234-8234-123456789ab2';
     const hostDevice = '12345678-1234-4234-8234-123456789ab3';
     final liveMenu = quickMenuDuringPlay || hostRematch;
-    if (quickBootCancel || liveMenu || failIce || failNativeBoot) server.me['id'] = local;
+    if (quickBootCancel || liveMenu || failIce || timeoutIce || failNativeBoot) server.me['id'] = local;
     if (hostRematch) server.friend(host, 'ana', 'Ana', presence: {'state': 'online'});
     final protocol = RetroOnlineMode.lan.protocol;
     final invite = {
@@ -309,7 +310,7 @@ void main() {
       expect(model.running, isNull);
       return;
     }
-    if (quickBootCancel || liveMenu || failIce || failNativeBoot) {
+    if (quickBootCancel || liveMenu || failIce || timeoutIce || failNativeBoot) {
       const path = 'game-sessions/$roomId';
       final room = {
         ...(server.answers['GET $path']!.$2 as Map<String, dynamic>),
@@ -335,6 +336,32 @@ void main() {
           'DELETE $path': (204, null),
         },
       });
+      if (timeoutIce) {
+        final requested = Completer<void>();
+        final release = Completer<void>();
+        addTearDown(() {
+          if (!release.isCompleted) release.complete();
+        });
+        server.answers.remove('GET $path/ice-servers');
+        server.handlers.add((call) async {
+          if (call.method != 'GET' || call.path != '$path/ice-servers') return null;
+          requested.complete();
+          await release.future;
+          return (200, {'iceServers': []});
+        });
+        press(continueId);
+        await requested.future.timeout(const Duration(seconds: 5));
+        await Future<void>.delayed(const Duration(seconds: 12));
+        await until(() => server.callsTo('$path/leave').length == 1);
+        await until(() => !model.panelCategories().single.rows.any((row) => row.id == 'ps2-lan-status'));
+        expect(model.toast, 'Connecting took too long. Ask your friend to send a new invite.');
+        expect(model.running, isNull);
+        expect(network.made, isEmpty);
+        release.complete();
+        await Future<void>.delayed(Duration.zero);
+        expect(network.made, isEmpty);
+        return;
+      }
       if (failIce) {
         server.answers['GET $path/ice-servers'] = (500, {'code': 'no_route'});
         press(continueId);
@@ -749,6 +776,11 @@ void main() {
   test(
     'PS2 LAN reports a peer connection failure before the game boots',
     () => verifyBundledSetup(expired: false, failIce: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'PS2 LAN explains a connection settings timeout',
+    () => verifyBundledSetup(expired: false, timeoutIce: true),
     skip: Abi.current() != Abi.windowsX64,
   );
   test(
