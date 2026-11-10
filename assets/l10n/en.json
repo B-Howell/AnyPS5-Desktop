@@ -270,7 +270,7 @@
   "ps1OnlineCouch": "Online couch co-op",
   "retroOnlineChooseFriend": "Invite a friend",
   "retroOnlineNoFriends": "None of your friends are online right now.",
-  "ps1OnlineInviteDetail": "Online split-screen · Both players need the same game and BIOS.",
+  "ps1OnlineInviteDetail": "Both players need the same game and BIOS. The game uses its usual local multiplayer view.",
   "ps1OnlineLeave": "Leave online game",
   "ps1OnlineCancel": "Cancel online session",
   "ps1OnlinePlaying": "Match in progress",

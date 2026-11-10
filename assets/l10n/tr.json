@@ -270,7 +270,7 @@
   "ps1OnlineCouch": "Çevrimiçi yerel eşli oyun",
   "retroOnlineChooseFriend": "Bir arkadaşını davet et",
   "retroOnlineNoFriends": "Şu anda çevrimiçi arkadaşın yok.",
-  "ps1OnlineInviteDetail": "Çevrimiçi bölünmüş ekran · İki oyuncuda da aynı oyun ve BIOS olmalı.",
+  "ps1OnlineInviteDetail": "İki oyuncuda da aynı oyun ve BIOS olmalı. Oyun, yerel çok oyunculu modun normal ekran düzenini kullanır.",
   "ps1OnlineLeave": "Çevrimiçi oyundan ayrıl",
   "ps1OnlineCancel": "Çevrimiçi oturumu iptal et",
   "ps1OnlinePlaying": "Oyun devam ediyor",

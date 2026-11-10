@@ -425,6 +425,112 @@ void main() {
   }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null);
 
   final standardFixture = Platform.environment['ANYPS5_TEST_PS1_STANDARD_FIXTURE'];
+  test('PS1 Game Settings verifies the clean setup before inviting the selected friend', () async {
+    final [_, disc, bios] = (jsonDecode(await File(ordinaryFixture!).readAsString()) as List).cast<String>();
+    final [package, _] = (jsonDecode(await File(standardFixture!).readAsString()) as List).cast<String>();
+    final server = await FakeTogether.start();
+    addTearDown(server.close);
+    const me = '12345678-1234-4234-8234-123456789ab1';
+    const friendId = '12345678-1234-4234-8234-123456789ab2';
+    const path = 'game-sessions/12345678-1234-4234-8234-123456789abc';
+    final digest = await Ps1NetplayMedia.cueDigest(disc);
+    final room = {
+      'id': path.split('/').last,
+      'host': {'userId': me},
+      'kind': 'online',
+      'titleId': 'SCUS94426',
+      'gameVersion': Ps1NetplayRoomMode.fresh.version,
+      'engineBuild': RetroOnlineMode.synchronized.protocol,
+      'capacity': 2,
+      'joinable': false,
+      'properties': {'protocol': RetroOnlineMode.synchronized.protocol, 'discSha256': digest},
+      'members': [
+        {'userId': me},
+      ],
+    };
+    server.me['id'] = me;
+    server.friend(friendId, 'ana', 'Ana', presence: {'state': 'online'});
+    server.answers.addAll({
+      'GET me/game-session': (200, {'session': null}),
+      'POST game-sessions': (201, room),
+      'PUT $path/members/me': (200, room),
+      'GET $path': (200, room),
+      'POST $path/invites': (204, null),
+      'DELETE $path': (204, null),
+    });
+    var biosPicks = 0;
+    final fixture = makeFixture(
+      together: server.base,
+      system: HostSystem.windows,
+      environment: {'ANYPS5_PS1_NETPLAY': '1', 'ANYPS5_MANAGED_CORE_PACKAGES': p.dirname(package)},
+      pickFile: (_, _) async => ++biosPicks == 1 ? null : bios,
+    );
+    final model = fixture.model;
+    addTearDown(() {
+      model.dispose();
+      fixture.dispose();
+    });
+    await signIn(model.together);
+    expect(await eventually(() => model.together.hub.friends.loaded), isTrue);
+    final home = p.join(p.dirname(model.paths.toolkits), 'Emulators');
+    final offline = File(p.join(home, 'swanstation_libretro.dll'))
+      ..createSync(recursive: true)
+      ..writeAsBytesSync([1, 2, 3]);
+    final game = Game(
+      folder: p.dirname(disc),
+      titleId: 'PS1-fixture',
+      name: 'CTR fixture',
+      names: const {},
+      defaultLanguage: 'en',
+      version: '',
+      executable: ExecutableKind.disc,
+      retro: (platform: RetroPlatform.ps1, path: disc),
+      retroSerial: 'SCUS94426',
+    );
+    model.games = [game];
+    model.select(0);
+    const link = 'ps1-netplay-dashboard-invite';
+    const friendRow = 'ps1-netplay-dashboard-$friendId';
+    void press(String id) {
+      final index = model.panelCategories().single.rows.indexWhere((row) => row.id == id);
+      expect(index, isNonNegative, reason: id);
+      model.activateRow(index);
+    }
+
+    model.open(Layer.gameSettings);
+    press(link);
+    model.closeOverlay();
+    expect(model.spot?.row, link);
+    expect(biosPicks, 0);
+    expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
+    press(link);
+    press(friendRow);
+    expect(await eventually(() => biosPicks == 1 && model.together.ps1NetplayRows().isEmpty), isTrue);
+    expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
+
+    model.open(Layer.gameSettings);
+    press(link);
+    press(friendRow);
+    expect(
+      await eventually(
+        () => server.callsTo('$path/invites', method: 'POST').isNotEmpty,
+        timeout: const Duration(seconds: 20),
+      ),
+      isTrue,
+      reason: 'Expected invite after media verification. Status: ${model.toast}',
+    );
+    final sent = server.callsTo('game-sessions', method: 'POST').single.body;
+    expect(sent['gameVersion'], Ps1NetplayRoomMode.fresh.version);
+    expect(sent['properties'], {'protocol': RetroOnlineMode.synchronized.protocol, 'discSha256': digest});
+    expect(server.callsTo('$path/invites', method: 'POST').single.body['userIds'], [friendId]);
+    expect(File(p.join(home, 'PS1-Netplay', 'swanstation_libretro.dll')).existsSync(), isTrue);
+    expect(offline.readAsBytesSync(), [1, 2, 3]);
+    expect(model.running, isNull);
+    (model.together.ps1NetplayRows().single.kind as ActionRow).run();
+    expect(await eventually(() => model.together.ps1NetplayRows().isEmpty), isTrue);
+    expect(server.callsTo(path, method: 'DELETE'), hasLength(1));
+  }, skip: Abi.current() != Abi.windowsX64 || ordinaryFixture == null || standardFixture == null);
+
   Future<void> verifyOrdinaryHandoff({
     required bool guestMode,
     Ps1NetplayRoomMode mode = Ps1NetplayRoomMode.ordinary,
@@ -730,6 +836,8 @@ void main() {
       server.answers['GET $path'] = (200, room);
       if (mode == Ps1NetplayRoomMode.fresh) {
         final held = await File(matchCore).rename('$matchCore.unavailable');
+        final package = p.join(packageDirectory, 'swanstation-netplay.zip');
+        final heldPackage = await File(package).rename('$package.unavailable');
         await model.openQuickMenu();
         choose('game-accept-$roomId');
         expect(
@@ -742,6 +850,7 @@ void main() {
         expect(server.callsTo('$path/join'), isEmpty);
         expect(native, ['local']);
         await held.rename(matchCore);
+        await heldPackage.rename(package);
       }
       await model.openQuickMenu();
       choose('game-accept-$roomId');

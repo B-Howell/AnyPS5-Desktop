@@ -4096,11 +4096,16 @@ class AppModel extends ChangeNotifier {
   Future<String> resolvePs1NetplayCore(Ps1NetplayExecution execution, {required bool requireHandoff}) async {
     final managed = _managedRetro;
     final override = retroCoreOverride;
-    if (!execution.usesPresentationCore &&
-        (override != null || (!requireHandoff && execution == Ps1NetplayExecution.standard))) {
-      return p.join(override ?? managed.root, ManagedRetro.libraryName(RetroPlatform.ps1));
+    if (!execution.usesPresentationCore && override != null) {
+      return p.join(override, ManagedRetro.libraryName(RetroPlatform.ps1));
     }
     try {
+      if (execution == Ps1NetplayExecution.standard && !requireHandoff) {
+        final existing = File(p.join(managed.root, ManagedRetro.libraryName(RetroPlatform.ps1)));
+        if (await existing.exists() && execution.coreDigests.contains(await AssetDownload.sha256Of(existing.path))) {
+          return existing.path;
+        }
+      }
       return await managed.ensurePs1NetplayCore(execution: execution);
     } on FormatException {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
@@ -6236,6 +6241,7 @@ class AppModel extends ChangeNotifier {
               if (_canOptimizeBeforeLaunch(game) && running == null && starting == null)
                 _emulatorMenu.autoOptimizeLink(game),
               ..._gameRows(game),
+              ?together.ps1NetplayDashboardLink(game, _emulatorMenu.openPage),
               ?together.ps2LanDashboardLink(game, _emulatorMenu.openPage),
               ?together.ps3PartyDashboardLink(game, _emulatorMenu.openPage),
               if (managedRetroAvailable && game.retro?.platform == RetroPlatform.ps3) _ps3OnlineReadinessRow(game),

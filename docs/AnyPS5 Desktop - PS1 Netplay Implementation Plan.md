@@ -930,6 +930,23 @@ remains unverified.
 
 ### Windows launcher rollback preview
 
+For a PS1 CUE game with a readable boot serial, **Game Settings → Online
+couch co-op** opens the shared online friend picker. Back returns to the
+same game action. After a friend is selected, the launcher verifies the
+disc, BIOS and standard netplay core before making a room. If the
+reviewer build supplies the pinned standard package, the launcher can
+install it into the dedicated `PS1-Netplay` directory when no compatible
+offline core is installed. It prefers an existing offline core whose
+digest matches the standard execution policy. Both peers must use the
+same core digest, so a player on the dedicated package and a player
+on a different legacy core fail the existing compatibility check.
+Canceling BIOS selection sends no invitation.
+
+The [dashboard test](../test/ui/ps1_netplay_setup_test.dart) uses the
+pinned core ZIP and verifies the original disc fingerprint and selected
+recipient at the room API. It also checks that canceling a pending
+room releases it. The peer and room service are fixtures in this test.
+
 The [Friends invite flow](../lib/ui/together_ps1_netplay.dart) offers a
 separate Rollback Preview invitation when both PS1 netplay and the rollback
 preview are enabled. Preview rooms use version `4` and a distinct

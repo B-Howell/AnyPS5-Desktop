@@ -108,13 +108,15 @@ extension TogetherPs1Netplay on TogetherModel {
     );
   }
 
-  Iterable<Game> _ps1Candidates(Ps1NetplayProfile profile) => app.games.where((game) {
+  bool _ps1Candidate(Game game, Ps1NetplayProfile profile) {
     final disc = game.retro;
     return disc != null &&
         disc.platform == RetroPlatform.ps1 &&
         p.extension(disc.path).toLowerCase() == '.cue' &&
         game.retroSerial == profile.titleId;
-  });
+  }
+
+  Iterable<Game> _ps1Candidates(Ps1NetplayProfile profile) => app.games.where((game) => _ps1Candidate(game, profile));
 
   List<PanelRow> ps1NetplayRows() {
     if (!_ps1NetplayEnabled) return const [];
@@ -195,6 +197,34 @@ extension TogetherPs1Netplay on TogetherModel {
     ];
   }
 
+  PanelRow? ps1NetplayDashboardLink(Game game, void Function(PanelCategory Function()) open) {
+    final profile = Ps1NetplayProfile.tryRead(game.retroSerial);
+    if (profile == null || !_ps1Candidate(game, profile)) return null;
+    bool available() =>
+        _ps1NetplayEnabled &&
+        _ps1Match == null &&
+        !_ps2LanBusy &&
+        !_verifyingPs1 &&
+        app.running == null &&
+        app.starting == null &&
+        !app.stopping &&
+        app.managedSetupConsole == null;
+    if (!available()) return null;
+    return _retroDashboardInviteLink(
+      game,
+      open,
+      prefix: 'ps1-netplay-dashboard',
+      title: 'ps1OnlineCouch',
+      detail: 'ps1OnlineInviteDetail',
+      unavailable: 'ps1OnlineUnavailable',
+      available: available,
+      invite: (friend) {
+        app.open(Layer.friends);
+        unawaited(_startPs1Netplay(profile, friendId: friend.person.id, selectedGame: game));
+      },
+    );
+  }
+
   Future<void> _unsupportedRetroInvite() async => app.show(T.text('retroOnlineUnavailable'));
 
   EmbeddedRetroGame? _ps1GuestWorker(GameInvite invite) {
@@ -248,6 +278,7 @@ extension TogetherPs1Netplay on TogetherModel {
     Ps1NetplayRoomMode mode = Ps1NetplayRoomMode.fresh,
   }) async {
     final me = account.user?.id;
+    final owner = app.currentProfile?.id;
     final candidates = _ps1Candidates(profile).toList();
     if (!_ps1NetplayEnabled || me == null || hub.socket.status != SocketStatus.ready) {
       app.show(T.text('ps1OnlineUnavailable'));
@@ -264,7 +295,11 @@ extension TogetherPs1Netplay on TogetherModel {
     if (_verifyingPs1 || _ps1Match != null || _ps2LanBusy || !hostAvailable()) return;
     _verifyingPs1 = true;
     final verification = _ps1InviteVerification = _Ps1InviteVerification(localWorker);
-    bool active() => identical(_ps1InviteVerification, verification) && account.user?.id == me && hostAvailable();
+    bool active() =>
+        identical(_ps1InviteVerification, verification) &&
+        account.user?.id == me &&
+        app.currentProfile?.id == owner &&
+        hostAvailable();
     Ps1NetplayMatch? opened;
     var holdingTransition = false;
     RetroOnlineRooms rooms([String? discDigest]) => RetroOnlineRooms(
