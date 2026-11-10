@@ -1068,3 +1068,35 @@ At step 41 each peer recorded one DHCP lease. The host transmitted
 received 3,408. Both worker processes exited zero with empty fault logs.
 The two role-card seed hashes were unchanged. This calibration used the
 local UDP fixture with the production frame filter. Neither car finished.
+
+
+### Tsukuba course and race telemetry probe
+
+The two headless clients navigated the LAN course picker and confirmed
+all six options: FISCO 90's, Mid-Field, High-Speed Ring, Infineon SP,
+Tsukuba and Laguna Seca. The picker showed Tsukuba at 1.27 miles.
+Both clients entered its two-lap race in the Toyota Superautobacs Apex
+MR-S with automatic transmission, TCS and ASM, and Racing Hard tires.
+The private D: receipt `gt4-course-race-da13d3e` retains the course and
+race captures, low-speed HUD digit reader, driver script and logs.
+
+At step 85 both HUDs showed 31.083 seconds on lap one. The host had
+reached the first turn, and the guest had hit the straight-side
+barrier. The driver using the minimap and numeric speed alone failed
+to keep both cars on the road. Each worker recorded one DHCP lease.
+The host sent 5,760 UDP/5000 packets and received 6,102. The guest
+sent 6,105 and received 5,760. Both exited zero with empty fault logs
+and unchanged role-card seeds. The local transport was the same UDP
+fixture and production frame filter used in the preceding run.
+
+The bounded trace retained 2,475 host and 2,470 guest race datagrams.
+The larger UDP payload lengths include 74, 146 and 218 bytes. This
+establishes the length pattern for this capture, with field meanings
+still open. The local `analyze_race_packets.py` aligns 46 host and 53
+guest HUD samples to 74-byte payloads. Candidate offsets 6 and 72
+tracked progress in the moving samples but kept increasing while the
+guest marker was stationary. The value at offset 18 also changed
+during that stopped interval. Those correlations are insufficient
+to use these values as car coordinates. A second run with controlled
+movement or direct road-view feedback is needed before closing the
+race-finish gate.
