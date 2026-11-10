@@ -234,6 +234,17 @@ documentation and Linux overlay. The published heads `0435da3`,
 The latter two runs included the upstream Linux overlay Dart tests.
 Hosted platform jobs and maintainer review remain separate gates.
 
+PS1 and PS2 bind disc verification to the host returned by the first room
+lookup. If an older invite omits the sender, the launcher still requires the
+same host at admission. A host change before the join request displays the
+existing host-changed message. The [room client](../lib/core/online/retro_online_rooms.dart)
+returns the host and fingerprints together. The
+[PS2 LAN invite tests](../test/ui/ps2_lan_invite_test.dart) exercise the
+launcher with both sender-bearing and senderless invites. The
+[fresh PS1 invite fixture](../test/ui/ps1_netplay_setup_test.dart) also
+rejects the replacement host after selecting the compatible core. The
+focused Windows runs passed 33 tests using a local fixture room service.
+
 - On a clean AnyPS5 install, set up the needed emulator inside Settings,
   select user-supplied firmware and games, and start or accept a session
   from the dashboard or Quick Menu. Report incompatible media, missing

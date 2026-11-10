@@ -284,13 +284,14 @@ extension TogetherPs2Lan on TogetherModel {
     );
     app.refresh();
     try {
-      final expected = roomId == null
+      final invite = roomId == null
           ? null
-          : await Future.any<String?>([
-              rooms().invitedDiscDigest(roomId, expectedHost: expectedHost).timeout(const Duration(seconds: 12)),
+          : await Future.any<RetroRoomInvite?>([
+              rooms().readInvite(roomId, expectedHost: expectedHost).timeout(const Duration(seconds: 12)),
               attempt.cancellation.future.then((_) => null),
             ]);
       if (!active()) return;
+      final expected = invite?.disc;
       if (roomId != null && expected == null) return app.show(T.text('ps2LanDisc'));
       for (final game in candidates) {
         if (!active() || !canLaunch()) return;
@@ -367,7 +368,7 @@ extension TogetherPs2Lan on TogetherModel {
         if (roomId == null) {
           await match.host(friendId!);
         } else {
-          await match.join(roomId, expectedHost: expectedHost);
+          await match.join(roomId, expectedHost: invite!.room.hostId);
           if (owned()) unawaited(hub.games.refresh().catchError((Object _) {}));
         }
         var visible = false;

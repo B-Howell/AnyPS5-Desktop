@@ -119,6 +119,7 @@ void main() {
     bool cancelLookup = false,
     bool cancelAdmission = false,
     bool hostChanged = false,
+    bool omitInviteSender = false,
     bool failIce = false,
     bool failNativeBoot = false,
     bool quickBootCancel = false,
@@ -201,7 +202,7 @@ void main() {
     final protocol = RetroOnlineMode.lan.protocol;
     final invite = {
       'sessionId': roomId,
-      'from': server.person(host, 'ana', 'Ana'),
+      if (!omitInviteSender) 'from': server.person(host, 'ana', 'Ana'),
       'titleId': 'SLUS21148',
       'gameVersion': '1.00',
       'engineBuild': protocol,
@@ -722,6 +723,11 @@ void main() {
   test(
     'PS2 LAN refuses a room that changes host after the disc lookup',
     () => verifyBundledSetup(expired: false, hostChanged: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'PS2 LAN refuses a changed host when the invite has no sender',
+    () => verifyBundledSetup(expired: false, hostChanged: true, omitInviteSender: true),
     skip: Abi.current() != Abi.windowsX64,
   );
   test(

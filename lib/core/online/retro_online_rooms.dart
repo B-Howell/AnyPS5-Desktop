@@ -4,7 +4,7 @@ import 'online_peer.dart';
 
 typedef RetroRoomMember = ({String userId, String device});
 typedef RetroRoom = ({String id, String hostId});
-typedef RetroRoomFingerprints = ({String? disc, String? core});
+typedef RetroRoomInvite = ({RetroRoom room, String? disc, String? core});
 
 final class RetroRoomHostMismatch implements Exception {
   const RetroRoomHostMismatch();
@@ -99,16 +99,13 @@ final class RetroOnlineRooms {
     return _publish(room);
   }
 
-  Future<String?> invitedDiscDigest(String id, {String? expectedHost}) async =>
-      (await invitedFingerprints(id, expectedHost: expectedHost)).disc;
-
-  /// Reads the host's fingerprints before choosing the local disc and core.
-  Future<RetroRoomFingerprints> invitedFingerprints(String id, {String? expectedHost}) async {
+  /// Binds the host to the fingerprints used to choose the local disc and core.
+  Future<RetroRoomInvite> readInvite(String id, {String? expectedHost}) async {
     final json = await call('GET', _path(id));
     final room = _room(json, id: id);
     _checkInviteHost(room, expectedHost);
     final properties = json['properties'] as Map;
-    return (disc: properties['discSha256'] as String?, core: properties['coreSha256'] as String?);
+    return (room: room, disc: properties['discSha256'] as String?, core: properties['coreSha256'] as String?);
   }
 
   void _checkInviteHost(RetroRoom room, String? expectedHost) {

@@ -324,15 +324,15 @@ extension TogetherPs1Netplay on TogetherModel {
       if (localWorker != null && roomId != null) app.resumeGame();
       app.refresh();
       if (!active()) return;
-      final fingerprints = roomId == null
+      final invite = roomId == null
           ? null
-          : await Future.any<RetroRoomFingerprints?>([
-              rooms().invitedFingerprints(roomId, expectedHost: expectedHost),
+          : await Future.any<RetroRoomInvite?>([
+              rooms().readInvite(roomId, expectedHost: expectedHost),
               verification.canceled.future.then((_) => null),
             ]);
       if (!active()) return;
-      final invitedDigest = fingerprints?.disc;
-      if (mode == Ps1NetplayRoomMode.fresh) expectedCore = fingerprints?.core;
+      final invitedDigest = invite?.disc;
+      if (mode == Ps1NetplayRoomMode.fresh) expectedCore = invite?.core;
       if (expectedCore != null && !mode.execution.coreDigests.contains(expectedCore)) {
         return app.show(T.text('ps1OnlineMismatchCore'));
       }
@@ -486,7 +486,7 @@ extension TogetherPs1Netplay on TogetherModel {
       }
       app.refresh();
       if (roomId != null) {
-        await match.join(roomId, expectedHost: expectedHost);
+        await match.join(roomId, expectedHost: invite!.room.hostId);
         unawaited(hub.games.refresh().catchError((Object _) {}));
       } else {
         await match.host(friendId!);

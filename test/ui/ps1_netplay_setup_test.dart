@@ -1218,7 +1218,26 @@ void main() {
       expect(File(primary).existsSync(), isTrue);
       if (rollback) expect(File(Ps1NetplayMedia.presentationCorePath(primary)).existsSync(), isTrue);
       expect(File(p.join(home, 'PS1-Netplay', 'swanstation_libretro.dll')).existsSync(), fresh);
-      if (fresh) expect(offline.existsSync(), isTrue);
+      if (fresh) {
+        expect(offline.existsSync(), isTrue);
+        final room = server.answers.remove('GET $path')!;
+        var reads = 0;
+        server.handlers.add((call) {
+          if (call.method != 'GET' || call.path != path) return null;
+          if (++reads == 1) return room;
+          return (
+            200,
+            {
+              ...(room.$2 as Map<String, dynamic>),
+              'host': {'userId': '12345678-1234-4234-8234-123456789abd'},
+            },
+          );
+        });
+        await model.together.joinPs1Netplay(invite);
+        expect(reads, 2);
+        expect(server.callsTo('$path/join'), hasLength(1), reason: 'the replacement host must not receive a join');
+        expect(model.toast, contains('host has changed'));
+      }
       expect(model.running, isNull);
     }, skip: skip);
   }

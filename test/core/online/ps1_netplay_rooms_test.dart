@@ -230,12 +230,12 @@ void main() {
       },
       signal: (_, _, _, _, _) {},
     );
-    expect(await rooms().invitedDiscDigest(_roomId), digest);
+    expect((await rooms().readInvite(_roomId)).disc, digest);
     advertised = 'c' * 64;
     await expectLater(rooms(digest).join(_roomId), throwsStateError);
     expect(joined, isFalse);
     advertised = 'invalid';
-    await expectLater(rooms().invitedDiscDigest(_roomId), throwsStateError);
+    await expectLater(rooms().readInvite(_roomId), throwsStateError);
   });
 
   test('reads a fresh invite core fingerprint and rejects changed or malformed metadata', () async {
@@ -255,14 +255,14 @@ void main() {
       },
       signal: (_, _, _, _, _) {},
     );
-    expect(await rooms().invitedFingerprints(_roomId), (disc: digest, core: core));
+    expect(await rooms().readInvite(_roomId), (room: (id: _roomId, hostId: _host), disc: digest, core: core));
     advertised = 'c' * 64;
     await expectLater(rooms(expectedCore: core).join(_roomId), throwsStateError);
     expect(joined, isFalse);
     advertised = 42;
-    await expectLater(rooms().invitedFingerprints(_roomId), throwsStateError);
+    await expectLater(rooms().readInvite(_roomId), throwsStateError);
     advertised = null;
-    expect(await rooms().invitedFingerprints(_roomId), (disc: digest, core: null));
+    expect((await rooms().readInvite(_roomId)).core, isNull);
   });
 
   test('removes an owned room when the provider drops the protocol marker', () async {
