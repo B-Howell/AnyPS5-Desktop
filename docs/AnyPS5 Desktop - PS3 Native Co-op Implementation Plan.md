@@ -735,8 +735,25 @@ displayed that level loading. The backend received the host's
 entry and play requests before the fixture deadline. Both workers
 exited zero and the fixture released its transport. This verifies
 native invite, acceptance, shared Pod and guest input on one PC.
-Level gameplay, completion and a two-network run remain separate
-checks.
+Two fresh pairs then repeated the native invitation and moved
+into separate Savannah challenges. In **Flaming Seesaws – Hard**,
+host-only movement triggered the same opening dialogue on both
+screens. Guest-only movement displaced its own character on both
+clients. Both then traversed the seesaws until both player icons
+showed elimination. The paired captures show the same remaining
+race time. The run did not capture a finish or a result screen.
+In **Tunnel Plunge**, the host chose **Play on our own**, which
+carried the existing pair into the private round. Both players
+jumped the first spike gap and reached the same lit checkpoint.
+The fixture deadline ended the test before the finish. Each pair
+exited with code zero and released its listeners.
+
+The native path is verified through independent controls inside
+two levels on one PC. A successful finish, clean in-game rematch,
+and a two-network run remain separate checks. Keep the known-good
+distinct-address fixture and execute the timed course input
+between captures so the game timer can be judged independently of
+the host fixture deadline.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
