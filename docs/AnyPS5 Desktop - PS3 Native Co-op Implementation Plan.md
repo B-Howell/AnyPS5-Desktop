@@ -664,6 +664,16 @@ or the Friends menu, then use the friend's Info Page to invite or join.
 Keep both profiles on the same private lobby key as described in the
 [Bonsai setup guide](https://docs.lbpbonsai.com/rpcs3.html).
 
+The next Windows protocol-32 run restored the First Steps completion
+in the isolated host profile and reauthenticated with the private RPCN
+fixture and the game backend. The game backend accepted the story
+level entry and play requests. Offscreen frame receipts confirmed that
+the host cleared all three wall puzzles in Get a Grip and reached
+the second wooden steed. The host exited cleanly and the fixture
+released its transport. The updated scratch save has yet to be
+reloaded to confirm where the level resumes. The Gardens unlock and
+the two-player friend invite still need to be verified.
+
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
 field. The guard terminated it before sending test input. A subsequent
