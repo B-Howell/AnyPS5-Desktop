@@ -544,11 +544,26 @@ offline friend event, yet the raw receive marker again followed the
 presence update after 30.023 seconds. Refresh accepted intro entry
 and the game remained on the animated loading screen. The failure
 can occur with the host disconnected. The remaining difference from
-the working solo run is the fixture's bind and signaling relay route,
-which should be traced separately from the in-game invite. Compare
-the destination and receipt of the game's own UDP traffic at
-`sendto` and `recvfrom` across the two solo runs, without logging
-payloads. The native invite remains unverified.
+the working solo run is the fixture's bind and signaling relay route.
+
+The Windows socket trace recorded endpoints and byte counts only.
+Before intro entry, the remapped guest repeatedly sent from
+`127.0.0.1:3659` to `127.0.0.1:3658` and received no packets from
+that destination. The RPCN signaling relay on 3657 was replying.
+A fixture-only control kept the physical bind and relay unchanged,
+delivered the guest's loopback traffic to its own 3659 socket, and
+reported the logical source as 3658 on receive. The socket trace
+then showed paired sends and receives. The raw receive marker
+followed the first presence update by 0.251 seconds. Refresh
+accepted intro entry and play, and captured frames verified that
+the guest moved in the playable intro. Both workers ran serially
+offscreen and exited zero.
+
+This resolves the loading stall in the guest-only fixture. For a
+two-core run, preserve each game's logical self route and assign
+distinct advertised RPCN peer endpoints. Verify both direct
+directions and both self routes before booting the pair. The native
+invite remains unverified.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
