@@ -1147,6 +1147,10 @@ the embedded worker reports its first presented frame. Cancel releases
 the room and keeps Closing visible while the worker shuts down, including
 when it arrives after cancellation. After the first presented frame,
 **Leave AnyTogether Room** releases the room and leaves the game open.
+Its detail follows the worker's RPCN connection status. The instruction
+to meet in the game's online menu appears after RPCN reports readiness.
+If the core later reports a failure, the row shows that failure and keeps
+Leave available. The game still owns admission to its native lobby.
 A running game with a reviewed release and a successful provider sign-in
 can also host from **Quick Menu → Invite a Friend to Online Play**. The
 picker binds to the running worker and its verified release. It resumes

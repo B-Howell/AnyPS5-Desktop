@@ -59,8 +59,9 @@ extension TogetherPs3Online on TogetherModel {
         !_canReusePs3Game(game, worker, release)) {
       return null;
     }
-    if (invite != null && (invite.titleId != release.titleId || invite.gameVersion != release.updateVersion))
+    if (invite != null && (invite.titleId != release.titleId || invite.gameVersion != release.updateVersion)) {
       return null;
+    }
     return (game: game, worker: worker, release: release);
   }
 
@@ -140,13 +141,15 @@ extension TogetherPs3Online on TogetherModel {
       return [PanelRow(id: 'ps3-party-leave', title: T.text('ps3PartyClosing'), kind: const InfoRow(''))];
     }
     final playing = app.isPlayingPs3Party(attempt) || attempt.attached && attempt.runningWorker != null;
+    final worker = attempt.runningWorker ?? app.embeddedGame;
+    final provider = worker?.ps3ProviderStatus ?? Ps3ProviderStatus.unavailable;
     return [
       PanelRow(
         id: 'ps3-party-leave',
         title: T.text(playing ? 'ps3PartyLeave' : 'ps3PartyCancel'),
         detail: T.text(
           playing
-              ? 'ps3PartyGameMenu'
+              ? (provider == Ps3ProviderStatus.ready ? 'ps3PartyGameMenu' : provider.detailKey)
               : app.isStartingPs3Party(attempt)
               ? 'ps3PartyBooting'
               : 'ps3PartyStarting',

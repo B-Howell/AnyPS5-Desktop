@@ -474,6 +474,18 @@ void main() {
         expect(calls.where((call) => call.method == 'start'), hasLength(1));
       }
       if (mode.startsWith('guest')) {
+        if (mode == 'guest') {
+          PanelRow partyRow() => model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-party-leave');
+          expect(partyRow().title, 'Leave AnyTogether Room');
+          expect(partyRow().detail, 'Checking the connection for multiplayer.');
+          providerStatus = 3;
+          await waitFor(() => model.embeddedGame?.ps3ProviderStatus?.name == 'ready');
+          expect(partyRow().detail, "Use the game's online menu to meet your friend.");
+          providerStatus = 6;
+          await waitFor(() => model.embeddedGame?.ps3ProviderStatus?.name == 'signalingFailed');
+          expect(partyRow().detail, 'Signed in, but multiplayer signaling did not respond.');
+          expect(server!.callsTo('game-sessions/$roomId/leave'), isEmpty);
+        }
         if (mode == 'guest-provider-rejected') {
           expect(server!.callsTo('game-sessions/$roomId/leave'), isEmpty);
           providerStatus = 5;
