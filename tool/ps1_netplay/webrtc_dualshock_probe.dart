@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:anyps5_desktop/core/online/ps1_netplay_match.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_wire.dart';
-import 'package:anyps5_desktop/ui/online_webrtc.dart';
 
 import 'webrtc_native_worker.dart';
 import 'webrtc_room_fixture.dart';
@@ -31,20 +30,22 @@ Future<String> verifyDualShockWebRtc(String config) async {
   try {
     const hostPad = (buttons: 8, leftX: -19000, leftY: 14000, rightX: 24000, rightY: -12000);
     const guestPad = (buttons: 256, leftX: 21000, leftY: -16000, rightX: -25000, rightY: 13000);
+    final drivers = [_DualShockTrace(hostPad), _DualShockTrace(guestPad)];
     final launch = [args.first, media.core, media.disc, media.bios];
-    for (final (seat, pad) in <(int, Ps1PadInput)>[(0, hostPad), (1, guestPad)]) {
+    for (final (seat, driver) in drivers.indexed) {
       final worker = await WebRtcNativeWorker.spawn(
         launch,
         File('${work.path}/seat-$seat.state'),
         seat,
         dualShock: true,
+        onSync: driver.record,
       );
       workers.add(worker);
-      await worker.setInput(pad);
+      await worker.setInput(driver.initial);
     }
 
     final gateway = WebRtcRoomFixture(profile.roomFor(mode), media.discDigest);
-    final links = WebRtcGameLinks();
+    final links = WebRtcProbeLinks(dropGamePacket: (packetNumber) => packetNumber % 5 == 0);
     Ps1NetplayMatch match(String user, WebRtcNativeWorker worker) {
       final match = Ps1NetplayMatch(
         rooms: gateway.client(user, expectedDigest: media.discDigest, expectedCore: media.coreDigest),
@@ -72,18 +73,25 @@ Future<String> verifyDualShockWebRtc(String config) async {
         .timeout(const Duration(seconds: 8));
 
     final deadline = Stopwatch()..start();
-    while (workers.any((worker) => worker.confirmedPads == null) ||
+    while (drivers.any((driver) => driver.history == null) ||
         matches.any((match) => (match.session?.confirmedFrame ?? -1) < 359)) {
       if (deadline.elapsed > const Duration(seconds: 16) || matches.any((match) => match.closed)) {
         throw StateError('DualShock match stalled before recording confirmed input history.');
       }
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
-    for (final worker in workers) {
-      final pads = worker.confirmedPads!;
-      if (pads.length != 16 || pads.any((pair) => pair != (hostPad, guestPad))) {
-        throw StateError('Confirmed input history did not preserve both signed DualShock snapshots.');
+    final hostHistory = drivers.first.history!;
+    final guestHistory = drivers.last.history!;
+    for (var frame = 0; frame < hostHistory.length; frame++) {
+      if (hostHistory[frame] != guestHistory[frame]) {
+        throw StateError('Confirmed DualShock snapshots differ at frame $frame.');
       }
+    }
+    for (final (seat, driver) in drivers.indexed) {
+      driver.verify(hostHistory.map((pair) => seat == 0 ? pair.$1 : pair.$2).toList());
+    }
+    if (links.opened.length != 2 || links.opened.any((link) => link.droppedGamePackets == 0)) {
+      throw StateError('The probe did not drop input packets from both peers.');
     }
     for (final frame in [119, 239, 359]) {
       final hash = workers.first.fingerprints[frame];
@@ -94,8 +102,9 @@ Future<String> verifyDualShockWebRtc(String config) async {
     await guest.leave();
     await host.done.timeout(const Duration(seconds: 6));
     if (!gateway.released || gateway.signals < 2) throw StateError('The DualShock room did not release.');
-    return 'DualShock WebRTC passed for ${profile.titleId}: 360 confirmed frames, three matching RAM '
-        'fingerprints, and 16 exact two-port signed snapshots in each native history.';
+    final drops = links.opened.map((link) => link.droppedGamePackets).join('/');
+    return 'DualShock WebRTC passed for ${profile.titleId}: 360 matching two-port inputs, '
+        'both stick reversals and releases, three matching RAM fingerprints, and $drops dropped input packets.';
   } finally {
     try {
       await Future.wait(matches.map((match) => match.leave())).timeout(const Duration(seconds: 4));
@@ -104,6 +113,57 @@ Future<String> verifyDualShockWebRtc(String config) async {
         await Future.wait(workers.map((worker) => worker.stop()));
       } finally {
         await work.delete();
+      }
+    }
+  }
+}
+
+final class _DualShockTrace {
+  _DualShockTrace(this.initial);
+
+  static const _neutral = (buttons: 0, leftX: 0, leftY: 0, rightX: 0, rightY: 0);
+  final Ps1PadInput initial;
+  int _phase = 0;
+  List<Ps1FrameInputs>? history;
+
+  Ps1PadInput get _reversed => (
+    buttons: initial.buttons,
+    leftX: -initial.leftX,
+    leftY: -initial.leftY,
+    rightX: -initial.rightX,
+    rightY: -initial.rightY,
+  );
+
+  Future<void> record(WebRtcNativeWorker worker, int frame) async {
+    if (_phase == 0 && frame >= 100) {
+      await worker.setInput(_reversed);
+      _phase++;
+    }
+    if (_phase == 1 && frame >= 230) {
+      await worker.setInput(_neutral);
+      _phase++;
+    }
+    if (frame < 360 || history != null) return;
+    history = [
+      for (final first in [0, 120, 240]) ...(await worker.readHistory(first, frame)).frames.take(120),
+    ];
+    if (history!.length != 360) throw StateError('The native worker returned an incomplete input history.');
+  }
+
+  void verify(List<Ps1PadInput> pads) {
+    final changes = <Ps1PadInput>[];
+    for (final pad in pads.skip(16)) {
+      if (changes.lastOrNull != pad) changes.add(pad);
+    }
+    if (changes.length != 3 || changes[0] != initial || changes[1] != _reversed || changes[2] != _neutral) {
+      throw StateError('The DualShock snapshots did not change in the expected order.');
+    }
+    // The native two-tick sampler chooses the exact change frame. Compare
+    // the complete histories across peers and verify stable windows on
+    // either side of each change, leaving room for the sampling boundary.
+    for (final (first, expected) in [(64, initial), (164, _reversed), (344, _neutral)]) {
+      for (var frame = first; frame < first + 16; frame++) {
+        if (pads[frame] != expected) throw StateError('Unexpected DualShock snapshot at frame $frame.');
       }
     }
   }

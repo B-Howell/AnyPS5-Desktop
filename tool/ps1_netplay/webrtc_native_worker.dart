@@ -8,7 +8,7 @@ import 'package:anyps5_desktop/core/online/ps1_netplay_wire.dart';
 
 /// Drives the windowless Windows worker probe over its command pipes.
 final class WebRtcNativeWorker implements Ps1NetplayRunner {
-  WebRtcNativeWorker._(this._process, this._state, this._dualShock)
+  WebRtcNativeWorker._(this._process, this._state, this._dualShock, this._onSync)
     : _output = StreamIterator(_process.stdout.transform(utf8.decoder).transform(const LineSplitter())) {
     unawaited(_process.stderr.drain<void>());
   }
@@ -16,7 +16,7 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
   final Process _process;
   final File _state;
   final bool _dualShock;
-  List<Ps1FrameInputs>? confirmedPads;
+  final Future<void> Function(WebRtcNativeWorker worker, int frame)? _onSync;
   final StreamIterator<String> _output;
   Future<String>? _pending;
   Future<void>? _stopping;
@@ -30,6 +30,7 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
     bool local = false,
     bool recompiler = false,
     bool dualShock = false,
+    Future<void> Function(WebRtcNativeWorker worker, int frame)? onSync,
   }) async {
     if (dualShock && (local || recompiler)) throw ArgumentError('DualShock requires a fresh match worker.');
     final process = await Process.start(launch.first, [
@@ -37,7 +38,7 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
       '$seat',
       if (local) 'local' else if (recompiler) 'recompiler' else if (dualShock) 'dualshock',
     ]);
-    final worker = WebRtcNativeWorker._(process, state, dualShock);
+    final worker = WebRtcNativeWorker._(process, state, dualShock, onSync);
     try {
       final ready = await worker._read();
       if (ready != 'ready') throw StateError('Unexpected worker greeting: $ready.');
@@ -166,10 +167,7 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
     if (index != fields.length) throw StateError('Native input packet is malformed.');
     fingerprints.addAll(current);
     sentButtons.addAll(local.map((sample) => sample.input.buttons));
-    if (_dualShock && frame >= 360 && confirmedPads == null) {
-      final history = await readHistory(344, frame);
-      confirmedPads = history.frames.take(16).toList();
-    }
+    await _onSync?.call(this, frame);
     return (
       frame: frame,
       confirmedFrame: frame == 0 ? null : frame - 1,

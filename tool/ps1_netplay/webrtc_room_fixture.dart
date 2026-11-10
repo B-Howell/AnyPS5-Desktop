@@ -142,21 +142,27 @@ final class WebRtcRoomFixture {
 // Injects only connection-state notifications. The data channels and frame
 // exchange still use the real Windows WebRTC plugin.
 final class WebRtcProbeLinks implements GameLinks {
+  WebRtcProbeLinks({this.dropGamePacket});
+
+  final bool Function(int packetNumber)? dropGamePacket;
   final _delegate = WebRtcGameLinks();
   final opened = <WebRtcProbeLink>[];
 
   @override
   Future<GameLink> link(List<Map<String, dynamic>> iceServers) async {
-    final link = WebRtcProbeLink(await _delegate.link(iceServers));
+    final link = WebRtcProbeLink(await _delegate.link(iceServers), dropGamePacket);
     opened.add(link);
     return link;
   }
 }
 
 final class WebRtcProbeLink implements GameLink, RestartableGameLink {
-  WebRtcProbeLink(this._link);
+  WebRtcProbeLink(this._link, this._dropGamePacket);
 
   final GameLink _link;
+  final bool Function(int packetNumber)? _dropGamePacket;
+  int _gamePackets = 0;
+  int droppedGamePackets = 0;
   final offerCredentials = <String>[];
   int answersApplied = 0;
   void Function(String)? _onState;
@@ -202,7 +208,15 @@ final class WebRtcProbeLink implements GameLink, RestartableGameLink {
   @override
   bool get streamOpen => _link.streamOpen;
   @override
-  bool send(Uint8List data) => _link.send(data);
+  bool send(Uint8List data) {
+    // Simulate loss after the sender accepts an unordered input datagram.
+    if (_dropGamePacket?.call(++_gamePackets) == true) {
+      droppedGamePackets++;
+      return true;
+    }
+    return _link.send(data);
+  }
+
   @override
   bool sendStream(Uint8List data) => _link.sendStream(data);
   @override
