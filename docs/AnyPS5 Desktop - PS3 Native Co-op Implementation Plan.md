@@ -505,10 +505,24 @@ again entered playable intro. The guest sent the accepted intro
 entry request but still showed loading about 55 seconds later.
 Both workers stopped cleanly and released the listeners in both
 controls. The configured and reported startup addresses alone did
-not clear the failure. A further fixture control can keep both
-native sockets on `127.0.0.1`, separate them by port, and translate
-the guest endpoint at send and receive boundaries while preserving
-distinct provider endpoints. The native invite remains unverified.
+not clear the failure.
+
+The port control bound both native sockets on `127.0.0.1`, with the
+host on 3658 and the guest on 3659. The fixture translated peer
+addresses at send and receive and retained distinct provider
+endpoints. A transport preflight passed endpoint lookup and direct
+UDP on the two physical ports. The host entered the playable intro,
+but the guest remained loading for over a minute after the provider
+accepted intro entry. The guest stopped normally. The host timed
+out during shutdown and the fixture terminated it. Both workers
+and the disposable credential files were gone after cleanup.
+
+The same guest account then ran alone on `127.0.0.1:3658` using the
+paired backend. Refresh accepted intro entry and play, and the
+captured guest responded to movement. It stopped with exit zero.
+This rules out the guest account as a sufficient cause. Compare
+the first divergent guest network call in these two receipts before
+changing the fixture again. The native invite remains unverified.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
