@@ -998,3 +998,33 @@ Local receipts are in `gt4-ring-84ce5599` under the private test
 workspace. The setup script, controller trace, paired grid captures,
 worker logs, `drive-audit.png` and `road_observation.py` record the
 inputs, result and remaining driver limitation.
+
+### High-Speed Ring steering and wall recovery
+
+The next one-PC run used the same pinned LRPS2 DEV9 DLL, two role-card
+copies and offscreen D3D11 at native resolution. The first launch pulses
+used throttle with zero steering. Both cars stayed on the opening
+straight, with the host at 45 mph and the delayed guest at 12 mph.
+Speed feedback from the dashboard needle then kept both cars near
+60 mph approaching the first turn. Limiting each steering correction
+to at most eight of 24 input ticks and estimating heading over multiple
+samples carried both cars into the banked turn. Both were on the
+tarmac at 41.950 seconds, in separate positions.
+
+The host later hit the inside barrier. The guest passed it and drove
+under the bridge into the next bend. A verified reverse input moved
+the host off the wall, and later manual inputs got it moving at
+31 mph. The [US game manual](https://db.hfsplay.fr/files/2019/12/02/Gran_Turismo_4_USA_teBOv76.pdf)
+maps Triangle to reverse and the D-pad to steering. The trial ended
+on lap one at about 1:17, with no finish or results screen. The host's
+wall contact shows that short steering pulses and a smoothed map
+heading still need road-edge feedback, especially as banking changes
+what the driver sees.
+
+At the final sample both workers had one DHCP lease. The host sent
+12,744 UDP/5000 frames and received 12,742. The guest sent 12,742 and
+received 12,739. The workers exited zero with empty fault logs and
+unchanged role-card seeds. The private `gt4-steering-5c5406a` receipt
+keeps the steering probes, matching captures, and per-worker packet
+counts. This used local UDP and the production frame filter. A full
+race and hosted network qualification remain open.
