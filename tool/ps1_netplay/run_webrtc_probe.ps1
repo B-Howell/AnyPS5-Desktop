@@ -5,6 +5,8 @@ param(
     [Parameter(Mandatory)][string]$Data,
     [string]$NativeFixture,
     [string]$RaceTrace,
+    [ValidateRange(1024, 65535)][int]$TurnPort,
+    [string]$TurnAddress = '127.0.0.1',
     [switch]$Ordinary,
     [switch]$DualShock,
     [switch]$Lan
@@ -13,6 +15,18 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($RaceTrace -and -not $DualShock) {
     throw 'Race traces require DualShock mode.'
+}
+if ($TurnPort -and -not $DualShock) {
+    throw 'The local TURN fixture requires DualShock mode.'
+}
+if ($PSBoundParameters.ContainsKey('TurnAddress') -and -not $TurnPort) {
+    throw 'A TURN address requires a TURN port.'
+}
+if ($TurnPort -and $TurnAddress -ne '127.0.0.1') {
+    $adapter = Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
+        $_.IPAddress -eq $TurnAddress -and $_.InterfaceAlias -like 'vEthernet (WSL*' -and $_.AddressState -eq 'Preferred'
+    }
+    if (-not $adapter) { throw 'The TURN fixture must use loopback or the local WSL virtual adapter.' }
 }
 if ($Lan -and ($Ordinary -or $DualShock -or $NativeFixture)) {
     throw 'LAN mode uses its synthetic Ethernet fixture and cannot take a PS1 fixture.'
@@ -42,6 +56,8 @@ try {
             ANYPS5_PS1_WEBRTC_NATIVE = $fixturePath
             ANYPS5_PS1_WEBRTC_ORDINARY = if ($Ordinary) { '1' } else { $null }
             ANYPS5_PS1_WEBRTC_RACE_TRACE = $tracePath
+            ANYPS5_TEST_TURN_PORT = if ($TurnPort) { [string]$TurnPort } else { $null }
+            ANYPS5_TEST_TURN_ADDRESS = if ($TurnPort) { $TurnAddress } else { $null }
             ANYPS5_PS1_WEBRTC_DUALSHOCK = if ($DualShock) { '1' } else { $null }
             ANYPS5_PS2_WEBRTC_LAN = if ($Lan) { '1' } else { $null }
         }

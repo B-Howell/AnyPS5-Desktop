@@ -10,10 +10,14 @@ import '../core/online/online_peer_mesh.dart';
 /// reliable, ordered `stream` channel for the game's streams, the way the Mac launcher opens them,
 /// so a PC and a Mac connect to each other.
 class WebRtcGameLinks implements GameLinks {
+  WebRtcGameLinks({this.relayOnly = false});
+
+  final bool relayOnly;
   @override
   Future<GameLink> link(List<Map<String, dynamic>> iceServers) async {
     final pc = await createPeerConnection({
       'iceServers': iceServers,
+      if (relayOnly) 'iceTransportPolicy': 'relay',
       'sdpSemantics': 'unified-plan',
       'bundlePolicy': 'max-bundle',
       'rtcpMuxPolicy': 'require',

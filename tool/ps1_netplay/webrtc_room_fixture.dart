@@ -7,7 +7,7 @@ import 'package:anyps5_desktop/ui/online_webrtc.dart';
 
 /// Local stand-in for the room API and directed gateway events.
 final class WebRtcRoomFixture {
-  WebRtcRoomFixture(this.spec, this.digest);
+  WebRtcRoomFixture(this.spec, this.digest, {this.iceServers = const []});
 
   static const roomId = '00000000-0000-0000-0000-000000000001';
   static const host = '00000000-0000-0000-0000-000000000002';
@@ -18,6 +18,7 @@ final class WebRtcRoomFixture {
 
   final RetroRoomSpec spec;
   final String digest;
+  final List<Map<String, dynamic>> iceServers;
   final _invited = Completer<void>();
   final _members = <String>{};
   final _published = <String>{};
@@ -121,7 +122,7 @@ final class WebRtcRoomFixture {
       return _view();
     }
     if (method == 'GET' && path == '$_path/ice-servers' && _published.contains(user)) {
-      return {'iceServers': <Object>[]};
+      return {'iceServers': iceServers};
     }
     throw StateError('Unexpected fixture room request: $method $path.');
   }
@@ -142,10 +143,10 @@ final class WebRtcRoomFixture {
 // Injects only connection-state notifications. The data channels and frame
 // exchange still use the real Windows WebRTC plugin.
 final class WebRtcProbeLinks implements GameLinks {
-  WebRtcProbeLinks({this.dropGamePacket});
+  WebRtcProbeLinks({this.dropGamePacket, bool relayOnly = false}) : _delegate = WebRtcGameLinks(relayOnly: relayOnly);
 
   final bool Function(int packetNumber)? dropGamePacket;
-  final _delegate = WebRtcGameLinks();
+  final WebRtcGameLinks _delegate;
   final opened = <WebRtcProbeLink>[];
 
   @override
@@ -167,6 +168,8 @@ final class WebRtcProbeLink implements GameLink, RestartableGameLink {
   int answersApplied = 0;
   void Function(String)? _onState;
   void reportState(String state) => _onState?.call(state);
+
+  Future<GamePathStats?> readPath() => (_link as GameLinkPath).readPath();
 
   @override
   set onState(void Function(String) handler) => _link.onState = _onState = handler;

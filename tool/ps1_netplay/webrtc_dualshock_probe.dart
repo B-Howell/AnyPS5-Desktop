@@ -10,7 +10,7 @@ import 'webrtc_ctr_race.dart';
 import 'webrtc_native_worker.dart';
 import 'webrtc_room_fixture.dart';
 
-Future<String> verifyDualShockWebRtc(String config, {String? raceTrace}) async {
+Future<String> verifyDualShockWebRtc(String config, {String? raceTrace, String? turnUrl}) async {
   final args = (jsonDecode(await File(config).readAsString()) as List).cast<String>();
   if (args.length != 5) throw const FormatException('Expected a worker, core, CUE, BIOS and disc serial.');
   final profile = Ps1NetplayProfile.tryRead(args[4]);
@@ -52,8 +52,14 @@ Future<String> verifyDualShockWebRtc(String config, {String? raceTrace}) async {
       if (race == null) await worker.setInput(driver.initial);
     }
 
-    final gateway = WebRtcRoomFixture(profile.roomFor(mode), media.discDigest);
-    final links = WebRtcProbeLinks(dropGamePacket: (packetNumber) => packetNumber % 5 == 0);
+    final gateway = WebRtcRoomFixture(
+      profile.roomFor(mode),
+      media.discDigest,
+      iceServers: [
+        if (turnUrl != null) {'urls': turnUrl, 'username': 'anyps5-probe', 'credential': 'loopback-fixture'},
+      ],
+    );
+    final links = WebRtcProbeLinks(dropGamePacket: (packetNumber) => packetNumber % 5 == 0, relayOnly: turnUrl != null);
     Ps1NetplayMatch match(String user, WebRtcNativeWorker worker) {
       final match = Ps1NetplayMatch(
         rooms: gateway.client(user, expectedDigest: media.discDigest, expectedCore: media.coreDigest),
@@ -119,16 +125,23 @@ Future<String> verifyDualShockWebRtc(String config, {String? raceTrace}) async {
         throw StateError('DualShock RAM fingerprints differ at frame $frame.');
       }
     }
+    if (turnUrl != null) {
+      final paths = await Future.wait(links.opened.map((link) => link.readPath())).timeout(const Duration(seconds: 3));
+      if (paths.any((path) => path?.relayed != true)) {
+        throw StateError('Both peers must report a selected TURN relay route: $paths');
+      }
+    }
     await guest.leave();
     await host.done.timeout(const Duration(seconds: 6));
     if (!gateway.released || gateway.signals < 2) throw StateError('The DualShock room did not release.');
     final drops = links.opened.map((link) => link.droppedGamePackets).join('/');
+    final route = turnUrl == null ? 'WebRTC' : 'relay-only WebRTC';
     if (race != null) {
-      return 'DualShock CTR WebRTC finished $targetFrames frames with ${targetFrames ~/ 120} matching '
+      return 'DualShock CTR $route finished $targetFrames frames with ${targetFrames ~/ 120} matching '
           'interval RAM fingerprints and matching final RAM, 60 matching stick-steered frames, $drops dropped input packets and '
           '${raceReceipts.first.finish}.';
     }
-    return 'DualShock WebRTC passed for ${profile.titleId}: 360 matching two-port inputs, '
+    return 'DualShock $route passed for ${profile.titleId}: 360 matching two-port inputs, '
         'both stick reversals and releases, three matching RAM fingerprints, and $drops dropped input packets.';
   } finally {
     try {

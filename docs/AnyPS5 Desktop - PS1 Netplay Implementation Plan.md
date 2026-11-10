@@ -1057,6 +1057,56 @@ The run covers a hybrid input trace on one PC. It does not measure WAN
 latency, jitter, rollback cost, or two independently completed three-lap
 races.
 
+The same probe can require a real TURN route on one Windows PC. The
+[local TURN fixture](../tool/ps1_netplay/turn_fixture/main.go) uses
+[pinned Pion dependencies](../tool/ps1_netplay/turn_fixture/go.mod) and
+[their module checksums](../tool/ps1_netplay/turn_fixture/go.sum).
+It prints its ephemeral UDP port and binds the listener and allocations
+to one local address. Authentication and peer permissions accept only
+that address. Its credentials are disposable test constants. The
+[probe wrapper](../tool/ps1_netplay/run_webrtc_probe.ps1) accepts
+loopback or an existing WSL virtual adapter, with no firewall changes.
+
+Build from the fixture directory with Go 1.25 or later and an absolute
+scratch path. Keep the Go cache, module cache and temporary files on
+that drive. Run the fixture with the Windows IPv4 address of the WSL
+virtual adapter and pass the printed port to the headless probe. Stop
+the fixture after the probe finishes.
+
+```powershell
+go build -p 3 -mod=readonly -buildvcs=false -trimpath -o "$scratch/turn-fixture.exe" .
+& "$scratch/turn-fixture.exe" -address $adapterAddress
+```
+
+```powershell
+pwsh -File tool/ps1_netplay/run_webrtc_probe.ps1 -Runner "path/to/loopback.exe" -Data "path/to/data" -NativeFixture "path/to/fixture.json" -DualShock -TurnAddress $adapterAddress -TurnPort $printedPort -RaceTrace "tool/ps1_netplay/fixtures/ctr_usa_coco_park_versus.json"
+```
+
+The [room fixture](../tool/ps1_netplay/webrtc_room_fixture.dart) supplies
+the TURN endpoint through the same ICE-server response used by the
+launcher. The [WebRTC transport](../lib/ui/online_webrtc.dart) requests
+relay-only ICE for both peers, and the
+[DualShock probe](../tool/ps1_netplay/webrtc_dualshock_probe.dart) requires
+the real selected candidate pair on each link to report a relay.
+The unbound-port control stopped before gameplay. On this Windows
+build, binding to loopback also did not complete a connection.
+The private WSL adapter control allocated two TURN endpoints and
+passed 360 confirmed frames with three matching RAM fingerprints and
+151 dropped input packets per link. The direct-route regression passed
+360 frames with 150 dropped input packets per link.
+
+The full relay-only Coco Park replay passed all 13,706 frames.
+Both native histories matched the 60-frame stick segment, the 114
+interval RAM fingerprints matched, and final RAM and placements
+matched. The game recorded the host first with three completed laps
+and the guest second with zero. The two links dropped 5,726 and 5,724
+input packets. The relay logged two allocations during play and zero
+after teardown. The tested fixture binary reproduced from the sources
+above with SHA-256
+`63c4fcee8a6e1e5340b611c7c7105892a03a0dac57381aca38538e63e488dfaa`.
+Both clients, signaling and TURN ran on one PC. Production relay
+provisioning and separate-network play remain unqualified.
+
 After a friend is selected, the launcher verifies the disc, BIOS and
 standard netplay core before making a room. If the
 reviewer build supplies the pinned standard package, the launcher can
