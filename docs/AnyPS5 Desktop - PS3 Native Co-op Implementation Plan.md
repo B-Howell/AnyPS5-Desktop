@@ -749,11 +749,8 @@ The fixture deadline ended the test before the finish. Each pair
 exited with code zero and released its listeners.
 
 The native path is verified through independent controls inside
-two levels on one PC. A successful finish, clean in-game rematch,
-and a two-network run remain separate checks. Keep the known-good
-distinct-address fixture and execute the timed course input
-between captures so the game timer can be judged independently of
-the host fixture deadline.
+two levels on one PC. Use the distinct-address fixture for replay
+and separate the game timer from the host fixture deadline.
 
 On November 10, the next offscreen replay ended before the invite
 after the guest worker exited with Windows status `0xC0000006`.
@@ -764,6 +761,33 @@ The pinned PS1 invite and handoff fixtures, PS1 session tests, PS2 LAN
 invite tests, and PS3 offline boot test passed 54 launcher regressions
 in the same checkout. The test suite uses local fixtures and adds no
 wide-area acceptance evidence.
+
+A subsequent replay copied both owned fixture profiles, writable caches
+and worker temp directories to a volume with free space. It preserved
+the core, protected client patch, starting save hashes and distinct peer
+addresses. Both workers booted and signed into the private service.
+The first invite reached the game's pending state while the guest was
+in the attract reel. With the guest back in the Pod, the host canceled
+and resent the invite. The guest accepted and joined Tunnel Plunge.
+
+Both players saw the same opening checkpoint after the host used
+**Restart Level**. They then crossed the starting gap, descended the
+obstacle course and reached **Level Complete** with a shared score of
+563. The race timer had expired during the descent. The provider
+returned HTTP 401 and 400 for the two score submissions, so the
+result verifies the in-game finish and leaves leaderboard upload
+unqualified. The host chose **Replay Level** from the two-player
+result prompt. Both returned to the starting checkpoint together.
+Both owned workers exited zero, the private transport released its
+listeners, and the original launcher remained running.
+
+The paired finish captures (`tunnel-plunge-complete.png`) have SHA-256
+`ae3ced80b789ff9eb0540ace4f8b227f705323170de17f89a3db0ec05a560799`
+for the host and
+`878f35a58753f7839f53270632fd4385fdca2f16d4aa908bb06ee2166d040e56`
+for the guest. The same private run demonstrates a native rematch on
+one PC. Qualification still needs a session across two networks
+started through AnyPS5's production invitation flow.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop

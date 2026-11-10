@@ -224,6 +224,16 @@ a connection failure.
 
 ## Acceptance before exposing Play Together
 
+The optional emulator reviews remain separate from multiplayer.
+On November 10, [#85](https://github.com/AnyTogether/AnyPS5-Desktop/pull/85),
+[#86](https://github.com/AnyTogether/AnyPS5-Desktop/pull/86), and
+[#87](https://github.com/AnyTogether/AnyPS5-Desktop/pull/87) regained
+mergeability with upstream `7eb9277` after preserving the new install
+documentation and Linux overlay. The published heads `0435da3`,
+`2571884` and `990511f` passed 8, 22 and 28 focused tests respectively.
+The latter two runs included the upstream Linux overlay Dart tests.
+Hosted platform jobs and maintainer review remain separate gates.
+
 - On a clean AnyPS5 install, set up the needed emulator inside Settings,
   select user-supplied firmware and games, and start or accept a session
   from the dashboard or Quick Menu. Report incompatible media, missing
