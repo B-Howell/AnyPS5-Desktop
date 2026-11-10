@@ -14,6 +14,10 @@ final class RetroRoomLookupTimeout implements Exception {
   const RetroRoomLookupTimeout();
 }
 
+final class RetroInviteSendTimeout implements Exception {
+  const RetroInviteSendTimeout();
+}
+
 /// A deadline while preparing the connection, before the game can start.
 final class RetroConnectionTimeout extends TimeoutException {
   RetroConnectionTimeout(Duration duration) : super('The multiplayer connection did not finish setting up.', duration);
@@ -130,9 +134,11 @@ final class RetroOnlineRooms {
     if (room.hostId != me || userId == me || !_uuid.hasMatch(userId)) {
       throw ArgumentError('A retro invite needs a friend and the host account.');
     }
+    // The caller already owns the room and can release it even if this reply
+    // never arrives. Do not retry a POST that may have reached the service.
     await call('POST', '${_path(room.id)}/invites', {
       'userIds': [userId],
-    });
+    }).timeout(const Duration(seconds: 12), onTimeout: () => throw const RetroInviteSendTimeout());
   }
 
   Future<List<RetroRoomMember>> peers(RetroRoom room, {String? expectedUser}) async {

@@ -32,7 +32,8 @@ void main() {
 
   Future<void> verifySetup(String mode) async {
     final dashboardHost = mode == 'dashboard-host';
-    final host = mode == 'host' || dashboardHost || mode == 'host-cancel-invite';
+    final inviteTimeout = mode == 'host-invite-timeout';
+    final host = mode == 'host' || dashboardHost || mode == 'host-cancel-invite' || inviteTimeout;
     final quickHost = mode == 'solo-quick-host';
     final quickGuest = mode == 'solo-quick-guest';
     const title = 'BCUS98208';
@@ -354,7 +355,7 @@ void main() {
         activate('game-accept-$roomId');
       }
     }
-    if (mode == 'host-cancel-invite') {
+    if (mode == 'host-cancel-invite' || inviteTimeout) {
       const path = 'game-sessions/$roomId';
       final sending = Completer<void>();
       final reply = Completer<void>();
@@ -384,11 +385,14 @@ void main() {
       activate('ps3-online-play');
       await sending.future.timeout(const Duration(seconds: 5));
       expect(model.spot?.row, 'ps3-party-leave');
-      activate('ps3-party-leave');
+      if (!inviteTimeout) activate('ps3-party-leave');
       await deleting.future.timeout(
-        const Duration(seconds: 5),
-        onTimeout: () => fail('Cancel never requested room deletion while the invite response was held.'),
+        Duration(seconds: inviteTimeout ? 16 : 5),
+        onTimeout: () => fail('The launcher never released the room while the invite response was held.'),
       );
+      if (inviteTimeout) {
+        expect(model.toast, 'Could not confirm the invitation. Try inviting your friend again.');
+      }
       expect(model.together.ps3PartyRows().single.title, 'Closing the AnyTogether room…');
       expect(start.isCompleted, isFalse);
       deleted.complete();
@@ -736,6 +740,7 @@ void main() {
     'host',
     'dashboard-host',
     'host-cancel-invite',
+    'host-invite-timeout',
     'guest',
     'guest-room-timeout',
     'guest-ended',

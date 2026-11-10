@@ -403,6 +403,8 @@ extension TogetherPs2Lan on TogetherModel {
       if (active()) app.show(T.text('ps2LanProfileInUse'));
     } on RetroRoomHostMismatch {
       if (active()) app.show(T.text('retroInviteHostChanged'));
+    } on RetroInviteSendTimeout {
+      if (active()) app.show(T.text('retroInviteSendTimeout'));
     } on RetroConnectionTimeout {
       if (active()) app.show(T.text(host ? 'retroConnectionTimeoutHost' : 'retroConnectionTimeoutGuest'));
     } on RetroRoomLookupTimeout {

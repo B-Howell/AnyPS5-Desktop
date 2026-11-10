@@ -248,8 +248,8 @@ focused Windows runs passed 33 tests using a local fixture room service.
 The initial PS1 and PS2 room lookup has a 12-second deadline. The launcher
 releases the pending attempt and lets the player accept the same invite again.
 The PS1, PS2, and PS3 room recheck before admission shares that deadline.
-A late lookup response cannot launch the old attempt. The deadline applies to
-the read-only lookup. Room writes retain their existing cleanup path.
+A late lookup response cannot launch the old attempt. Room creation and
+admission retain their existing cleanup path.
 The [PS1 handoff fixture](../test/ui/ps1_netplay_setup_test.dart) and
 [PS2 LAN fixture](../test/ui/ps2_lan_invite_test.dart) verify retry while the
 first response is still withheld. This update passed 33 focused tests on
@@ -261,6 +261,18 @@ match takes the existing room cleanup and connection failure path.
 A response from the abandoned request cannot create a link or start
 the game. The [room regression tests](../test/core/online/ps1_netplay_rooms_test.dart)
 hold the response past the deadline in both modes and then deliver it late.
+
+Sending a friend invite also has a 12-second deadline. At this point the
+[room client](../lib/core/online/retro_online_rooms.dart) already knows the
+room it owns, so PS1, PS2 and PS3 begin releasing that room on timeout
+and give the host retry guidance. Another attempt can start once
+cleanup completes. The launcher sends the request once because the
+service may have sent the invite before the reply was lost.
+The [room test](../test/core/online/ps1_netplay_rooms_test.dart) verifies
+the deadline and single request. The
+[PS3 host fixture](../test/ui/ps3_settings_test.dart) also checks cleanup,
+the retry message, and that a late response cannot launch the game.
+The Windows room, PS3 settings and language suites passed 68 tests.
 
 PS1 also allows 30 seconds for the WebRTC plugin to create the peer
 connection before the existing signaling timer starts. If creation

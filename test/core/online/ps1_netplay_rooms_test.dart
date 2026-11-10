@@ -171,6 +171,32 @@ void main() {
     });
   });
 
+  test('a stalled invite expires once without resending it', () {
+    fakeAsync((clock) {
+      final reply = Completer<Map<String, dynamic>>();
+      final calls = <(String, String)>[];
+      final rooms = RetroOnlineRooms(
+        spec: _spec,
+        me: _host,
+        call: (method, path, [body]) {
+          calls.add((method, path));
+          return reply.future;
+        },
+        signal: (_, _, _, _, _) {},
+      );
+      Object? failure;
+      unawaited(rooms.invite(_room, _guest).then<void>((_) {}, onError: (Object error) => failure = error));
+      clock.elapse(const Duration(seconds: 11));
+      expect(failure, isNull);
+      clock.elapse(const Duration(seconds: 1));
+      expect(failure, isA<RetroInviteSendTimeout>());
+      reply.complete({});
+      clock.flushMicrotasks();
+      expect(failure, isA<RetroInviteSendTimeout>());
+      expect(calls, [('POST', '$_path/invites')]);
+    });
+  });
+
   test('host cancellation releases read-only checks but returns a room already being created', () async {
     final firstRead = Completer<Map<String, dynamic>>();
     final creating = Completer<void>();
