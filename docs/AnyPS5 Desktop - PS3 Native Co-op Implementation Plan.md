@@ -755,6 +755,16 @@ distinct-address fixture and execute the timed course input
 between captures so the game timer can be judged independently of
 the host fixture deadline.
 
+On November 10, the next offscreen replay ended before the invite
+after the guest worker exited with Windows status `0xC0000006`.
+The host produced one frame during startup, and both owned workers
+exited. The storage or memory operation that caused the guest exit
+is unidentified. This replay adds no race or rematch evidence.
+The pinned PS1 invite and handoff fixtures, PS1 session tests, PS2 LAN
+invite tests, and PS3 offline boot test passed 54 launcher regressions
+in the same checkout. The test suite uses local fixtures and adds no
+wide-area acceptance evidence.
+
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
 field. The guard terminated it before sending test input. A subsequent
