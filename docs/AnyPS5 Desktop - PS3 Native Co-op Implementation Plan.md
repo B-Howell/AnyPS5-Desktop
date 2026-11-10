@@ -390,6 +390,22 @@ forced stop. Both the game process and its private display were gone
 after cleanup. Comparing the final globe and Pod transition still
 requires a faster offscreen renderer or a longer controlled replay.
 
+A warm replay at 25% scale retained the same pinned standalone build,
+Accurate XFloat, async shader recompiler and isolated software Vulkan.
+The first playable scene ran around 11 FPS. Right movement and jump
+advanced through the opening credits hills, where captures reported
+under 1 FPS at times. The run stopped before the tutorials and required
+the fixture's bounded forced shutdown. A separate private Xvfb GLX
+pbuffer rendered the expected green pixel under llvmpipe. With the
+D3D12 Gallium override and the WSL device and libraries available, GLX
+failed to create the software rendering screen. That route did not
+qualify as a hardware fixture.
+
+The Windows private-desktop log shows that its F12 messages arrived
+while LLVM was still compiling PPU modules at the stop deadline.
+The next Windows capture check should wait for the game to finish PPU
+compilation and use the existing native desktop and PID guards.
+
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
 field. The guard terminated it before sending test input. A subsequent
