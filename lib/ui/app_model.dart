@@ -4220,7 +4220,7 @@ class AppModel extends ChangeNotifier {
 
   void openPs2LanSetup({VoidCallback? onReady}) {
     if (!together.ps2LanSetupAvailable) return show(T.text('ps2LanBusy'));
-    _emulatorMenu.openPage(() => _emulatorMenu._ps2LanSetupPage(onReady: onReady));
+    _emulatorMenu.openChild(() => _emulatorMenu._ps2LanSetupPage(onReady: onReady));
   }
 
   Future<void> _preparePs2LanMedia({required bool bios}) async {
@@ -6236,6 +6236,7 @@ class AppModel extends ChangeNotifier {
               if (_canOptimizeBeforeLaunch(game) && running == null && starting == null)
                 _emulatorMenu.autoOptimizeLink(game),
               ..._gameRows(game),
+              ?together.ps2LanDashboardLink(game, _emulatorMenu.openPage),
               ?together.ps3PartyDashboardLink(game, _emulatorMenu.openPage),
               if (managedRetroAvailable && game.retro?.platform == RetroPlatform.ps3) _ps3OnlineReadinessRow(game),
               if (game.retro case final RetroDisc disc)

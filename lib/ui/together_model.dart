@@ -1085,6 +1085,43 @@ class TogetherModel {
     ];
   }
 
+  PanelRow _retroDashboardInviteLink(
+    Game game,
+    void Function(PanelCategory Function()) open, {
+    required String prefix,
+    required String title,
+    required String detail,
+    required String unavailable,
+    required bool Function() available,
+    required void Function(Friend) invite,
+  }) {
+    final category = '$prefix-friends';
+    bool canInvite() => app.selectedGame?.id == game.id && available();
+    return PanelRow(
+      id: '$prefix-invite',
+      title: T.text(title),
+      detail: T.text(detail),
+      kind: ActionRow(() {
+        if (app.overlay != Layer.gameSettings || !canInvite()) return;
+        open(
+          () => PanelCategory(
+            id: category,
+            title: T.text('retroOnlineChooseFriend'),
+            rows: _retroInviteFriendRows(
+              prefix: prefix,
+              title: 'retroOnlineChooseFriend',
+              detail: detail,
+              unavailable: unavailable,
+              invite: (friend) {
+                if (app.overlay == Layer.emulatorMenu && app.spot?.category == category && canInvite()) invite(friend);
+              },
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
   List<PanelRow> _retroInviteFriendRows({
     required String prefix,
     required String title,

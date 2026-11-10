@@ -142,29 +142,15 @@ extension TogetherPs3Online on TogetherModel {
   PanelRow? ps3PartyDashboardLink(Game game, void Function(PanelCategory Function()) open) {
     final release = _ps3PartyRelease(game);
     if (!_ps3PartyAvailable || release == null) return null;
-    bool canInvite() => _ps3PartyAvailable && app.selectedGame?.id == game.id && _ps3PartyRelease(game) == release;
-    return PanelRow(
-      id: 'ps3-party-dashboard-invite',
-      title: T.text('ps3PartyInviteFromGame'),
-      detail: T.text('ps3PartyInviteDetail'),
-      kind: ActionRow(() {
-        if (!canInvite()) return;
-        open(
-          () => PanelCategory(
-            id: 'ps3-party-dashboard-friends',
-            title: T.text('retroOnlineChooseFriend'),
-            rows: _retroInviteFriendRows(
-              prefix: 'ps3-party-dashboard',
-              title: 'retroOnlineChooseFriend',
-              detail: 'ps3PartyInviteDetail',
-              unavailable: 'ps3PartyUnavailable',
-              invite: (friend) {
-                if (canInvite()) _openPs3PartySetup(game, release, friendId: friend.person.id);
-              },
-            ),
-          ),
-        );
-      }),
+    return _retroDashboardInviteLink(
+      game,
+      open,
+      prefix: 'ps3-party-dashboard',
+      title: 'ps3PartyInviteFromGame',
+      detail: 'ps3PartyInviteDetail',
+      unavailable: 'ps3PartyUnavailable',
+      available: () => _ps3PartyAvailable && _ps3PartyRelease(game) == release,
+      invite: (friend) => _openPs3PartySetup(game, release, friendId: friend.person.id),
     );
   }
 

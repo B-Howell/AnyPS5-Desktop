@@ -409,6 +409,16 @@ on a route interruption or ICE route change. After 750 ms without a route, the Q
 keeps Reconnecting visible until the connection returns, then displays
 fresh statistics as they arrive. The local network-card setup can still pause while
 its Quick Menu is open.
+From **Game Settings → Invite a Friend to LAN Play**, select an online
+friend to start a room for that disc. The picker uses the same shared
+friend rows as the PS3 dashboard and the in-game invitation menus.
+If setup is needed, Back returns to the chosen friend and then to the
+game's settings. The setup page creates no room until **Continue to LAN
+Play**. Continue rechecks the account, launcher profile and selected
+library entry. The room flow verifies the disc identity and hashes the
+image before sending the invite to the selected friend. The game needs
+its own LAN mode to connect after launch.
+
 The launcher verifies the ISO itself when joining. If the LAN core or
 BIOS is missing, the action opens the existing setup page. **Back**
 returns to the same friend or invite without creating, joining or
@@ -421,8 +431,8 @@ For a blank card, the same page offers the supported Gran Turismo 4
 setup path if the disc is present. Closing that local setup session
 returns to the setup page with the invitation still pending.
 The [launcher invite tests](../test/ui/ps2_lan_invite_test.dart) cover
-Back, the missing-disc case, an expired invite and a clean-profile setup
-through the original room's join request. A simulated embedded GT4
+the Game Settings picker, Back, the missing-disc case, an expired
+invite and clean-profile setup for hosting and joining. A simulated embedded GT4
 session also returns to the pending invite after stopping. A separate Windows probe
 repeated the clean-profile path with the pinned LRPS2 package and a
 real BIOS dump. The bundled core installed without a ZIP picker, the

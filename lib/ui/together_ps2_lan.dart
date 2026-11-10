@@ -113,6 +113,21 @@ extension TogetherPs2Lan on TogetherModel {
     ];
   }
 
+  PanelRow? ps2LanDashboardLink(Game game, void Function(PanelCategory Function()) open) {
+    final spec = _ps2LanSpec(game);
+    if (!ps2LanSetupAvailable || spec == null) return null;
+    return _retroDashboardInviteLink(
+      game,
+      open,
+      prefix: 'ps2-lan-dashboard',
+      title: 'ps2LanInviteFromGame',
+      detail: _ps2LanSetupIssue ?? 'ps2LanInviteDetail',
+      unavailable: 'ps2LanUnavailable',
+      available: () => ps2LanSetupAvailable,
+      invite: (friend) => unawaited(_startPs2Lan(spec, [game], friendId: friend.person.id)),
+    );
+  }
+
   List<PanelRow> ps2LanRows() {
     final attempt = _ps2Lan;
     if (attempt == null) return const [];
@@ -217,7 +232,9 @@ extension TogetherPs2Lan on TogetherModel {
       return app.openPs2LanSetup(
         onReady: () {
           app.open(Layer.friends);
-          if (account.user?.id != me) return app.show(T.text('ps2LanUnavailable'));
+          if (account.user?.id != me || app.currentProfile?.id != profile) {
+            return app.show(T.text('ps2LanUnavailable'));
+          }
           if (roomId != null &&
               !hub.games.invites.any(
                 (invite) =>

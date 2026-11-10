@@ -124,6 +124,7 @@ void main() {
     bool quickBootCancel = false,
     bool quickMenuDuringPlay = false,
     bool hostRematch = false,
+    bool dashboardHost = false,
   }) async {
     final server = await FakeTogether.start();
     addTearDown(server.close);
@@ -229,7 +230,30 @@ void main() {
     PanelRow row(String id) => model.panelCategories().single.rows.singleWhere((row) => row.id == id);
     void press(String id) => (row(id).kind as ActionRow).run();
     const continueId = 'ps2-lan-setup-continue';
-    press('game-accept-$roomId');
+    if (dashboardHost) {
+      model.selected = model.games.indexWhere((game) => game.titleId == 'PS2-TIMESPLITTERS');
+      model.open(Layer.gameSettings);
+      void select(String id) =>
+          model.activateRow(model.panelCategories().single.rows.indexWhere((item) => item.id == id));
+      const link = 'ps2-lan-dashboard-invite';
+      final friendRow = 'ps2-lan-dashboard-$host';
+      await until(() => model.together.hub.friends.friends.any((friend) => friend.person.id == host));
+      select(link);
+      expect(row(friendRow).title, 'Ana');
+      select(friendRow);
+      expect(model.overlay, Layer.emulatorMenu);
+      expect(row(continueId).kind, isA<InfoRow>());
+      model.handle(Command.back);
+      expect(model.spot?.row, friendRow);
+      model.handle(Command.back);
+      expect(model.overlay, Layer.gameSettings);
+      expect(model.spot?.row, link);
+      expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
+      select(link);
+      select(friendRow);
+    } else {
+      press('game-accept-$roomId');
+    }
     expect(row(continueId).kind, isA<InfoRow>());
     press('ps2-lan-setup-install');
     await until(() => model.ps2LanCoreInstalled && model.managedSetupConsole == null);
@@ -241,6 +265,7 @@ void main() {
     expect(row('ps2-lan-setup-launch').kind, isA<ActionRow>());
     expect(offline.readAsBytesSync(), [1, 2, 3]);
     expect(server.callsTo('game-sessions/$roomId'), isEmpty);
+    expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
     if (configureCard) {
       const channel = MethodChannel('anyps5/retro_core');
       final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -404,7 +429,7 @@ void main() {
       }
 
       await connectPeer(roomId, () {
-        if (hostRematch) {
+        if (hostRematch && !dashboardHost) {
           model.selected = model.games.indexWhere((game) => game.titleId == 'PS2-TIMESPLITTERS');
           expect(model.selectedGame?.titleId, 'PS2-TIMESPLITTERS');
           final friend = model.together.hub.friends.friends.single;
@@ -414,6 +439,10 @@ void main() {
           press(continueId);
         }
       });
+      if (dashboardHost) {
+        final request = server.callsTo('game-sessions/$roomId/invites', method: 'POST').single.body;
+        expect(request['userIds'], [host]);
+      }
       await starting.future.timeout(const Duration(seconds: 5));
       expect(model.starting?.titleId, 'PS2-TIMESPLITTERS');
       if (failNativeBoot) {
@@ -718,6 +747,11 @@ void main() {
   test(
     'PS2 LAN host can invite a friend to a new room from the Quick Menu',
     () => verifyBundledSetup(expired: false, hostRematch: true),
+    skip: Abi.current() != Abi.windowsX64,
+  );
+  test(
+    'PS2 LAN starts from Game Settings and resumes the selected friend after setup',
+    () => verifyBundledSetup(expired: false, hostRematch: true, dashboardHost: true),
     skip: Abi.current() != Abi.windowsX64,
   );
 }
