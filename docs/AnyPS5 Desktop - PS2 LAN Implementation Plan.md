@@ -1100,3 +1100,49 @@ during that stopped interval. Those correlations are insufficient
 to use these values as car coordinates. A second run with controlled
 movement or direct road-view feedback is needed before closing the
 race-finish gate.
+
+### Tsukuba road-view steering
+
+The minimap controller's heading estimate lagged the car after a slide.
+The next headless pair used the 640 × 448 bumper view to estimate the
+asphalt corridor, with the HUD speed digits limiting throttle. The
+private D: receipt `gt4-road-feedback-3ddd0ff` includes the detector,
+the nine labeled capture checks, the input loop, and the two worker logs.
+
+Both clients entered the two-lap race, stayed on the opening straight,
+and reached the first hairpin. At 32.350 seconds on lap one, the host
+was stopped near the outside edge and the guest was approaching the
+turn at 32 mph. The test driver stopped both workers when it could no
+longer steer the host safely. Both exited zero with empty fault logs
+and the role-card seeds preserved. The host transmitted 6,074 UDP/5000
+packets and received 6,145. The guest transmitted 6,145 and received
+6,071. Both obtained a DHCP lease. This run used local UDP and the
+production frame filter.
+
+Bright asphalt in the turn exceeded the detector's intensity cutoff.
+At steps 178 and 179 it returned leftward targets at x=56 and x=0.
+Raising the cutoff from 97 to 112 made the same frames return rightward
+targets at x=412 and x=415, and step 184 showed the road to the right
+at x=630. All nine prior capture checks still passed. The follow-up
+driver uses a three-sample median to reject isolated steering reversals
+and keeps steering when the speed read is temporarily unavailable,
+with throttle released until the next readable sample.
+
+The revised live pair (`gt4-road-feedback-v2-3ddd0ff`) reproduced the
+wrong-way steering at a slightly different point. The host's filtered
+target jumped from x=390 to x=38 at step 177, then stayed at x=0 for
+three samples. It stopped near the outside edge at 32.283 seconds on
+lap one, with the guest still moving at 23 mph. The controller stopped
+at step 190 in both runs. Neither reached results. Both revised
+workers ran 9,745 video frames, exited zero, recorded no faults, and
+preserved the role-card seeds. Each received one DHCP lease. Both
+transmitted 6,099 UDP/5000 packets. The host received 6,099 and the guest
+received 6,097.
+
+The offline cutoff result did not generalize to new views of the
+same turn. Before another race, compare annotated road boundaries
+with the detector's candidate and selected spans, including whether
+each edge is clipped. Record the raw and filtered targets around the
+reversal. The minimap's route bends right near the failure and can
+serve as an independent check when the car marker is visible. The
+remaining local race gate is a full two-player results screen.
