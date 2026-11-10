@@ -413,9 +413,23 @@ The first attempt stopped when the log was locked. The successful
 run used a shared log reader and a separate PID-checked command
 helper. The original monitor still timed out because its glob omitted
 the game's serial prefix. The scratch harness now uses the shared
-reader and matches new serial-prefixed captures. The next comparison
-needs time to finish the second tutorial and observe the globe and
-Pod transition.
+reader and matches new serial-prefixed captures.
+
+The longer warm standalone Windows replay reached the Pod offline on
+`BCUS98208` update `01.30`. The guest closed
+`acting_and_emoting.bik` at 4:43.575, opened
+`new_podintro.bik` from the disc at 4:55.578, and closed it at
+5:21.882. Native captures show the playable Pod and its controller
+interface opening after Square. The fixture closed RPCS3 with exit
+zero and verified that the active desktop stayed the same.
+
+The first warm attempt requested capture during early rendering and
+exited with an access violation in the NVIDIA driver. The successful
+retry left capture disabled until the opening movie had played. The
+effective standalone config used Approximate XFloat, while the
+embedded offline control used Accurate. Match that setting and trace
+the tutorial close and Pod movie open in the embedded run before
+attributing the progression difference to the integration.
 
 The first Windows standalone launch briefly appeared on the active
 desktop because the subprocess wrapper dropped the private desktop
