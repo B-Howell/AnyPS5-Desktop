@@ -2352,7 +2352,7 @@
   "retroControlsPreset": "Profile",
   "retroControlsPlayer": "Player",
   "retroControlsPlayerDetail": "Each player on this computer can have their own layout.",
-  "retroControlsLive": "Choose a label, then hold the button you want for it. Press any button to see what it does.",
+  "retroControlsLive": "Choose a label, then hold the button you want for it.",
   "retroControlsActsAs": "%@ acts as %@",
   "retroControlsPresetDetail": "This game remembers the profile you pick. Change any label on the controller to make your own.",
   "retroControlsStandard": "Standard",

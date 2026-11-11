@@ -282,9 +282,14 @@ screen: up and down along one side of the controller, left and right across to
 the label level with it on the other side, up from a side's first label to
 Select or Start. The list is to the right of the controller, so right from the
 right-hand labels reaches it, as does down from the last label of a side. From
-the list, up from its first row, or left from a row that has no value to step,
-returns to the label the focus was last on. Rows with a value (Player, Profile,
-Swap sticks) keep left and right for that value. The labels are rows after the
+the list, left returns to the label the focus was last on, and so does up from
+the first row. With a controller that holds for every row: a controller changes
+a row's value only after the row is chosen with Cross (then left and right are
+the value until Cross or Back), so until then left is free and always goes
+back. With the keys, left and right step a value at once, so left goes back
+only from a row that has no value. Player 1's controller on this page is the
+one driving the launcher, the last to have moved the focus, not necessarily
+the launcher's first controller. The labels are rows after the
 list's last so that one can hold the focus; `_retroLabelCommand` holds these
 moves, and a change that adds or removes a row (Save as a profile) puts the
 focus back on the row it was on. With the mouse a label is clicked. On a
@@ -316,7 +321,8 @@ The three preference keys are `retroButtonMaps` (a scope's own layout),
 `retroControlProfiles` and `retroProfileChoice`; all three travel with a
 launcher profile. Layouts saved before profiles existed used the same per-game
 scopes and are read as they were. A change reaches the running game at once,
-for every seat. Swap sticks, the controller test and Reset stay on the page.
+for every seat. Swap sticks and Reset stay on the page; the controller test is
+not offered here (it is in Settings › Controllers).
 
 The [screen test](../test/ui/retro_controls_screen_test.dart) reads the real
 asset and checks that every input has a shape and a side. It covers a held

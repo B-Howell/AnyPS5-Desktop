@@ -295,17 +295,66 @@ void main() {
     expect(model.panelRow, waiting, reason: 'the pointer passing over a row leaves a waiting label alone');
     model.setRowValue(0, 0);
     expect(model.retroCapture, isNull, reason: 'a click elsewhere ends the wait');
+    model.preferences.retroControls.edit(game.id, RetroButtonMap.swapCrossCircle);
     model.startRetroCapture(PadButton.south);
-    final reset = rows(model).indexWhere((row) => row.id == 'padTest');
-    model.activateRow(reset);
+    model.activateRow(rows(model).indexWhere((row) => row.id == 'retroControlsReset'));
     expect(model.retroCapture, isNull);
-    expect(model.overlay, Layer.controls, reason: 'a row reached while a label waits ends the wait and does nothing more');
+    expect(model.retroLayout(game, 1), RetroButtonMap.swapCrossCircle, reason: 'a row reached while a label waits ends the wait and does nothing more');
+    model.preferences.retroControls.useLayout(game.id, RetroButtonMap.standard);
 
     model.startRetroCapture(PadButton.south);
     send(pad.id, PadButton.l1, down: true);
     await tester.pump(hold);
     expect(model.retroLayout(game, 1).source(PadButton.south), PadButton.l1);
     expect(focused(model), 'retroButton-south', reason: 'the focus stays on its label when Save as a profile appears');
+    await tester.pump(const Duration(seconds: 10));
+  });
+
+  testWidgets('with a controller, left always goes back to the labels and a chosen row keeps its directions', (tester) async {
+    final fixture = withGames();
+    final model = fixture.model;
+    addTearDown(() {
+      model.dispose();
+      fixture.dispose();
+    });
+    openControls(model, 'First');
+    expect(focused(model), 'retroButton-south');
+    expect(rows(model).map((row) => row.id), isNot(contains('padTest')), reason: 'the controller test is not on this page');
+
+    model.padCommand(PadCommand.right);
+    expect(focused(model), 'retroControlsPlayer', reason: 'right of the right-hand labels is the list');
+    model.padCommand(PadCommand.left);
+    expect(focused(model), 'retroButton-south', reason: 'left goes back, from a row with a value too');
+
+    model.padCommand(PadCommand.right);
+    model.padCommand(PadCommand.down);
+    expect(focused(model), 'retroControlsPreset');
+    model.padCommand(PadCommand.left);
+    expect(focused(model), 'retroButton-south');
+
+    model.padCommand(PadCommand.right);
+    model.padCommand(PadCommand.select);
+    expect(model.editingValue, 'retroControlsPlayer', reason: 'choosing a row is what lets its value change');
+    model.padCommand(PadCommand.right);
+    expect(model.retroControlsPlayer, 2);
+    expect(focused(model), 'retroControlsPlayer');
+    model.padCommand(PadCommand.left);
+    expect(model.retroControlsPlayer, 1, reason: 'while it is chosen, left and right are the value');
+    expect(focused(model), 'retroControlsPlayer');
+    model.padCommand(PadCommand.select);
+    expect(model.editingValue, isNull);
+    model.padCommand(PadCommand.left);
+    expect(focused(model), 'retroButton-south', reason: 'and afterwards left goes back again');
+
+    for (final step in [PadCommand.up, PadCommand.up, PadCommand.left, PadCommand.down]) {
+      model.padCommand(step);
+    }
+    expect(focused(model), 'retroButton-dpadLeft', reason: 'among the labels the directions follow the screen');
+    model.padCommand(PadCommand.select);
+    expect(model.retroCapture, PadButton.dpadLeft, reason: 'choosing a label makes it wait');
+    model.padCommand(PadCommand.down);
+    expect(focused(model), 'retroButton-dpadLeft');
+    model.cancelRetroCapture();
     await tester.pump(const Duration(seconds: 10));
   });
 
@@ -340,6 +389,7 @@ void main() {
     final game = model.selectedGame!;
     final before = model.retroLayout(game, 1);
     press(model, PadButton.r1, down: true);
+    expect(find.text('Test buttons and sticks'), findsNothing);
     await tester.tapAt(tester.getCenter(find.text('Reset to standard layout')));
     await tester.pump(hold);
     expect(model.retroCapture, isNull, reason: 'a click ends the wait');

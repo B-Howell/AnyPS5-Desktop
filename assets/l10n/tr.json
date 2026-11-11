@@ -2352,7 +2352,7 @@
   "retroControlsPreset": "Profil",
   "retroControlsPlayer": "Oyuncu",
   "retroControlsPlayerDetail": "Bu bilgisayardaki her oyuncunun kendi düzeni olabilir.",
-  "retroControlsLive": "Bir etiket seçin, sonra onun için istediğiniz tuşu basılı tutun. Ne yaptığını görmek için herhangi bir tuşa basın.",
+  "retroControlsLive": "Bir etiket seçin, sonra onun için istediğiniz tuşu basılı tutun.",
   "retroControlsPress": "Bir tuşu basılı tutun…",
   "retroControlsHoldFor": "%@ olması gereken tuşu basılı tutun. İptal için %@ tuşuna dokunun.",
   "retroControlsAssigned": "%@ artık %@ tuşunda",

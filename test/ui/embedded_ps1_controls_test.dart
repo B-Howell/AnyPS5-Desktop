@@ -139,7 +139,8 @@ void main() {
         rows.where((row) => row.id.startsWith('retroButton-')).length,
         RetroButtonMap.buttons.length,
       );
-      expect(rows.map((row) => row.id), containsAll(['retroSwapSticks', 'padTest', 'retroControlsReset']));
+      expect(rows.map((row) => row.id), containsAll(['retroSwapSticks', 'retroControlsReset']));
+      expect(rows.map((row) => row.id), isNot(contains('padTest')));
       return rows.singleWhere((row) => row.id == 'retroControlsPreset').kind as ChoiceRow;
     }
 

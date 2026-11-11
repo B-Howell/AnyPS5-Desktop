@@ -45,8 +45,16 @@ extension RetroEmbeddedControls on AppModel {
       game.retro == null ? RetroButtonMap.standard : preferences.retroControls.resolve(game.id, player);
 
   /// The controller of the player the Controls page shows, or null when that seat has none.
+  /// Player 1 is whoever is driving the launcher: the controller that last moved the focus, when
+  /// it is not one seated as another player, else the launcher's Player 1.
   String? get retroControlsPadId {
-    if (retroControlsPlayer <= 1) return (controllers.playerOne ?? controllers.pads.firstOrNull)?.id;
+    if (retroControlsPlayer <= 1) {
+      final driving = _navigator?.lastPad;
+      if (driving != null && !localSeatPads.contains(driving) && controllers.pads.any((pad) => pad.id == driving)) {
+        return driving;
+      }
+      return (controllers.playerOne ?? controllers.pads.firstOrNull)?.id;
+    }
     final index = retroControlsPlayer - 2;
     return index < localSeatPads.length ? localSeatPads[index] : null;
   }
@@ -226,8 +234,11 @@ extension RetroEmbeddedControls on AppModel {
   /// The labels are rows after the list's last, drawn on the controller, and the page opens on
   /// one. Among them the directions follow their places. Right from the right-hand labels, or
   /// down from the last label of a side, goes to the list beside the controller. From the list,
-  /// up from its first row, or left from a row that has no value to step, comes back to the
-  /// label the focus was last on.
+  /// left comes back to the label the focus was last on, as does up from the first row.
+  ///
+  /// A controller changes a row's value only after choosing the row (_padPanelCommand), so with
+  /// a controller left is free on every row and always goes back. The keys step a value with
+  /// left and right at once, so with them left goes back only from a row that has no value.
   bool _retroLabelCommand(Command command) {
     if (overlay != Layer.controls || selectedGame?.retro == null || editingRow != null) return false;
     // A mirrored screen (Arabic, Urdu) swaps the list and the controller, and [command] comes
@@ -255,7 +266,10 @@ extension RetroEmbeddedControls on AppModel {
     }
 
     if (current == null) {
-      final stepped = row?.kind is ChoiceRow || row?.kind is StepperRow || row?.kind is ToggleRow;
+      // A row being changed with a controller keeps every direction until that is done.
+      if (_viaPad && editingValue != null) return false;
+      final valued = row?.kind is ChoiceRow || row?.kind is StepperRow || row?.kind is ToggleRow;
+      final stepped = valued && !_viaPad;
       if ((command == Command.up && panelRow == first) || (command == Command.left && !stepped)) {
         toLabel(retroLabelFocus);
         return true;
@@ -370,12 +384,6 @@ extension RetroEmbeddedControls on AppModel {
         title: T.text('retroSwapSticks'),
         detail: T.text(platform == RetroPlatform.ps1 ? 'retroSwapSticksPs1Detail' : 'retroSwapSticksDetail'),
         kind: ToggleRow(map.swapSticks, (value) => _editRetroLayout(game, map.withSwapSticks(value))),
-      ),
-      PanelRow(
-        id: 'padTest',
-        title: T.text('padTest'),
-        detail: T.text('padTestDetail'),
-        kind: ActionRow(openControllerTest),
       ),
       PanelRow(
         id: 'retroControlsReset',
