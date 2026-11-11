@@ -988,3 +988,20 @@ first port, and the guest controls the second. Both see split-screen.
 The supported USA disc and SCPH-1001 BIOS must match. This handoff
 verifies the staged packages and the route through the application code.
 Manual dashboard play is pending.
+
+### Managed PS1 setup on Linux
+
+[Emulator settings](../lib/ui/emulator_menu.dart) and
+[managed setup and launch](../lib/ui/app_model.dart) share a
+per-console capability. Linux x64 lists PS1 in Settings even with
+the online preview flags unset. [PS1 setup](../lib/ui/retro_settings_model.dart)
+uses the native Linux SwanStation installer and BIOS import. Once the
+core is installed, ordinary Play, console folders and prelaunch
+optimization use the managed core. Mixed-platform netplay still uses
+its independently verified rollback package.
+
+The [PS1 setup regression](../test/ui/ps1_netplay_setup_test.dart)
+reproduced the missing menu on the old Linux build and passed with
+the managed setup action visible on the replacement. The focused
+laptop run passed six cases and skipped 19 cases with unmet platform
+or media requirements. The release build completed on the laptop.

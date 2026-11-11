@@ -3,7 +3,7 @@ part of 'app_model.dart';
 extension RetroLaunchOptimization on AppModel {
   bool _canOptimizeBeforeLaunch(Game game) =>
       game.retro != null &&
-      (managedRetroAvailable || retroCoreOverride != null) &&
+      (supportsManagedRetro(game.retro!.platform) || retroCoreOverride != null) &&
       (retroCoreOverride != null || retroSettings.program(game.retro!.platform) == null);
 
   RetroOptimizePlan _prepareLaunchOptimization(Game game, RetroHardware? hardware) {

@@ -53,7 +53,7 @@ class RetroSettingsModel {
             if (ManagedRetro(override, host: app.embeddedCoreHost).isInstalled(platform) && !inUse)
               _gamesFolderRow(platform),
           ]
-        : !hasPortable && app.managedRetroAvailable
+        : !hasPortable && app.supportsManagedRetro(platform)
         ? _managedSetupRows(platform)
         : const <PanelRow>[];
     final portableProgram = PanelRow(
@@ -79,7 +79,7 @@ class RetroSettingsModel {
         title: name,
         rows: [
           ...setup,
-          if (!app.managedRetroAvailable) portableProgram,
+          if (!app.supportsManagedRetro(platform)) portableProgram,
           if (override == null && hasPortable && !inUse) _gamesFolderRow(platform),
           if (executable != null && !inUse)
             if (platform == RetroPlatform.ps1)
@@ -127,7 +127,7 @@ class RetroSettingsModel {
             ),
         ],
       ),
-      if (app.managedRetroAvailable)
+      if (app.supportsManagedRetro(platform))
         PanelCategory(id: '$prefix-portable', title: 'Existing portable installation', rows: [portableProgram]),
       if (settings != null && !inUse && !graphicsQueued)
         _optimize.category(

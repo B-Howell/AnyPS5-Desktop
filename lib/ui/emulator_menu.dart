@@ -130,7 +130,7 @@ class _EmulatorMenu {
     title: 'Emulators',
     rows: [
       for (final platform in RetroPlatform.values)
-        if (app.system == HostSystem.windows || platform == RetroPlatform.ps2)
+        if (app.system == HostSystem.windows || app.supportsManagedRetro(platform) || platform == RetroPlatform.ps2)
           PanelRow(
             id: 'emulators-${platform.name}',
             title: ManagedRetro.platformName(platform),

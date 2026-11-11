@@ -10,7 +10,7 @@ extension RetroHomeFolders on AppModel {
       return ManagedRetro(override, host: embeddedCoreHost).isInstalled(platform);
     }
     if (retroSettings.program(platform) case final program? when File(program).existsSync()) return true;
-    return managedRetroAvailable && _managedRetro.isInstalled(platform);
+    return supportsManagedRetro(platform) && _managedRetro.isInstalled(platform);
   }
 
   RetroPlatform? get activeHomeRetroFolder {

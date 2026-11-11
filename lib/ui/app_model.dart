@@ -3966,6 +3966,8 @@ class AppModel extends ChangeNotifier {
   bool get managedRetroAvailable => system == HostSystem.windows && _nativeRetroHost == EmbeddedCoreHost.windowsX64;
   bool get embeddedOnlineRetroAvailable =>
       managedRetroAvailable || (system == HostSystem.linux && _nativeRetroHost == EmbeddedCoreHost.linuxX64);
+  bool supportsManagedRetro(RetroPlatform platform) =>
+      managedRetroAvailable || (embeddedOnlineRetroAvailable && platform == RetroPlatform.ps1);
   String? get retroCoreOverride => (services.environment ?? Platform.environment)['ANYPS5_LIBRETRO_HOME'];
 
   ({bool installed, bool systemReady}) managedRetroStatus(RetroPlatform platform) {
@@ -3995,7 +3997,7 @@ class AppModel extends ChangeNotifier {
   RetroPlatform? managedSetupConsole;
 
   Future<void> setupManagedRetro(RetroPlatform platform) async {
-    if (!managedRetroAvailable ||
+    if (!supportsManagedRetro(platform) ||
         (platform != RetroPlatform.ps3 && retroCoreOverride != null) ||
         managedSetupConsole != null ||
         starting != null ||
@@ -4469,7 +4471,7 @@ class AppModel extends ChangeNotifier {
             ps2Lan == null &&
             override == null &&
             !standalone &&
-            managedRetroAvailable
+            supportsManagedRetro(disc.platform)
         ? _managedRetro
         : null;
     final embeddedHome = ordinaryRecovery != null
@@ -7067,7 +7069,8 @@ class AppModel extends ChangeNotifier {
           updates.channelRow(),
         ],
       ),
-      if (system == HostSystem.windows || together.ps2LanSetupEnabled) _emulatorMenu.entry,
+      if (system == HostSystem.windows || supportsManagedRetro(RetroPlatform.ps1) || together.ps2LanSetupEnabled)
+        _emulatorMenu.entry,
     ];
   }
 

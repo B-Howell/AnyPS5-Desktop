@@ -30,6 +30,25 @@ import '../support/ui_support.dart';
 
 void main() {
   LoopbackTestBinding();
+  test('Linux x64 exposes managed PS1 setup through Settings', () {
+    final fixture = makeFixture(system: HostSystem.linux);
+    final model = fixture.model;
+    addTearDown(() {
+      model.dispose();
+      fixture.dispose();
+    });
+
+    model.open(Layer.settings);
+    final emulators = model.panelCategories().singleWhere((category) => category.id == 'emulators');
+    final console = emulators.rows.singleWhere((row) => row.id == 'emulators-ps1');
+    (console.kind as ActionRow).run();
+    final setup = model.panelCategories().single.rows.singleWhere((row) => row.id == 'emulator-group-setup');
+    (setup.kind as ActionRow).run();
+    final install = model.panelCategories().single.rows.singleWhere((row) => row.id == 'retro-ps1-setup');
+    expect(install.title, 'Install SwanStation (DuckStation-based)');
+    expect(install.kind, isA<ActionRow>());
+  }, skip: Abi.current() != Abi.linuxX64);
+
   test('game connection stats use the selected ICE pair and only report known values', () {
     final transport = StatsReport('transport', 'transport', 0, {'selectedCandidatePairId': 'chosen'});
     final pair = StatsReport('chosen', 'candidate-pair', 0, {
