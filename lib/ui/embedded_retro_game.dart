@@ -98,6 +98,7 @@ class EmbeddedRetroGame extends RunningGame {
   bool _closing = false;
   bool _awaitNeutral = true;
   RetroButtonMap _buttonMap = RetroButtonMap.standard;
+  List<RetroButtonMap> _seatMaps = const [RetroButtonMap.standard, RetroButtonMap.standard, RetroButtonMap.standard];
   bool _portableCheckpoint = false;
   int? _ordinaryCheckpointSource;
   String error = '';
@@ -178,6 +179,7 @@ class EmbeddedRetroGame extends RunningGame {
     ({int index, String path})? initialDisc,
     void Function(String)? onDiscPlayed,
     RetroButtonMap buttonMap = RetroButtonMap.standard,
+    List<RetroButtonMap> seatButtonMaps = const [],
     ({Ps1NetplayMedia media, int seat})? netplay,
     bool localNetplayStaging = false,
     ({Uint8List mac, String system, String saves})? ps2Lan,
@@ -259,6 +261,9 @@ class EmbeddedRetroGame extends RunningGame {
       ordinaryRecovery,
     );
     session._buttonMap = buttonMap;
+    for (var index = 0; index < seatButtonMaps.length && index < 3; index++) {
+      session.setSeatButtonMap(index + 2, seatButtonMaps[index]);
+    }
     session._onManualOptionAccepted = onManualOptionAccepted;
     session.tuning = RetroGameTuning(
       platform: disc.platform,
@@ -799,6 +804,13 @@ class EmbeddedRetroGame extends RunningGame {
 
   RetroButtonMap get buttonMap => _buttonMap;
 
+  /// Players 2 to 4 on this computer each keep their own layout.
+  void setSeatButtonMap(int player, RetroButtonMap map) {
+    final index = player - 2;
+    if (index < 0 || index >= _seatMaps.length || _seatMaps[index] == map) return;
+    _seatMaps = [..._seatMaps]..[index] = map;
+  }
+
   void setButtonMap(RetroButtonMap map) {
     if (_closing || _buttonMap == map) return;
     _buttonMap = map;
@@ -823,19 +835,19 @@ class EmbeddedRetroGame extends RunningGame {
       if (held.isNotEmpty || [pad.leftX, pad.leftY, pad.rightX, pad.rightY].any((axis) => axis.abs() > 0.2)) return;
       _awaitNeutral = false;
     }
-    final input = _encode({...held, ..._keys}, pad);
+    final input = _encode({...held, ..._keys}, pad, _buttonMap);
     if (_same(_lastInput, input)) return;
     _lastInput = input;
     unawaited(_native.invokeMethod<void>('input', input));
   }
 
-  List<int> _encode(Set<PadButton> held, PadState pad) {
+  List<int> _encode(Set<PadButton> held, PadState pad, RetroButtonMap layout) {
     var mask = 0;
-    for (final button in _buttonMap.map(held)) {
+    for (final button in layout.map(held)) {
       final bit = _buttonCodes[button];
       if (bit != null) mask |= 1 << bit;
     }
-    final sticks = _buttonMap.swapSticks
+    final sticks = layout.swapSticks
         ? [pad.rightX, pad.rightY, pad.leftX, pad.leftY]
         : [pad.leftX, pad.leftY, pad.rightX, pad.rightY];
     return [mask, for (final axis in sticks) (axis.clamp(-1, 1) * 32767).round()];
@@ -851,7 +863,7 @@ class EmbeddedRetroGame extends RunningGame {
       final pad = index < seats.length ? seats[index] : null;
       final input = pad == null
           ? neutral
-          : _encode(pad.pressed.where((button) => _buttonCodes.containsKey(button)).toSet(), pad);
+          : _encode(pad.pressed.where((button) => _buttonCodes.containsKey(button)).toSet(), pad, _seatMaps[index]);
       final last = index < _seatInputs.length ? _seatInputs[index] : neutral;
       if (_same(last, input)) continue;
       while (_seatInputs.length <= index) {

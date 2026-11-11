@@ -38,13 +38,20 @@ extension CoopLobby on AppModel {
     if (seated && event.button == PadButton.east) {
       localSeatPads.remove(event.pad);
       sounds.play(Cue.back);
-      _changed();
+      _seatsChanged();
     } else if (!seated && event.button == PadButton.south && _seatFree) {
       localSeatPads.add(event.pad);
       sounds.play(Cue.select);
-      _changed();
+      _seatsChanged();
     }
     return true;
+  }
+
+  void _seatsChanged() {
+    final rows = _currentRows;
+    final focusable = [for (var index = 0; index < rows.length; index++) if (rows[index].focusable) index];
+    if (focusable.isNotEmpty && !focusable.contains(panelRow)) panelRow = focusable.last;
+    _changed();
   }
 
   String _coopSummary() {

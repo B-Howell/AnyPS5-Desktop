@@ -28,9 +28,14 @@ extension RetroEmbeddedControls on AppModel {
     _ => null,
   };
 
-  static String _buttonName(PadButton? button) => button == null ? T.text('retroButtonOff') : T.text(_buttonKeys[button]!);
+  static String buttonName(PadButton? button) => button == null ? T.text('retroButtonOff') : T.text(_buttonKeys[button]!);
 
-  RetroButtonMap _retroButtonMap(Game game) => preferences.retroButtonMaps[game.id] ?? RetroButtonMap.standard;
+  static String retroLayoutKey(String gameId, int player) => player <= 1 ? gameId : '$gameId#p$player';
+
+  RetroButtonMap retroLayout(String gameId, int player) =>
+      preferences.retroButtonMaps[retroLayoutKey(gameId, player)] ?? RetroButtonMap.standard;
+
+  RetroButtonMap _retroButtonMap(Game game) => retroLayout(game.id, retroControlsPlayer);
 
   String _retroControlsSummary(Game game) => switch (_retroButtonMap(game).preset) {
     RetroControlPreset.standard => T.text('retroControlsStandard'),
@@ -39,12 +44,19 @@ extension RetroEmbeddedControls on AppModel {
   };
 
   void _setRetroButtonMap(Game game, RetroButtonMap map) {
+    final key = retroLayoutKey(game.id, retroControlsPlayer);
     if (map.isStandard) {
-      preferences.retroButtonMaps.remove(game.id);
+      preferences.retroButtonMaps.remove(key);
     } else {
-      preferences.retroButtonMaps[game.id] = map;
+      preferences.retroButtonMaps[key] = map;
     }
-    if (running?.$1.id == game.id) embeddedGame?.setButtonMap(map);
+    if (running?.$1.id == game.id) {
+      if (retroControlsPlayer <= 1) {
+        embeddedGame?.setButtonMap(map);
+      } else {
+        embeddedGame?.setSeatButtonMap(retroControlsPlayer, map);
+      }
+    }
     savePreferences();
     _changed();
   }
@@ -53,7 +65,22 @@ extension RetroEmbeddedControls on AppModel {
     final map = _retroButtonMap(game);
     const presets = [RetroControlPreset.standard, RetroControlPreset.swapCrossCircle, RetroControlPreset.custom];
     const functions = [...RetroButtonMap.buttons, null];
+    final players = running?.$1.id == game.id ? coopSeats : (platform == RetroPlatform.ps3 ? 1 : 2);
     return [
+      if (players > 1)
+        PanelRow(
+          id: 'retroControlsPlayer',
+          title: T.text('retroControlsPlayer'),
+          detail: T.text('retroControlsPlayerDetail'),
+          kind: ChoiceRow(
+            [for (var player = 1; player <= players; player++) T.format('coopPlayer', [player])],
+            (retroControlsPlayer - 1).clamp(0, players - 1),
+            (index) {
+              retroControlsPlayer = index + 1;
+              _changed();
+            },
+          ),
+        ),
       PanelRow(
         id: 'retroControlsPreset',
         title: T.text('retroControlsPreset'),
@@ -72,10 +99,10 @@ extension RetroEmbeddedControls on AppModel {
       for (final button in RetroButtonMap.buttons)
         PanelRow(
           id: 'retroButton-${button.name}',
-          title: _buttonName(button),
+          title: buttonName(button),
           glyph: _glyph(button),
           kind: ChoiceRow(
-            [for (final function in functions) _buttonName(function)],
+            [for (final function in functions) buttonName(function)],
             functions.indexOf(map.target(button)),
             (index) => _setRetroButtonMap(game, map.assign(button, functions[index])),
           ),

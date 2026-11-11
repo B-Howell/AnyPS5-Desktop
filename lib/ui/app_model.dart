@@ -1749,6 +1749,7 @@ class AppModel extends ChangeNotifier {
 
   Layer? _controllerTestFrom;
   final List<String> localSeatPads = [];
+  int retroControlsPlayer = 1;
   bool _controlsFromQuickMenu = false;
 
   void openControllerTest() {
@@ -4697,7 +4698,8 @@ class AppModel extends ChangeNotifier {
           internalResolution: preferences.retroInternalResolution[game.id],
           graphics: {if (ps3) ...preferences.retroPs3Defaults, ...?graphics[graphicsId], ...trialOptions},
           initialDisc: initialDisc,
-          buttonMap: preferences.retroButtonMaps[game.id] ?? RetroButtonMap.standard,
+          buttonMap: retroLayout(game.id, 1),
+          seatButtonMaps: [for (var player = 2; player <= 4; player++) retroLayout(game.id, player)],
           onDiscPlayed: initialDisc == null || trialOptions.isNotEmpty
               ? null
               : (path) {
@@ -5180,6 +5182,7 @@ class AppModel extends ChangeNotifier {
     }
     if (next == Layer.trophies || next == Layer.gallery) _loadShots();
     if (next == Layer.controls && selectedGame?.retro == null && selectedGame != null) _readControls(selectedGame!);
+    if (next == Layer.controls && overlay != Layer.controllerTest) retroControlsPlayer = 1;
     // The screens that show the own name and handle read them again first.
     if (next == Layer.friends || next == Layer.profile || next == Layer.settings || next == Layer.profilePicker) {
       together.refreshOwnProfile();

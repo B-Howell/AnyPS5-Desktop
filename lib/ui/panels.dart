@@ -17,6 +17,7 @@ import 'glass.dart';
 import 'level_badge.dart';
 import 'messages_view.dart';
 import 'player_slots_strip.dart';
+import 'retro_controls_art.dart';
 import 'profile_picture.dart';
 import 'home.dart';
 import 'strings.dart';
@@ -212,6 +213,7 @@ class PanelView extends StatelessWidget {
     final tall = model.overlay == Layer.copyWarning;
     // The party with its chat beside the rows: wider.
     final partyChat = model.overlay == Layer.party && model.together.partyChatShown;
+    final retroControls = model.overlay == Layer.controls && model.selectedGame?.retro != null;
     final heading = switch (model.overlay) {
       Layer.settings => T.text('settings'),
       Layer.emulatorMenu => 'Emulators',
@@ -397,6 +399,10 @@ class PanelView extends StatelessWidget {
                           child: _CategoryList(model: model, categories: categories),
                         ),
                         SizedBox(width: 22 * scale),
+                      ],
+                      if (retroControls) ...[
+                        SizedBox(width: 560 * scale, child: RetroControlsArt(model: model)),
+                        SizedBox(width: 28 * scale),
                       ],
                       Expanded(
                         child: PanelRows(
