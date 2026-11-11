@@ -968,3 +968,23 @@ placements. The selected WebRTC path was direct on the test network.
 This verifies hosted signaling and mixed-platform rollback on two
 physical machines. The race used offscreen test peers and did not
 exercise the dashboard controls or a relayed path.
+
+### Manual CTR dashboard test
+
+The Windows portable bundle for fork revision `ebfcf6f` was staged from
+[workflow run 43035328354](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/43035328354).
+Its shortcut sets both PS1 preview flags and points to a verified Windows
+rollback archive. The installed Linux dashboard `d333062` uses the
+verified Linux archive. The intervening source changes affect this
+document and the hosted test harness, so both dashboards use the same
+multiplayer implementation.
+
+Open the dashboards and sign in to separate AnyTogether accounts that
+are already friends. On Windows, select Crash Team Racing, open the
+ellipsis beside Play, choose Online couch co-op, and select the Linux
+friend. On Linux, open Friends and accept Play with [host]. Once both
+games boot, pick Versus and two players in CTR. The host controls the
+first port, and the guest controls the second. Both see split-screen.
+The supported USA disc and SCPH-1001 BIOS must match. This handoff
+verifies the staged packages and the route through the application code.
+Manual dashboard play is pending.
