@@ -123,6 +123,7 @@ import 'trophy_card.dart';
 part 'emulator_menu.dart';
 part 'retro_disc_menu.dart';
 part 'retro_embedded_controls.dart';
+part 'coop_lobby.dart';
 part 'retro_launch_optimization.dart';
 part 'ps3_online_readiness_page.dart';
 part 'ps3_update_panel.dart';
@@ -1114,12 +1115,22 @@ class TextRow extends RowKind {
 /// ring while they speak in party voice.
 /// One seat in a couch co-op lobby: Player 1 to 4, who holds it and with which controller.
 class PlayerSlot {
-  const PlayerSlot({required this.player, this.name, required this.status, this.you = false, this.available = true});
+  const PlayerSlot({
+    required this.player,
+    this.name,
+    required this.status,
+    this.you = false,
+    this.available = true,
+    this.joinHint = false,
+  });
   final int player;
   final String? name;
   final String status;
   final bool you;
   final bool available;
+
+  /// A controller on this computer is connected but not seated: the seat asks it to press Cross.
+  final bool joinHint;
 }
 
 class PanelPerson {
@@ -1737,6 +1748,7 @@ class AppModel extends ChangeNotifier {
   }
 
   Layer? _controllerTestFrom;
+  final List<String> localSeatPads = [];
   bool _controlsFromQuickMenu = false;
 
   void openControllerTest() {
@@ -1877,6 +1889,7 @@ class AppModel extends ChangeNotifier {
   /// A controller's event past the gate: to the navigator, or to Settings › Shortcuts while it
   /// waits for buttons.
   void _padEvent(PadEvent event) {
+    if (coopPadEvent(event)) return;
     if (event case PadButtonEvent(button: PadButton.guide) when _retroSession) return _navigator?.handle(event);
     if (embeddedGame != null && overlay == null && event is PadButtonEvent) return;
     if (embeddedGame != null && overlay == null && event is PadAxisEvent) return;
@@ -4715,6 +4728,7 @@ class AppModel extends ChangeNotifier {
             final player = controllers.playerOne ?? controllers.pads.firstOrNull;
             return player == null ? PadState.idle : controllers.stateOf(player.id) ?? PadState.idle;
           },
+          readSeats: localSeatStates,
           changed: _changed,
           netplay: netplay,
           localNetplayStaging: localNetplayStaging,
@@ -4806,6 +4820,7 @@ class AppModel extends ChangeNotifier {
         _loadTrophies(game);
       }
       running = null;
+      localSeatPads.clear();
       together.family.followGame();
       together.family.played(run.started, DateTime.now(), reported: false);
       stopping = false;
@@ -6481,7 +6496,7 @@ class AppModel extends ChangeNotifier {
           ),
         ];
       case Layer.coopLobby when running != null:
-        return [PanelCategory(id: 'coopLobby', title: T.text('coopLobbyTitle'), rows: together.ps1LobbyRows())];
+        return [PanelCategory(id: 'coopLobby', title: T.text('coopLobbyTitle'), rows: coopLobbyRows())];
       case Layer.retroStartDisc:
         return [PanelCategory(id: 'retroStartDisc', title: T.text('retroSelectDisc'), rows: _retroLaunchDiscRows())];
       case Layer.retroDiscs:
@@ -6537,6 +6552,7 @@ class AppModel extends ChangeNotifier {
                 ),
               if (embeddedGame == null) ...media.gameRows(),
               if (embeddedGame == null) ...sharePlay.rows(),
+              ?coopQuickRow(),
               ...together.ps1QuickRows(),
               ...together.ps2LanQuickRows(),
               ...together.ps3PartyQuickRows(),

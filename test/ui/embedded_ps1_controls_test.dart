@@ -178,4 +178,62 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
     await replay;
   });
+  testWidgets('a second controller joins Couch Co-op as Player 2 and drives port 2', (tester) async {
+    final env = <String, String>{};
+    final fixture = makeFixture(environment: env);
+    final model = fixture.model;
+    env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
+    File(p.join(fixture.temp.path, model.embeddedCoreHost.libraryName(RetroPlatform.ps1))).createSync();
+    final folder = Directory(p.join(model.root!, 'Racing'))..createSync();
+    File(p.join(folder.path, 'one.cue')).createSync();
+    File(p.join(folder.path, 'retro.json')).writeAsStringSync(
+      jsonEncode({'platform': 'ps1', 'titleId': 'TEST24680', 'name': 'Racing', 'disc': 'one.cue'}),
+    );
+    const one = PadInfo(id: 'sdl0', name: 'DualSense Wireless Controller', kind: PadKind.dualSense, connection: PadConnection.usb, driver: 'SDL');
+    const two = PadInfo(id: 'sdl1', name: 'DualShock 4', kind: PadKind.dualShock4, connection: PadConnection.usb, driver: 'SDL');
+    var states = <String, PadState>{};
+    model.controllers.preview([one, two], playerOne: one.id, states: states);
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final inputs = <List<dynamic>>[];
+    var ended = false;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'start') return 123;
+      if (call.method == 'status') return {'presented': true, 'ended': ended};
+      if (call.method == 'input') inputs.add(call.arguments as List<dynamic>);
+      return null;
+    });
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(channel, null);
+      model.dispose();
+      fixture.dispose();
+    });
+    model.rescan();
+    final game = model.games.singleWhere((game) => game.name == 'Racing');
+    final play = model.play(game);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    await model.openQuickMenu();
+    final quick = model.panelCategories().single.rows;
+    expect(quick.map((row) => row.title), contains('Couch Co-op'));
+    (quick.singleWhere((row) => row.id == 'coop').kind as ActionRow).run();
+    expect(model.overlay, Layer.coopLobby);
+    PlayerSlot seat(int player) =>
+        model.panelCategories().single.rows.singleWhere((row) => row.id == 'coop-players').playerSlots[player - 1];
+    expect(seat(2).joinHint, isTrue);
+    expect(model.coopPadEvent(const PadButtonEvent('sdl1', PadButton.south, down: true)), isTrue);
+    expect(model.localSeatPads, ['sdl1']);
+    expect(seat(2).name, 'Guest');
+    expect(seat(2).status, contains('DualShock 4'));
+    model.resumeGame();
+    states = {'sdl1': const PadState(pressed: {PadButton.north})};
+    model.controllers.preview([one, two], playerOne: one.id, states: states);
+    await tester.pump(const Duration(milliseconds: 48));
+    expect(inputs.where((input) => input.length == 6 && input.first == 1).last, [1, 1 << 9, 0, 0, 0, 0]);
+    model.open(Layer.coopLobby);
+    expect(model.coopPadEvent(const PadButtonEvent('sdl1', PadButton.east, down: true)), isTrue);
+    expect(model.localSeatPads, isEmpty);
+    ended = true;
+    await tester.pump(const Duration(seconds: 5));
+    await play;
+  });
 }

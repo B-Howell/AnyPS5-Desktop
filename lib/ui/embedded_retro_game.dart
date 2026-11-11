@@ -122,6 +122,7 @@ class EmbeddedRetroGame extends RunningGame {
   late final RetroGameTuning tuning;
   final _keys = <PadButton>{};
   List<int> _lastInput = const [];
+  final List<List<int>> _seatInputs = [];
 
   Future<bool> get ready => _ready.future;
   Future<bool> get netplayReady => _netplayReady.future;
@@ -172,6 +173,7 @@ class EmbeddedRetroGame extends RunningGame {
     RetroTuningPersist? onAutoOptimizeApplied,
     void Function()? onManualOptionAccepted,
     required PadState Function() readPad,
+    List<PadState> Function()? readSeats,
     required void Function() changed,
     ({int index, String path})? initialDisc,
     void Function(String)? onDiscPlayed,
@@ -300,6 +302,7 @@ class EmbeddedRetroGame extends RunningGame {
     session._input = Timer.periodic(const Duration(milliseconds: 16), (_) {
       if (session._acceptsInput && !session._closing && session._ordinaryRecovery == null) {
         session._sendInput(readPad());
+        if (!session._netplay && readSeats != null) session._sendSeats(readSeats());
       }
     });
     return session;
@@ -820,24 +823,43 @@ class EmbeddedRetroGame extends RunningGame {
       if (held.isNotEmpty || [pad.leftX, pad.leftY, pad.rightX, pad.rightY].any((axis) => axis.abs() > 0.2)) return;
       _awaitNeutral = false;
     }
+    final input = _encode({...held, ..._keys}, pad);
+    if (_same(_lastInput, input)) return;
+    _lastInput = input;
+    unawaited(_native.invokeMethod<void>('input', input));
+  }
+
+  List<int> _encode(Set<PadButton> held, PadState pad) {
     var mask = 0;
-    for (final button in _buttonMap.map({...held, ..._keys})) {
+    for (final button in _buttonMap.map(held)) {
       final bit = _buttonCodes[button];
       if (bit != null) mask |= 1 << bit;
     }
     final sticks = _buttonMap.swapSticks
         ? [pad.rightX, pad.rightY, pad.leftX, pad.leftY]
         : [pad.leftX, pad.leftY, pad.rightX, pad.rightY];
-    final input = [
-      mask,
-      for (final axis in sticks) (axis.clamp(-1, 1) * 32767).round(),
-    ];
-    if (_lastInput.length == input.length &&
-        List.generate(input.length, (i) => _lastInput[i] == input[i]).every((e) => e)) {
-      return;
+    return [mask, for (final axis in sticks) (axis.clamp(-1, 1) * 32767).round()];
+  }
+
+  static bool _same(List<int> a, List<int> b) =>
+      a.length == b.length && List.generate(a.length, (i) => a[i] == b[i]).every((e) => e);
+
+  /// Players 2 to 4 on this computer: each seated controller drives its own port.
+  void _sendSeats(List<PadState> seats) {
+    const neutral = [0, 0, 0, 0, 0];
+    for (var index = 0; index < 3; index++) {
+      final pad = index < seats.length ? seats[index] : null;
+      final input = pad == null
+          ? neutral
+          : _encode(pad.pressed.where((button) => _buttonCodes.containsKey(button)).toSet(), pad);
+      final last = index < _seatInputs.length ? _seatInputs[index] : neutral;
+      if (_same(last, input)) continue;
+      while (_seatInputs.length <= index) {
+        _seatInputs.add(neutral);
+      }
+      _seatInputs[index] = input;
+      unawaited(_native.invokeMethod<void>('input', [index + 1, ...input]));
     }
-    _lastInput = input;
-    unawaited(_native.invokeMethod<void>('input', input));
   }
 
   static const _buttonCodes = {

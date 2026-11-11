@@ -116,6 +116,17 @@ void CheckSession(const std::filesystem::path& path) {
     const auto frame = session.AcquireFrame();
     return frame && frame->pixels == std::vector<uint8_t>{255, 0, 0, 255};
   }, "Session did not deliver the packed player input mask");
+  session.SetInput(1, 0x0010, {});
+  WaitFor([&] {
+    const auto frame = session.AcquireFrame();
+    return frame && frame->pixels == std::vector<uint8_t>{0, 0, 0, 255};
+  }, "Session did not deliver the second player's input to port 2");
+  session.SetInput(1, 0, {});
+  WaitFor([&] {
+    const auto frame = session.AcquireFrame();
+    return frame && frame->pixels == std::vector<uint8_t>{255, 0, 0, 255};
+  }, "Session did not release the second player's input");
+  session.SetInput(4, 0x0010, {});
   const auto active = session.Status();
   Check(active.presented && active.telemetry.audio_frames > 0 && active.telemetry.audio_rate == 48000.0,
         "Session did not report video and audio");

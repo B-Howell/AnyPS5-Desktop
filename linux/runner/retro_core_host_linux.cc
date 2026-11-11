@@ -212,16 +212,26 @@ void Success(FlMethodCall* call, FlValue* result = nullptr) {
 }
 
 void SetInput(Session& session, FlValue* input) {
-  if (!input || fl_value_get_type(input) != FL_VALUE_TYPE_LIST || fl_value_get_length(input) != 5) return;
-  auto* mask = fl_value_get_list_value(input, 0);
+  if (!input || fl_value_get_type(input) != FL_VALUE_TYPE_LIST) return;
+  const auto length = fl_value_get_length(input);
+  if (length != 5 && length != 6) return;
+  const size_t first = length - 5;
+  int64_t port = 0;
+  if (first) {
+    auto* value = fl_value_get_list_value(input, 0);
+    if (fl_value_get_type(value) != FL_VALUE_TYPE_INT) return;
+    port = fl_value_get_int(value);
+    if (port < 0 || port > 3) return;
+  }
+  auto* mask = fl_value_get_list_value(input, first);
   if (fl_value_get_type(mask) != FL_VALUE_TYPE_INT) return;
   std::array<int16_t, 4> axes{};
   for (size_t i = 0; i < axes.size(); ++i) {
-    auto* axis = fl_value_get_list_value(input, i + 1);
+    auto* axis = fl_value_get_list_value(input, first + i + 1);
     if (fl_value_get_type(axis) == FL_VALUE_TYPE_INT)
       axes[i] = static_cast<int16_t>(std::clamp<int64_t>(fl_value_get_int(axis), -32768, 32767));
   }
-  session.SetInput(static_cast<uint16_t>(fl_value_get_int(mask)), axes);
+  session.SetInput(static_cast<unsigned>(port), static_cast<uint16_t>(fl_value_get_int(mask)), axes);
 }
 }  // namespace
 

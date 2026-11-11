@@ -70,21 +70,9 @@ extension TogetherPs1Netplay on TogetherModel {
   }
 
   List<PanelRow> ps1QuickRows() {
-    if (!_ps1NetplayEnabled) return const [];
-    final host = app.embeddedGame;
-    if (_ps1Match != null) return host != null && app.running != null ? [_ps1LobbyEntry()] : ps1NetplayRows();
-    if (host != null && identical(_ps1InviteVerification?.host, host)) return [_ps1LobbyEntry()];
-    if (_verifyingPs1) return const [];
-    if (host == null || _ps1HostMode(host, app.running?.$1) == null) return const [];
-    return [_ps1LobbyEntry()];
+    if (!_ps1NetplayEnabled || (app.embeddedGame != null && app.running != null)) return const [];
+    return _ps1Match != null ? ps1NetplayRows() : const [];
   }
-
-  PanelRow _ps1LobbyEntry() => PanelRow(
-    id: 'ps1-invite-from-game',
-    title: T.text('ps1OnlineCouch'),
-    detail: _ps1Match == null && !_verifyingPs1 ? T.text('coopLobbyEntryDetail') : _ps1PartnerStatus(),
-    kind: ActionRow(() => app.open(Layer.coopLobby)),
-  );
 
   String? _ps1PartnerName() {
     final id = _ps1Partner?.id;
@@ -105,45 +93,37 @@ extension TogetherPs1Netplay on TogetherModel {
     return T.text(match.hasMatchedPlayer ? 'coopJoining' : 'coopInvited');
   }
 
-  List<PlayerSlot> ps1LobbySlots() {
-    final partner = _ps1Partner;
-    final me = user?.displayName ?? app.currentProfile?.name ?? T.text('coopYou');
-    final hosting = partner?.hosting ?? true;
-    final friend = partner == null ? null : _ps1PartnerName();
-    final friendStatus = partner == null ? T.text('coopInviteSeat') : '${T.text('coopController2')} · ${_ps1PartnerStatus()}';
-    final mine = PlayerSlot(
-      player: hosting ? 1 : 2,
-      name: me,
-      status: T.text(hosting ? 'coopController1' : 'coopController2'),
-      you: true,
-    );
-    final theirs = PlayerSlot(player: hosting ? 2 : 1, name: friend, status: friendStatus);
-    return [
-      if (hosting) ...[mine, theirs] else ...[theirs, mine],
-      for (final player in [3, 4]) PlayerSlot(player: player, status: T.text('coopTwoPlayers'), available: false),
-    ];
+  bool get ps1OnlineActive => _ps1Match != null || _ps1InviteVerification != null;
+
+  bool get ps1CanHostOnline {
+    final host = app.embeddedGame;
+    return _ps1NetplayEnabled &&
+        !ps1OnlineActive &&
+        !_verifyingPs1 &&
+        host != null &&
+        _ps1HostMode(host, app.running?.$1) != null;
   }
 
-  List<PanelRow> ps1LobbyRows() {
-    final busy = _ps1Match != null || _ps1InviteVerification != null;
-    return [
-      PanelRow(
-        id: 'coop-players',
-        title: app.running?.$1.name ?? T.text('ps1OnlineCouch'),
-        kind: InfoRow(T.text('coopLobbyDetail')),
-        playerSlots: ps1LobbySlots(),
-      ),
-      if (!busy && !_verifyingPs1)
-        PanelRow(
-          id: 'coop-invite',
-          title: T.text('coopInvite'),
-          detail: T.text('ps1OnlineInviteDetail'),
-          kind: ActionRow(() => app.open(Layer.retroOnlineFriends)),
-        ),
-      ...ps1NetplayRows(),
-      PanelRow(id: 'coop-back-to-game', title: T.text('coopBackToGame'), kind: ActionRow(app.resumeGame)),
-    ];
+  ({String name, String status, bool hosting})? ps1OnlineSlot() {
+    final partner = _ps1Partner;
+    if (partner == null) return null;
+    return (
+      name: _ps1PartnerName() ?? T.text('coopFriend'),
+      status: '${T.text(partner.hosting ? 'coopController2' : 'coopController1')} · ${_ps1PartnerStatus()}',
+      hosting: partner.hosting,
+    );
   }
+
+  List<PanelRow> ps1LobbyOnlineRows() => [
+    if (ps1CanHostOnline)
+      PanelRow(
+        id: 'coop-invite',
+        title: T.text('coopInvite'),
+        detail: T.text('ps1OnlineInviteDetail'),
+        kind: ActionRow(() => app.open(Layer.retroOnlineFriends)),
+      ),
+    ...ps1NetplayRows(),
+  ];
 
   Ps1NetplayRoomMode? _ps1HostMode(EmbeddedRetroGame host, Game? game) {
     if (!app.embeddedOnlineRetroAvailable) return null;

@@ -937,7 +937,7 @@ void main() {
     PanelRow row(String id) {
       Iterable<PanelRow> rows() => model.panelCategories().expand((category) => category.rows);
       if (id.startsWith('ps1-netplay-') && model.overlay == Layer.quickMenu && !rows().any((row) => row.id == id)) {
-        (rows().singleWhere((row) => row.id == 'ps1-invite-from-game').kind as ActionRow).run();
+        (rows().singleWhere((row) => row.id == 'coop').kind as ActionRow).run();
         expect(model.overlay, Layer.coopLobby);
       }
       return rows().singleWhere((row) => row.id == id);
@@ -945,7 +945,7 @@ void main() {
 
     void choose(String id) => (row(id).kind as ActionRow).run();
     void inviteFromGame() {
-      choose('ps1-invite-from-game');
+      choose('coop');
       expect(model.overlay, Layer.coopLobby);
       expect(row('coop-players').playerSlots.map((slot) => slot.player), [1, 2, 3, 4]);
       choose('coop-invite');
@@ -1063,7 +1063,7 @@ void main() {
     expect(row('ps1-netplay-cancel-verification').detail, contains('Verifying your PS1 game'));
     choose('ps1-netplay-cancel-verification');
     expect(
-      await eventually(() => model.together.ps1QuickRows().any((row) => row.id == 'ps1-invite-from-game')),
+      await eventually(() => model.together.ps1QuickRows().any((row) => row.id == 'coop')),
       isTrue,
     );
     expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
@@ -1130,7 +1130,7 @@ void main() {
     await rejected.done.timeout(const Duration(seconds: 5));
     expect(rejected.session.mismatch, Ps1NetplayMismatch.disc);
     expect(
-      await eventually(() => model.together.ps1QuickRows().any((row) => row.id == 'ps1-invite-from-game')),
+      await eventually(() => model.together.ps1QuickRows().any((row) => row.id == 'coop')),
       isTrue,
     );
     expect(model.toast, 'Your PS1 disc files differ. Both players need the same disc and revision.');

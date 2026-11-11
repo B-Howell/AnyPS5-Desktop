@@ -761,12 +761,12 @@ class RetroCoreSession {
 
   void Pause(bool pause) {
     if (netplay_ || lan_) {
-      if (pause) SetInput(0, {});
+      if (pause) ClearInput();
       return;
     }
     if (paused_.exchange(pause) == pause) return;
     if (pause) {
-      SetInput(0, {});
+      ClearInput();
       audio_.Flush();
       std::lock_guard<std::mutex> lock(telemetry_mutex_);
       last_frame_at_ = {};
@@ -785,11 +785,17 @@ class RetroCoreSession {
     return true;
   }
 
-  void SetInput(uint16_t buttons, const std::array<int16_t, 4>& axes) {
-    if (!recovery_accepted_) return;
+  void ClearInput() {
     std::lock_guard<std::mutex> lock(input_mutex_);
-    buttons_ = buttons;
-    axes_ = axes;
+    buttons_.fill(0);
+    for (auto& axes : axes_) axes.fill(0);
+  }
+
+  void SetInput(unsigned port, uint16_t buttons, const std::array<int16_t, 4>& axes) {
+    if (!recovery_accepted_ || port >= kLocalPorts) return;
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    buttons_[port] = buttons;
+    axes_[port] = axes;
   }
 
   bool StartNetplay() {
@@ -1671,10 +1677,10 @@ class RetroCoreSession {
       if (device == 5 && index < 2 && id < 2) return input.axes[index * 2 + id];
       return 0;
     }
-    if (suppress_frame_ || port != 0 || paused_) return 0;
+    if (suppress_frame_ || port >= kLocalPorts || paused_) return 0;
     std::lock_guard<std::mutex> lock(input_mutex_);
-    if (device == 1 && id < 16) return (buttons_ & (1u << id)) != 0;
-    if (device == 5 && index < 2 && id < 2) return axes_[index * 2 + id];
+    if (device == 1 && id < 16) return (buttons_[port] & (1u << id)) != 0;
+    if (device == 5 && index < 2 && id < 2) return axes_[port][index * 2 + id];
     return 0;
   }
 
@@ -2100,7 +2106,7 @@ class RetroCoreSession {
       ps1_netplay::PadInput local;
       {
         std::lock_guard<std::mutex> lock(input_mutex_);
-        local = {buttons_, axes_};
+        local = {buttons_[0], axes_[0]};
       }
       if (presentation_core_) {
         if (presentation_render.valid() &&
@@ -2545,6 +2551,10 @@ class RetroCoreSession {
           }
         }
         lan_ready_ = lan_ && loaded;
+        if (loaded && !netplay_ && ps1_) {
+          if (const auto controller = Symbol<void (*)(unsigned, unsigned)>(dll, "retro_set_controller_port_device", false))
+            controller(1, kPs1DualShockDevice);
+        }
         if (loaded && netplay_) {
           const auto controller = Symbol<void (*)(unsigned, unsigned)>(dll, "retro_set_controller_port_device");
           const unsigned device = netplay_dualshock_ ? kPs1DualShockDevice : 1u;
@@ -2845,8 +2855,9 @@ class RetroCoreSession {
   std::optional<std::promise<std::optional<PresentationState>>> presentation_capture_;
   std::optional<PresentationRender> presentation_render_;
   std::shared_ptr<Frame> frame_;
-  uint16_t buttons_ = 0;
-  std::array<int16_t, 4> axes_{};
+  static constexpr unsigned kLocalPorts = 4;
+  std::array<uint16_t, kLocalPorts> buttons_{};
+  std::array<std::array<int16_t, 4>, kLocalPorts> axes_{};
   std::map<std::string, Option> options_;
   bool options_changed_ = false;
   bool graphics_queued_ = false;
@@ -3379,15 +3390,18 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
     result->Success();
   } else if (method == "input") {
     const auto* input = std::get_if<List>(arguments);
-    if (input && input->size() == 5) {
+    if (input && (input->size() == 5 || input->size() == 6)) {
+      const size_t first = input->size() - 5;
+      const auto* port = first ? std::get_if<int32_t>(&input->front()) : nullptr;
       std::array<int16_t, 4> axes{};
       for (size_t index = 0; index < axes.size(); ++index) {
-        if (const auto* axis = std::get_if<int32_t>(&(*input)[index + 1])) {
+        if (const auto* axis = std::get_if<int32_t>(&(*input)[first + index + 1])) {
           axes[index] = static_cast<int16_t>(std::clamp(*axis, -32768, 32767));
         }
       }
-      if (const auto* mask = std::get_if<int32_t>(&input->front())) {
-        session_->SetInput(static_cast<uint16_t>(*mask), axes);
+      const auto* mask = std::get_if<int32_t>(&(*input)[first]);
+      if (mask && (!first || (port && *port >= 0 && *port < 4))) {
+        session_->SetInput(port ? static_cast<unsigned>(*port) : 0u, static_cast<uint16_t>(*mask), axes);
       }
     }
     result->Success();

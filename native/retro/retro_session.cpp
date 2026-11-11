@@ -163,12 +163,12 @@ class Session::Impl {
 
   void Pause(bool pause) {
     if (lan_ || match_timeline_) {
-      if (pause) SetInput(0, {});
+      if (pause) ClearInput();
       return;
     }
     if (paused_.exchange(pause) == pause) return;
     if (pause) {
-      SetInput(0, {});
+      ClearInput();
       audio_->Flush();
       std::lock_guard<std::mutex> lock(telemetry_mutex_);
       last_frame_at_ = {};
@@ -187,11 +187,18 @@ class Session::Impl {
     return true;
   }
 
-  void SetInput(uint16_t buttons, const std::array<int16_t, 4>& axes) {
+  void ClearInput() {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    buttons_.fill(0);
+    for (auto& axes : axes_) axes.fill(0);
+  }
+
+  void SetInput(unsigned port, uint16_t buttons, const std::array<int16_t, 4>& axes) {
+    if (port >= kLocalPorts) return;
     std::lock_guard<std::mutex> lock(input_mutex_);
     if (!recovery_accepted_) return;
-    buttons_ = buttons;
-    axes_ = axes;
+    buttons_[port] = buttons;
+    axes_[port] = axes;
   }
 
   std::optional<LanFrames> ExchangeLan(const LanFrames& input) {
@@ -1008,11 +1015,11 @@ class Session::Impl {
       return 0;
     }
     if (suppress_frame_) return 0;
-    if (port != 0 || paused_) return 0;
+    if (port >= kLocalPorts || paused_) return 0;
     std::lock_guard<std::mutex> lock(input_mutex_);
-    if (device == 1 && id == 256) return static_cast<int16_t>(buttons_);
-    if (device == 1 && id < 16) return (buttons_ & (1u << id)) != 0;
-    if (device == 5 && index < 2 && id < 2) return axes_[index * 2 + id];
+    if (device == 1 && id == 256) return static_cast<int16_t>(buttons_[port]);
+    if (device == 1 && id < 16) return (buttons_[port] & (1u << id)) != 0;
+    if (device == 5 && index < 2 && id < 2) return axes_[port][index * 2 + id];
     return 0;
   }
 
@@ -1115,6 +1122,10 @@ class Session::Impl {
           throw std::runtime_error("The core cannot boot the selected disc.");
         }
         loaded = load(&game);
+        if (loaded && !match_timeline_ && console_ == Console::kPs1) {
+          if (const auto controller = core.Get<void (*)(unsigned, unsigned)>("retro_set_controller_port_device", false))
+            controller(1, kPs1DualShockDevice);
+        }
         if (loaded && match_timeline_) {
           const auto controller = core.Get<void (*)(unsigned, unsigned)>("retro_set_controller_port_device");
           const auto device = config_.ps1_match->dualshock ? kPs1DualShockDevice : 1u;
@@ -1335,7 +1346,7 @@ class Session::Impl {
           ps1_netplay::PadInput local;
           {
             std::lock_guard<std::mutex> lock(input_mutex_);
-            local = {buttons_, axes_};
+            local = {buttons_[0], axes_[0]};
           }
           bool prepared;
           bool staging;
@@ -1487,8 +1498,9 @@ class Session::Impl {
   std::atomic<float> aspect_{4.f / 3.f};
   std::mutex frame_mutex_, input_mutex_, settings_mutex_;
   std::shared_ptr<Frame> frame_;
-  uint16_t buttons_ = 0;
-  std::array<int16_t, 4> axes_{};
+  static constexpr unsigned kLocalPorts = 4;
+  std::array<uint16_t, kLocalPorts> buttons_{};
+  std::array<std::array<int16_t, 4>, kLocalPorts> axes_{};
   std::map<std::string, Option> options_;
   std::optional<DiscStatus> discs_;
   int64_t disc_inserted_at_step_ = 0;
@@ -1517,7 +1529,10 @@ void Session::Stop() { impl_->Stop(); }
 void Session::Join() { impl_->Join(); }
 void Session::Pause(bool pause) { impl_->Pause(pause); }
 bool Session::ChangeDisc(unsigned index) { return impl_->ChangeDisc(index); }
-void Session::SetInput(uint16_t buttons, const std::array<int16_t, 4>& axes) { impl_->SetInput(buttons, axes); }
+void Session::SetInput(uint16_t buttons, const std::array<int16_t, 4>& axes) { impl_->SetInput(0, buttons, axes); }
+void Session::SetInput(unsigned port, uint16_t buttons, const std::array<int16_t, 4>& axes) {
+  impl_->SetInput(port, buttons, axes);
+}
 std::optional<LanFrames> Session::ExchangeLan(const LanFrames& input) { return impl_->ExchangeLan(input); }
 bool Session::ClearLanFrames() { return impl_->ClearLanFrames(); }
 std::optional<int64_t> Session::RequestOrdinaryCheckpoint(int64_t source, const ps1_checkpoint::Digest& digest, bool park) {

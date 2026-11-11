@@ -71,7 +71,7 @@ class _SlotCard extends StatelessWidget {
             ),
             SizedBox(height: 12 * scale),
             Text(
-              slot.name ?? T.text('coopOpen'),
+              slot.name ?? T.text(slot.joinHint ? 'coopPressToJoin' : 'coopOpen'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
