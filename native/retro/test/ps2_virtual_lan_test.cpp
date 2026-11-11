@@ -1,3 +1,7 @@
+#ifdef NDEBUG
+#error "Native online tests require active assertions"
+#endif
+
 #include "../ps2_virtual_lan.h"
 
 #include <cassert>

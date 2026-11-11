@@ -235,7 +235,7 @@ bootstrap modes, cancellation, and the first live fingerprint after cutover.
 The [Windows worker](../windows/runner/retro_core_host.cpp) holds between
 committed frames and keeps that history stable for the guest. Starting again
 clears the previous peer's inputs, history, and fingerprint counters while
-preserving the emulator state. The [input timeline](../windows/runner/ps1_netplay_timeline.h)
+preserving the emulator state. The [input timeline](../native/retro/ps1_netplay_timeline.h)
 refuses to hold while a frame is being committed. The [headless probe](../windows/runner/tests/run_ps1_netplay_probe.py)
 can replace a peer with `--cutover` and verify the fresh input epoch with
 the real core. With the recorded CTR fixture, `--cutover-frame 4748`
@@ -764,9 +764,9 @@ and passed the same 13,706-frame race with 114 matching checkpoints.
 That run shared the machine with the PS2 test and used the Python harness
 clock. Treat it as a correctness result. Native frame-budget qualification
 and continuous in-app video and audio remain separate tests.
-The [native timeline](../windows/runner/ps1_netplay_timeline.h) owns the
+The [native timeline](../native/retro/ps1_netplay_timeline.h) owns the
 delay, retransmit window and ordered inputs. Its
-[unit test](../windows/runner/tests/ps1_netplay_timeline_test.cpp) checks
+[unit test](../native/retro/test/ps1_netplay_timeline_test.cpp) checks
 gaps and conflicting inputs. The timeline can also be constructed with a
 bounded prediction window. It marks frames that need a checkpoint,
 reports the earliest incorrect prediction at a frame boundary, and

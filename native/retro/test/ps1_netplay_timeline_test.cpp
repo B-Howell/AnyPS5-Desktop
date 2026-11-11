@@ -1,3 +1,7 @@
+#ifdef NDEBUG
+#error "Native online tests require active assertions"
+#endif
+
 #include "../ps1_netplay_timeline.h"
 
 #include <cassert>

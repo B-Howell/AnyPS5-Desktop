@@ -17,6 +17,7 @@ import '../core/online/ps1_netplay_media.dart';
 import '../core/online/ps1_netplay_session.dart';
 import '../core/online/ps1_netplay_wire.dart';
 
+import 'retro_core_channel.dart';
 import 'retro_game_tuning.dart';
 
 export 'retro_game_tuning.dart' show EmbeddedOption, RetroTuningPersist;
@@ -54,7 +55,7 @@ enum _DiscRequest { sending, queued }
 
 class EmbeddedRetroGame extends RunningGame {
   EmbeddedRetroGame._(
-    this.textureId,
+    this._native,
     this._finished,
     this._onResolutionSelected,
     this._onGraphicsSelected,
@@ -69,7 +70,8 @@ class EmbeddedRetroGame extends RunningGame {
 
   static const _channel = MethodChannel('anyps5/retro_core');
   static const ps3Resolution = 'rpcs3_resolution_scale';
-  final int textureId;
+  final RetroCoreChannel _native;
+  int get textureId => _native.texture;
   final Completer<int> _finished;
   final Ps3OnlineRelease? ps3OnlineRelease;
   final void Function(String) _onResolutionSelected;
@@ -208,9 +210,9 @@ class EmbeddedRetroGame extends RunningGame {
                 onlineProfile?.saveRoot ?? p.join(folder, 'saves', disc.platform.name),
               )..createSync(recursive: true)).path
             : Directory.systemTemp.path);
-    final id = ordinaryRecovery != null
-        ? await _channel.invokeMethod<int>('ps1LocalCheckpointReopen', ordinaryRecovery)
-        : await _channel.invokeMethod<int>('start', {
+    final startResult = ordinaryRecovery != null
+        ? await _channel.invokeMethod<Object>('ps1LocalCheckpointReopen', ordinaryRecovery)
+        : await _channel.invokeMethod<Object>('start', {
             'core': core,
             'disc': netplay?.media.disc ?? onlineProfile?.disc ?? disc.path,
             if (initialDisc != null) 'initialDiscIndex': initialDisc.index,
@@ -232,9 +234,14 @@ class EmbeddedRetroGame extends RunningGame {
               if (localNetplayStaging) 'ps1LocalStaging': true,
             },
           });
-    if (id == null || id < 0) throw StateError('The game surface could not start.');
+    final RetroCoreChannel native;
+    try {
+      native = RetroCoreChannel.fromStart(startResult);
+    } on FormatException {
+      throw StateError('The game surface could not start.');
+    }
     final session = EmbeddedRetroGame._(
-      id,
+      native,
       Completer<int>(),
       onResolutionSelected,
       onGraphicsSelected,
@@ -262,7 +269,10 @@ class EmbeddedRetroGame extends RunningGame {
           !session.isPs3Online && !session._netplay && !session._ps2Lan && session.presented && !session._closing,
       writeOptions: (expected, values) async {
         if (onlineProfile != null || session._closing) return false;
-        final accepted = await _channel.invokeMethod<bool>('tuningOptions', {'expected': expected, 'values': values});
+        final accepted = await session._native.invokeMethod<bool>('tuningOptions', {
+          'expected': expected,
+          'values': values,
+        });
         return accepted == true &&
             (!values.keys.any(_usesGraphicsCheckpoint) || await session._waitForGraphics(values));
       },
@@ -297,18 +307,18 @@ class EmbeddedRetroGame extends RunningGame {
     _reading = true;
     final acknowledgeDiscRequest = _discRequest == _DiscRequest.queued;
     try {
-      final status = await _channel.invokeMapMethod<String, Object?>('status');
+      final status = await _native.invokeMapMethod<String, Object?>('status');
       if (_finished.isCompleted) return;
       if (status == null || status['ended'] == true) {
         final nativeError = status?['error'] as String?;
         if (nativeError != null && nativeError.isNotEmpty) error = nativeError;
-        await _channel.invokeMethod<void>('release');
+        await _native.invokeMethod<void>('release');
         _finish(error.isEmpty ? 0 : 1);
         return;
       }
       if (_awaitingRecoveryRestore && status['ps1RecoveredSource'] == _ordinaryRecovery) {
         _recoveryRestored = true;
-        if (_playing && !_closing) await _channel.invokeMethod<void>('pause', false);
+        if (_playing && !_closing) await _native.invokeMethod<void>('pause', false);
       }
       final updatedAspect = status['aspect'];
       if (acknowledgeDiscRequest) _discRequest = null;
@@ -434,7 +444,7 @@ class EmbeddedRetroGame extends RunningGame {
 
   Future<bool> acceptOrdinaryRecovery(int source) async {
     if (_ordinaryRecovery != source || !_startupVisible || _closing || _finished.isCompleted) return false;
-    final accepted = await _channel.invokeMethod<bool>('ps1LocalCheckpointAccept', {
+    final accepted = await _native.invokeMethod<bool>('ps1LocalCheckpointAccept', {
       'source': source,
       'texture': textureId,
     });
@@ -452,7 +462,7 @@ class EmbeddedRetroGame extends RunningGame {
     if (_playing != playing) {
       _playing = playing;
       if (pausesForOverlay) {
-        unawaited(_channel.invokeMethod<void>('pause', !playing));
+        unawaited(_native.invokeMethod<void>('pause', !playing));
       }
     }
     final acceptsInput = playing && focused;
@@ -462,7 +472,7 @@ class EmbeddedRetroGame extends RunningGame {
     _lastInput = const [];
     _awaitNeutral = true;
     if (!acceptsInput) {
-      unawaited(_channel.invokeMethod<void>('input', const [0, 0, 0, 0, 0]));
+      unawaited(_native.invokeMethod<void>('input', const [0, 0, 0, 0, 0]));
       unawaited(tuning.interrupt());
     }
   }
@@ -474,7 +484,7 @@ class EmbeddedRetroGame extends RunningGame {
     final changed = tuning.selectedValue(key) != value;
     final bool? accepted;
     try {
-      accepted = await _channel.invokeMethod<bool>('option', {'key': key, 'value': value});
+      accepted = await _native.invokeMethod<bool>('option', {'key': key, 'value': value});
     } on PlatformException {
       return false;
     } on MissingPluginException {
@@ -506,7 +516,7 @@ class EmbeddedRetroGame extends RunningGame {
   }
 
   Future<void> startNetplayFrames() async {
-    if (!_netplay || _closing || await _channel.invokeMethod<bool>('netplayStart') != true) {
+    if (!_netplay || _closing || await _native.invokeMethod<bool>('netplayStart') != true) {
       throw StateError('The PS1 netplay runner could not start.');
     }
   }
@@ -514,12 +524,12 @@ class EmbeddedRetroGame extends RunningGame {
   /// Returns null until the core has loaded and the private queues are available.
   Future<List<Uint8List>?> exchangePs2LanFrames(List<Uint8List> input) async {
     if (!_ps2Lan || _closing || _finished.isCompleted) return null;
-    return _channel.invokeListMethod<Uint8List>('ps2LanExchange', {'texture': textureId, 'frames': input});
+    return _native.invokeListMethod<Uint8List>('ps2LanExchange', {'texture': textureId, 'frames': input});
   }
 
   Future<bool> resetPs2LanFrames() async {
     if (!_ps2Lan || _closing || _finished.isCompleted) return false;
-    return await _channel.invokeMethod<bool>('ps2LanReset', textureId) == true;
+    return await _native.invokeMethod<bool>('ps2LanReset', textureId) == true;
   }
 
   /// Captures the state immediately before the returned emulation frame.
@@ -563,7 +573,7 @@ class EmbeddedRetroGame extends RunningGame {
     if (source == null || _closing || _finished.isCompleted) throw StateError('The original PS1 game is unavailable.');
     _closing = true;
     try {
-      final ticket = await _channel.invokeMethod<int>('ps1LocalCheckpointDetach', {
+      final ticket = await _native.invokeMethod<int>('ps1LocalCheckpointDetach', {
         'texture': textureId,
         'source': source,
       });
@@ -611,7 +621,7 @@ class EmbeddedRetroGame extends RunningGame {
     _requirePortableCheckpoint();
     final timer = Stopwatch()..start();
     while (!_closing && !_finished.isCompleted && timer.elapsed < const Duration(seconds: 3)) {
-      final frame = await _channel.invokeMethod<int>('ps1CheckpointHold');
+      final frame = await _native.invokeMethod<int>('ps1CheckpointHold');
       if (frame != null) return frame;
       await Future<void>.delayed(const Duration(milliseconds: 8));
     }
@@ -621,14 +631,14 @@ class EmbeddedRetroGame extends RunningGame {
   /// Releases the local host if the invitation is cancelled before cutover.
   Future<void> resumeLocalNetplay() async {
     _requirePortableCheckpoint();
-    if (await _channel.invokeMethod<bool>('ps1ResumeLocal') != true) {
+    if (await _native.invokeMethod<bool>('ps1ResumeLocal') != true) {
       throw StateError('The emulator could not resume local play.');
     }
   }
 
   Future<({int nextFrame, List<Ps1FrameInputs> frames})> readNetplayHistory(int firstFrame) async {
     _requirePortableCheckpoint();
-    final reply = await _channel.invokeMapMethod<String, Object?>('ps1CheckpointHistory', firstFrame);
+    final reply = await _native.invokeMapMethod<String, Object?>('ps1CheckpointHistory', firstFrame);
     if (reply == null) throw StateError('The emulator could not read confirmed inputs.');
     return (
       nextFrame: reply['nextFrame'] as int,
@@ -676,13 +686,13 @@ class EmbeddedRetroGame extends RunningGame {
   ]);
 
   Future<Object> _exchangeCheckpoint(String method, Map<String, Object> arguments) async {
-    final id = await _channel.invokeMethod<int>(method, arguments);
+    final id = await _native.invokeMethod<int>(method, arguments);
     if (id == null) throw StateError('The emulator did not accept the checkpoint request.');
     final timer = Stopwatch()..start();
     var consumed = false;
     try {
       while (!_closing && !_finished.isCompleted && timer.elapsed < const Duration(seconds: 3)) {
-        final result = await _channel.invokeMethod<Object>('ps1CheckpointResult', id);
+        final result = await _native.invokeMethod<Object>('ps1CheckpointResult', id);
         if (result != null) {
           consumed = true;
           return result;
@@ -691,13 +701,13 @@ class EmbeddedRetroGame extends RunningGame {
       }
       throw StateError('The checkpoint operation did not finish.');
     } finally {
-      if (!consumed) await _channel.invokeMethod<void>('ps1CheckpointCancel', id);
+      if (!consumed) await _native.invokeMethod<void>('ps1CheckpointCancel', id);
     }
   }
 
   Future<Ps1NetplayTick> exchangeNetplayFrames(List<Ps1NetplayFrame> remote, int? acknowledgedFrame) async {
     if (!_netplay || _closing) throw StateError('The PS1 netplay runner is closed.');
-    final reply = await _channel.invokeMapMethod<String, Object?>('netplaySync', {
+    final reply = await _native.invokeMapMethod<String, Object?>('netplaySync', {
       'remote': [
         for (final sample in remote) [sample.frame, ..._encodePad(sample.input)],
       ],
@@ -729,7 +739,7 @@ class EmbeddedRetroGame extends RunningGame {
   Future<bool> _waitForGraphics(Map<String, String> requested) async {
     final deadline = Stopwatch()..start();
     while (!_closing && deadline.elapsed < const Duration(seconds: 20)) {
-      final status = await _channel.invokeMapMethod<String, Object?>('status');
+      final status = await _native.invokeMapMethod<String, Object?>('status');
       if (status == null || status['ended'] == true || _closing) return false;
       if (status['graphicsPending'] != true) {
         final active = status['options'] as Map?;
@@ -767,7 +777,7 @@ class EmbeddedRetroGame extends RunningGame {
     _discRequest = _DiscRequest.sending;
     var accepted = false;
     try {
-      accepted = await _channel.invokeMethod<bool>('changeDisc', index) == true;
+      accepted = await _native.invokeMethod<bool>('changeDisc', index) == true;
       return accepted;
     } on PlatformException {
       return false;
@@ -784,7 +794,7 @@ class EmbeddedRetroGame extends RunningGame {
     _keys.clear();
     _awaitNeutral = true;
     _lastInput = const [];
-    if (_acceptsInput) unawaited(_channel.invokeMethod<void>('input', const [0, 0, 0, 0, 0]));
+    if (_acceptsInput) unawaited(_native.invokeMethod<void>('input', const [0, 0, 0, 0, 0]));
   }
 
   void key(PadButton button, bool down) {
@@ -824,7 +834,7 @@ class EmbeddedRetroGame extends RunningGame {
       return;
     }
     _lastInput = input;
-    unawaited(_channel.invokeMethod<void>('input', input));
+    unawaited(_native.invokeMethod<void>('input', input));
   }
 
   static const _buttonCodes = {
@@ -851,7 +861,7 @@ class EmbeddedRetroGame extends RunningGame {
     if (_closing || _finished.isCompleted) return;
     _closing = true;
     try {
-      await _channel.invokeMethod<void>('stop');
+      await _native.invokeMethod<void>('stop');
     } on PlatformException {
       _closing = false;
       rethrow;

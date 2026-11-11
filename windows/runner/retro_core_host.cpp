@@ -1,6 +1,6 @@
 #include "retro_core_host.h"
-#include "ps1_netplay_timeline.h"
-#include "ps2_virtual_lan.h"
+#include "../../native/retro/ps1_netplay_timeline.h"
+#include "../../native/retro/ps2_virtual_lan.h"
 #include "ps3_package_batch.h"
 #include "retro_vulkan_video.h"
 

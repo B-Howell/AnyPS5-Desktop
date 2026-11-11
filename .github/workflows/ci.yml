@@ -25,7 +25,7 @@ env:
   FLUTTER_VERSION: 3.47.1
   # libpulse-dev: flutter_webrtc's Linux loopback capture (share play's Opus track) builds only
   # with it; the bundle then needs libpulse0, which PulseAudio and PipeWire systems have.
-  LINUX_PACKAGES: clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libsdl2-2.0-0 libpulse-dev file
+  LINUX_PACKAGES: clang cmake ninja-build pkg-config libgtk-3-dev libegl1-mesa-dev libepoxy-dev liblzma-dev libstdc++-12-dev libsdl2-2.0-0 libpulse-dev file
   # libmpv-dev: the in-app clip player (media_kit_video links libmpv); patchelf: the bundle carries
   # that libmpv and what it needs in lib/ (packaging/linux/bundle-libmpv.sh).
   CLIP_PLAYER_PACKAGES: libmpv-dev patchelf
@@ -119,6 +119,16 @@ jobs:
         env:
           # The bundle has to carry libmpv here: no patchelf or no libmpv fails the build.
           ANYPS5_REQUIRE_LIBMPV: 1
+      - name: Test shared emulator worker and Linux channel
+        run: |
+          cmake -S native/retro/test -B build/retro-native -G Ninja -DANYPS5_RETRO_VULKAN=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/retro-native --parallel 3
+          ctest --test-dir build/retro-native --output-on-failure
+          flutter_root="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
+          cmake -S linux/runner/test -B build/linux-channel -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DFLUTTER_ENGINE_DIR="$flutter_root/bin/cache/artifacts/engine/linux-x64"
+          cmake --build build/linux-channel --parallel 3
+          ctest --test-dir build/linux-channel --output-on-failure
       - name: Bundle size and the libraries carried for the clip player
         run: |
           du -sh build/linux/x64/release/bundle build/linux/x64/release/bundle/lib
@@ -169,6 +179,15 @@ jobs:
           channel: stable
           cache: true
       - run: flutter build windows --release
+      - name: Test shared emulator worker on Windows
+        shell: pwsh
+        run: |
+          cmake -S native/retro/test -B build/retro-native -DANYPS5_RETRO_VULKAN=OFF
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build/retro-native --config Release --parallel 3
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ctest --test-dir build/retro-native -C Release --output-on-failure
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       # The clip player's libmpv and ANGLE (media_kit_libs_windows_video) beside the launcher: the
       # installer and the .zip take the whole folder.
       - name: Check the clip player's libraries are beside the launcher

@@ -1,0 +1,150 @@
+# AnyPS5 Desktop Linux online implementation plan
+
+Windows and Linux are both required for the emulator online feature. A working
+Windows build does not satisfy this requirement. The combined online branch
+previously omitted the Linux embedded host already present in review slice #87
+and restricted managed emulation to Windows. Linux online implementation is
+the immediate priority; no menu-only enablement counts as completion.
+
+## Implementation and acceptance
+
+1. Integrate the Linux embedded foundation from review head
+   `990511f1190e31388162be20e2e1010aac84e32b` into the combined branch, preserving
+   the Windows optimizer, disc picker, console media and online behavior.
+2. Share the input timeline and virtual NIC between platforms. Add native
+   session tests for PS2 Ethernet exchange, queue reset and teardown, then
+   expose the existing Dart channel contract through the Linux host.
+3. Port the complete PS1 worker contract: confirmed input, checkpoint export
+   and import, ordinary-game handoff/recovery, rollback, controller seats,
+   state fingerprints and clean cancellation. Reuse the protocol, not an
+   independently evolving Linux copy.
+4. Make package names, immutable core pins, ABI/export validation and managed
+   setup platform-aware. Verify native Linux ELF cores. Cross-platform PS1
+   compatibility must use an explicitly qualified core-build family; blindly
+   equating different DLL/SO hashes or removing compatibility checks is invalid.
+5. Integrate PS3 provider setup/status and native online handoff with Linux
+   Vulkan. Provider approval and a real two-client level remain required on
+   both platforms; neither a fake fixture nor Windows evidence closes Linux.
+6. Qualify Linux app setup, in-game invites and recovery, then Windows/Linux
+   peer interoperability. Run Windows regression checks. Preserve the existing
+   upstream review slices; keep the complete feature set in one integration
+   branch/build rather than a reduced Linux edition.
+
+Completion requires actual Linux native and launcher evidence for every online
+flow exposed to users, plus mixed-platform compatibility. Native unit tests
+and source imports are intermediate gates. Do not advertise unsupported flows.
+
+## Shared native foundation
+
+The [core build](../native/retro/CMakeLists.txt) compiles the common runtime.
+[The library loader](../native/retro/retro_library.cpp) and its
+[interface](../native/retro/retro_library.h) load host libraries and resolve
+the [Libretro ABI](../native/retro/libretro_abi.h). The
+[session implementation](../native/retro/retro_session.cpp) and
+[session interface](../native/retro/retro_session.h) own the emulation worker,
+input, lifecycle, graphics transitions and disc state. Immutable frame
+conversion lives in [retro_frame.cpp](../native/retro/retro_frame.cpp) and
+[retro_frame.h](../native/retro/retro_frame.h). The
+[Vulkan implementation](../native/retro/retro_vulkan_video.cpp) and
+[interface](../native/retro/retro_vulkan_video.h) provide the PS3 render path.
+
+The [input timeline](../native/retro/ps1_netplay_timeline.h) and
+[virtual NIC](../native/retro/ps2_virtual_lan.h) are shared production code.
+The Windows host includes those same headers. The
+[native test build](../native/retro/test/CMakeLists.txt) runs the
+[core fixture](../native/retro/test/fake_core.cpp),
+[lifecycle/frame/disc checks](../native/retro/test/retro_native_test.cpp),
+[timeline checks](../native/retro/test/ps1_netplay_timeline_test.cpp) and
+[NIC checks](../native/retro/test/ps2_virtual_lan_test.cpp). The latter two
+explicitly retain assertions in Release builds and refuse to compile with
+`NDEBUG`, so an optimized test cannot silently remove its checks.
+
+The [session LAN checks](../native/retro/test/retro_lan_test.cpp) use a separate
+core fixture with the private DEV9 ABI. The test verifies binding before game
+load, continuing execution while the launcher menu is open, typed Ethernet
+exchange, whole-batch rejection, queue reset, and worker-owned teardown. A core
+without the required private export fails before boot; the host never falls
+back to a stock core's system networking. Shared fake video/audio and bounded
+waits live in [test support](../native/retro/test/retro_test_support.h).
+
+## Linux integration
+
+The [Linux runner build](../linux/runner/CMakeLists.txt) links the common
+runtime. [Application registration](../linux/runner/my_application.cc)
+creates the [method-channel host](../linux/runner/retro_core_host_linux.cc),
+whose [interface](../linux/runner/retro_core_host_linux.h) handles shutdown
+before Flutter's view and renderer are disposed. The
+[platform interface](../linux/runner/retro_linux_platform.h),
+[EGL renderer](../linux/runner/retro_linux_video.cc) and
+[PulseAudio output](../linux/runner/retro_linux_audio.cc) supply Linux devices.
+[Layer overlay implementation](../linux/runner/layer_overlay.cc) and
+[interface](../linux/runner/layer_overlay.h) preserve the reviewed compositor
+integration; they are not replaced with a Windows window-control workaround.
+
+Linux retains one texture registration for the view's lifetime. Its start
+response therefore includes a separate monotonically increasing session owner;
+every subsequent command must match that owner. The
+[Dart channel adapter](../lib/ui/retro_core_channel.dart) envelopes Linux calls
+while preserving the Windows integer-handle protocol. The
+[embedded game](../lib/ui/embedded_retro_game.dart) uses that adapter for input,
+status, graphics, discs, LAN exchange and teardown. Delayed traffic from a
+closed game cannot reach a later game that reuses the same texture. The
+[channel tests](../test/ui/retro_core_channel_test.dart) and
+[embedded ownership tests](../test/ui/embedded_retro_ownership_test.dart) cover
+both handle formats and consecutive runs with the same texture.
+
+The [Linux channel value adapter](../linux/runner/retro_linux_channel.h) validates
+ownership and bounded Ethernet batches using Flutter's actual `FlValue` API.
+It explicitly rejects PS1/PS3 online start flags until their complete workers
+are ported, avoiding a misleading offline boot. The
+[Linux adapter tests](../linux/runner/test/retro_linux_channel_test.cpp) and
+[test build](../linux/runner/test/CMakeLists.txt) exercise those values without a
+display server and compile the actual host, EGL and PulseAudio implementations.
+
+## Current evidence
+
+The common runtime builds with Ubuntu 22.04 / GCC 11.4.0. Its lifecycle,
+timeline, NIC and LAN session suites passed through CTest with assertions enabled. This
+uses an actual Linux executable and fixture library, not a Windows test labeled
+Linux. It does not yet prove that managed packages, real-game sessions or the
+Flutter launcher work. The Linux host has PS2 LAN handlers; Linux PS1 rollback,
+handoff/recovery and PS3 provider contracts remain unimplemented. Application
+availability is still Windows-only until the entire setup and native path is
+qualified together. This is an intermediate implementation checkpoint, not a
+Linux online release.
+
+The bounded port checkpoint has four passing shared-native CTest suites on
+Ubuntu 22.04 / GCC 11.4 and Windows / MSVC 19.29 Release. The separate Linux
+channel value suite passes against Flutter's real Linux library; its build also
+compiles the application host, EGL renderer and PulseAudio implementation with
+`-Wall -Wextra -Werror`. Fourteen focused Flutter tests pass for both handle
+formats, embedded ownership, controls, disc switching and graphics. These are
+fixture/regression checks, not a real online game qualification.
+
+The [CI workflow](../.github/workflows/ci.yml) now runs shared-native checks on
+Windows and Ubuntu 22.04, plus actual Flutter channel value checks on Linux.
+The Linux app job explicitly installs EGL and Epoxy development libraries rather
+than assuming a Windows build covers Linux compilation.
+
+Local source, builds, temporary files and compiler caches remain on D:.
+Native builds use `nice -n 19 ionice -c3` and at most three jobs. Tests use fake
+video/audio backends and do not control the physical monitor. Flutter 3.47.1
+at framework `6655482ec06e547f90abf8ae7590466f4415978d` and GTK/EGL/PulseAudio
+development packages were prepared in isolated D: storage. Dependency archives
+were extracted without package installation or maintainer scripts; host package
+status was verified unchanged. Do not stop the user's existing WSL workloads or
+change their display/session configuration.
+
+To run the adapter checks on a normal Linux development machine with Flutter
+Linux artifacts already cached:
+
+```sh
+cmake -S linux/runner/test -B build/linux-channel -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DFLUTTER_ENGINE_DIR="$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64"
+cmake --build build/linux-channel --parallel 3
+ctest --test-dir build/linux-channel --output-on-failure
+```
+
+These checks require `gtk+-3.0`, EGL, Epoxy and PulseAudio development libraries
+through `pkg-config`. They do not launch the app, an emulator or a visible window.

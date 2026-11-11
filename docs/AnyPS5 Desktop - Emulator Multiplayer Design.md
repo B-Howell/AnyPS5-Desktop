@@ -32,6 +32,7 @@ tracks integration and qualification while the upstream slices are reviewed.
 | Fresh installation and ordinary-user operation | Managed package verification, missing-setup recovery, in-game invites, cancellation, retry messages and isolated storage have focused regression coverage. | Approved immutable online-core distribution and a fresh-profile end-to-end run with the production room service. |
 
 Detailed evidence and constraints belong to the
+[Linux implementation plan](<AnyPS5 Desktop - Linux Online Implementation Plan.md>),
 [PS1 plan](<AnyPS5 Desktop - PS1 Netplay Implementation Plan.md>),
 [PS2 plan](<AnyPS5 Desktop - PS2 LAN Implementation Plan.md>) and
 [PS3 plan](<AnyPS5 Desktop - PS3 Native Co-op Implementation Plan.md>).

@@ -461,14 +461,14 @@ adds a versioned binding for frontend-owned Ethernet queues. It uses frames
 without a frame check sequence and leaves the original adapter selection in
 place when no frontend transport is bound.
 
-The [Windows queue](../windows/runner/ps2_virtual_lan.h) copies frames
+The [shared native queue](../native/retro/ps2_virtual_lan.h) copies frames
 into fixed 64-frame buffers in each direction. The [embedded runner](../windows/runner/retro_core_host.cpp)
 requires the DEV9 binding for an explicitly configured PS2 LAN launch,
 enables the core's Ethernet option for that session, and detaches after
 unloading the game. It refuses a core without the binding before boot.
 The [Dart bridge](../lib/ui/embedded_retro_game.dart) exchanges batches
 of at most 16 frames and accepts caller-supplied LAN system and save
-paths for isolation. The [native queue test](../windows/runner/tests/ps2_virtual_lan_test.cpp)
+paths for isolation. The [native queue test](../native/retro/test/ps2_virtual_lan_test.cpp)
 exercises the callback ABI, frame copying, bounded queues, routing checks,
 and teardown. The LAN launch preserves its network state by rejecting
 graphics changes that reopen the core.
@@ -511,7 +511,7 @@ same verified disc, account, running worker and save lease. Changing
 seats requires a fresh launch because the network address is fixed at
 boot. Before connecting a new bridge, the
 [Windows host](../windows/runner/retro_core_host.cpp) clears both queues
-in the [virtual adapter](../windows/runner/ps2_virtual_lan.h). When
+in the [virtual adapter](../native/retro/ps2_virtual_lan.h). When
 the connection is ready, Friends returns the player to the running game.
 The game still owns its LAN lobby, so players regroup in its multiplayer menu.
 After the old room finishes closing, a retained host can choose
@@ -682,7 +682,7 @@ is active.
 
 The [LAN invite test](../test/ui/ps2_lan_invite_test.dart) joins two rooms
 in sequence with the same guest worker and checks the queue reset.
-The [virtual adapter test](../windows/runner/tests/ps2_virtual_lan_test.cpp)
+The [virtual adapter test](../native/retro/test/ps2_virtual_lan_test.cpp)
 checks that resetting discards both queued directions and keeps the adapter usable.
 The [library test](../test/core/retro_library_test.dart) verifies serial
 and revision extraction with a conflicting manifest. The
@@ -853,7 +853,7 @@ a reset exception ends the room through the connection-failure path
 and preserves the game. An in-flight reset is still awaited before the
 worker can be reused.
 This uses the existing
-[native queue reset](../windows/runner/ps2_virtual_lan.h), wired through
+[native queue reset](../native/retro/ps2_virtual_lan.h), wired through
 the [PS2 launcher](../lib/ui/together_ps2_lan.dart). The bridge retains
 its local DHCP replies. Native queued DHCP packets can be dropped by
 the reset and follow the console's usual retransmission path.
@@ -861,7 +861,7 @@ the reset and follow the console's usual retransmission path.
 The Windows regression reproduced zero native resets before the fix.
 Afterward the full focused suite passed 38 tests, and a follow-up
 22-test core run included the new reset-readiness timeout. The native
-[NIC test](../windows/runner/tests/ps2_virtual_lan_test.cpp) passed
+[NIC test](../native/retro/test/ps2_virtual_lan_test.cpp) passed
 after rebuilding with assertions enabled. The relay-only probe verified
 that each seat's reset counter advanced across ICE restart and traffic
 resumed. That probe uses simulated console interfaces. The launcher
