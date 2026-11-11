@@ -717,3 +717,16 @@ PS2 match remain open.
 The final focused Linux run passed 16 tests with 19 platform- or
 fixture-dependent skips. Flutter analysis of all seven touched Dart files
 reported no issues.
+
+### Full Linux PS2 LAN match timer
+
+Two isolated LRPS2 workers discovered, joined and started the same
+five-minute TimeSplitters Deathmatch. Both showed the in-game map and
+then the Results screen by 405 seconds after the first loading capture.
+Both players were idle in the map and finished tied at zero. The bridge
+relayed 8,249 frames from the host and 3,128 from the guest through the
+445-second capture. Both workers exited with status 0. This qualifies
+the local Linux match lifecycle through the game's results screen.
+The test used the production frame bridge and routing with an
+in-process link, so hosted signaling, mixed Windows/Linux PS2 play
+and active controller input during the map remain separate checks.

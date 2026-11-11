@@ -649,15 +649,19 @@ the join request after Continue.
 
 You can also open **Settings → Emulators → PS2 → Setup → Set up
 LAN network**. **Install PS2 LAN core** uses the pinned
-`pcsx2_libretro.dll.zip` from the configured
-`ANYPS5_MANAGED_CORE_PACKAGES` directory when supplied with the build.
-Without that package the action opens a ZIP picker. The installer verifies the ZIP, DLL and DEV9
-export before publishing it under `Emulators/PS2-LAN`. LAN setup and rooms
-prefer that dedicated core. Offline PS2 play keeps its usual core.
-**Import PS2 BIOS** accepts the user's own BIOS on the same page.
-An independently built reviewer ZIP can opt in to its own exact ZIP and
-DLL SHA-256 values using `ANYPS5_PS2_LAN_CORE_DIGESTS` as
-`<archive-sha256>:<dll-sha256>`. Normal setup uses the pins below.
+`pcsx2_libretro.dll.zip` on Windows x64 or `pcsx2_libretro.so.zip` on
+Linux x64 from `ANYPS5_MANAGED_CORE_PACKAGES` when supplied with the
+build. Without the package the action opens a ZIP picker. The installer
+verifies the ZIP, native library and DEV9 export before publishing it
+under `Emulators/PS2-LAN`. Linux uses that verified installation for
+LAN. Windows also supports its existing compatible core override.
+Offline PS2 play keeps its usual core. **Import PS2 BIOS** accepts the
+user's own BIOS on the same page.
+
+An independently built reviewer ZIP can opt in to its exact hashes
+using `ANYPS5_PS2_LAN_CORE_DIGESTS` as
+`<archive-sha256>:<library-sha256>`. Normal setup uses the platform
+pins in the [managed installer](../lib/core/managed_retro.dart).
 
 The [setup page](../lib/ui/emulator_menu.dart) then offers the
 verified Gran Turismo 4 USA v2.00 disc from the local library, identified by
@@ -704,6 +708,35 @@ existing LAN cores. The setup test also drives both file pickers, checks
 that cancellation restores the page, and verifies the native launch
 receives the dedicated DLL path. The [invite routing test](../test/ui/together_test.dart)
 checks that PS2 invites cannot join a PS5 session on a build with LAN off.
+
+### Linux core build and native smoke
+
+The Linux package tested with TimeSplitters used Ubuntu 22.04, GCC
+11.4 and Ninja. Use a fresh LRPS2 checkout of
+`da5b07ebebc18016e1ca5b401188a283971a0e8d` with the
+[DEV9 patch](../tool/patches/parallel-ps2-virtual-lan.patch). From the
+launcher repository, where `lrps2_source` and `lrps2_build` refer to
+separate scratch directories, run:
+
+```bash
+git -C "$lrps2_source" apply --check "$PWD/tool/patches/parallel-ps2-virtual-lan.patch"
+git -C "$lrps2_source" apply "$PWD/tool/patches/parallel-ps2-virtual-lan.patch"
+nice -n 19 ionice -c3 cmake -S "$lrps2_source" -B "$lrps2_build" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DLIBRETRO=ON -DPCAP=OFF \
+  -DDISABLE_ADVANCE_SIMD=ON -DUSE_VULKAN=ON -DUSE_OPENGL=ON \
+  -DLRPS2_SMOKE_GATE=ON
+nice -n 19 ionice -c3 cmake --build "$lrps2_build" --target pcsx2_libretro --parallel 3
+nm -D "$lrps2_build/bin/pcsx2_libretro.so" | grep -w retro_anyps5_dev9_bind_v1
+ldd "$lrps2_build/bin/pcsx2_libretro.so"
+```
+
+Ensure the build shell sees the patch with LF line endings. Check that
+`ldd` lists no missing dependencies. ZIP only `pcsx2_libretro.so` at
+the archive root. Compute SHA-256 for both files. Independently built
+ZIPs can have different hashes, so supply the two matching digests when
+testing one. The verified build, package hashes and game acceptance
+results are recorded in the
+[Linux online implementation plan](<AnyPS5 Desktop - Linux Online Implementation Plan.md>).
 
 ### Windows core build and native smoke
 
