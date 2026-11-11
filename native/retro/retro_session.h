@@ -26,12 +26,27 @@ struct InitialDisc {
   std::string path;
 };
 
+struct Ps1MatchConfig {
+  unsigned seat;
+  std::string bios;
+  bool dualshock = false;
+};
+
+struct Ps1MatchTick {
+  uint32_t frame;
+  std::optional<uint32_t> confirmed, received;
+  bool waiting;
+  std::vector<ps1_netplay::FrameInput> local;
+  std::vector<std::pair<uint32_t, std::string>> fingerprints;
+};
+
 struct SessionConfig {
   std::string core, disc, system, saves, initial_resolution;
   Options initial_graphics;
   std::optional<InitialDisc> initial_disc = std::nullopt;
   std::optional<std::array<uint8_t, 6>> lan_mac = std::nullopt;
   std::shared_ptr<const ps1_checkpoint::Recovery> recovery = nullptr;
+  std::optional<Ps1MatchConfig> ps1_match = std::nullopt;
 };
 
 using LanFrames = std::vector<std::vector<uint8_t>>;
@@ -61,6 +76,7 @@ struct SessionStatus {
   int64_t checkpoint_source = 0;
   int64_t recovered_source = 0;
   bool checkpoint_parked = false;
+  bool netplay_ready = false;
   bool ready = false, presented = false, ended = false, hardware = false, graphics_pending = false;
   int32_t frame_width = 0, frame_height = 0;
   double aspect = 4.0 / 3.0;
@@ -123,6 +139,9 @@ class Session {
   std::optional<int64_t> RequestOrdinaryResume(int64_t source);
   std::optional<SessionConfig> DetachOrdinaryRecovery(int64_t source);
   bool AcceptOrdinaryRecovery(int64_t source);
+  bool StartNetplay();
+  std::optional<Ps1MatchTick> SyncNetplay(const std::vector<ps1_netplay::FrameInput>& remote,
+                                         std::optional<uint32_t> acknowledged);
   ps1_checkpoint::Mailbox::Reply TakeCheckpoint(int64_t ticket);
   void CancelCheckpoint(int64_t ticket);
   bool SetOption(const std::string& key, const std::string& value);

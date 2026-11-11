@@ -259,8 +259,29 @@ selection, ticket ownership, and card persistence after acceptance. The
 fixture covers a single-disc reopen. A multi-disc reopen and a real core still
 need qualification.
 
-Match import and catch-up, synchronized input, rollback and presentation
-are still required before exposing Linux PS1 online play.
+## Confirmed input matches on Linux
+
+The shared session now runs standard and analog PS1 matches on the existing
+timeline. The Linux channel exposes match readiness, start and input exchange
+with the same payloads as Windows. The worker waits for the remote input for
+each frame, applies both seats at the core callback, and publishes the main
+RAM fingerprint every 120 confirmed frames.
+
+The Windows and Linux workers share the deterministic options, RAM fingerprint
+algorithm and isolated match storage through [the PS1 match header](../native/retro/ps1_match.h).
+The match ignores ordinary per-game overrides. On Linux the temporary
+directory must enforce owner-only access before the BIOS copy is written.
+
+The [native match fixture](../native/retro/test/retro_ps1_match_test.cpp)
+runs each seat through the same 120-frame trace. It checks the missing-input
+stall, conflicting-packet rejection, both controller ports and analog axes,
+the expected frame 119 RAM fingerprint, and the ordinary save directory.
+The Ubuntu run uses memory-backed temporary storage because the Windows
+mounted scratch directory does not enforce Unix permissions.
+
+Portable match import, catch-up, rollback and presentation still need a Linux
+implementation. The launcher also needs qualified Linux core packages and
+mixed-platform real-game verification before exposing Linux PS1 online play.
 
 Local source, builds, temporary files and compiler caches remain on D:.
 Native builds use `nice -n 19 ionice -c3` and at most three jobs. Tests use fake

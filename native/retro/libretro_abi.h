@@ -91,6 +91,7 @@ enum EnvironmentCommand {
   kPreferredHardware = 56, kDiskControlVersion = 57, kSetDiskControlExt = 58,
   kSetCoreOptionsV2 = 67, kSetCoreOptionsV2Intl = 68,
   kMessageVersion = 59, kExtendedMessage = 60,
+  kGetInputBitmasks = 51 | 0x10000,
   kFrontendCompileProgress = 0x20000 | 0x4150,
 };
 enum PixelFormat {

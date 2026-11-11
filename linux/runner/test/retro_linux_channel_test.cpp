@@ -62,15 +62,29 @@ int main() {
     Check(ReadCheckpointDigest(request).front() == 42, "Checkpoint digest changed in channel decoding");
 
     g_autoptr(FlValue) offline = fl_value_new_map();
-    ValidateOnlineStart(offline);
+    Check(!ReadPs1Match(offline), "Offline request became a match");
     fl_value_set_string_take(offline, "ps2LanMac", fl_value_new_uint8_list(packet.data(), 6));
-    ValidateOnlineStart(offline);
+    Check(!ReadPs1Match(offline), "PS2 request became a PS1 match");
     for (const auto* flag : {"ps1NetplaySeat", "ps1NetplayBios", "ps1NetplayDualShock", "ps1NetplayCpu",
                              "ps1PresentationCore", "ps1LocalStaging", "ps3Online"}) {
       g_autoptr(FlValue) unsupported = fl_value_new_map();
       fl_value_set_string_take(unsupported, flag, fl_value_new_null());
-      MustReject([&] { ValidateOnlineStart(unsupported); });
+      MustReject([&] { ReadPs1Match(unsupported); });
     }
+    fl_value_set_string_take(offline, "ps1NetplaySeat", fl_value_new_int(1));
+    fl_value_set_string_take(offline, "ps1NetplayBios", fl_value_new_string("/test/bios.bin"));
+    Check(ReadPs1Match(offline)->seat == 1, "PS1 seat changed at the channel");
+    auto* remote = fl_value_new_list();
+    auto* row = fl_value_new_list();
+    for (const int value : {0, 65535, -32768, 32767, 0, 0})
+      fl_value_append_take(row, fl_value_new_int(value));
+    fl_value_append_take(remote, row);
+    fl_value_set_string_take(request, "remote", remote);
+    const auto update = ReadMatchExchange(request);
+    Check(update.remote.size() == 1 && update.remote[0].input.axes[0] == -32768,
+          "Valid PS1 input was changed");
+    fl_value_set_string_take(request, "acknowledgedFrame", fl_value_new_int(-1));
+    MustReject([&] { ReadMatchExchange(request); });
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
     return 1;

@@ -41,13 +41,56 @@ inline ps1_checkpoint::Digest ReadCheckpointDigest(FlValue* args) {
   return result;
 }
 
-inline void ValidateOnlineStart(FlValue* args) {
-  // Until the complete worker contracts are ported, never silently downgrade
-  // a requested online game into an ordinary session.
-  for (const auto* flag : {"ps1NetplaySeat", "ps1NetplayBios", "ps1NetplayDualShock",
-                           "ps1NetplayCpu", "ps1PresentationCore", "ps1LocalStaging", "ps3Online"}) {
+inline std::optional<Ps1MatchConfig> ReadPs1Match(FlValue* args) {
+  for (const auto* flag : {"ps1NetplayCpu", "ps1PresentationCore", "ps1LocalStaging", "ps3Online"}) {
     if (Field(args, flag)) throw std::runtime_error("This online worker is not yet available on Linux");
   }
+  auto* seat = Field(args, "ps1NetplaySeat");
+  auto* bios = Field(args, "ps1NetplayBios");
+  auto* dualshock = Field(args, "ps1NetplayDualShock");
+  if (!seat && !bios && !dualshock) return std::nullopt;
+  if (!seat || fl_value_get_type(seat) != FL_VALUE_TYPE_INT || fl_value_get_int(seat) < 0 ||
+      fl_value_get_int(seat) > 1 || !bios || fl_value_get_type(bios) != FL_VALUE_TYPE_STRING ||
+      (dualshock && fl_value_get_type(dualshock) != FL_VALUE_TYPE_BOOL))
+    throw std::runtime_error("Invalid synchronized PS1 seat or BIOS.");
+  return Ps1MatchConfig{static_cast<unsigned>(fl_value_get_int(seat)), fl_value_get_string(bios),
+                       dualshock && fl_value_get_bool(dualshock)};
+}
+
+struct MatchExchange {
+  std::vector<ps1_netplay::FrameInput> remote;
+  std::optional<uint32_t> acknowledged;
+};
+
+inline MatchExchange ReadMatchExchange(FlValue* args) {
+  constexpr auto max_frame = ps1_netplay::Timeline::kMaxFrame;
+  const auto integer = [](FlValue* value, int64_t min, int64_t max) {
+    if (!value || fl_value_get_type(value) != FL_VALUE_TYPE_INT)
+      throw std::runtime_error("Invalid synchronized PS1 input.");
+    const auto number = fl_value_get_int(value);
+    if (number < min || number > max) throw std::runtime_error("Invalid synchronized PS1 input.");
+    return number;
+  };
+  MatchExchange exchange;
+  auto* ack = Field(args, "acknowledgedFrame");
+  if (ack && fl_value_get_type(ack) != FL_VALUE_TYPE_NULL)
+    exchange.acknowledged = static_cast<uint32_t>(integer(ack, 0, max_frame));
+  auto* frames = Field(args, "remote");
+  if (!frames || fl_value_get_type(frames) != FL_VALUE_TYPE_LIST || fl_value_get_length(frames) > 32)
+    throw std::runtime_error("Invalid synchronized PS1 input batch.");
+  for (size_t i = 0; i < fl_value_get_length(frames); ++i) {
+    auto* sample = fl_value_get_list_value(frames, i);
+    if (fl_value_get_type(sample) != FL_VALUE_TYPE_LIST || fl_value_get_length(sample) != 6)
+      throw std::runtime_error("Invalid synchronized PS1 frame.");
+    ps1_netplay::FrameInput frame{};
+    frame.frame = static_cast<uint32_t>(integer(fl_value_get_list_value(sample, 0), 0, max_frame));
+    frame.input.buttons = static_cast<uint16_t>(integer(fl_value_get_list_value(sample, 1), 0, UINT16_MAX));
+    for (size_t axis = 0; axis < frame.input.axes.size(); ++axis)
+      frame.input.axes[axis] = static_cast<int16_t>(integer(fl_value_get_list_value(sample, axis + 2),
+                                                          INT16_MIN, INT16_MAX));
+    exchange.remote.push_back(frame);
+  }
+  return exchange;
 }
 
 inline std::optional<LanFrames> ReadLanFrames(FlValue* args, int64_t texture_id) {

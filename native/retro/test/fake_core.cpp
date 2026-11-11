@@ -19,6 +19,7 @@ namespace {
 #ifdef TEST_CHECKPOINT
 uint32_t checkpoint_card = 7;
 bool checkpoint_loaded = false;
+std::array<uint8_t, 2 * 1024 * 1024> match_ram{};
 std::atomic<bool> checkpoint_hold_tray{false}, checkpoint_tray_entered{false};
 std::atomic<bool> checkpoint_hold_export{false}, checkpoint_export_entered{false};
 #endif
@@ -172,7 +173,16 @@ extern "C" TEST_EXPORT void retro_init() {
 #ifdef TEST_CHECKPOINT
   checkpoint_card = 7;
   checkpoint_loaded = false;
-  const Variable variables[]{{"swanstation_CPU_ExecutionMode", "CPU; Recompiler|CachedInterpreter"}, {nullptr, nullptr}};
+  match_ram.fill(0);
+  const Variable variables[]{
+      {"swanstation_CPU_ExecutionMode", "CPU; Recompiler|CachedInterpreter"},
+      {"swanstation_GPU_Renderer", "Renderer; Software"},
+      {"swanstation_GPU_ResolutionScale", "Scale; 1"},
+      {"swanstation_CPU_RecompilerBlockLinking", "Linking; true|false"},
+      {"swanstation_GPU_UseThread", "Thread; true|false"},
+      {"swanstation_BIOS_PatchFastBoot", "Fast boot; true|false"},
+      {"swanstation_CDROM_ReadThread", "Read thread; false|true"},
+      {nullptr, nullptr}};
   environment(16, const_cast<Variable*>(variables));
 #endif
   if (!legacy_disk_control) RegisterDiskControl();
@@ -217,6 +227,12 @@ extern "C" TEST_EXPORT void retro_get_system_av_info(AvInfo* info) {
 
 extern "C" TEST_EXPORT void retro_run() {
   ++run_count;
+#ifdef TEST_CHECKPOINT
+  for (unsigned port = 0; port < 2; ++port) {
+    match_ram[port * 2] = static_cast<uint8_t>(input(port, 1, 0, 256));
+    match_ram[port * 2 + 1] = static_cast<uint8_t>(input(port, 5, 0, 0));
+  }
+#endif
   const uint8_t pixel[] = {0, static_cast<uint8_t>(input(0, 1, 0, 0) ? 0x7c : 0)};
   const int16_t stereo[] = {123, -123};
   video(pixel, 1, 1, sizeof(pixel));
@@ -239,6 +255,7 @@ extern "C" TEST_EXPORT void retro_run() {
 }
 
 #ifdef TEST_CHECKPOINT
+extern "C" TEST_EXPORT void retro_set_controller_port_device(unsigned, unsigned) { CheckDiskThread(); }
 extern "C" TEST_EXPORT void test_checkpoint_hold_tray(bool hold) {
   if (hold) checkpoint_tray_entered = false;
   checkpoint_hold_tray = hold;
@@ -251,10 +268,12 @@ extern "C" TEST_EXPORT void test_checkpoint_hold_export(bool hold) {
 extern "C" TEST_EXPORT bool test_checkpoint_export_entered() { return checkpoint_export_entered; }
 extern "C" TEST_EXPORT void* retro_get_memory_data(unsigned kind) {
   CheckDiskThread();
+  if (kind == 2) return match_ram.data();
   return kind == 0 ? &checkpoint_card : nullptr;
 }
 extern "C" TEST_EXPORT size_t retro_get_memory_size(unsigned kind) {
   CheckDiskThread();
+  if (kind == 2) return match_ram.size();
   return kind == 0 ? sizeof(checkpoint_card) : 0;
 }
 extern "C" TEST_EXPORT size_t retro_serialize_size() { return 8; }

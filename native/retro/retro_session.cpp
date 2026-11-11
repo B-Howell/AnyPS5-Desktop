@@ -1,4 +1,5 @@
 #include "retro_session.h"
+#include "ps1_match.h"
 
 #include "retro_library.h"
 #include "ps2_virtual_lan.h"
@@ -121,6 +122,16 @@ class Session::Impl {
       : config_(std::move(config)), content_(std::filesystem::u8path(config_.disc).parent_path().u8string()),
         console_(ConsoleForCore(config_.core)), ps3_(console_ == Console::kPs3),
         frame_available_(std::move(frame_available)), video_(std::move(video)), audio_(std::move(audio)) {
+    if (config_.ps1_match) {
+      if (console_ != Console::kPs1 || config_.recovery || config_.initial_disc || config_.lan_mac)
+        throw std::invalid_argument("Invalid synchronized PS1 launch configuration");
+      match_timeline_.emplace(config_.ps1_match->seat);
+      match_storage_ = std::make_unique<Ps1MatchStorage>(config_.ps1_match->bios);
+      config_.system = match_storage_->system();
+      config_.saves = match_storage_->saves();
+      content_ = match_storage_->content();
+      suppress_frame_ = true;
+    }
     if (config_.recovery) {
       const auto& recovery = *config_.recovery;
       if (console_ != Console::kPs1 || recovery.source <= 0 || recovery.state.empty() ||
@@ -146,7 +157,7 @@ class Session::Impl {
   void Join() { if (worker_.joinable()) worker_.join(); }
 
   void Pause(bool pause) {
-    if (lan_) {
+    if (lan_ || match_timeline_) {
       if (pause) SetInput(0, {});
       return;
     }
@@ -161,7 +172,7 @@ class Session::Impl {
 
   bool ChangeDisc(unsigned index) {
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (!recovery_accepted_ || checkpoint_.busy()) return false;
+    if (match_timeline_ || !recovery_accepted_ || checkpoint_.busy()) return false;
     if (stop_ || ended_ || !discs_ || discs_->busy ||
         index >= discs_->labels.size() || discs_->inserted == index)
       return false;
@@ -233,6 +244,20 @@ class Session::Impl {
     bool pending = false;
     return recovery_accepted_.compare_exchange_strong(pending, true);
   }
+  bool StartNetplay() {
+    std::lock_guard<std::mutex> lock(match_mutex_);
+    if (!match_ready_ || stop_ || ended_) return false;
+    match_timeline_->Start();
+    return true;
+  }
+  std::optional<Ps1MatchTick> SyncNetplay(const std::vector<ps1_netplay::FrameInput>& remote,
+                                         std::optional<uint32_t> acknowledged) {
+    std::lock_guard<std::mutex> lock(match_mutex_);
+    if (!match_ready_ || stop_ || ended_ || remote.size() > 32 ||
+        !match_timeline_->Receive(remote, acknowledged)) return std::nullopt;
+    return Ps1MatchTick{match_timeline_->frame(), match_timeline_->confirmed(), match_timeline_->received(),
+                        match_timeline_->waiting(), match_timeline_->LocalPacket(), match_fingerprints_};
+  }
   ps1_checkpoint::Mailbox::Reply TakeCheckpoint(int64_t ticket) { return checkpoint_.Take(ticket); }
   void CancelCheckpoint(int64_t ticket) { checkpoint_.Cancel(ticket); }
 
@@ -242,6 +267,7 @@ class Session::Impl {
     status.ready = frame_ready_;
     status.presented = presented_;
     status.ended = ended_;
+    status.netplay_ready = match_ready_ && !stop_ && !ended_;
     status.recovered_source = recovered_source_;
     if (recovery_accepted_ && presented_ && !stop_ && !ended_) status.checkpoint_source = checkpoint_.source();
     status.checkpoint_parked = checkpoint_.parked();
@@ -277,7 +303,7 @@ class Session::Impl {
 
   bool SetOption(const std::string& key, const std::string& value) {
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (!recovery_accepted_ || checkpoint_.busy()) return false;
+    if (match_timeline_ || !recovery_accepted_ || checkpoint_.busy()) return false;
     const auto option = options_.find(key);
     if (option == options_.end() ||
         (!option->second.graphics && !option->second.boot && !LiveCoreOption(key, hardware_frame_))) return false;
@@ -303,7 +329,7 @@ class Session::Impl {
     if (!presented_ || !hardware_frame_ || values.empty() || expected.size() != values.size())
       return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (!recovery_accepted_ || checkpoint_.busy() || graphics_applying_ || graphics_queued_) return false;
+    if (match_timeline_ || !recovery_accepted_ || checkpoint_.busy() || graphics_applying_ || graphics_queued_) return false;
     std::vector<std::pair<Option*, size_t>> changes;
     bool checkpoint = false;
     for (const auto& [key, value] : values) {
@@ -355,7 +381,7 @@ class Session::Impl {
       option.boot = BootCoreOption(key);
       std::string preferred = row->default_value ? row->default_value : "";
       if (key == "rpcs3_renderer") preferred = "vulkan";
-      if (option.graphics || option.boot) {
+      if (!match_timeline_ && (option.graphics || option.boot)) {
         const auto saved = config_.initial_graphics.find(key);
         if (saved != config_.initial_graphics.end()) preferred = saved->second;
       }
@@ -372,6 +398,7 @@ class Session::Impl {
       }
       if (choice != option.values.end()) option.selected = static_cast<size_t>(choice - option.values.begin());
       ApplyRecoveryOption(key, option);
+      ApplyMatchOption(key, option);
       ApplyPrivateLanOption(key, option);
       if (!option.values.empty()) options_.emplace(key, std::move(option));
     }
@@ -528,6 +555,16 @@ class Session::Impl {
     if (value != option.values.end()) option.selected = static_cast<size_t>(value - option.values.begin());
   }
 
+  void ApplyMatchOption(const std::string& key, Option& option) const {
+    if (!match_timeline_) return;
+    for (const auto& [name, value] : kPs1NetplayOptions) {
+      if (name != key) continue;
+      const auto choice = std::find(option.values.begin(), option.values.end(), value);
+      if (choice != option.values.end()) option.selected = static_cast<size_t>(choice - option.values.begin());
+      return;
+    }
+  }
+
   void SetVariables(const Variable* variables) {
     std::lock_guard<std::mutex> lock(settings_mutex_);
     for (; variables->key && variables->value; ++variables) {
@@ -543,10 +580,12 @@ class Session::Impl {
         if (!SupportedBootValue(key, value, hardware_available_ ? video_->PreferredRenderer() : std::string_view{})) continue;
         if (ResolutionOption(key) && !value.empty() && value[0] >= '0' && value[0] <= '9' &&
             std::stoi(value) > 4) continue;
-        if (key.find("renderer") != std::string::npos || key.find("Renderer") != std::string::npos) {
-          if (value == "Software" || value == "Software (HW)") option.selected = option.values.size();
-        } else if (key.find("FastBoot") != std::string::npos || key == "pcsx2_fastboot") {
-          if (value == "enabled" || value == "true") option.selected = option.values.size();
+        if (!match_timeline_) {
+          if (key.find("renderer") != std::string::npos || key.find("Renderer") != std::string::npos) {
+            if (value == "Software" || value == "Software (HW)") option.selected = option.values.size();
+          } else if (key.find("FastBoot") != std::string::npos || key == "pcsx2_fastboot") {
+            if (value == "enabled" || value == "true") option.selected = option.values.size();
+          }
         }
         option.values.push_back(std::move(value));
       }
@@ -561,7 +600,8 @@ class Session::Impl {
         if (saved != option.values.end())
           option.selected = static_cast<size_t>(saved - option.values.begin());
       }
-      if (!ResolutionOption(key) && (option.boot || (hardware_available_ && TrialOption(key)))) {
+      if (!match_timeline_ && !ResolutionOption(key) &&
+          (option.boot || (hardware_available_ && TrialOption(key)))) {
         const auto saved = config_.initial_graphics.find(key);
         if (saved != config_.initial_graphics.end()) {
           const auto choice = std::find(option.values.begin(), option.values.end(), saved->second);
@@ -570,6 +610,7 @@ class Session::Impl {
         }
       }
       ApplyRecoveryOption(key, option);
+      ApplyMatchOption(key, option);
       ApplyPrivateLanOption(key, option);
       if (!option.values.empty()) options_.emplace(key, std::move(option));
     }
@@ -701,6 +742,8 @@ class Session::Impl {
       case kCanDupe:
         *static_cast<bool*>(data) = true;
         return true;
+      case kGetInputBitmasks:
+        return match_timeline_.has_value();
       case kSystemDirectory:
         *static_cast<const char**>(data) = config_.system.c_str();
         return true;
@@ -772,6 +815,14 @@ class Session::Impl {
 
   int16_t Input(unsigned port, unsigned device, unsigned index, unsigned id) {
     if (suppress_frame_) return 0;
+    if (match_timeline_) {
+      if (port >= match_ports_.size()) return 0;
+      const auto& pad = match_ports_[port];
+      if (device == 1 && id == 256) return static_cast<int16_t>(pad.buttons);
+      if (device == 1 && id < 16) return (pad.buttons & (1u << id)) != 0;
+      if (device == 5 && index < 2 && id < 2) return pad.axes[index * 2 + id];
+      return 0;
+    }
     if (port != 0 || paused_) return 0;
     std::lock_guard<std::mutex> lock(input_mutex_);
     if (device == 1 && id < 16) return (buttons_ & (1u << id)) != 0;
@@ -795,7 +846,7 @@ class Session::Impl {
       return;
     }
     try {
-      hardware_available_ = video_->Open();
+      hardware_available_ = !match_timeline_ && video_->Open();
       if (ps3_ && !hardware_available_)
         throw std::runtime_error("PS3 requires a working Vulkan driver.");
       const auto path = std::filesystem::u8path(config_.core);
@@ -875,6 +926,12 @@ class Session::Impl {
           throw std::runtime_error("The core cannot boot the selected disc.");
         }
         loaded = load(&game);
+        if (loaded && match_timeline_) {
+          const auto controller = core.Get<void (*)(unsigned, unsigned)>("retro_set_controller_port_device");
+          const auto device = config_.ps1_match->dualshock ? kPs1DualShockDevice : 1u;
+          controller(0, device);
+          controller(1, device);
+        }
         lan_ready_ = loaded && lan_ != nullptr;
         if (loaded && initial_disc) {
           const auto& disk = disk_callbacks_.basic;
@@ -908,7 +965,7 @@ class Session::Impl {
       size_t card_size = 0;
       std::filesystem::path card_path;
       const auto restore_card = [&] {
-        if (!ps1) return;
+        if (!ps1 || match_timeline_) return;
         card = core.Get<void* (*)(unsigned)>("retro_get_memory_data")(0);
         card_size = core.Get<size_t (*)(unsigned)>("retro_get_memory_size")(0);
         card_path = std::filesystem::u8path(config_.saves) / std::filesystem::u8path(config_.disc).stem();
@@ -916,7 +973,7 @@ class Session::Impl {
         if (!config_.recovery) RestoreCard(card_path, card, card_size);
       };
       restore_card();
-      if (ps1) {
+      if (ps1 && !match_timeline_) {
         const auto blank = core.Get<ps1_checkpoint::Save>("retro_anyps5_export_blank_card_checkpoint_v1", false);
         const auto private_save = core.Get<ps1_checkpoint::Save>("retro_anyps5_export_checkpoint_v1", false);
         const auto load_private = core.Get<ps1_checkpoint::Load>("retro_anyps5_import_checkpoint_v1", false);
@@ -957,12 +1014,28 @@ class Session::Impl {
         audio_rate_ = audio_open ? av.sample_rate : 0;
       }
       const auto frame_time = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / fps));
+      const uint8_t* match_ram = nullptr;
+      constexpr size_t match_ram_size = 2 * 1024 * 1024;
+      if (match_timeline_) {
+        match_ram = static_cast<const uint8_t*>(core.Get<void* (*)(unsigned)>("retro_get_memory_data")(2));
+        if (!match_ram || core.Get<size_t (*)(unsigned)>("retro_get_memory_size")(2) != match_ram_size)
+          throw std::runtime_error("PS1 netplay could not access the core's main RAM.");
+        {
+          std::lock_guard<std::mutex> lock(settings_mutex_);
+          for (const auto& [key, value] : kPs1NetplayOptions) {
+            const auto option = options_.find(std::string(key));
+            if (option == options_.end() || option->second.values[option->second.selected] != value)
+              throw std::runtime_error("The PS1 core could not configure the required netplay profile.");
+          }
+        }
+        match_ready_ = true;
+      }
       auto next = Clock::now();
       auto hardware_deadline = next + std::chrono::seconds(8);
       std::optional<Clock::time_point> recovery_deadline;
       while (!stop_) {
-        if (!checkpoint_.busy()) ApplyDiscChange();
-        if ((ps1 || ps2) && !checkpoint_.busy())
+        if (!match_timeline_ && !checkpoint_.busy()) ApplyDiscChange();
+        if (!match_timeline_ && (ps1 || ps2) && !checkpoint_.busy())
           ApplyCheckpointGraphics(core, reopen, step, ps1, card, card_size, card_path);
         if (!recovered_source_ && !ps3_ && hardware_callbacks_.reset && !frame_ready_ && Clock::now() > hardware_deadline) {
           if (!use_native_resolution()) {
@@ -1001,7 +1074,37 @@ class Session::Impl {
           next = Clock::now();
           continue;
         }
-        step();
+        if (match_timeline_) {
+          ps1_netplay::PadInput local;
+          {
+            std::lock_guard<std::mutex> lock(input_mutex_);
+            local = {buttons_, axes_};
+          }
+          bool prepared;
+          uint32_t frame;
+          {
+            std::lock_guard<std::mutex> lock(match_mutex_);
+            frame = match_timeline_->cursor();
+            prepared = match_timeline_->Prepare(local, match_ports_);
+          }
+          if (!prepared) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            next = Clock::now();
+            continue;
+          }
+          if (stop_) break;
+          suppress_frame_ = false;
+          step();
+          auto fingerprint = (frame + 1) % 120 == 0 ? NetplayFingerprint(match_ram, match_ram_size) : std::string{};
+          std::lock_guard<std::mutex> lock(match_mutex_);
+          match_timeline_->Commit();
+          if (!fingerprint.empty()) {
+            if (match_fingerprints_.size() == 16) match_fingerprints_.erase(match_fingerprints_.begin());
+            match_fingerprints_.emplace_back(frame, std::move(fingerprint));
+          }
+        } else {
+          step();
+        }
         if (!paused_) ++steps_;
         if (video_->UnsupportedSync())
           throw std::runtime_error("This RPCS3 core uses Vulkan synchronization AnyPS5 does not support.");
@@ -1035,7 +1138,7 @@ class Session::Impl {
 
   static std::atomic<Session::Impl*> active_;
   SessionConfig config_;
-  const std::string content_;
+  std::string content_;
   const Console console_;
   const bool ps3_;
   const std::function<void()> frame_available_;
@@ -1044,6 +1147,12 @@ class Session::Impl {
   std::unique_ptr<Audio> audio_;
   std::unique_ptr<Ps2VirtualLan> lan_;
   ps1_checkpoint::Mailbox checkpoint_;
+  std::unique_ptr<Ps1MatchStorage> match_storage_;
+  std::optional<ps1_netplay::Timeline> match_timeline_;
+  std::atomic<bool> match_ready_{false};
+  std::mutex match_mutex_;
+  std::array<ps1_netplay::PadInput, 2> match_ports_{};
+  std::vector<std::pair<uint32_t, std::string>> match_fingerprints_;
   std::atomic<bool> recovery_accepted_{true};
   std::atomic<int64_t> recovered_source_{0};
   std::atomic<bool> lan_ready_{false};
@@ -1104,6 +1213,11 @@ std::optional<int64_t> Session::RequestOrdinaryCheckpoint(int64_t source, const 
 std::optional<int64_t> Session::RequestOrdinaryResume(int64_t source) { return impl_->RequestOrdinaryResume(source); }
 std::optional<SessionConfig> Session::DetachOrdinaryRecovery(int64_t source) { return impl_->DetachOrdinaryRecovery(source); }
 bool Session::AcceptOrdinaryRecovery(int64_t source) { return impl_->AcceptOrdinaryRecovery(source); }
+bool Session::StartNetplay() { return impl_->StartNetplay(); }
+std::optional<Ps1MatchTick> Session::SyncNetplay(const std::vector<ps1_netplay::FrameInput>& remote,
+                                                 std::optional<uint32_t> acknowledged) {
+  return impl_->SyncNetplay(remote, acknowledged);
+}
 ps1_checkpoint::Mailbox::Reply Session::TakeCheckpoint(int64_t ticket) { return impl_->TakeCheckpoint(ticket); }
 void Session::CancelCheckpoint(int64_t ticket) { impl_->CancelCheckpoint(ticket); }
 bool Session::SetOption(const std::string& key, const std::string& value) { return impl_->SetOption(key, value); }

@@ -100,6 +100,7 @@ FlValue* EncodeStatus(const SessionStatus& status) {
   fl_value_set_string_take(result, "ready", fl_value_new_bool(status.ready));
   fl_value_set_string_take(result, "presented", fl_value_new_bool(status.presented));
   fl_value_set_string_take(result, "ended", fl_value_new_bool(status.ended));
+  fl_value_set_string_take(result, "netplayReady", fl_value_new_bool(status.netplay_ready));
   fl_value_set_string_take(result, "error", fl_value_new_string(status.error.c_str()));
   fl_value_set_string_take(result, "aspect", fl_value_new_float(status.aspect));
   fl_value_set_string_take(result, "hardware", fl_value_new_bool(status.hardware));
@@ -155,6 +156,32 @@ FlValue* EncodeStatus(const SessionStatus& status) {
   fl_value_set_string_take(tuning, "targetFps", fl_value_new_float(telemetry.target_fps));
   fl_value_set_string_take(tuning, "audioRate", fl_value_new_float(telemetry.audio_rate));
   fl_value_set_string_take(result, "tuningTelemetry", tuning);
+  return result;
+}
+
+FlValue* EncodeMatchTick(const Ps1MatchTick& tick) {
+  auto* result = fl_value_new_map();
+  auto* local = fl_value_new_list();
+  for (const auto& sample : tick.local) {
+    auto* row = fl_value_new_list();
+    fl_value_append_take(row, fl_value_new_int(sample.frame));
+    fl_value_append_take(row, fl_value_new_int(sample.input.buttons));
+    for (const auto axis : sample.input.axes) fl_value_append_take(row, fl_value_new_int(axis));
+    fl_value_append_take(local, row);
+  }
+  auto* fingerprints = fl_value_new_list();
+  for (const auto& [frame, hash] : tick.fingerprints) {
+    auto* row = fl_value_new_list();
+    fl_value_append_take(row, fl_value_new_int(frame));
+    fl_value_append_take(row, fl_value_new_string(hash.c_str()));
+    fl_value_append_take(fingerprints, row);
+  }
+  fl_value_set_string_take(result, "local", local);
+  fl_value_set_string_take(result, "fingerprints", fingerprints);
+  fl_value_set_string_take(result, "frame", fl_value_new_int(tick.frame));
+  fl_value_set_string_take(result, "confirmedFrame", tick.confirmed ? fl_value_new_int(*tick.confirmed) : fl_value_new_null());
+  fl_value_set_string_take(result, "receivedFrame", tick.received ? fl_value_new_int(*tick.received) : fl_value_new_null());
+  fl_value_set_string_take(result, "waiting", fl_value_new_bool(tick.waiting));
   return result;
 }
 
@@ -264,6 +291,13 @@ class RetroCoreHostLinux::Impl {
     } else if (method == "input") {
       SetInput(*session_, args);
       Success(call);
+    } else if (method == "netplayStart") {
+      Success(call, fl_value_new_bool(session_->StartNetplay()));
+    } else if (method == "netplaySync") {
+      const auto exchange = linux_channel::ReadMatchExchange(args);
+      const auto tick = session_->SyncNetplay(exchange.remote, exchange.acknowledged);
+      if (!tick) throw std::runtime_error("The PS1 netplay input exchange was rejected.");
+      Success(call, EncodeMatchTick(*tick));
     } else if (method == "ps1LocalCheckpointDetach" || method == "ps1LocalCheckpointAccept") {
       const auto source = linux_channel::ReadCheckpointSource(args, fl_texture_get_id(FL_TEXTURE(texture_)));
       if (!source) throw std::runtime_error("The PS1 recovery session changed.");
@@ -369,7 +403,7 @@ class RetroCoreHostLinux::Impl {
       return;
     }
     try {
-      linux_channel::ValidateOnlineStart(args);
+      auto match = linux_channel::ReadPs1Match(args);
       std::optional<std::array<uint8_t, 6>> lan_mac;
       if (auto* mac = ReadField(args, "ps2LanMac")) {
         if (console != Console::kPs2 || fl_value_get_type(mac) != FL_VALUE_TYPE_UINT8_LIST ||
@@ -388,9 +422,10 @@ class RetroCoreHostLinux::Impl {
         if (index < 0 || index >= 128) throw std::runtime_error("Invalid initial disc");
         initial_disc = InitialDisc{static_cast<unsigned>(index), initial_path};
       }
-      StartSession(call, SessionConfig{core, disc, system, saves, resolution ? resolution : "",
-                       ReadOptions(ReadField(args, "graphics")).value_or(Options{}), std::move(initial_disc), lan_mac},
-                   console);
+      SessionConfig config{core, disc, system, saves, resolution ? resolution : "",
+                           ReadOptions(ReadField(args, "graphics")).value_or(Options{}), std::move(initial_disc), lan_mac};
+      config.ps1_match = std::move(match);
+      StartSession(call, std::move(config), console);
     } catch (const std::exception& error) {
       fl_method_call_respond_error(call, "start", error.what(), nullptr, nullptr);
     }
