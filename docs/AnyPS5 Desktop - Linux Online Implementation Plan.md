@@ -554,3 +554,30 @@ does not identify the wait or measure auxiliary core threads. The pinned
 SwanStation source enables an asynchronous CD read worker by default and can
 wait for its result. A controlled read-thread comparison or a wait trace is
 needed before changing the core or the negotiated match settings.
+
+### CD read-thread comparison
+
+Two scratch Windows probe binaries were compiled from 54bf632 with the same
+MSVC settings and pinned DLL. The treatment selected false for
+swanstation_CDROM_ReadThread when registering its options. The control kept
+the core default. Both queried the effective option before Start. The
+physical Linux laptop retained its unchanged pinned worker and core. Both
+races used the same two-tick input buffer and 120 ms jitter/loss profile,
+with Windows at Idle priority. No launcher settings or package pins changed.
+
+| Windows disc reads | Full race | Iterations over 16.667 ms | Worst work | Worst step | Video time in worst step |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Asynchronous | 250.06 s | 8 | 177.432 ms | 176.307 ms | 168.725 ms |
+| Synchronous | 248.44 s | 8 | 106.357 ms | 102.751 ms | 0.328 ms |
+
+Both races matched all 114 RAM fingerprints, the placements and the hash
+of 10,104,619 confirmed stereo pairs. Linux rolled back 1,196 and 1,226
+times, respectively. The asynchronous worst step used 9,734,663 worker
+cycles against a mean of 13,609,218. The synchronous worst used 45,456,384
+against a mean of 13,262,779. Each arm still missed the frame budget eight
+times. One paired run does not isolate a performance improvement, and an
+asynchronous disc worker is not necessary for spikes to occur. Keep the
+default and investigate the Windows worker's wait or scheduling state around
+individual overruns. The control's longest callback uses the headless
+registrar, which copies its pixel buffer synchronously; the trace does not
+establish the same callback cost with the Flutter display registrar.
