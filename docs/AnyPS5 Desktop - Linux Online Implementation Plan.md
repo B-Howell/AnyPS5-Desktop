@@ -617,3 +617,14 @@ pause and port checks remain in place. The
 before the fix and passed afterward along with all seven Linux native
 suites. This verifies the callback contract needed to drive the real
 game's Network menu. It does not verify a real LAN session.
+
+A subsequent private run verified real D-pad and Cross input from the
+title screen through **Network → LAN Game**. A blank scratch memory card
+reached the game's missing network-configuration message. With a copy of
+the existing DHCP fixture in slot 1, the game accepted the network profile
+and the native LAN exchange drained six 342-byte IPv4 Ethernet frames
+while the game was connecting. The strict source-MAC filter was active.
+The run was single-peer and did not return a DHCP lease. The next gate is
+to feed the production LAN bridge's DHCP replies back to the core and
+verify that two peers discover and join a lobby. Both private sessions
+exited successfully.
