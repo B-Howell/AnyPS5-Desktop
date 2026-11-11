@@ -3,9 +3,27 @@ import subprocess
 import ctypes as c
 import hashlib
 from unittest.mock import Mock
-from checkpoint import CheckpointCore, compare, validate_fixture, wait_owned
+from checkpoint import CheckpointCore, compare, state_difference, validate_fixture, wait_owned
 
 class CheckpointReceiptTest(unittest.TestCase):
+    def test_identical_serialized_state(self):
+        self.assertEqual(state_difference(b'abcdefgh', b'abcdefgh'),
+                         {'matches': True, 'beforeBytes': 8, 'afterBytes': 8, 'firstOffsets': []})
+
+    def test_serialized_difference_is_bounded(self):
+        result = state_difference(bytes(100), bytes([1]) * 100)
+        self.assertFalse(result['matches'])
+        self.assertEqual(result['firstOffsets'], list(range(64)))
+
+    def test_serialized_size_change_is_not_match(self):
+        result = state_difference(b'abc', b'abcd')
+        self.assertFalse(result['matches']); self.assertEqual(result['firstOffsets'], [3])
+
+    def test_serialized_difference_across_page_boundary(self):
+        before = bytearray(8193); after = bytearray(before)
+        for offset in [4095, 4096, 8192]: after[offset] = 1
+        self.assertEqual(state_difference(before, after)['firstOffsets'], [4095, 4096, 8192])
+
     def sample(self, **overrides):
         return dict(step=0, ram='ram', video='video', audio='audio',
                     videoFrames=60, audioFrames=48000, inputReads=[1, 1], **overrides)

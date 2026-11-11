@@ -2,6 +2,11 @@
 
 ## Product direction
 
+Windows and Linux are required platforms for the emulator online feature.
+Windows-only implementation or qualification cannot satisfy release acceptance.
+The Linux port is the immediate implementation priority; the platform gaps
+below remain release blockers.
+
 Use AnyTogether's **Play Together** to invite friends into a game session.
 Every player launches a compatible local copy, renders locally, and plays
 through their own controller. The session exchanges game traffic or frame

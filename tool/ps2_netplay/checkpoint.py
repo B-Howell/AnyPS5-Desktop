@@ -66,6 +66,28 @@ def compare(before, after):
     return mismatches
 
 
+def state_difference(before, after):
+    """Compare serialized buffers without copying them or writing game memory."""
+    left, right = memoryview(before).cast("B"), memoryview(after).cast("B")
+    matches = left == right
+    offsets = []
+    if not matches:
+        # Skip equal pages in native memoryview comparisons, rather than
+        # visiting tens of millions of matching bytes in Python.
+        for start in range(0, max(len(left), len(right)), 4096):
+            a, b = left[start:start + 4096], right[start:start + 4096]
+            if a == b:
+                continue
+            for index in range(max(len(a), len(b))):
+                if index >= min(len(a), len(b)) or a[index] != b[index]:
+                    offsets.append(start + index)
+                    if len(offsets) == 64:
+                        break
+            if len(offsets) == 64:
+                break
+    return {"matches": matches, "beforeBytes": len(left), "afterBytes": len(right), "firstOffsets": offsets}
+
+
 class CheckpointCore(Core):
     """Reuse the PS1 probe's libretro ABI, bounds checks and digital input.
 
@@ -221,6 +243,10 @@ def worker(args, fixture):
         core.restore(frame, state, image)
         load_ms = (time.perf_counter() - start) * 1000
         restored_ram = hashlib.sha256(core.read_ram()).hexdigest()
+        restored_state = None
+        if args.inspect_state:
+            phase("inspect-restored-state")
+            restored_state = state_difference(state, core.checkpoint())
         phase("replay")
         after = core.trace(args.blocks)
         mismatches = compare(before, after)
@@ -231,13 +257,15 @@ def worker(args, fixture):
                    "context": args.context, "cpu": args.cpu, "bootTicks": args.boot,
                    "replayTicks": args.blocks * 60, "stateBytes": len(state),
                    "saveMs": save_ms, "loadMs": load_ms, "sameRamAtRestore": initial_ram == restored_ram,
+                   "restoredState": restored_state,
                    "before": before, "after": after, "mismatches": mismatches,
                    "pins": {key: value for key, value in fixture.items() if key.endswith("Sha256")},
                    "settings": {key.decode(): value.decode() for key, value in core.settings.items()}}
         (args.output / "receipt.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
         phase("compared")
-        print(json.dumps({key: receipt[key] for key in ("context", "saveMs", "loadMs", "sameRamAtRestore", "mismatches")}), flush=True)
-        return 0 if initial_ram == restored_ram and not mismatches else 3
+        print(json.dumps({key: receipt[key] for key in ("context", "saveMs", "loadMs", "sameRamAtRestore", "restoredState", "mismatches")}), flush=True)
+        return 0 if (initial_ram == restored_ram and not mismatches and
+                     (restored_state is None or restored_state["matches"])) else 3
     finally:
         core.close()
 
@@ -251,8 +279,11 @@ def main():
     parser.add_argument("--boot", type=int, default=3100)
     parser.add_argument("--blocks", type=int, default=8)
     parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--inspect-state", action="store_true", help="Normal context only: reserialize after restore and compare the entire state; this adds a diagnostic capture")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.inspect_state and args.context != "normal":
+        parser.error("Serialized-state inspection is only supported in normal context")
     if sys.platform != "win32":
         parser.error("The native probe currently supports Windows only")
     args.fixture = args.fixture.resolve()

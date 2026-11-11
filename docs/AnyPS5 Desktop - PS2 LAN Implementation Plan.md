@@ -51,6 +51,14 @@ prove delivery to the core, not that the game accepted the input or entered
 multiplayer. RAM sampling can miss an intermediate divergence that reconverges.
 The process receipt and progress file also preserve failed/timeout attempts.
 
+For normal restore, `--inspect-state` immediately captures the restored core
+again and compares the complete serialized buffers in memory. Its receipt
+records equality, both sizes and at most 64 differing byte offsets. It writes
+no game-memory dump. A difference fails the run even if main RAM matches.
+This diagnostic adds a capture between restore and replay; keep a run without
+it as the control. It is refused in same-instance mode, whose GPU references
+are not a portable serialized-state comparison.
+
 ```powershell
 python -B -m unittest discover -s tool/ps2_netplay -p test_checkpoint.py
 python -B tool/ps2_netplay/checkpoint.py --fixture D:/scratch/fixture.json --output D:/scratch/normal-run --context normal
@@ -101,10 +109,112 @@ GPU readback as the sole source of RAM divergence; it does not establish a
 specific CPU-cache bug. These runs reached the game's initial setup menu,
 not a completed match. Do not describe them as PS2 gameplay synchronization.
 
-Next, isolate the first differing emulated state at a fixed tick in the
-software restore control. Then qualify portable transfer between two processes,
-repeat through actual multiplayer gameplay, and measure rollback cost. Keep
-PS2 couch co-op unavailable until those gates pass; native LAN remains separate.
+The warm-versus-cold replay difference still needs investigation for rollback
+and continuity. The separate shared-start control below tests whether two
+fresh peers agree after loading the same normal checkpoint. Next, qualify
+actual multiplayer gameplay, incorrect predictions followed by rollback, and
+the hardware renderer. Keep PS2 couch co-op unavailable until those gates
+pass; native LAN remains separate.
+
+#### Restore-state versus replay investigation
+
+A matching-source Windows rebuild reproduced all six normal-restore RAM
+failures. Its core hash is
+`e5262cae7b3d04ede1e6a647612227098e2ba61ed44dea2e7b971950d2d4b403`.
+The private `ps2-restore-order-6a200a7` receipt preserves the build logs,
+fixture pins, source diff and isolated probe profiles.
+
+The source has a concrete ordering hazard: normal load restores VU pipeline
+state and `nextBlockCycles`, then `ClearCPUExecutionCaches` clears them through
+`mVUreset`. A candidate separated CPU identity from subsystem restoration and
+reset caches between them. It preserved the serialized layout and passed
+the adapted load-order audit, but reproduced the same six RAM failures.
+The candidate hash is
+`5450b13a6113b4b1f73efcb7b58502e268760acae7b136ba48afbb95c5df2005`.
+It is an investigation artifact, not a launcher core update or a verified
+fix for this replay failure.
+
+Immediate reserialization after normal restore matched all 50,650,586 bytes
+in both the rebuilt control and ordering candidate. Subsequent execution
+still diverged. The first observed RAM difference was one representable step
+in a single-precision float, while emitted video/audio matched. This directs
+the next investigation toward execution history outside the serialized state,
+rather than treating a main-RAM restore as sufficient proof.
+
+A private cache-isolation core retained selected compiled code only for the
+bounded restore test. Retaining the EE cache, with changed code pages checked
+and invalidated, reduced the RAM failures from six samples to one. Retaining
+only VU0 did not remove the six failures. The EE software-FPU control also
+retained six failures. Enabling both VU software interpreters did not finish
+boot within the 180-second limit; the owned worker was killed and reaped.
+These are diagnostic results, not recommended launcher settings. No cache
+retention bypass or title-specific address exception is part of the app.
+
+Retaining all four CPU/VU compiled-code caches made the bounded replay pass,
+both with and without retaining the VIF code cache. Retaining EE plus VU0
+still left one RAM sample different. These temporary controls used a private
+diagnostic core, with changed code pages checked before retaining their code.
+The diagnostic exports and cache bypasses are excluded from the published
+core patch below.
+
+#### Portable shared-start control
+
+The [portable probe](../tool/ps2_netplay/portable.py) makes a normal checkpoint
+in a donor process, then independently boots a host and guest, restores the
+same checkpoint into both and compares their subsequent traces. Workers run
+sequentially to limit CPU use. They have separate BIOS/card copies and no
+windows or audio device output. The [portable tests](../tool/ps2_netplay/test_portable.py)
+cover fixture and payload binding, truncated state, schema validation and
+refusing success when restored state or replay differs.
+
+Comparing a restored cold-cache run to the original warm-cache run does not
+by itself establish whether two peers can agree from a shared start. The
+unmodified-core control matched both peers' initial RAM and all eight replay
+samples, but their reserialized buffers differed from the donor at three
+host addresses. The source identified these as `Gif_Path.buffer`: its loader
+already retains each process's live buffer instead of using the loaded pointer.
+
+The [portable GIF state patch](../tool/patches/parallel-ps2-portable-gif-state.patch)
+at source pin `da5b07ebebc18016e1ca5b401188a283971a0e8d` zeroes only that
+pointer slot in the **serialized output** after the block is written
+successfully. It preserves the live pointer, allocation bounds, serialized
+layout and existing loader behavior. There is no normal-load cache-retention
+bypass in this patch. Apply it in addition to the existing DEV9 and Windows
+GNU patches for this qualification; the regular installer pins are unchanged.
+
+The resulting Windows x64 core SHA-256 is
+`533db196b47df8e7543ab31d73faf2bc8215ac9596e48281244183ac14792dd6`.
+Its lifecycle smoke passed. In `portable-tracked`, donor, host and guest all
+exited 0. Both peers matched the donor's 50,650,586-byte serialized state and
+initial RAM, then matched the complete 480-frame software video/audio traces
+and all eight RAM samples. Both ports were read. Original fixture hashes were
+unchanged. This used a 3,100-tick boot history for each process and reserialized
+each restored core before replay. The 26 Python unit tests passed.
+
+The follow-up `portable-different-history` also passed with the host booted
+for 3,100 ticks and guest for only 120 before both restored the donor state.
+Both complete serialized states and initial RAM matched the seed, all eight
+replay samples matched, all three workers exited 0 and fixtures were unchanged.
+This extends the setup-menu evidence to that specific different-history case.
+
+```powershell
+python -B -m unittest discover -s tool/ps2_netplay -p 'test_*.py'
+python -B tool/ps2_netplay/portable.py --fixture D:/scratch/fixture.json --output D:/scratch/portable-control
+python -B tool/ps2_netplay/portable.py --fixture D:/scratch/fixture.json --output D:/scratch/portable-history --guest-boot 120
+```
+
+`--guest-boot` changes only the guest's pre-restore boot history. The seed
+still comes from the donor's `--boot` tick and both peers replay the same
+input sequence after restore. Receipts bind the fixture, all three Python
+source hashes, sequence, tick counts, worker exits and final fixture integrity.
+Full-state comparison and replay comparison are separate gates; neither may
+silently pass for missing or unequal samples. The private `seed.bin` contains
+game memory and must not be uploaded with review evidence.
+
+This is a portable setup-menu proof, not a full PS2 couch co-op match. It does
+not yet qualify hardware rendering, altered speculative input, rollback frame
+cost, network loss or the launcher integration. The existing PS2 LAN adapter
+is independent of this work.
 
 ## Test titles
 
@@ -606,12 +716,21 @@ reads the Git version from the LRPS2 source directory. With WinLibs
 GCC 15.2.0 r7 and Ninja on `PATH`, configure an out-of-tree build:
 
 ```powershell
+$env:CCACHE_DIR = Join-Path $buildDir '.ccache'
+$env:CCACHE_TEMPDIR = Join-Path $buildDir '.ccache-tmp'
+$env:TEMP = $env:TMP = Join-Path $buildDir '.tmp'
+New-Item -ItemType Directory -Force $env:CCACHE_DIR, $env:CCACHE_TEMPDIR, $env:TEMP | Out-Null
 cmake -S $lrps2Source -B $buildDir -G Ninja -DCMAKE_BUILD_TYPE=Release `
   -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DLIBRETRO=ON -DPCAP=OFF `
   -DDISABLE_ADVANCE_SIMD=ON -DUSE_VULKAN=ON -DUSE_OPENGL=ON -DLRPS2_SMOKE_GATE=ON `
   '-DCMAKE_SHARED_LINKER_FLAGS=-static -static-libgcc -static-libstdc++'
 cmake --build $buildDir --target pcsx2_libretro --parallel 3
 ```
+
+Scope the build and compiler-cache directories explicitly. CMake can discover
+an existing `ccache` executable whose default cache is on the system drive,
+even with an out-of-tree build elsewhere. Local qualification uses D: for the
+source, build, cache and temporary directories and runs at Idle priority.
 
 Package `libretro/pcsx2_libretro.dll` as the only archive entry. The
 verified DLL SHA-256 is
