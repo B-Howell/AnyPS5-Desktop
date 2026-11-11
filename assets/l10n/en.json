@@ -454,6 +454,7 @@
   "ps2LanReconnected": "LAN connection restored. If your game disconnected, regroup in its LAN menu.",
   "retroOnlineBusy": "Leave your current retro online game first.",
   "gameInvitedYou": "%@ invites you to %@",
+  "gameInvitedYouPs": "%@ invites you to %@. Press PS to join.",
   "gameNotHere": "%@ is not in your library",
   "gameUnlockFirst": "Unlock %@ first",
   "gameVersionMismatch": "%@ plays version %@ of the game; yours is %@",

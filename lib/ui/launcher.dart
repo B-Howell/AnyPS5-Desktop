@@ -582,6 +582,7 @@ class _LauncherShellState extends State<LauncherShell> with WidgetsBindingObserv
                                                   : null),
                                           level: model.toastLevel,
                                           icon: model.toastIcon,
+                                          psButton: model.toastPsButton,
                                           onTap: model.toastTap,
                                         ),
                                         if (model.showsWindowButtons)
@@ -704,7 +705,10 @@ class _StartingCard extends StatelessWidget {
 }
 
 class _Toast extends StatelessWidget {
-  const _Toast({required this.message, this.level, this.icon, this.onTap});
+  const _Toast({required this.message, this.level, this.icon, this.onTap, this.psButton = false});
+
+  /// The controller's PS button before the words: pressing it acts on the toast.
+  final bool psButton;
 
   final String? message;
 
@@ -769,6 +773,21 @@ class _Toast extends StatelessWidget {
                               Text(message!, style: AppText.display(18 * scale, weight: FontWeight.w600)),
                             ],
                           ),
+                        ],
+                      ),
+                    )
+                  : psButton
+                  ? Glass(
+                      key: ValueKey(message),
+                      radius: 30 * scale,
+                      opacity: 0.6,
+                      padding: EdgeInsetsDirectional.fromSTEB(10 * scale, 10 * scale, 26 * scale, 10 * scale),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          PsButtonGlyph(size: 36 * scale),
+                          SizedBox(width: 14 * scale),
+                          Text(message!, style: AppText.display(16 * scale, weight: FontWeight.w500)),
                         ],
                       ),
                     )

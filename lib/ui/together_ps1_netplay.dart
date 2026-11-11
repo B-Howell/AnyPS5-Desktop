@@ -153,7 +153,7 @@ extension TogetherPs1Netplay on TogetherModel {
       detail: 'ps1OnlineInviteDetail',
       unavailable: 'ps1OnlineUnavailable',
       invite: (friend) {
-        app.resumeGame();
+        app.open(Layer.coopLobby);
         unawaited(_startPs1Netplay(profile, friendId: friend.person.id, localWorker: host, mode: mode));
       },
     );

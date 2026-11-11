@@ -131,7 +131,12 @@ class TogetherModel {
     hub.games.onInvite = (invite) {
       _noticeSound();
       app.vibrate(HapticCue.ring);
-      app.show(T.format('gameInvitedYou', [invite.from?.displayName ?? '', gameName(invite.titleId)]));
+      if (app.running != null) app.inviteMenuFocus = invite.sessionId;
+      app.show(
+        T.format(app.running != null ? 'gameInvitedYouPs' : 'gameInvitedYou', [invite.from?.displayName ?? '', gameName(invite.titleId)]),
+        psButton: app.running != null,
+        onTap: app.running != null ? () => unawaited(app.openQuickMenu()) : null,
+      );
     };
     hub.games.onEnded = (host) => app.show(
       T.format(hub.games.ended?.together == true ? 'togetherEnded' : 'sessionEnded', [host?.displayName ?? '']),

@@ -865,7 +865,7 @@ int main(int argc, char** argv) {
     if (command == "pad") {
       ps1_netplay::PadInput input;
       if (!ReadProbePad(std::cin, input, dualshock)) return 5;
-      session.SetInput(input.buttons, input.axes);
+      session.SetInput(0, input.buttons, input.axes);
       std::cout << "pad" << std::endl;
       continue;
     }

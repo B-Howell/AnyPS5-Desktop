@@ -454,6 +454,7 @@
   "ps2LanReconnected": "LAN bağlantısı yeniden kuruldu. Oyunun bağlantısı kesildiyse LAN menüsünde yeniden buluşun.",
   "retroOnlineBusy": "Önce mevcut retro çevrimiçi oyundan ayrıl.",
   "gameInvitedYou": "%@ seni %@ oyununa çağırıyor",
+  "gameInvitedYouPs": "%@ sizi %@ oyununa davet ediyor. Katılmak için PS’ye basın.",
   "gameNotHere": "%@ kütüphanende yok",
   "gameUnlockFirst": "Önce %@ oyununun kilidini aç",
   "gameVersionMismatch": "%@ oyunun %@ sürümünü oynuyor; seninki %@",
