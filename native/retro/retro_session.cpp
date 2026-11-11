@@ -3,6 +3,7 @@
 
 #include "retro_library.h"
 #include "ps2_virtual_lan.h"
+#include "ps3_network_policy.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1032,6 +1033,7 @@ class Session::Impl {
       const auto& core = library.emplace(path);
       if (core.Get<unsigned (*)()>("retro_api_version")() != 1)
         throw std::runtime_error("Unsupported emulator core API");
+      if (ps3_) ApplyPs3OfflinePolicy(core.Get<Ps3OfflinePolicy>(kPs3OfflinePolicyExport, false), false);
       const auto init = core.Get<VoidFunction>("retro_init");
       deinit = core.Get<VoidFunction>("retro_deinit");
       unload = core.Get<VoidFunction>("retro_unload_game");

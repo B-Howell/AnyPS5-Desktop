@@ -2,6 +2,7 @@
 #include "retro_frame.h"
 #include "retro_library.h"
 #include "retro_session.h"
+#include "ps3_network_policy.h"
 #include "retro_test_support.h"
 
 #include <chrono>
@@ -61,6 +62,40 @@ void CheckFrames() {
   Check(!retro::DecodeSoftwareFrame(nullptr, 1, 2, 8, retro::kXrgb8888), "Null frame accepted");
   Check(!retro::DecodeSoftwareFrame(xrgb, 4097, 2, 8, retro::kXrgb8888), "Oversized frame accepted");
 }
+void CheckPs3Policy() {
+  retro::ApplyPs3OfflinePolicy(nullptr, false);
+  retro::ApplyPs3OfflinePolicy([](unsigned mode, const char* xfloat, const char* dns, bool upnp) {
+    return mode == 0 && !xfloat && !dns && !upnp;
+  }, true);
+  retro::Ps3NetworkPolicy online{"strict", "192.0.2.1", false, "fixture.invalid", "certificate",
+                                 {"TEST00001", "01.00", "patch", "ppu", {"required"}, {2}}};
+  const auto accepts = [](const char* xfloat, const char* dns, bool upnp, const char* host,
+                          const char* certificate, const char* title, const char* version, const char* digest,
+                          const char* ppu, unsigned count, const char* const* names, const unsigned* writes) {
+    return std::string_view(xfloat) == "strict" && std::string_view(dns) == "192.0.2.1" && !upnp &&
+           std::string_view(host) == "fixture.invalid" && std::string_view(certificate) == "certificate" &&
+           std::string_view(title) == "TEST00001" && std::string_view(version) == "01.00" &&
+           std::string_view(digest) == "patch" && std::string_view(ppu) == "ppu" &&
+           count == 1 && std::string_view(names[0]) == "required" && writes[0] == 2;
+  };
+  retro::ApplyPs3OnlinePolicy(accepts, online);
+  const auto reject = [](const auto& call, const char* message) {
+    bool rejected = false;
+    try {
+      call();
+    } catch (const std::runtime_error&) {
+      rejected = true;
+    }
+    Check(rejected, message);
+  };
+  reject([] { retro::ApplyPs3OfflinePolicy(nullptr, true); }, "Isolated PS3 boot accepted a missing offline export");
+  reject([&] { retro::ApplyPs3OnlinePolicy(nullptr, online); }, "PS3 online boot accepted a missing attestation export");
+  online.upnp = true;
+  reject([&] { retro::ApplyPs3OnlinePolicy(accepts, online); }, "PS3 online boot ignored core rejection");
+  online.protection.writes.clear();
+  reject([&] { retro::ApplyPs3OnlinePolicy(accepts, online); }, "PS3 online boot accepted mismatched patch entries");
+}
+
 void CheckSession(const std::filesystem::path& path) {
   const retro::DynamicLibrary library(path);
   const auto lifecycle = library.Get<unsigned (*)()>("test_lifecycle_count");
@@ -174,6 +209,7 @@ int main(int argc, char** argv) {
     Check(argc == 2, "Pass the path to the test core");
     CheckLibrary(std::filesystem::u8path(argv[1]));
     CheckFrames();
+    CheckPs3Policy();
     CheckSession(std::filesystem::u8path(argv[1]));
     const auto path = std::filesystem::u8path(argv[1]);
     const retro::DynamicLibrary library(path);

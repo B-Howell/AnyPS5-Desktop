@@ -827,3 +827,27 @@ local CTR disc and BIOS. Both hosting from Game Settings and resuming
 a mixed-platform guest invite after package selection passed against
 the simulated room service. This validates the invite and setup path
 separately from the pending hosted gameplay test.
+
+### Shared PS3 network policy
+
+The [native policy adapter](../native/retro/ps3_network_policy.h)
+carries the same RPCS3 offline and attested-online ABI calls on both
+hosts. The [Windows runner](../windows/runner/retro_core_host.cpp)
+still requires the v3 export and passes the provider identity and
+patch requirements before online boot. The
+[shared session](../native/retro/retro_session.cpp) now explicitly
+selects offline mode on PS3 cores that expose the v1 policy hook.
+Legacy offline cores may omit it. A core rejection aborts launch.
+
+The [native test](../native/retro/test/retro_native_test.cpp) verifies
+offline arguments and the complete attestation arguments, and rejects
+missing exports, rejected policies, and mismatched patch entries. Linux
+PS3 online still needs the native channel parser, provider-status
+bridge, and a qualified Linux provider/core profile before it can
+expose online launch.
+
+All seven native suites passed on Linux and Windows, and the Windows
+runner syntax check passed. The contract test uses fixture callbacks
+and did not boot a real RPCS3 core. All five hosted jobs also passed
+on the preceding invite-test head in
+[run 42992515280](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/42992515280).

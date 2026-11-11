@@ -3,6 +3,7 @@
 #include "../../native/retro/ps1_checkpoint.h"
 #include "../../native/retro/ps1_match.h"
 #include "../../native/retro/ps2_virtual_lan.h"
+#include "../../native/retro/ps3_network_policy.h"
 #include "ps3_package_batch.h"
 #include "retro_vulkan_video.h"
 
@@ -43,58 +44,7 @@ using Value = flutter::EncodableValue;
 using Map = flutter::EncodableMap;
 using List = flutter::EncodableList;
 
-struct Ps3NetworkPolicy {
-  struct Protection {
-    std::string title;
-    std::string version;
-    std::string sha256;
-    std::string ppu_hash;
-    std::vector<std::string> names;
-    std::vector<unsigned> writes;
-  };
-  std::string xfloat;
-  std::string dns;
-  bool upnp;
-  std::string host;
-  std::string certificate_sha256;
-  Protection protection;
-};
-
-void SelectPs3NetworkPolicy(HMODULE dll, const std::optional<Ps3NetworkPolicy>& online,
-                            bool require_export) {
-  if (online) {
-    using SelectVerifiedPolicy = bool (*)(const char*, const char*, bool, const char*, const char*,
-                                         const char*, const char*, const char*, const char*, unsigned,
-                                         const char* const*, const unsigned*);
-    const auto address = GetProcAddress(dll, "retro_anyps5_ps3_network_policy_v3");
-    SelectVerifiedPolicy select = nullptr;
-    static_assert(sizeof(select) == sizeof(address));
-    std::memcpy(&select, &address, sizeof(select));
-    if (!select)
-      throw std::runtime_error("This RPCS3 core cannot verify the PS3 online provider.");
-
-    const auto& patch = online->protection;
-    std::vector<const char*> names;
-    names.reserve(patch.names.size());
-    for (const auto& name : patch.names) names.push_back(name.c_str());
-    if (!select(online->xfloat.c_str(), online->dns.c_str(), online->upnp,
-                online->host.c_str(), online->certificate_sha256.c_str(),
-                patch.title.c_str(), patch.version.c_str(), patch.sha256.c_str(), patch.ppu_hash.c_str(),
-                static_cast<unsigned>(names.size()), names.data(), patch.writes.data()))
-      throw std::runtime_error("RPCS3 rejected the required online protection.");
-    return;
-  }
-
-  using SelectPolicy = bool (*)(unsigned, const char*, const char*, bool);
-  const auto address = GetProcAddress(dll, "retro_anyps5_ps3_network_policy_v1");
-  SelectPolicy select = nullptr;
-  static_assert(sizeof(select) == sizeof(address));
-  std::memcpy(&select, &address, sizeof(select));
-  if (require_export && !select)
-    throw std::runtime_error("This RPCS3 core does not support isolated PS3 profiles.");
-  if (select && !select(0, nullptr, nullptr, false))
-    throw std::runtime_error("RPCS3 rejected the network policy.");
-}
+using anyps5::retro::Ps3NetworkPolicy;
 
 // Layouts and command values from the libretro v1 C ABI.
 struct GameInfo {
@@ -522,13 +472,23 @@ class ConfirmedPcmPlayout {
 };
 
 template <typename T>
-T Symbol(HMODULE dll, const char* name) {
+T Symbol(HMODULE dll, const char* name, bool required = true) {
   auto address = GetProcAddress(dll, name);
-  if (!address) throw std::runtime_error(std::string("Core is missing ") + name);
+  if (!address && required) throw std::runtime_error(std::string("Core is missing ") + name);
   T function;
   static_assert(sizeof(function) == sizeof(address));
   std::memcpy(&function, &address, sizeof(function));
   return function;
+}
+
+void SelectPs3NetworkPolicy(HMODULE dll, const std::optional<Ps3NetworkPolicy>& online,
+                            bool require_export) {
+  using namespace anyps5::retro;
+  if (online) {
+    ApplyPs3OnlinePolicy(Symbol<Ps3VerifiedOnlinePolicy>(dll, kPs3VerifiedOnlinePolicyExport, false), *online);
+  } else {
+    ApplyPs3OfflinePolicy(Symbol<Ps3OfflinePolicy>(dll, kPs3OfflinePolicyExport, false), require_export);
+  }
 }
 
 const std::string* StringField(const Map& map, const char* name) {
