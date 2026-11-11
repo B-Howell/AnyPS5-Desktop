@@ -30,6 +30,14 @@ struct Ps1MatchConfig {
   unsigned seat;
   std::string bios;
   bool dualshock = false;
+  bool local_staging = false;
+};
+
+using Ps1Ports = std::array<ps1_netplay::PadInput, 2>;
+constexpr size_t kPs1CatchupBatch = 120;
+struct Ps1MatchHistory {
+  uint32_t next_frame;
+  std::vector<Ps1Ports> frames;
 };
 
 struct Ps1MatchTick {
@@ -144,6 +152,10 @@ class Session {
   std::optional<int64_t> RequestMatchExport(const ps1_checkpoint::Digest& digest);
   std::optional<int64_t> RequestMatchImport(const ps1_checkpoint::Digest& digest, uint32_t frame,
                                             ps1_checkpoint::Bytes state);
+  std::optional<uint32_t> HoldNetplay();
+  bool ResumeLocalNetplay();
+  std::optional<Ps1MatchHistory> MatchHistory(uint32_t first);
+  std::optional<int64_t> RequestMatchReplay(uint32_t first, std::vector<Ps1Ports> frames);
   std::optional<Ps1MatchTick> SyncNetplay(const std::vector<ps1_netplay::FrameInput>& remote,
                                          std::optional<uint32_t> acknowledged);
   ps1_checkpoint::Mailbox::Reply TakeCheckpoint(int64_t ticket);

@@ -81,6 +81,8 @@ int main() {
     fl_value_set_string_take(offline, "ps1NetplaySeat", fl_value_new_int(1));
     fl_value_set_string_take(offline, "ps1NetplayBios", fl_value_new_string("/test/bios.bin"));
     Check(ReadPs1Match(offline)->seat == 1, "PS1 seat changed at the channel");
+    fl_value_set_string_take(offline, "ps1LocalStaging", fl_value_new_bool(true));
+    Check(ReadPs1Match(offline)->local_staging, "PS1 staging flag changed at the channel");
     auto* remote = fl_value_new_list();
     auto* row = fl_value_new_list();
     for (const int value : {0, 65535, -32768, 32767, 0, 0})
@@ -92,6 +94,17 @@ int main() {
           "Valid PS1 input was changed");
     fl_value_set_string_take(request, "acknowledgedFrame", fl_value_new_int(-1));
     MustReject([&] { ReadMatchExchange(request); });
+    MustReject([&] { ReadMatchReplay(request); });
+    auto* history = fl_value_new_list();
+    auto* ports = fl_value_new_list();
+    for (const int buttons : {1, 2}) {
+      auto* pad = fl_value_new_list();
+      for (const int value : {buttons, -10, 0, 0, 0}) fl_value_append_take(pad, fl_value_new_int(value));
+      fl_value_append_take(ports, pad);
+    }
+    fl_value_append_take(history, ports);
+    fl_value_set_string_take(request, "frames", history);
+    Check(ReadMatchReplay(request).at(0).at(1).buttons == 2, "Catch-up lost the second controller");
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
     return 1;

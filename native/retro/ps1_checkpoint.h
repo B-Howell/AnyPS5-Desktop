@@ -120,6 +120,9 @@ class Mailbox {
     job_.reset();
   }
   Effects Service(uint64_t frame, const std::function<void()>& validate_restore = {}) {
+    return Service([frame] { return frame; }, validate_restore);
+  }
+  Effects Service(const std::function<uint64_t()>& frame, const std::function<void()>& validate_restore = {}) {
     Hooks hooks;
     Kind kind;
     int64_t id;
@@ -135,7 +138,7 @@ class Mailbox {
     }
     const bool loading = kind == Kind::kResume || kind == Kind::kImport;
     auto captured = loading ? std::nullopt :
-        CaptureState(hooks.blank, hooks.private_save, hooks.capacity, digest, frame, kind == Kind::kPark);
+        CaptureState(hooks.blank, hooks.private_save, hooks.capacity, digest, frame(), kind == Kind::kPark);
     const bool restored = loading && hooks.load(recovery.data(), recovery.size(), digest.data());
     if (restored && validate_restore) validate_restore();
     Effects effects{loading, loading};

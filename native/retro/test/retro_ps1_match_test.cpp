@@ -11,8 +11,46 @@ using namespace anyps5::retro;
 using namespace anyps5::retro::test;
 
 namespace {
+struct StagedMatch {
+  ps1_checkpoint::Snapshot snapshot;
+  Ps1MatchHistory history;
+};
+
+StagedMatch StageHost(const char* core, const std::filesystem::path& root) {
+  SessionConfig config{core, "test.cue", root.u8string(), root.u8string(), "", {}};
+  config.ps1_match = Ps1MatchConfig{0, (root / "bios.bin").u8string(), true, true};
+  Session host(std::move(config), std::make_unique<TestVideo>(), std::make_unique<TestAudio>(), [] {});
+  host.SetInput(4, {});
+  host.Start();
+  WaitFor([&] { return host.Status().telemetry.steps >= 3; }, "Host did not stage local play");
+  Check(!host.StartNetplay(), "Host switched to the match before holding");
+  ps1_checkpoint::Digest digest{};
+  const auto ticket = host.RequestMatchExport(digest);
+  Check(ticket.has_value(), "Staged checkpoint was rejected");
+  ps1_checkpoint::Mailbox::Reply reply;
+  WaitFor([&] { reply = host.TakeCheckpoint(*ticket); return !std::holds_alternative<std::monostate>(reply); },
+          "Staged checkpoint did not complete");
+  auto snapshot = std::get<ps1_checkpoint::Snapshot>(std::move(reply));
+  WaitFor([&] { return host.Status().telemetry.steps >= snapshot.frame + 5; }, "Host did not advance after capture");
+  std::optional<uint32_t> held;
+  WaitFor([&] { held = host.HoldNetplay(); return held.has_value(); }, "Host did not hold at a frame boundary");
+  Check(host.ResumeLocalNetplay(), "Held game could not resume local play");
+  const auto previous = *held;
+  WaitFor([&] { return host.Status().telemetry.steps > previous; }, "Resumed host did not advance");
+  WaitFor([&] { held = host.HoldNetplay(); return held.has_value(); }, "Resumed host did not hold again");
+  const auto history = host.MatchHistory(snapshot.frame);
+  Check(history && history->next_frame == *held && history->frames.size() == *held - snapshot.frame &&
+        history->frames.front()[0].buttons == 4 && history->frames.front()[1].buttons == 0,
+        "Host did not retain both controller ports through cutover");
+  Check(host.StartNetplay(), "Held host could not start the synchronized match");
+  const auto first = host.SyncNetplay({}, {});
+  Check(first && first->frame == 0 && first->waiting, "Host did not start a new input timeline");
+  host.Stop(); host.Join();
+  return {std::move(snapshot), *history};
+}
+
 void CheckSeat(const char* core, const std::filesystem::path& root, unsigned seat,
-               const std::string& expected) {
+               const StagedMatch& staged, const std::string& expected) {
   const std::array<ps1_netplay::PadInput, 2> pads{{{1, {-22, 0, 0, 0}}, {2, {33, 0, 0, 0}}}};
   SessionConfig config{core, "test.cue", root.u8string(), root.u8string(), "",
                        {{"swanstation_CDROM_ReadThread", "true"}}};
@@ -33,9 +71,8 @@ void CheckSeat(const char* core, const std::filesystem::path& root, unsigned sea
   WaitFor([&] { checkpoint = match.TakeCheckpoint(*rejected); return !std::holds_alternative<std::monostate>(checkpoint); },
           "Rejected import did not complete");
   Check(!std::get<bool>(checkpoint) && !match.StartNetplay(), "Failed import let the match start");
-  const uint32_t saved_position = 37;
-  ps1_checkpoint::Bytes state(8);
-  std::memcpy(state.data(), &saved_position, sizeof(saved_position));
+  const auto saved_position = staged.snapshot.frame;
+  const auto& state = staged.snapshot.state;
   const auto cancelled = match.RequestMatchImport(digest, saved_position, state);
   Check(cancelled.has_value(), "Could not queue an import to cancel");
   match.CancelCheckpoint(*cancelled);
@@ -47,11 +84,13 @@ void CheckSeat(const char* core, const std::filesystem::path& root, unsigned sea
   WaitFor([&] { checkpoint = match.TakeCheckpoint(*imported); return !std::holds_alternative<std::monostate>(checkpoint); },
           "Valid import did not complete");
   Check(std::get<bool>(checkpoint), "Valid import failed");
-  const auto exported = match.RequestMatchExport(digest);
-  Check(exported.has_value(), "Restored core did not accept a checkpoint export");
-  WaitFor([&] { checkpoint = match.TakeCheckpoint(*exported); return !std::holds_alternative<std::monostate>(checkpoint); },
-          "Checkpoint export did not complete");
-  Check(std::get<ps1_checkpoint::Snapshot>(checkpoint).state == state, "Imported core lost the saved position");
+  Check(!match.RequestMatchReplay(saved_position + 1, staged.history.frames), "Guest accepted a gap in catch-up");
+  const auto replay = match.RequestMatchReplay(saved_position, staged.history.frames);
+  Check(replay && !match.StartNetplay(), "Queued replay let the match start");
+  WaitFor([&] { checkpoint = match.TakeCheckpoint(*replay); return !std::holds_alternative<std::monostate>(checkpoint); },
+          "Catch-up replay did not complete");
+  Check(std::get<bool>(checkpoint) && !match.AcquireFrame(), "Catch-up did not stay off the presentation surface");
+  Check(!match.RequestMatchReplay(saved_position, staged.history.frames), "Guest accepted duplicate catch-up");
   match.SetInput(pads[seat].buttons, pads[seat].axes);
   Check(match.StartNetplay() && match.StartNetplay(), "Match start was not idempotent");
   Check(!match.RequestMatchImport(digest, 37, state), "Running match accepted a checkpoint import");
@@ -118,9 +157,13 @@ int main(int argc, char** argv) {
     ram[1] = static_cast<uint8_t>(-22);
     ram[2] = 2;
     ram[3] = 33;
+    const auto staged = StageHost(argv[1], root);
+    const auto cursor = staged.history.next_frame + 120;
+    for (unsigned i = 0; i < 4; ++i) ram[4 + i] = static_cast<uint8_t>(cursor >> (8 * i));
+    ram[8] = 4;
     const auto expected = NetplayFingerprint(ram.data(), ram.size());
-    CheckSeat(argv[1], root, 0, expected);
-    CheckSeat(argv[1], root, 1, expected);
+    CheckSeat(argv[1], root, 0, staged, expected);
+    CheckSeat(argv[1], root, 1, staged, expected);
     std::filesystem::remove_all(root);
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

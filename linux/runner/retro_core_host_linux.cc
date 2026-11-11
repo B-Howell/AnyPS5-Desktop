@@ -186,6 +186,24 @@ FlValue* EncodeMatchTick(const Ps1MatchTick& tick) {
   return result;
 }
 
+FlValue* EncodeMatchHistory(const Ps1MatchHistory& history) {
+  auto* result = fl_value_new_map();
+  auto* frames = fl_value_new_list();
+  for (const auto& frame : history.frames) {
+    auto* ports = fl_value_new_list();
+    for (const auto& pad : frame) {
+      auto* row = fl_value_new_list();
+      fl_value_append_take(row, fl_value_new_int(pad.buttons));
+      for (const auto axis : pad.axes) fl_value_append_take(row, fl_value_new_int(axis));
+      fl_value_append_take(ports, row);
+    }
+    fl_value_append_take(frames, ports);
+  }
+  fl_value_set_string_take(result, "frames", frames);
+  fl_value_set_string_take(result, "nextFrame", fl_value_new_int(history.next_frame));
+  return result;
+}
+
 void Success(FlMethodCall* call, FlValue* result = nullptr) {
   g_autoptr(FlValue) owned_result = result;
   fl_method_call_respond_success(call, owned_result, nullptr);
@@ -294,6 +312,20 @@ class RetroCoreHostLinux::Impl {
       Success(call);
     } else if (method == "netplayStart") {
       Success(call, fl_value_new_bool(session_->StartNetplay()));
+    } else if (method == "ps1CheckpointHold") {
+      const auto frame = session_->HoldNetplay();
+      Success(call, frame ? fl_value_new_int(*frame) : nullptr);
+    } else if (method == "ps1ResumeLocal") {
+      Success(call, fl_value_new_bool(session_->ResumeLocalNetplay()));
+    } else if (method == "ps1CheckpointHistory") {
+      const auto history = session_->MatchHistory(linux_channel::ReadMatchFrame(args));
+      if (!history) throw std::runtime_error("The requested input history is unavailable.");
+      Success(call, EncodeMatchHistory(*history));
+    } else if (method == "ps1CheckpointReplay") {
+      const auto first = linux_channel::ReadMatchFrame(linux_channel::Field(args, "frame"));
+      const auto ticket = session_->RequestMatchReplay(first, linux_channel::ReadMatchReplay(args));
+      if (!ticket) throw std::runtime_error("The guest cannot replay from that frame.");
+      Success(call, fl_value_new_int(*ticket));
     } else if (method == "netplaySync") {
       const auto exchange = linux_channel::ReadMatchExchange(args);
       const auto tick = session_->SyncNetplay(exchange.remote, exchange.acknowledged);

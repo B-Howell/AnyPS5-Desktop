@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -125,6 +126,8 @@ class Session::Impl {
     if (config_.ps1_match) {
       if (console_ != Console::kPs1 || config_.recovery || config_.initial_disc || config_.lan_mac)
         throw std::invalid_argument("Invalid synchronized PS1 launch configuration");
+      if (config_.ps1_match->local_staging && config_.ps1_match->seat != 0)
+        throw std::invalid_argument("Only the PS1 host can stage a local match.");
       match_timeline_.emplace(config_.ps1_match->seat);
       match_storage_ = std::make_unique<Ps1MatchStorage>(config_.ps1_match->bios);
       config_.system = match_storage_->system();
@@ -247,42 +250,109 @@ class Session::Impl {
   }
   bool StartNetplay() {
     std::lock_guard<std::mutex> lock(match_mutex_);
-    if (!match_ready_ || stop_ || ended_ || checkpoint_.busy() || match_import_) return false;
+    if (!MatchCheckpointIdle() || match_import_ || (StagingLocal() && !match_held_)) return false;
+    if (match_held_) {
+      match_timeline_->Reset();
+      match_history_.clear();
+      match_fingerprints_.clear();
+      match_held_ = false;
+    }
     match_timeline_->Start();
     match_started_ = true;
+    match_replay_cursor_.reset();
     return true;
   }
   std::optional<int64_t> RequestMatchExport(const ps1_checkpoint::Digest& digest) {
     std::lock_guard<std::mutex> lock(match_mutex_);
-    if (!match_ready_ || stop_ || ended_ || match_import_) return std::nullopt;
+    if (!MatchCheckpointIdle() || match_import_ || match_replay_cursor_) return std::nullopt;
     return checkpoint_.RequestCapture(digest, false);
   }
   std::optional<int64_t> RequestMatchImport(const ps1_checkpoint::Digest& digest, uint32_t frame,
                                             ps1_checkpoint::Bytes state) {
     std::lock_guard<std::mutex> lock(match_mutex_);
-    if (!match_ready_ || stop_ || ended_ || match_started_ || frame > ps1_netplay::Timeline::kMaxFrame)
+    if (!MatchCheckpointIdle() || match_started_ || StagingLocal() || frame > ps1_netplay::Timeline::kMaxFrame)
       return std::nullopt;
     const auto ticket = checkpoint_.RequestImport(digest, std::move(state));
-    if (ticket) match_import_ = ticket;
+    if (ticket) {
+      match_import_ = std::make_pair(*ticket, frame);
+      match_replay_cursor_.reset();
+    }
+    return ticket;
+  }
+  std::optional<uint32_t> HoldNetplay() {
+    std::lock_guard<std::mutex> lock(match_mutex_);
+    if (!MatchCheckpointIdle() || !checkpoint_.ready() || match_frame_in_flight_) return std::nullopt;
+    if (!StagingLocal() && (!match_started_ || !match_timeline_->Hold())) return std::nullopt;
+    match_held_ = true;
+    return MatchFrame();
+  }
+  bool ResumeLocalNetplay() {
+    std::lock_guard<std::mutex> lock(match_mutex_);
+    if (!MatchCheckpointIdle() || !config_.ps1_match->local_staging || !match_held_) return false;
+    if (match_started_) {
+      match_started_ = false;
+      match_local_frame_ = 0;
+      match_history_.clear();
+    }
+    match_held_ = false;
+    return true;
+  }
+  std::optional<Ps1MatchHistory> MatchHistory(uint32_t first) {
+    std::lock_guard<std::mutex> lock(match_mutex_);
+    if (!match_ready_ || stop_ || ended_ || !checkpoint_.ready() || (!StagingLocal() && !match_started_))
+      return std::nullopt;
+    const auto next = MatchFrame();
+    const auto oldest = next - static_cast<uint32_t>(match_history_.size());
+    if (first < oldest || first > next) return std::nullopt;
+    const auto count = std::min<size_t>(next - first, kPs1CatchupBatch);
+    const auto begin = match_history_.begin() + (first - oldest);
+    return Ps1MatchHistory{next, {begin, begin + count}};
+  }
+  std::optional<int64_t> RequestMatchReplay(uint32_t first, std::vector<Ps1Ports> frames) {
+    std::lock_guard<std::mutex> lock(match_mutex_);
+    if (!MatchCheckpointIdle() || match_import_ || match_started_ || match_replay_cursor_ != first ||
+        frames.empty() || frames.size() > kPs1CatchupBatch ||
+        first > ps1_netplay::Timeline::kMaxFrame - frames.size()) return std::nullopt;
+    const auto ticket = ps1_checkpoint::NextIdentity();
+    if (!ticket) return std::nullopt;
+    match_replay_ = Replay{*ticket, first, std::move(frames), false, std::nullopt};
     return ticket;
   }
   std::optional<Ps1MatchTick> SyncNetplay(const std::vector<ps1_netplay::FrameInput>& remote,
                                          std::optional<uint32_t> acknowledged) {
     std::lock_guard<std::mutex> lock(match_mutex_);
-    if (!match_ready_ || stop_ || ended_ || remote.size() > 32 ||
+    if (!match_ready_ || stop_ || ended_ || StagingLocal() || remote.size() > 32 ||
         !match_timeline_->Receive(remote, acknowledged)) return std::nullopt;
     return Ps1MatchTick{match_timeline_->frame(), match_timeline_->confirmed(), match_timeline_->received(),
                         match_timeline_->waiting(), match_timeline_->LocalPacket(), match_fingerprints_};
   }
   ps1_checkpoint::Mailbox::Reply TakeCheckpoint(int64_t ticket) {
     std::lock_guard<std::mutex> lock(match_mutex_);
+    if (match_replay_ && match_replay_->ticket == ticket) {
+      if (stop_ || ended_) return false;
+      if (!match_replay_->result) return std::monostate{};
+      const auto success = *match_replay_->result;
+      match_replay_.reset();
+      return success;
+    }
     auto reply = checkpoint_.Take(ticket);
-    if (match_import_ == ticket) {
-      if (const auto* imported = std::get_if<bool>(&reply); imported && *imported) match_import_.reset();
+    if (match_import_ && match_import_->first == ticket) {
+      if (const auto* imported = std::get_if<bool>(&reply); imported && *imported) {
+        match_replay_cursor_ = match_import_->second;
+        match_import_.reset();
+      }
     }
     return reply;
   }
-  void CancelCheckpoint(int64_t ticket) { checkpoint_.Cancel(ticket); }
+  void CancelCheckpoint(int64_t ticket) {
+    std::lock_guard<std::mutex> lock(match_mutex_);
+    if (match_replay_ && match_replay_->ticket == ticket) {
+      if (match_replay_->running || match_replay_->result == true) Stop();
+      match_replay_.reset();
+      return;
+    }
+    checkpoint_.Cancel(ticket);
+  }
 
   SessionStatus Status() {
     std::lock_guard<std::mutex> lock(settings_mutex_);
@@ -383,6 +453,46 @@ class Session::Impl {
   }
 
  private:
+  struct Replay {
+    int64_t ticket;
+    uint32_t first;
+    std::vector<Ps1Ports> frames;
+    bool running;
+    std::optional<bool> result;
+  };
+
+  // Match helpers below are called with match_mutex_ held unless they acquire it.
+  bool MatchCheckpointIdle() const {
+    return match_ready_ && !stop_ && !ended_ && !checkpoint_.busy() && !match_replay_;
+  }
+  bool StagingLocal() const { return config_.ps1_match->local_staging && !match_started_; }
+  uint32_t MatchFrame() const { return StagingLocal() ? match_local_frame_ : match_timeline_->frame(); }
+
+  void ServiceMatchReplay(void (*step)()) {
+    std::vector<Ps1Ports> frames;
+    int64_t ticket;
+    uint32_t first;
+    {
+      std::lock_guard<std::mutex> lock(match_mutex_);
+      if (!match_replay_ || match_replay_->running || match_replay_->result) return;
+      match_replay_->running = true;
+      ticket = match_replay_->ticket;
+      first = match_replay_->first;
+      frames = std::move(match_replay_->frames);
+    }
+    suppress_frame_ = true;
+    for (const auto& ports : frames) {
+      if (stop_) break;
+      match_ports_ = ports;
+      step();
+    }
+    std::lock_guard<std::mutex> lock(match_mutex_);
+    if (!match_replay_ || match_replay_->ticket != ticket) return;
+    match_replay_->running = false;
+    match_replay_->result = !stop_;
+    if (!stop_) match_replay_cursor_ = first + static_cast<uint32_t>(frames.size());
+  }
+
   struct Option {
     std::vector<std::string> values;
     std::vector<std::string> labels;
@@ -839,7 +949,6 @@ class Session::Impl {
   }
 
   int16_t Input(unsigned port, unsigned device, unsigned index, unsigned id) {
-    if (suppress_frame_) return 0;
     if (match_timeline_) {
       if (port >= match_ports_.size()) return 0;
       const auto& pad = match_ports_[port];
@@ -848,6 +957,7 @@ class Session::Impl {
       if (device == 5 && index < 2 && id < 2) return pad.axes[index * 2 + id];
       return 0;
     }
+    if (suppress_frame_) return 0;
     if (port != 0 || paused_) return 0;
     std::lock_guard<std::mutex> lock(input_mutex_);
     if (device == 1 && id < 16) return (buttons_ & (1u << id)) != 0;
@@ -1062,11 +1172,18 @@ class Session::Impl {
         const auto size = save && load_state ? core.Get<size_t (*)()>("retro_serialize_size")() : 0;
         if (size && size <= ps1_checkpoint::kMaximumBytes - ps1_checkpoint::kPrefixBytes)
           checkpoint_.Configure({save, nullptr, load_state, size + ps1_checkpoint::kPrefixBytes});
+        if (config_.ps1_match->local_staging && !checkpoint_.ready())
+          throw std::runtime_error("Local PS1 hosting requires the portable checkpoint core.");
         match_ready_ = true;
       }
       auto next = Clock::now();
       auto hardware_deadline = next + std::chrono::seconds(8);
       std::optional<Clock::time_point> recovery_deadline;
+      const std::function<uint64_t()> checkpoint_frame = [&]() -> uint64_t {
+        if (!match_timeline_) return static_cast<uint64_t>(steps_.load());
+        std::lock_guard<std::mutex> lock(match_mutex_);
+        return MatchFrame();
+      };
       while (!stop_) {
         if (!match_timeline_ && !checkpoint_.busy()) ApplyDiscChange();
         if (!match_timeline_ && (ps1 || ps2) && !checkpoint_.busy())
@@ -1088,17 +1205,13 @@ class Session::Impl {
           restore_card();
           hardware_deadline = Clock::now() + std::chrono::seconds(8);
         }
-        uint64_t checkpoint_frame = static_cast<uint64_t>(steps_.load());
-        if (match_timeline_) {
-          std::lock_guard<std::mutex> lock(match_mutex_);
-          checkpoint_frame = match_timeline_->frame();
-        }
         const auto checkpoint_effects = checkpoint_.Service(checkpoint_frame, validate_match_memory);
         if (checkpoint_effects.refresh_memory && ps1 && !match_timeline_) {
           card = core.Get<void* (*)(unsigned)>("retro_get_memory_data")(0);
           card_size = core.Get<size_t (*)(unsigned)>("retro_get_memory_size")(0);
         }
         if (checkpoint_effects.flush_audio) audio_->Flush();
+        if (match_timeline_) ServiceMatchReplay(step);
         if (stop_) break;
         if (recovered_source_ && !frame_ready_ && !paused_) {
           const auto now = Clock::now();
@@ -1120,11 +1233,21 @@ class Session::Impl {
             local = {buttons_, axes_};
           }
           bool prepared;
+          bool staging;
           uint32_t frame;
           {
             std::lock_guard<std::mutex> lock(match_mutex_);
-            frame = match_timeline_->cursor();
-            prepared = match_timeline_->Prepare(local, match_ports_);
+            staging = StagingLocal();
+            frame = MatchFrame();
+            if (staging) {
+              if (frame == ps1_netplay::Timeline::kMaxFrame)
+                throw std::runtime_error("PS1 staging reached its frame limit.");
+              prepared = !match_held_;
+              match_ports_ = {local, {}};
+            } else {
+              prepared = match_timeline_->Prepare(local, match_ports_);
+            }
+            match_frame_in_flight_ = prepared;
           }
           if (!prepared) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -1134,9 +1257,16 @@ class Session::Impl {
           if (stop_) break;
           suppress_frame_ = false;
           step();
-          auto fingerprint = (frame + 1) % 120 == 0 ? NetplayFingerprint(match_ram, match_ram_size) : std::string{};
+          auto fingerprint = !staging && (frame + 1) % 120 == 0 ?
+              NetplayFingerprint(match_ram, match_ram_size) : std::string{};
           std::lock_guard<std::mutex> lock(match_mutex_);
-          match_timeline_->Commit();
+          if (staging) ++match_local_frame_;
+          else match_timeline_->Commit();
+          match_frame_in_flight_ = false;
+          if (checkpoint_.ready()) {
+            if (match_history_.size() == 1024) match_history_.pop_front();
+            match_history_.push_back(match_ports_);
+          }
           if (!fingerprint.empty()) {
             if (match_fingerprints_.size() == 16) match_fingerprints_.erase(match_fingerprints_.begin());
             match_fingerprints_.emplace_back(frame, std::move(fingerprint));
@@ -1190,7 +1320,12 @@ class Session::Impl {
   std::optional<ps1_netplay::Timeline> match_timeline_;
   std::atomic<bool> match_ready_{false};
   bool match_started_ = false;
-  std::optional<int64_t> match_import_;
+  bool match_held_ = false, match_frame_in_flight_ = false;
+  uint32_t match_local_frame_ = 0;
+  std::optional<std::pair<int64_t, uint32_t>> match_import_;
+  std::optional<uint32_t> match_replay_cursor_;
+  std::optional<Replay> match_replay_;
+  std::deque<Ps1Ports> match_history_;
   std::mutex match_mutex_;
   std::array<ps1_netplay::PadInput, 2> match_ports_{};
   std::vector<std::pair<uint32_t, std::string>> match_fingerprints_;
@@ -1261,6 +1396,12 @@ std::optional<int64_t> Session::RequestMatchExport(const ps1_checkpoint::Digest&
 std::optional<int64_t> Session::RequestMatchImport(const ps1_checkpoint::Digest& digest, uint32_t frame,
                                                    ps1_checkpoint::Bytes state) {
   return impl_->RequestMatchImport(digest, frame, std::move(state));
+}
+std::optional<uint32_t> Session::HoldNetplay() { return impl_->HoldNetplay(); }
+bool Session::ResumeLocalNetplay() { return impl_->ResumeLocalNetplay(); }
+std::optional<Ps1MatchHistory> Session::MatchHistory(uint32_t first) { return impl_->MatchHistory(first); }
+std::optional<int64_t> Session::RequestMatchReplay(uint32_t first, std::vector<Ps1Ports> frames) {
+  return impl_->RequestMatchReplay(first, std::move(frames));
 }
 std::optional<Ps1MatchTick> Session::SyncNetplay(const std::vector<ps1_netplay::FrameInput>& remote,
                                                  std::optional<uint32_t> acknowledged) {

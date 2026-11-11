@@ -287,9 +287,16 @@ fixture checks these transitions and exports the restored core state to
 verify that the saved position survived import. The fresh match input
 timeline starts at zero after the transfer, as on Windows.
 
-Live input history and catch-up, rollback and presentation still need a Linux
-implementation. The launcher also needs qualified Linux core packages and
-mixed-platform real-game verification before exposing Linux PS1 online play.
+The Linux worker also supports local match staging, a bounded two-port input
+history, a frame-boundary hold, and replay from the imported cursor. The
+fixture captures the staging host while it runs, resumes it after a hold,
+then imports and catches up both guest seats before checking the synchronized
+RAM fingerprint. Replay rejects gaps and duplicates and suppresses audio
+and video while retaining the recorded controller inputs.
+
+Rollback and presentation still need a Linux implementation. The launcher
+also needs qualified Linux core packages and mixed-platform real-game
+verification before exposing Linux PS1 online play.
 
 Local source, builds, temporary files and compiler caches remain on D:.
 Native builds use `nice -n 19 ionice -c3` and at most three jobs. Tests use fake

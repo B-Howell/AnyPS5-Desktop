@@ -41,33 +41,39 @@ inline ps1_checkpoint::Digest ReadCheckpointDigest(FlValue* args) {
   return result;
 }
 
-inline ps1_checkpoint::Snapshot ReadMatchCheckpoint(FlValue* args) {
-  auto* frame = Field(args, "frame");
+inline uint32_t ReadMatchFrame(FlValue* frame) {
   if (!frame || fl_value_get_type(frame) != FL_VALUE_TYPE_INT || fl_value_get_int(frame) < 0 ||
       fl_value_get_int(frame) > ps1_netplay::Timeline::kMaxFrame)
-    throw std::runtime_error("Invalid portable checkpoint frame.");
+    throw std::runtime_error("Invalid PS1 match frame.");
+  return static_cast<uint32_t>(fl_value_get_int(frame));
+}
+
+inline ps1_checkpoint::Snapshot ReadMatchCheckpoint(FlValue* args) {
+  const auto frame = ReadMatchFrame(Field(args, "frame"));
   auto* state = Field(args, "state");
   if (!state || fl_value_get_type(state) != FL_VALUE_TYPE_UINT8_LIST || !fl_value_get_length(state) ||
       fl_value_get_length(state) > ps1_checkpoint::kMaximumBytes)
     throw std::runtime_error("Invalid portable checkpoint size.");
   const auto* bytes = fl_value_get_uint8_list(state);
-  return {static_cast<uint32_t>(fl_value_get_int(frame)), {bytes, bytes + fl_value_get_length(state)}};
+  return {frame, {bytes, bytes + fl_value_get_length(state)}};
 }
 
 inline std::optional<Ps1MatchConfig> ReadPs1Match(FlValue* args) {
-  for (const auto* flag : {"ps1NetplayCpu", "ps1PresentationCore", "ps1LocalStaging", "ps3Online"}) {
+  for (const auto* flag : {"ps1NetplayCpu", "ps1PresentationCore", "ps3Online"}) {
     if (Field(args, flag)) throw std::runtime_error("This online worker is not yet available on Linux");
   }
   auto* seat = Field(args, "ps1NetplaySeat");
   auto* bios = Field(args, "ps1NetplayBios");
   auto* dualshock = Field(args, "ps1NetplayDualShock");
-  if (!seat && !bios && !dualshock) return std::nullopt;
+  auto* staging = Field(args, "ps1LocalStaging");
+  if (!seat && !bios && !dualshock && !staging) return std::nullopt;
   if (!seat || fl_value_get_type(seat) != FL_VALUE_TYPE_INT || fl_value_get_int(seat) < 0 ||
       fl_value_get_int(seat) > 1 || !bios || fl_value_get_type(bios) != FL_VALUE_TYPE_STRING ||
-      (dualshock && fl_value_get_type(dualshock) != FL_VALUE_TYPE_BOOL))
+      (dualshock && fl_value_get_type(dualshock) != FL_VALUE_TYPE_BOOL) ||
+      (staging && fl_value_get_type(staging) != FL_VALUE_TYPE_BOOL))
     throw std::runtime_error("Invalid synchronized PS1 seat or BIOS.");
   return Ps1MatchConfig{static_cast<unsigned>(fl_value_get_int(seat)), fl_value_get_string(bios),
-                       dualshock && fl_value_get_bool(dualshock)};
+                       dualshock && fl_value_get_bool(dualshock), staging && fl_value_get_bool(staging)};
 }
 
 struct MatchExchange {
@@ -75,19 +81,29 @@ struct MatchExchange {
   std::optional<uint32_t> acknowledged;
 };
 
-inline MatchExchange ReadMatchExchange(FlValue* args) {
-  constexpr auto max_frame = ps1_netplay::Timeline::kMaxFrame;
-  const auto integer = [](FlValue* value, int64_t min, int64_t max) {
+inline ps1_netplay::PadInput ReadMatchPad(FlValue* sample, size_t offset = 0) {
+  if (!sample || fl_value_get_type(sample) != FL_VALUE_TYPE_LIST || fl_value_get_length(sample) != offset + 5)
+    throw std::runtime_error("Invalid synchronized PS1 pad.");
+  const auto integer = [&](size_t index, int64_t min, int64_t max) {
+    auto* value = fl_value_get_list_value(sample, index + offset);
     if (!value || fl_value_get_type(value) != FL_VALUE_TYPE_INT)
       throw std::runtime_error("Invalid synchronized PS1 input.");
     const auto number = fl_value_get_int(value);
     if (number < min || number > max) throw std::runtime_error("Invalid synchronized PS1 input.");
     return number;
   };
+  ps1_netplay::PadInput pad{};
+  pad.buttons = static_cast<uint16_t>(integer(0, 0, UINT16_MAX));
+  for (size_t axis = 0; axis < pad.axes.size(); ++axis)
+    pad.axes[axis] = static_cast<int16_t>(integer(axis + 1, INT16_MIN, INT16_MAX));
+  return pad;
+}
+
+inline MatchExchange ReadMatchExchange(FlValue* args) {
   MatchExchange exchange;
   auto* ack = Field(args, "acknowledgedFrame");
   if (ack && fl_value_get_type(ack) != FL_VALUE_TYPE_NULL)
-    exchange.acknowledged = static_cast<uint32_t>(integer(ack, 0, max_frame));
+    exchange.acknowledged = ReadMatchFrame(ack);
   auto* frames = Field(args, "remote");
   if (!frames || fl_value_get_type(frames) != FL_VALUE_TYPE_LIST || fl_value_get_length(frames) > 32)
     throw std::runtime_error("Invalid synchronized PS1 input batch.");
@@ -95,15 +111,25 @@ inline MatchExchange ReadMatchExchange(FlValue* args) {
     auto* sample = fl_value_get_list_value(frames, i);
     if (fl_value_get_type(sample) != FL_VALUE_TYPE_LIST || fl_value_get_length(sample) != 6)
       throw std::runtime_error("Invalid synchronized PS1 frame.");
-    ps1_netplay::FrameInput frame{};
-    frame.frame = static_cast<uint32_t>(integer(fl_value_get_list_value(sample, 0), 0, max_frame));
-    frame.input.buttons = static_cast<uint16_t>(integer(fl_value_get_list_value(sample, 1), 0, UINT16_MAX));
-    for (size_t axis = 0; axis < frame.input.axes.size(); ++axis)
-      frame.input.axes[axis] = static_cast<int16_t>(integer(fl_value_get_list_value(sample, axis + 2),
-                                                          INT16_MIN, INT16_MAX));
-    exchange.remote.push_back(frame);
+    exchange.remote.push_back({ReadMatchFrame(fl_value_get_list_value(sample, 0)), ReadMatchPad(sample, 1)});
   }
   return exchange;
+}
+
+inline std::vector<Ps1Ports> ReadMatchReplay(FlValue* args) {
+  auto* frames = Field(args, "frames");
+  if (!frames || fl_value_get_type(frames) != FL_VALUE_TYPE_LIST || !fl_value_get_length(frames) ||
+      fl_value_get_length(frames) > kPs1CatchupBatch)
+    throw std::runtime_error("Invalid PS1 catch-up batch.");
+  std::vector<Ps1Ports> result;
+  for (size_t i = 0; i < fl_value_get_length(frames); ++i) {
+    auto* ports = fl_value_get_list_value(frames, i);
+    if (fl_value_get_type(ports) != FL_VALUE_TYPE_LIST || fl_value_get_length(ports) != 2)
+      throw std::runtime_error("Invalid PS1 catch-up controller ports.");
+    result.push_back({ReadMatchPad(fl_value_get_list_value(ports, 0)),
+                      ReadMatchPad(fl_value_get_list_value(ports, 1))});
+  }
+  return result;
 }
 
 inline std::optional<LanFrames> ReadLanFrames(FlValue* args, int64_t texture_id) {

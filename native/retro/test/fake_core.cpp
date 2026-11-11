@@ -232,6 +232,9 @@ extern "C" TEST_EXPORT void retro_run() {
     match_ram[port * 2] = static_cast<uint8_t>(input(port, 1, 0, 256));
     match_ram[port * 2 + 1] = static_cast<uint8_t>(input(port, 5, 0, 0));
   }
+  const auto cursor = run_count.load();
+  for (unsigned i = 0; i < 4; ++i) match_ram[4 + i] = static_cast<uint8_t>(cursor >> (8 * i));
+  match_ram[8] |= match_ram[0] & 4;
 #endif
   const uint8_t pixel[] = {0, static_cast<uint8_t>(input(0, 1, 0, 0) ? 0x7c : 0)};
   const int16_t stereo[] = {123, -123};
