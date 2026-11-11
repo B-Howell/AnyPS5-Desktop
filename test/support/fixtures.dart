@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:anyps5_desktop/core/binary.dart';
 import 'package:path/path.dart' as p;
 
 /// Minimal x64 PE export table for the PS2 LAN installer. It is never loaded.
@@ -38,6 +39,60 @@ Uint8List ps2LanFixtureDll({bool dev9 = true}) {
   u32(raw + 40, rva + 128);
   u32(raw + 44, rva + 52);
   if (dev9) bytes.setAll(raw + 52, 'retro_anyps5_dev9_bind_v1'.codeUnits);
+  return bytes;
+}
+
+/// Minimal Linux x64 ELF export table for the PS2 LAN installer. It is never loaded.
+Uint8List ps2LanFixtureSo() {
+  final bytes = Uint8List(0x400);
+  bytes.setRange(0, 7, [0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  Binary.put16(bytes, 16, 3); // ET_DYN
+  Binary.put16(bytes, 18, 62); // EM_X86_64
+  Binary.put32(bytes, 20, 1);
+  Binary.put64(bytes, 32, 0x280);
+  Binary.put16(bytes, 54, 56);
+  Binary.put16(bytes, 56, 2);
+  Binary.put64(bytes, 40, 0x100);
+  Binary.put16(bytes, 52, 64);
+  Binary.put16(bytes, 58, 64);
+  Binary.put16(bytes, 60, 4);
+  // Dynamic symbol table linked to the string table.
+  Binary.put32(bytes, 0x144, 11);
+  Binary.put64(bytes, 0x150, 0x200);
+  Binary.put64(bytes, 0x158, 0x200);
+  Binary.put64(bytes, 0x160, 48);
+  Binary.put32(bytes, 0x168, 2);
+  Binary.put64(bytes, 0x178, 24);
+  Binary.put32(bytes, 0x184, 3);
+  Binary.put64(bytes, 0x190, 0x240);
+  Binary.put64(bytes, 0x198, 0x240);
+  Binary.put64(bytes, 0x1a0, 64);
+  // Executable allocated section and one exported function.
+  Binary.put32(bytes, 0x1c4, 1);
+  Binary.put64(bytes, 0x1c8, 6);
+  Binary.put64(bytes, 0x1d0, 0x300);
+  Binary.put64(bytes, 0x1d8, 0x300);
+  Binary.put64(bytes, 0x1e0, 16);
+  Binary.put32(bytes, 0x218, 1);
+  bytes[0x21c] = 0x12; // STB_GLOBAL, STT_FUNC
+  Binary.put16(bytes, 0x21e, 3);
+  Binary.put64(bytes, 0x220, 0x300);
+  Binary.put64(bytes, 0x228, 1);
+  bytes.setRange(0x241, 0x241 + 'retro_anyps5_dev9_bind_v1'.length, 'retro_anyps5_dev9_bind_v1'.codeUnits);
+  // Loader mappings and runtime dynamic table, independently of section flags.
+  Binary.put32(bytes, 0x280, 1); // PT_LOAD
+  Binary.put32(bytes, 0x284, 5); // PF_R | PF_X
+  Binary.put64(bytes, 0x2a0, bytes.length);
+  Binary.put64(bytes, 0x2a8, bytes.length);
+  Binary.put32(bytes, 0x2b8, 2); // PT_DYNAMIC
+  Binary.put64(bytes, 0x2c0, 0x80);
+  Binary.put64(bytes, 0x2c8, 0x80);
+  Binary.put64(bytes, 0x2d8, 0x50);
+  Binary.put64(bytes, 0x2e0, 0x50);
+  for (final (at, tag, value) in [(0x80, 6, 0x200), (0x90, 11, 24), (0xa0, 5, 0x240), (0xb0, 10, 64)]) {
+    Binary.put64(bytes, at, tag);
+    Binary.put64(bytes, at + 8, value);
+  }
   return bytes;
 }
 

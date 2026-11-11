@@ -785,3 +785,17 @@ match again. The Windows worker then terminated with an access violation
 The harness closed the Linux guest, which exited normally. This did not
 reproduce the earlier Linux software-renderer fault or complete a
 mixed-platform match.
+
+### PS2 LAN invite flow regression coverage on Linux
+
+The [PS2 LAN invite suite](../test/ui/ps2_lan_invite_test.dart) now runs
+on Linux x64 and Windows x64 using platform-matched native metadata
+fixtures from [test support](../test/support/fixtures.dart). Linux
+covers the original invite after core and BIOS setup, expired invites,
+cancel and retry, Quick Menu frame exchange, room closure, and rematch.
+Those room and native-channel checks use fixtures. The separate Settings
+case also installed the actual pinned Linux ZIP during the local run.
+The full focused Linux run passed 27 tests without skips, including the
+[ELF checks](../test/core/elf_core_library_test.dart) and card lease
+tests. Local Windows Flutter testing stopped before executing tests
+because its native-asset hook did not discover the installed compiler.

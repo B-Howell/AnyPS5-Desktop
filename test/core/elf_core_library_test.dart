@@ -9,58 +9,7 @@ import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Uint8List core() {
-  final bytes = Uint8List(0x400);
-  bytes.setRange(0, 7, [0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
-  Binary.put16(bytes, 16, 3); // ET_DYN
-  Binary.put16(bytes, 18, 62); // EM_X86_64
-  Binary.put32(bytes, 20, 1);
-  Binary.put64(bytes, 32, 0x280);
-  Binary.put16(bytes, 54, 56);
-  Binary.put16(bytes, 56, 2);
-  Binary.put64(bytes, 40, 0x100);
-  Binary.put16(bytes, 52, 64);
-  Binary.put16(bytes, 58, 64);
-  Binary.put16(bytes, 60, 4);
-  // Dynamic symbol table linked to the string table.
-  Binary.put32(bytes, 0x144, 11);
-  Binary.put64(bytes, 0x150, 0x200);
-  Binary.put64(bytes, 0x158, 0x200);
-  Binary.put64(bytes, 0x160, 48);
-  Binary.put32(bytes, 0x168, 2);
-  Binary.put64(bytes, 0x178, 24);
-  Binary.put32(bytes, 0x184, 3);
-  Binary.put64(bytes, 0x190, 0x240);
-  Binary.put64(bytes, 0x198, 0x240);
-  Binary.put64(bytes, 0x1a0, 64);
-  // Executable allocated section and one exported function.
-  Binary.put32(bytes, 0x1c4, 1);
-  Binary.put64(bytes, 0x1c8, 6);
-  Binary.put64(bytes, 0x1d0, 0x300);
-  Binary.put64(bytes, 0x1d8, 0x300);
-  Binary.put64(bytes, 0x1e0, 16);
-  Binary.put32(bytes, 0x218, 1);
-  bytes[0x21c] = 0x12; // STB_GLOBAL, STT_FUNC
-  Binary.put16(bytes, 0x21e, 3);
-  Binary.put64(bytes, 0x220, 0x300);
-  Binary.put64(bytes, 0x228, 1);
-  bytes.setRange(0x241, 0x241 + 'retro_anyps5_dev9_bind_v1'.length, 'retro_anyps5_dev9_bind_v1'.codeUnits);
-  // Loader mappings and runtime dynamic table, independently of section flags.
-  Binary.put32(bytes, 0x280, 1); // PT_LOAD
-  Binary.put32(bytes, 0x284, 5); // PF_R | PF_X
-  Binary.put64(bytes, 0x2a0, bytes.length);
-  Binary.put64(bytes, 0x2a8, bytes.length);
-  Binary.put32(bytes, 0x2b8, 2); // PT_DYNAMIC
-  Binary.put64(bytes, 0x2c0, 0x80);
-  Binary.put64(bytes, 0x2c8, 0x80);
-  Binary.put64(bytes, 0x2d8, 0x50);
-  Binary.put64(bytes, 0x2e0, 0x50);
-  for (final (at, tag, value) in [(0x80, 6, 0x200), (0x90, 11, 24), (0xa0, 5, 0x240), (0xb0, 10, 64)]) {
-    Binary.put64(bytes, at, tag);
-    Binary.put64(bytes, at + 8, value);
-  }
-  return bytes;
-}
+import '../support/fixtures.dart' show ps2LanFixtureSo;
 
 void main() {
   late Directory temp;
@@ -72,23 +21,23 @@ void main() {
   tearDown(() => temp.deleteSync(recursive: true));
 
   test('Linux x64 core validates a defined executable dynamic export without loading it', () {
-    file.writeAsBytesSync(core());
+    file.writeAsBytesSync(ps2LanFixtureSo());
     expect(ElfCoreLibrary.isX64(file), isTrue);
     expect(ElfCoreLibrary.isX64(file, requiredExport: 'retro_anyps5_dev9_bind_v1'), isTrue);
     expect(ElfCoreLibrary.isX64(file, requiredExport: 'missing'), isFalse);
   });
 
   test('managed Linux setup recognizes SO hooks and never substitutes a Windows DLL', () {
-    file.writeAsBytesSync(core());
+    file.writeAsBytesSync(ps2LanFixtureSo());
     final linux = ManagedRetro(temp.path, host: EmbeddedCoreHost.linuxX64);
     final windows = ManagedRetro(temp.path, host: EmbeddedCoreHost.windowsX64);
     expect(linux.host.libraryName(RetroPlatform.ps2), 'pcsx2_libretro.so');
     expect(linux.isInstalled(RetroPlatform.ps2), isTrue);
     expect(linux.supportsPs2Lan, isTrue);
     expect(windows.isInstalled(RetroPlatform.ps2), isFalse);
-    File('${temp.path}/pcsx2_libretro.dll').writeAsBytesSync(core());
+    File('${temp.path}/pcsx2_libretro.dll').writeAsBytesSync(ps2LanFixtureSo());
     expect(windows.isInstalled(RetroPlatform.ps2), isFalse);
-    final bytes = core()..[0x21c] = 0x11;
+    final bytes = ps2LanFixtureSo()..[0x21c] = 0x11;
     file.writeAsBytesSync(bytes);
     expect(linux.supportsPs2Lan, isFalse);
   });
@@ -105,7 +54,7 @@ void main() {
 
   test('verified Linux LAN package installs its SO in isolated storage and preserves offline files', () async {
     final offline = file..writeAsBytesSync([1, 2, 3]);
-    final library = core();
+    final library = ps2LanFixtureSo();
     final archive = ZipEncoder().encode(Archive()..addFile(ArchiveFile('pcsx2_libretro.so', library.length, library)));
     final package = File('${temp.path}/linux.zip')..writeAsBytesSync(archive);
     final managed = ManagedRetro(
@@ -144,12 +93,12 @@ void main() {
       (b) => Binary.put64(b, 40, 0x3ff),
       (b) => Binary.put16(b, 60, 0xffff),
     ]) {
-      final bytes = core();
+      final bytes = ps2LanFixtureSo();
       mutate(bytes);
       file.writeAsBytesSync(bytes);
       expect(ElfCoreLibrary.isX64(file, requiredExport: 'retro_anyps5_dev9_bind_v1'), isFalse);
     }
-    file.writeAsBytesSync(core().sublist(0, 30));
+    file.writeAsBytesSync(ps2LanFixtureSo().sublist(0, 30));
     expect(ElfCoreLibrary.isX64(file), isFalse);
   });
 
@@ -171,7 +120,7 @@ void main() {
       (b) => Binary.put32(b, 0x2b8, 0), // no runtime dynamic table
       (b) => Binary.put64(b, 0x88, 0x210), // runtime symtab differs from section
     ]) {
-      final bytes = core();
+      final bytes = ps2LanFixtureSo();
       mutate(bytes);
       file.writeAsBytesSync(bytes);
       expect(ElfCoreLibrary.isX64(file, requiredExport: 'retro_anyps5_dev9_bind_v1'), isFalse);

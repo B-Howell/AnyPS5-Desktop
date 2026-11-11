@@ -16,12 +16,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import '../support/fake_together.dart';
-import '../support/fixtures.dart' show ps2LanFixtureDll, writePs2IdentityIso;
+import '../support/fixtures.dart' show ps2LanFixtureDll, ps2LanFixtureSo, writePs2IdentityIso;
 import '../support/online_fakes.dart';
 import '../support/ui_support.dart';
 
 void main() {
   LoopbackTestBinding();
+  final abi = Abi.current();
+  final supportedHost = abi == Abi.windowsX64 || abi == Abi.linuxX64;
+  final hostSystem = abi == Abi.windowsX64 ? HostSystem.windows : HostSystem.linux;
 
   Future<void> until(bool Function() condition, {String? reason}) async {
     for (var tries = 0; tries < 300 && !condition(); tries++) {
@@ -34,11 +37,7 @@ void main() {
     final lanServer = await FakeTogether.start();
     addTearDown(lanServer.close);
     lanServer.friend('u-ana', 'ana', 'Ana', presence: {'state': 'online'});
-    final lanFixture = makeFixture(
-      together: lanServer.base,
-      system: HostSystem.windows,
-      environment: {'ANYPS5_PS2_LAN': '1'},
-    );
+    final lanFixture = makeFixture(together: lanServer.base, system: hostSystem, environment: {'ANYPS5_PS2_LAN': '1'});
     final lan = lanFixture.model;
     addTearDown(() {
       lan.dispose();
@@ -111,7 +110,7 @@ void main() {
     await lan.together.signOut();
     lan.handle(Command.back);
     expect(lan.overlay, Layer.friends);
-  }, skip: Abi.current() != Abi.windowsX64);
+  }, skip: !supportedHost);
 
   test('Linux x64 can open PS2 LAN core setup in the launcher', () async {
     final package = Platform.environment['ANYPS5_TEST_PS2_LAN_PACKAGE'];
@@ -169,7 +168,7 @@ void main() {
     final extensionsPicked = <List<String>>[];
     final fixture = makeFixture(
       together: server.base,
-      system: HostSystem.windows,
+      system: hostSystem,
       environment: environment,
       gameLinks: () => network.links,
       pickFile: (_, extensions) async {
@@ -185,15 +184,14 @@ void main() {
     final root = fixture.temp.path;
     bios = File(p.join(root, 'bios.bin'))..writeAsBytesSync(Uint8List(4 * 1024 * 1024)..[0] = 7);
     final packages = Directory(p.join(root, 'packages'))..createSync();
-    final bytes = ps2LanFixtureDll();
-    final archive = File(p.join(packages.path, 'pcsx2_libretro.dll.zip'))
-      ..writeAsBytesSync(
-        ZipEncoder().encode(Archive()..addFile(ArchiveFile('pcsx2_libretro.dll', bytes.length, bytes))),
-      );
+    final library = model.embeddedCoreHost.libraryName(RetroPlatform.ps2);
+    final bytes = hostSystem == HostSystem.windows ? ps2LanFixtureDll() : ps2LanFixtureSo();
+    final archive = File(p.join(packages.path, '$library.zip'))
+      ..writeAsBytesSync(ZipEncoder().encode(Archive()..addFile(ArchiveFile(library, bytes.length, bytes))));
     environment['ANYPS5_MANAGED_CORE_PACKAGES'] = packages.path;
     environment['ANYPS5_PS2_LAN_CORE_DIGESTS'] =
         '${await AssetDownload.sha256Of(archive.path)}:${sha256.convert(bytes)}';
-    final offline = File(p.join(p.dirname(model.paths.toolkits), 'Emulators', 'pcsx2_libretro.dll'))
+    final offline = File(p.join(p.dirname(model.paths.toolkits), 'Emulators', library))
       ..createSync(recursive: true)
       ..writeAsBytesSync([1, 2, 3]);
     final disc = File(p.join(root, 'game.iso'));
@@ -789,81 +787,81 @@ void main() {
   test(
     'a bundled PS2 LAN core and BIOS setup continue the original invite',
     () => verifyBundledSetup(expired: false),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'finishing PS2 LAN setup cannot join an invite that ended during setup',
     () => verifyBundledSetup(expired: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'closing the local PS2 card setup restores the pending LAN invite',
     () => verifyBundledSetup(expired: false, configureCard: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'canceling a stalled PS2 LAN lookup releases the invite for retry before the old reply',
     () => verifyBundledSetup(expired: false, cancelLookup: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'a stalled PS2 LAN lookup times out and can be retried before the old reply',
     () => verifyBundledSetup(expired: false, timeoutLookup: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'PS2 LAN retry waits for a canceled admission and its room leave after local close times out',
     () => verifyBundledSetup(expired: false, cancelAdmission: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'PS2 LAN refuses a room that changes host after the disc lookup',
     () => verifyBundledSetup(expired: false, hostChanged: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'PS2 LAN refuses a changed host when the invite has no sender',
     () => verifyBundledSetup(expired: false, hostChanged: true, omitInviteSender: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'PS2 LAN reports a peer connection failure before the game boots',
     () => verifyBundledSetup(expired: false, failIce: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'PS2 LAN explains a connection settings timeout',
     () => verifyBundledSetup(expired: false, timeoutIce: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'PS2 LAN reports a native exit before the game becomes visible',
     () => verifyBundledSetup(expired: false, failNativeBoot: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'PS2 LAN can be canceled from the Quick Menu before the worker opens',
     () => verifyBundledSetup(expired: false, quickBootCancel: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'PS2 LAN keeps exchanging frames while the Quick Menu is open',
     () => verifyBundledSetup(expired: false, quickMenuDuringPlay: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'PS2 LAN explains why a room ended and preserves the running game',
     () => verifyBundledSetup(expired: false, quickMenuDuringPlay: true, explainRoomEnd: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'PS2 LAN host can invite a friend to a new room from the Quick Menu',
     () => verifyBundledSetup(expired: false, hostRematch: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
   test(
     'PS2 LAN starts from Game Settings and resumes the selected friend after setup',
     () => verifyBundledSetup(expired: false, hostRematch: true, dashboardHost: true),
-    skip: Abi.current() != Abi.windowsX64,
+    skip: !supportedHost,
   );
 }
