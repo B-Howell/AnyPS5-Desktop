@@ -628,3 +628,12 @@ The run was single-peer and did not return a DHCP lease. The next gate is
 to feed the production LAN bridge's DHCP replies back to the core and
 verify that two peers discover and join a lobby. Both private sessions
 exited successfully.
+
+The Linux game subsequently reached **Matches Available → Start New
+Match**. The private native worker passed frames from its LAN exchange
+through the production [DHCP responder](../lib/core/online/retro_lan_dhcp.dart)
+and reinjected each reply into the same core. The responder accepted
+real 342-byte requests and generated 342-byte replies. This establishes
+that the title can configure networking and reach LAN discovery on the
+Linux core. No other peer was attached, so lobby visibility, joining,
+and gameplay across the room link remain unverified.
