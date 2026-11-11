@@ -1106,3 +1106,31 @@ class _KeepVisibleState extends State<KeepVisible> {
   @override
   Widget build(BuildContext context) => widget.child;
 }
+
+/// The controller's PS button, drawn as it sits between the sticks: a round black key with the
+/// PS mark, for hints that ask for that press.
+class PsButtonGlyph extends StatelessWidget {
+  const PsButtonGlyph({super.key, required this.size});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: size,
+    height: size,
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      gradient: const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xFF3C3E45), Color(0xFF0E0F12)],
+      ),
+      border: Border.all(color: const Color(0xFF6A6D76), width: size * 0.04),
+    ),
+    child: Text(
+      'PS',
+      style: AppText.display(size * 0.38, weight: FontWeight.w800, color: Colors.white).copyWith(fontStyle: FontStyle.italic),
+    ),
+  );
+}

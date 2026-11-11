@@ -1982,7 +1982,7 @@ class RetroCoreSession {
     const auto load = reinterpret_cast<LoadPortable>(GetProcAddress(dll, "retro_anyps5_import_checkpoint_v1"));
     const size_t maximum = save && load ? Symbol<size_t (*)()>(dll, "retro_serialize_size")() : 0;
     const bool can_import_handoff =
-        match_cpu_ == Ps1MatchCpu::kRecompiler && callback_slot_ == CallbackSlot::kPrimary;
+        callback_slot_ == CallbackSlot::kPrimary && (match_cpu_ == Ps1MatchCpu::kRecompiler || !presentation_core_);
     checkpoint_supported_ =
         (!rollback_ || can_import_handoff) && maximum && maximum <= kMaxPs1Checkpoint - kPs1CheckpointPrefix;
     if (local_staging_ && !checkpoint_supported_)

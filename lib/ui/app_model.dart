@@ -1749,6 +1749,10 @@ class AppModel extends ChangeNotifier {
 
   Layer? _controllerTestFrom;
   final List<String> localSeatPads = [];
+
+  /// A game invite that arrived while playing: the next PS menu opens on its Join row.
+  String? inviteMenuFocus;
+  bool toastPsButton = false;
   int retroControlsPlayer = 1;
   bool _controlsFromQuickMenu = false;
 
@@ -5133,8 +5137,9 @@ class AppModel extends ChangeNotifier {
 
   // Messages.
 
-  void show(String message, {LevelBadge? level, String? icon, void Function()? onTap}) {
+  void show(String message, {LevelBadge? level, String? icon, void Function()? onTap, bool psButton = false}) {
     toast = message;
+    toastPsButton = psButton;
     toastLevel = level;
     toastIcon = icon;
     toastTap = onTap;
@@ -5145,6 +5150,7 @@ class AppModel extends ChangeNotifier {
       toastLevel = null;
       toastIcon = null;
       toastTap = null;
+      toastPsButton = false;
       notifyListeners();
     });
     notifyListeners();
@@ -5722,12 +5728,21 @@ class AppModel extends ChangeNotifier {
   /// The quick menu over the game playing: the game's Options pressed first (Settings ›
   /// Behaviour › Pause Game When Opening the Menu) while it is still in front, then the
   /// launcher in front with Resume, Game Settings and Close Game.
+  void _focusPendingInvite() {
+    final session = inviteMenuFocus;
+    if (session == null || overlay != Layer.quickMenu) return;
+    inviteMenuFocus = null;
+    final row = _currentRows.indexWhere((row) => row.id == 'game-accept-$session');
+    if (row >= 0) panelRow = row;
+  }
+
   Future<void> openQuickMenu() async {
     final playing = running;
     if (!preferences.onboarded) return;
     if (playing == null) {
       if (_retroLaunchGame == null) return;
       open(Layer.quickMenu);
+      _focusPendingInvite();
       if (!_frontForGuide) await raiseLauncher();
       return;
     }
@@ -5757,6 +5772,7 @@ class AppModel extends ChangeNotifier {
     final index = games.indexOf(game);
     if (index >= 0) selected = index;
     open(Layer.quickMenu);
+    _focusPendingInvite();
     if (!front) await raiseLauncher();
   }
 

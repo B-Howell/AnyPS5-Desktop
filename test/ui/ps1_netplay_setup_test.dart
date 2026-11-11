@@ -1058,7 +1058,7 @@ void main() {
     inviteFromGame();
     expect(model.overlay, Layer.retroOnlineFriends);
     choose('ps1-invite-$friendId');
-    expect(model.overlay, isNull);
+    expect(model.overlay, Layer.coopLobby);
     await model.openQuickMenu();
     expect(row('ps1-netplay-cancel-verification').detail, contains('Verifying your PS1 game'));
     choose('ps1-netplay-cancel-verification');
