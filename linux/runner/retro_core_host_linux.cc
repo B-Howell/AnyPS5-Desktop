@@ -109,6 +109,8 @@ FlValue* EncodeStatus(const SessionStatus& status) {
   fl_value_set_string_take(result, "frameHeight", fl_value_new_int(status.frame_height));
   fl_value_set_string_take(result, "resolutionError", fl_value_new_string(status.resolution_error.c_str()));
   fl_value_set_string_take(result, "graphicsPending", fl_value_new_bool(status.graphics_pending));
+  if (status.ps3_provider_status >= 0)
+    fl_value_set_string_take(result, "ps3ProviderStatus", fl_value_new_int(status.ps3_provider_status));
   if (status.checkpoint_source > 0)
     fl_value_set_string_take(result, "localBlankCardCheckpoint", fl_value_new_int(status.checkpoint_source));
   fl_value_set_string_take(result, "ordinaryCheckpointParked", fl_value_new_bool(status.checkpoint_parked));
@@ -469,6 +471,7 @@ class RetroCoreHostLinux::Impl {
       SessionConfig config{core, disc, system, saves, resolution ? resolution : "",
                            ReadOptions(ReadField(args, "graphics")).value_or(Options{}), std::move(initial_disc), lan_mac};
       config.ps1_match = std::move(match);
+      config.ps3_online = linux_channel::ReadPs3Online(args, console);
       StartSession(call, std::move(config), console);
     } catch (const std::exception& error) {
       fl_method_call_respond_error(call, "start", error.what(), nullptr, nullptr);

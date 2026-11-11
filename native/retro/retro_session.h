@@ -4,6 +4,7 @@
 #include "libretro_abi.h"
 #include "retro_frame.h"
 #include "ps1_checkpoint.h"
+#include "ps3_network_policy.h"
 
 #include <array>
 #include <functional>
@@ -57,6 +58,7 @@ struct SessionConfig {
   std::optional<std::array<uint8_t, 6>> lan_mac = std::nullopt;
   std::shared_ptr<const ps1_checkpoint::Recovery> recovery = nullptr;
   std::optional<Ps1MatchConfig> ps1_match = std::nullopt;
+  std::optional<Ps3NetworkPolicy> ps3_online = std::nullopt;
 };
 
 using LanFrames = std::vector<std::vector<uint8_t>>;
@@ -96,6 +98,7 @@ struct SessionStatus {
   std::string error, resolution_error;
   std::optional<std::string> progress_label;
   std::optional<int32_t> progress_percent;
+  int32_t ps3_provider_status = -1;
   std::map<std::string, OptionStatus> options;
   Telemetry telemetry{};
   std::optional<DiscStatus> discs;

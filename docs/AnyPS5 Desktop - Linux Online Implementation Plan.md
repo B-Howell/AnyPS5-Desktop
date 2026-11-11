@@ -851,3 +851,24 @@ runner syntax check passed. The contract test uses fixture callbacks
 and did not boot a real RPCS3 core. All five hosted jobs also passed
 on the preceding invite-test head in
 [run 42992515280](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/42992515280).
+
+### Linux PS3 native launch contract
+
+The [Linux channel decoder](../linux/runner/retro_linux_channel.h)
+accepts the PS3 provider identity and patch protection only for a PS3
+session. The [native worker](../native/retro/retro_session.cpp) requires
+both the provider-status export and the verified v3 policy export
+before initialization, and aborts if the core rejects the policy.
+The [runner](../linux/runner/retro_core_host_linux.cc) returns the
+provider status using the same field and codes as Windows. An online
+PS3 session cannot switch discs or apply live graphics changes.
+If an attested boot fails, Linux preserves the core's protection error
+and does not retry with a different graphics setting.
+
+The [channel test](../linux/runner/test/retro_linux_channel_test.cpp)
+covers a valid policy, missing or malformed policy, a non-PS3 core,
+and out-of-range patch write counts. The native suite passed seven
+tests, and the Linux channel test passed after compiling the actual
+runner bridge. These tests exercise the launch contract with fixtures.
+The launcher still requires a qualified provider profile and a real
+Linux core with both exports before Linux PS3 online can be offered.

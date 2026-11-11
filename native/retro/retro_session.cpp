@@ -177,7 +177,7 @@ class Session::Impl {
 
   bool ChangeDisc(unsigned index) {
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (match_timeline_ || !recovery_accepted_ || checkpoint_.busy()) return false;
+    if (config_.ps3_online || match_timeline_ || !recovery_accepted_ || checkpoint_.busy()) return false;
     if (stop_ || ended_ || !discs_ || discs_->busy ||
         index >= discs_->labels.size() || discs_->inserted == index)
       return false;
@@ -363,6 +363,7 @@ class Session::Impl {
   SessionStatus Status() {
     std::lock_guard<std::mutex> lock(settings_mutex_);
     SessionStatus status;
+    status.ps3_provider_status = ps3_provider_status_;
     status.ready = frame_ready_;
     status.confirmed_audio_frame = confirmed_audio_frame_;
     status.rollback_corrections = rollback_corrections_;
@@ -406,7 +407,7 @@ class Session::Impl {
 
   bool SetOption(const std::string& key, const std::string& value) {
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (match_timeline_ || !recovery_accepted_ || checkpoint_.busy()) return false;
+    if (config_.ps3_online || match_timeline_ || !recovery_accepted_ || checkpoint_.busy()) return false;
     const auto option = options_.find(key);
     if (option == options_.end() ||
         (!option->second.graphics && !option->second.boot && !LiveCoreOption(key, hardware_frame_))) return false;
@@ -432,7 +433,7 @@ class Session::Impl {
     if (!presented_ || !hardware_frame_ || values.empty() || expected.size() != values.size())
       return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (match_timeline_ || !recovery_accepted_ || checkpoint_.busy() || graphics_applying_ || graphics_queued_) return false;
+    if (config_.ps3_online || match_timeline_ || !recovery_accepted_ || checkpoint_.busy() || graphics_applying_ || graphics_queued_) return false;
     std::vector<std::pair<Option*, size_t>> changes;
     bool checkpoint = false;
     for (const auto& [key, value] : values) {
@@ -884,6 +885,11 @@ class Session::Impl {
       case kExtendedMessage: {
         if (!ps3_) return false;
         const auto& message = *static_cast<const ExtendedMessage*>(data);
+        if (config_.ps3_online && message.type == 0 && message.level == 3 && message.target != 2 && message.text) {
+          std::lock_guard<std::mutex> lock(settings_mutex_);
+          error_ = message.text;
+          return true;
+        }
         if (message.type != 3 || message.target == 2 || !message.text ||
             message.progress < -1 || message.progress > 100)
           return false;
@@ -1026,6 +1032,8 @@ class Session::Impl {
       return;
     }
     try {
+      if (config_.ps3_online && (!ps3_ || match_timeline_ || lan_))
+        throw std::runtime_error("PS3 online requires a dedicated PS3 session.");
       hardware_available_ = !match_timeline_ && video_->Open();
       if (ps3_ && !hardware_available_)
         throw std::runtime_error("PS3 requires a working Vulkan driver.");
@@ -1033,7 +1041,15 @@ class Session::Impl {
       const auto& core = library.emplace(path);
       if (core.Get<unsigned (*)()>("retro_api_version")() != 1)
         throw std::runtime_error("Unsupported emulator core API");
-      if (ps3_) ApplyPs3OfflinePolicy(core.Get<Ps3OfflinePolicy>(kPs3OfflinePolicyExport, false), false);
+      using ReadProviderStatus = int32_t (*)();
+      ReadProviderStatus read_provider_status = nullptr;
+      if (config_.ps3_online) {
+        read_provider_status = core.Get<ReadProviderStatus>("retro_anyps5_ps3_provider_status_v1");
+        ApplyPs3OnlinePolicy(core.Get<Ps3VerifiedOnlinePolicy>(kPs3VerifiedOnlinePolicyExport, false), *config_.ps3_online);
+        ps3_provider_status_ = 0;
+      } else if (ps3_) {
+        ApplyPs3OfflinePolicy(core.Get<Ps3OfflinePolicy>(kPs3OfflinePolicyExport, false), false);
+      }
       const auto init = core.Get<VoidFunction>("retro_init");
       deinit = core.Get<VoidFunction>("retro_deinit");
       unload = core.Get<VoidFunction>("retro_unload_game");
@@ -1132,7 +1148,7 @@ class Session::Impl {
         const auto scale = options_.find(ps2 ? "pcsx2_upscale_multiplier" : "swanstation_GPU_ResolutionScale");
         return scale != options_.end() && std::exchange(scale->second.selected, 0) != 0;
       };
-      if (!reopen() && (config_.recovery || !use_native_resolution() || !reopen()))
+      if (!reopen() && (config_.ps3_online || config_.recovery || !use_native_resolution() || !reopen()))
         throw std::runtime_error("The core could not boot this disc. Check its BIOS and game files.");
       void* card = nullptr;
       size_t card_size = 0;
@@ -1385,6 +1401,7 @@ class Session::Impl {
         } else {
           step();
         }
+        if (read_provider_status) ps3_provider_status_ = read_provider_status();
         if (!paused_) ++steps_;
         if (video_->UnsupportedSync())
           throw std::runtime_error("This RPCS3 core uses Vulkan synchronization AnyPS5 does not support.");
@@ -1397,7 +1414,7 @@ class Session::Impl {
       if (card && recovery_accepted_) StoreCard(card_path, card, card_size);
     } catch (const std::exception& failure) {
       std::lock_guard<std::mutex> lock(settings_mutex_);
-      error_ = failure.what();
+      if (!config_.ps3_online || error_.empty()) error_ = failure.what();
     }
     audio_capture_ = nullptr;
     rollback_context_ = false;
@@ -1483,6 +1500,7 @@ class Session::Impl {
   std::chrono::steady_clock::time_point progress_until_{};
   std::string progress_label_;
   int32_t progress_percent_ = -1;
+  std::atomic<int32_t> ps3_provider_status_{-1};
   std::string error_, resolution_error_;
 };
 

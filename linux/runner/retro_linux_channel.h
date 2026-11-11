@@ -59,7 +59,7 @@ inline ps1_checkpoint::Snapshot ReadMatchCheckpoint(FlValue* args) {
 }
 
 inline std::optional<Ps1MatchConfig> ReadPs1Match(FlValue* args) {
-  for (const auto* flag : {"ps1NetplayCpu", "ps1PresentationCore", "ps3Online"}) {
+  for (const auto* flag : {"ps1NetplayCpu", "ps1PresentationCore"}) {
     if (Field(args, flag)) throw std::runtime_error("This online worker is not yet available on Linux");
   }
   auto* seat = Field(args, "ps1NetplaySeat");
@@ -77,6 +77,47 @@ inline std::optional<Ps1MatchConfig> ReadPs1Match(FlValue* args) {
   return Ps1MatchConfig{static_cast<unsigned>(fl_value_get_int(seat)), fl_value_get_string(bios),
                        dualshock && fl_value_get_bool(dualshock), staging && fl_value_get_bool(staging),
                        rollback && fl_value_get_bool(rollback)};
+}
+
+inline std::optional<Ps3NetworkPolicy> ReadPs3Online(FlValue* args, Console console) {
+  auto* policy = Field(args, "ps3Online");
+  if (!policy) return std::nullopt;
+  if (console != Console::kPs3 || fl_value_get_type(policy) != FL_VALUE_TYPE_MAP ||
+      fl_value_get_length(policy) != 5)
+    throw std::runtime_error("Invalid PS3 online profile.");
+  const auto read = [](FlValue* map, const char* key) -> std::string {
+    auto* value = Field(map, key);
+    if (!value || fl_value_get_type(value) != FL_VALUE_TYPE_STRING || !*fl_value_get_string(value))
+      throw std::runtime_error("Invalid PS3 online profile field.");
+    return fl_value_get_string(value);
+  };
+  auto* identity = Field(policy, "rpcnIdentity");
+  auto* protection = Field(policy, "patchProtection");
+  auto* upnp = Field(policy, "upnp");
+  auto* patches = Field(protection, "patches");
+  if (!identity || fl_value_get_type(identity) != FL_VALUE_TYPE_MAP || fl_value_get_length(identity) != 2 ||
+      !protection || fl_value_get_type(protection) != FL_VALUE_TYPE_MAP || fl_value_get_length(protection) != 5 ||
+      !upnp || fl_value_get_type(upnp) != FL_VALUE_TYPE_BOOL ||
+      !patches || fl_value_get_type(patches) != FL_VALUE_TYPE_LIST ||
+      fl_value_get_length(patches) == 0 || fl_value_get_length(patches) > 8)
+    throw std::runtime_error("Invalid PS3 online protection or provider identity.");
+
+  Ps3NetworkPolicy result{read(policy, "xfloat"), read(policy, "dns"), fl_value_get_bool(upnp),
+                          read(identity, "host"), read(identity, "certificateSha256"),
+                          {read(protection, "titleId"), read(protection, "updateVersion"),
+                           read(protection, "sha256"), read(protection, "ppuHash"), {}, {}}};
+  for (size_t i = 0; i < fl_value_get_length(patches); ++i) {
+    auto* patch = fl_value_get_list_value(patches, i);
+    auto* writes = Field(patch, "writes");
+    if (!patch || fl_value_get_type(patch) != FL_VALUE_TYPE_MAP || fl_value_get_length(patch) != 3 ||
+        !writes || fl_value_get_type(writes) != FL_VALUE_TYPE_INT ||
+        fl_value_get_int(writes) < 1 || fl_value_get_int(writes) > 4096)
+      throw std::runtime_error("Invalid PS3 online patch entry.");
+    read(patch, "option");
+    result.protection.names.push_back(read(patch, "name"));
+    result.protection.writes.push_back(static_cast<unsigned>(fl_value_get_int(writes)));
+  }
+  return result;
 }
 
 struct MatchExchange {

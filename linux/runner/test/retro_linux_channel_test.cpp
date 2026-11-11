@@ -70,10 +70,43 @@ int main() {
 
     g_autoptr(FlValue) offline = fl_value_new_map();
     Check(!ReadPs1Match(offline), "Offline request became a match");
+    Check(!ReadPs3Online(offline, Console::kPs3), "Offline request acquired a PS3 online policy");
+    g_autoptr(FlValue) online = fl_value_new_map();
+    fl_value_set_string_take(online, "ps3Online", fl_value_new_null());
+    MustReject([&] { ReadPs3Online(online, Console::kPs3); });
+    auto* policy = fl_value_new_map();
+    fl_value_set_string_take(online, "ps3Online", policy);
+    fl_value_set_string_take(policy, "xfloat", fl_value_new_string("strict"));
+    fl_value_set_string_take(policy, "dns", fl_value_new_string("192.0.2.1"));
+    fl_value_set_string_take(policy, "upnp", fl_value_new_bool(false));
+    auto* identity = fl_value_new_map();
+    fl_value_set_string_take(policy, "rpcnIdentity", identity);
+    fl_value_set_string_take(identity, "host", fl_value_new_string("fixture.invalid"));
+    fl_value_set_string_take(identity, "certificateSha256", fl_value_new_string("certificate"));
+    auto* protection = fl_value_new_map();
+    fl_value_set_string_take(policy, "patchProtection", protection);
+    fl_value_set_string_take(protection, "titleId", fl_value_new_string("TEST00001"));
+    fl_value_set_string_take(protection, "updateVersion", fl_value_new_string("01.00"));
+    fl_value_set_string_take(protection, "sha256", fl_value_new_string("patch"));
+    fl_value_set_string_take(protection, "ppuHash", fl_value_new_string("ppu"));
+    auto* patches = fl_value_new_list();
+    fl_value_set_string_take(protection, "patches", patches);
+    MustReject([&] { ReadPs3Online(online, Console::kPs3); });
+    auto* patch = fl_value_new_map();
+    fl_value_append_take(patches, patch);
+    fl_value_set_string_take(patch, "name", fl_value_new_string("Required patch"));
+    fl_value_set_string_take(patch, "option", fl_value_new_string("enabled"));
+    fl_value_set_string_take(patch, "writes", fl_value_new_int(2));
+    const auto parsed = ReadPs3Online(online, Console::kPs3);
+    Check(parsed && parsed->host == "fixture.invalid" && parsed->protection.names.front() == "Required patch" &&
+          parsed->protection.writes.front() == 2, "PS3 provider identity or protection changed in decoding");
+    MustReject([&] { ReadPs3Online(online, Console::kPs2); });
+    fl_value_set_string_take(patch, "writes", fl_value_new_int(4097));
+    MustReject([&] { ReadPs3Online(online, Console::kPs3); });
     fl_value_set_string_take(offline, "ps2LanMac", fl_value_new_uint8_list(packet.data(), 6));
     Check(!ReadPs1Match(offline), "PS2 request became a PS1 match");
     for (const auto* flag : {"ps1NetplaySeat", "ps1NetplayBios", "ps1NetplayDualShock", "ps1NetplayCpu",
-                             "ps1PresentationCore", "ps1LocalStaging", "ps1NetplayRollback", "ps3Online"}) {
+                             "ps1PresentationCore", "ps1LocalStaging", "ps1NetplayRollback"}) {
       g_autoptr(FlValue) unsupported = fl_value_new_map();
       fl_value_set_string_take(unsupported, flag, fl_value_new_null());
       MustReject([&] { ReadPs1Match(unsupported); });
