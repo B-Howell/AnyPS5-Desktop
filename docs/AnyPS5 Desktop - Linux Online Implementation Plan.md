@@ -497,3 +497,22 @@ This exercises the Dart worker protocol independently of hosted admission.
 The full analyzer passed with the hosted probe present.
 The focused session suite passed all 23 cases after adding the matching
 fingerprint frontier, including a divergence that must never advance it.
+### Physical laptop control
+
+The rebuilt offscreen harness at 11e9a35 passed its authentication
+preflight in the Windows viewless engine and on the Ubuntu laptop's private
+Xvfb display. The Windows kernel blob SHA-256 was
+1cc3c90a4f96fb7009809597ac5558261bd03b7f2d420ee82cd7a854ad07476e.
+The laptop probe bundle libapp.so SHA-256 was
+3312c8d9edb53915d72e8028fe74ccd3cab3d9deb55b2cdfc49cecde3dcb59f4.
+
+The [paced native driver](../windows/runner/tests/run_ps1_netplay_probe.py)
+also ran with its Linux worker command pipes forwarded to the physical
+laptop over SSH, using the same 120 ms round-trip jitter/loss profile and
+the laptop's own CUE, BIOS and pinned Linux core. The full 13,706-frame CTR
+race finished in 248.02 seconds. Both workers returned the same placements,
+114 confirmed RAM hashes and the hash of 10,104,619 confirmed stereo pairs.
+Linux made 1,213 corrections. Windows recorded 14 work iterations over
+16.667 ms, with a maximum of 153.003 ms. This verifies the separate
+machines' native cores over the simulated profile. Hosted signaling,
+WebRTC traversal and the frame budget remain open acceptance gates.
