@@ -52,6 +52,16 @@ extension Ps3OnlineReadinessPage on AppModel {
     );
   }
 
+  Iterable<Ps3OnlineRelease> ps3OnlineReleasesFor(Game game) {
+    if (!embeddedOnlineRetroAvailable || game.retro?.platform != RetroPlatform.ps3) return const [];
+    return services.ps3OnlineReleases.where(
+      (release) =>
+          release.hasManagedProfile &&
+          release.coreSha256For(embeddedCoreHost) != null &&
+          game.titleId == 'PS3-${release.titleId}',
+    );
+  }
+
   PanelRow _ps3OnlineReadinessRow(Game game) => PanelRow(
     id: 'ps3-online-readiness',
     title: T.text('ps3OnlineReadiness'),
@@ -68,14 +78,7 @@ extension Ps3OnlineReadinessPage on AppModel {
   }) {
     final disc = game.retro!;
     final managed = _managedRetro;
-    final releases = services.ps3OnlineReleases
-        .where(
-          (release) =>
-              release.hasManagedProfile &&
-              release.coreSha256For(embeddedCoreHost) != null &&
-              (partyRelease == null || release == partyRelease),
-        )
-        .toList();
+    final releases = ps3OnlineReleasesFor(game).where((release) => partyRelease == null || release == partyRelease);
     Ps3OnlineReadiness inspect() =>
         Ps3OnlineReadiness.inspect(disc: disc.path, managedSystem: managed.systemPath, releases: releases);
     var report = inspect();

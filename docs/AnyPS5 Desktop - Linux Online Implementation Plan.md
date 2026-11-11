@@ -889,7 +889,7 @@ The [profile regression](../test/core/ps3_online_profile_test.dart)
 checks both platforms' fixture digests, rejection when Linux has no
 pin, rejection of the other platform's bytes, and detection of a
 changed Linux core at revalidation. No provider was added to the
-catalog. Linux app admission and actual provider gameplay remain open.
+catalog. Real Linux provider gameplay remains open.
 
 The focused profile and offline-boot suites passed all 13 tests.
 The preceding shared-policy head passed all five hosted jobs in
@@ -918,3 +918,18 @@ The pinned source's Linux CI recipe uses `rpcs3/rpcs3-ci-jammy:2.1`
 with a newer compiler and LLVM under `/opt/llvm`. A build in that
 environment still needs to verify both exports, dependency resolution,
 and boot with the Linux Vulkan runner before assigning a release pin.
+
+### Linux PS3 online setup and invites
+
+[Game Settings](../lib/ui/app_model.dart) offers PS3 Online Readiness on
+Linux when the library title has a managed profile and a Linux core pin.
+[Readiness](../lib/ui/ps3_online_readiness_page.dart) and
+[party setup](../lib/ui/together_ps3_online.dart) share that eligibility
+rule. Setup can surface a missing core before play. Starting or joining
+still verifies the local disc, update, profile, and Linux core before
+handing off to the isolated worker.
+
+The [launcher regression](../test/ui/ps3_settings_test.dart) exercises
+15 setup and invite paths on Linux x64, including missing catalog data,
+cancellation, timeouts, and provider rejection. These paths use local
+fixtures and do not certify a real provider or a Windows–Linux match.

@@ -62,7 +62,7 @@ extension TogetherPs3Online on TogetherModel {
   }
 
   bool get _ps3LaunchAvailable =>
-      app.managedRetroAvailable &&
+      app.embeddedOnlineRetroAvailable &&
       app.running == null &&
       app.starting == null &&
       !app.stopping &&
@@ -72,7 +72,7 @@ extension TogetherPs3Online on TogetherModel {
   bool get _ps3PartyAvailable => _ps3LaunchAvailable && _ps3PartyIdle;
 
   bool _canReusePs3Game(Game game, EmbeddedRetroGame worker, Ps3OnlineRelease release) =>
-      app.managedRetroAvailable &&
+      app.embeddedOnlineRetroAvailable &&
       !app.stopping &&
       app.managedSetupConsole == null &&
       identical(app.running?.$1, game) &&
@@ -80,7 +80,7 @@ extension TogetherPs3Online on TogetherModel {
       worker.startupVisible &&
       worker.ps3ProviderStatus == Ps3ProviderStatus.ready &&
       identical(worker.ps3OnlineRelease, release) &&
-      app.services.ps3OnlineReleases.contains(release);
+      app.ps3OnlineReleasesFor(game).contains(release);
 
   ({Game game, EmbeddedRetroGame worker, Ps3OnlineRelease release})? _ps3ReadyGame({GameInvite? invite}) {
     final game = app.running?.$1;
@@ -99,18 +99,10 @@ extension TogetherPs3Online on TogetherModel {
     return (game: game, worker: worker, release: release);
   }
 
-  Ps3OnlineRelease? _ps3PartyRelease(Game game, {String? version}) {
-    if (game.retro?.platform != RetroPlatform.ps3) return null;
-    return app.services.ps3OnlineReleases
-        .where(
-          (release) =>
-              release.hasManagedProfile &&
-              release.coreSha256For(app.embeddedCoreHost) != null &&
-              game.titleId == 'PS3-${release.titleId}' &&
-              (version == null || release.updateVersion == version),
-        )
-        .singleOrNull;
-  }
+  Ps3OnlineRelease? _ps3PartyRelease(Game game, {String? version}) => app
+      .ps3OnlineReleasesFor(game)
+      .where((release) => version == null || release.updateVersion == version)
+      .singleOrNull;
 
   Game? _ps3PartyGame(GameInvite invite) => app.games
       .where(
@@ -122,7 +114,9 @@ extension TogetherPs3Online on TogetherModel {
   String ps3PartyInviteDetail(GameInvite invite) {
     if (_ps3ReadyGame(invite: invite) != null) return T.text('ps3PartyContinueInGame');
     return T.text(
-      !app.managedRetroAvailable || _ps3PartyGame(invite) == null ? 'ps3PartyCompatibility' : 'ps3PartyInviteDetail',
+      !app.embeddedOnlineRetroAvailable || _ps3PartyGame(invite) == null
+          ? 'ps3PartyCompatibility'
+          : 'ps3PartyInviteDetail',
     );
   }
 
@@ -164,7 +158,8 @@ extension TogetherPs3Online on TogetherModel {
     }
     final game = _ps3PartyGame(invite);
     final release = game == null ? null : _ps3PartyRelease(game, version: invite.gameVersion);
-    if (!app.managedRetroAvailable || game == null || release == null) return app.show(T.text('ps3PartyCompatibility'));
+    if (!app.embeddedOnlineRetroAvailable || game == null || release == null)
+      return app.show(T.text('ps3PartyCompatibility'));
     if (!_ps3PartyAvailable) return app.show(T.text('ps3PartyBusy'));
     _openPs3PartySetup(game, release, invite: invite);
   }

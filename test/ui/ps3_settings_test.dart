@@ -29,6 +29,9 @@ class _LoopbackHttpOverrides extends HttpOverrides {}
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(T.load);
+  final abi = Abi.current();
+  final windows = abi == Abi.windowsX64;
+  final supportsOnlineFixture = windows || abi == Abi.linuxX64;
 
   Future<void> verifySetup(String mode) async {
     final dashboardHost = mode == 'dashboard-host';
@@ -47,7 +50,7 @@ void main() {
     if (server != null) addTearDown(server.close);
     String? selectedPatch;
     final fixture = makeFixture(
-      system: HostSystem.windows,
+      system: windows ? HostSystem.windows : HostSystem.linux,
       together: server?.base,
       ps3OnlineReleases: releases,
       pickFile: (_, _) async => selectedPatch,
@@ -65,7 +68,7 @@ void main() {
     write(p.join(folder, 'PS3_GAME', 'USRDIR', 'EBOOT.BIN'), [0]);
     write(p.join(folder, 'PS3_GAME', 'PARAM.SFO'), ps3FixtureSfo({'TITLE_ID': title, 'APP_VER': '01.18'}));
     final managed = p.join(p.dirname(model.paths.toolkits), 'Emulators');
-    write(p.join(managed, 'rpcs3_libretro.dll'), [1]);
+    write(p.join(managed, model.embeddedCoreHost.libraryName(RetroPlatform.ps3)), [windows ? 1 : 6]);
     Directory(p.join(managed, 'system')).createSync();
     final profile = p.join(managed, 'OnlineProfiles', 'fixture', title);
     final rpcs3 = p.join(profile, 'system', 'rpcs3');
@@ -85,6 +88,7 @@ void main() {
         updateVersion: '01.30',
         updateTreeDigest: await ps3UpdateTreeDigest(Directory(await Directory(update).resolveSymbolicLinks())),
         coreSha256: sha256.convert([1]).toString(),
+        linuxCoreSha256: sha256.convert([6]).toString(),
         executableSha256: sha256.convert([2]).toString(),
         protection: Ps3YamlProtection(
           sha256: sha256.convert(utf8.encode(patch)).toString(),
@@ -119,6 +123,11 @@ void main() {
       model.activateRow(index);
     }
 
+    if (!windows) {
+      final release = releases.removeLast();
+      expect(model.panelCategories().single.rows.any((row) => row.id == 'ps3-online-readiness'), isFalse);
+      releases.add(release);
+    }
     activate('ps3-online-readiness');
     const channel = MethodChannel('anyps5/retro_core');
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -201,7 +210,7 @@ void main() {
     await waitFor(() => playStatus()?.contains('Import Provider Account') == true);
     expect(start.isCompleted, isFalse);
     const account = 'Version: 2\nHost: rpcn.example.invalid\nNPID: fixture\nPassword: test-only\nToken: fake-token\n';
-    final installedAccount = File(p.join(rpcs3, 'config', 'rpcn.yml'));
+    final installedAccount = File(p.joinAll([rpcs3, if (windows) 'config', 'rpcn.yml']));
     String? accountStatus() =>
         model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-online-import-account').detail;
     final wrongAccount = write(
@@ -429,6 +438,7 @@ void main() {
       onTimeout: () =>
           throw StateError('$mode launch timed out: ${model.toast}, ${server?.calls.map((call) => call.path)}'),
     );
+    expect(launch['core'], p.join(managed, model.embeddedCoreHost.libraryName(RetroPlatform.ps3)));
     if (providerFailsDuringBoot) {
       await waitFor(() => model.running != null);
       expect(model.embeddedGame?.startupVisible, isFalse);
@@ -682,6 +692,7 @@ void main() {
               updateVersion: '01.29',
               updateTreeDigest: release.updateTreeDigest,
               coreSha256: release.coreSha256,
+              linuxCoreSha256: release.linuxCoreSha256,
               executableSha256: release.executableSha256,
               protection: release.protection,
               rpcnHost: 'other.example.invalid',
@@ -769,7 +780,7 @@ void main() {
     test(
       'PS3 $mode verifies setup and launches only the isolated profile',
       () => HttpOverrides.runWithHttpOverrides(() => verifySetup(mode), _LoopbackHttpOverrides()),
-      skip: Abi.current() != Abi.windowsX64,
+      skip: !supportsOnlineFixture,
     );
   }
 

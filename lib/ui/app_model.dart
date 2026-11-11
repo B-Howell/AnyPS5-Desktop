@@ -6309,7 +6309,9 @@ class AppModel extends ChangeNotifier {
               ?together.ps1NetplayDashboardLink(game, _emulatorMenu.openPage),
               ?together.ps2LanDashboardLink(game, _emulatorMenu.openPage),
               ?together.ps3PartyDashboardLink(game, _emulatorMenu.openPage),
-              if (managedRetroAvailable && game.retro?.platform == RetroPlatform.ps3) _ps3OnlineReadinessRow(game),
+              if (game.retro?.platform == RetroPlatform.ps3 &&
+                  (managedRetroAvailable || ps3OnlineReleasesFor(game).isNotEmpty))
+                _ps3OnlineReadinessRow(game),
               if (game.retro case final RetroDisc disc)
                 PanelRow(
                   id: 'game-emulators',
