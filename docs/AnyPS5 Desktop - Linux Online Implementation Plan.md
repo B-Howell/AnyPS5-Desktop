@@ -730,3 +730,20 @@ the local Linux match lifecycle through the game's results screen.
 The test used the production frame bridge and routing with an
 in-process link, so hosted signaling, mixed Windows/Linux PS2 play
 and active controller input during the map remain separate checks.
+
+### Mixed Windows and Linux PS2 LAN control
+
+A native Windows worker loaded the pinned Windows LRPS2 DLL and a
+separate WSL Ubuntu worker loaded the Linux SO. Both ran offscreen
+with the same disc and independent scratch card copies. The production
+DHCP responder and frame transport ran in the test process. The Linux
+guest discovered the Windows room after refresh, both showed the same
+2/8-player Thief lobby, and both reached the same map loading screen.
+The Linux worker then exited with signal 11 before the gameplay
+capture. The kernel trace included an instruction fault in generated
+code, but the exact failing call site remains unconfirmed. The Windows
+worker retained a process-table record with zero threads and handles.
+This run verifies cross-platform LAN discovery and admission only.
+
+All five hosted jobs passed on the Linux PS2 setup commit `8db28a3`.
+See [run 42984202592](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/42984202592).
