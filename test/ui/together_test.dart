@@ -1908,7 +1908,9 @@ void main() {
       server.gameInvites.add(invite);
       server.push('game_session.invite', invite);
       await until(() => model.together.hub.games.invites.isNotEmpty);
-      expect(model.toast, 'Ana invites you to Crash Team Racing');
+      // This title is absent from the local library. Names come from game
+      // metadata; an uninstalled title falls back to its stable identifier.
+      expect(model.toast, 'Ana invites you to SCUS94426');
       model.open(Layer.friends);
       final accept = model.panelCategories().single.rows.singleWhere((row) => row.id == 'game-accept-ps1-ana');
       (accept.kind as ActionRow).run();

@@ -194,6 +194,15 @@ their native checks. The overall run is not green: the broad Linux tests found
 an outdated PS1 invite-title assertion, and macOS golden images differ. These
 must be resolved separately; successful build jobs do not imply passing CI.
 
+The [invite regression](../test/ui/together_test.dart) expected a hardcoded CTR
+name although that game was absent from its local library. The
+[shared title lookup](../lib/ui/together_model.dart) correctly uses library
+metadata and otherwise the canonical title ID. The assertion now expects
+`SCUS94426`, preserving the game-independent lookup rather than adding a
+title-specific production fallback. The prior assertion was reproduced failing
+locally, and the corrected focused test passes. This test-only correction does
+not resolve the separate macOS golden differences.
+
 Local source, builds, temporary files and compiler caches remain on D:.
 Native builds use `nice -n 19 ionice -c3` and at most three jobs. Tests use fake
 video/audio backends and do not control the physical monitor. Flutter 3.47.1
