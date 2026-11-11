@@ -3,6 +3,7 @@
 #include "retro_test_support.h"
 
 #include <filesystem>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 
@@ -24,8 +25,36 @@ void CheckSeat(const char* core, const std::filesystem::path& root, unsigned sea
   Check(match.Status().options.at("swanstation_CDROM_ReadThread").active_value == "false",
         "An offline option override reached the match");
   Check(!match.AcquireFrame() && match.Status().telemetry.steps == 0, "Core advanced before match start");
+  Check(match.Status().portable_checkpoint, "Portable checkpoint hooks were not advertised");
+  ps1_checkpoint::Digest digest{};
+  const auto rejected = match.RequestMatchImport(digest, 37, ps1_checkpoint::Bytes(7, 0));
+  Check(rejected.has_value() && !match.StartNetplay(), "Pending import let the match start");
+  ps1_checkpoint::Mailbox::Reply checkpoint;
+  WaitFor([&] { checkpoint = match.TakeCheckpoint(*rejected); return !std::holds_alternative<std::monostate>(checkpoint); },
+          "Rejected import did not complete");
+  Check(!std::get<bool>(checkpoint) && !match.StartNetplay(), "Failed import let the match start");
+  const uint32_t saved_position = 37;
+  ps1_checkpoint::Bytes state(8);
+  std::memcpy(state.data(), &saved_position, sizeof(saved_position));
+  const auto cancelled = match.RequestMatchImport(digest, saved_position, state);
+  Check(cancelled.has_value(), "Could not queue an import to cancel");
+  match.CancelCheckpoint(*cancelled);
+  Check(!match.StartNetplay(), "Cancelled import let the match start");
+  std::optional<int64_t> imported;
+  WaitFor([&] { imported = match.RequestMatchImport(digest, saved_position, state); return imported.has_value(); },
+          "Cancelled import blocked a fresh retry");
+  Check(imported.has_value() && !match.StartNetplay(), "Retry started before its import result was collected");
+  WaitFor([&] { checkpoint = match.TakeCheckpoint(*imported); return !std::holds_alternative<std::monostate>(checkpoint); },
+          "Valid import did not complete");
+  Check(std::get<bool>(checkpoint), "Valid import failed");
+  const auto exported = match.RequestMatchExport(digest);
+  Check(exported.has_value(), "Restored core did not accept a checkpoint export");
+  WaitFor([&] { checkpoint = match.TakeCheckpoint(*exported); return !std::holds_alternative<std::monostate>(checkpoint); },
+          "Checkpoint export did not complete");
+  Check(std::get<ps1_checkpoint::Snapshot>(checkpoint).state == state, "Imported core lost the saved position");
   match.SetInput(pads[seat].buttons, pads[seat].axes);
   Check(match.StartNetplay() && match.StartNetplay(), "Match start was not idempotent");
+  Check(!match.RequestMatchImport(digest, 37, state), "Running match accepted a checkpoint import");
   Check(match.SyncNetplay({{0, {}}}, {}).has_value(), "First remote frame rejected");
   WaitFor([&] {
     const auto tick = match.SyncNetplay({}, {});

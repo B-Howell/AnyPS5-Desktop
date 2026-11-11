@@ -279,7 +279,15 @@ the expected frame 119 RAM fingerprint, and the ordinary save directory.
 The Ubuntu run uses memory-backed temporary storage because the Windows
 mounted scratch directory does not enforce Unix permissions.
 
-Portable match import, catch-up, rollback and presentation still need a Linux
+The confirmed worker can export a portable checkpoint and import it before
+match start through the existing Flutter request and ticket flow. The worker
+checks the imported RAM mapping before reporting success. A pending, failed,
+or cancelled import keeps start unavailable until a successful retry. The
+fixture checks these transitions and exports the restored core state to
+verify that the saved position survived import. The fresh match input
+timeline starts at zero after the transfer, as on Windows.
+
+Live input history and catch-up, rollback and presentation still need a Linux
 implementation. The launcher also needs qualified Linux core packages and
 mixed-platform real-game verification before exposing Linux PS1 online play.
 

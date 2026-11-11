@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -95,6 +96,14 @@ class Mailbox {
     if (!Ready() || !parked_ || job_ || recovery_.empty() || !hooks_.load) return std::nullopt;
     return Queue(Kind::kResume, recovery_digest_);
   }
+  std::optional<int64_t> RequestImport(const Digest& digest, Bytes state) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!Ready() || job_ || parked_ || !hooks_.load || state.empty() || state.size() > kMaximumBytes)
+      return std::nullopt;
+    const auto ticket = Queue(Kind::kImport, digest);
+    if (ticket) job_->import = std::move(state);
+    return ticket;
+  }
   Reply Take(int64_t ticket) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (stopped_ || !job_ || job_->id != ticket || job_->cancelled) return false;
@@ -110,7 +119,7 @@ class Mailbox {
     if (job_->kind == Kind::kPark) { parked_ = false; recovery_.clear(); }
     job_.reset();
   }
-  Effects Service(uint64_t frame) {
+  Effects Service(uint64_t frame, const std::function<void()>& validate_restore = {}) {
     Hooks hooks;
     Kind kind;
     int64_t id;
@@ -122,11 +131,14 @@ class Mailbox {
       job_->running = true;
       hooks = hooks_; kind = job_->kind; id = job_->id; digest = job_->digest;
       if (kind == Kind::kResume) recovery = recovery_;
+      if (kind == Kind::kImport) recovery = std::move(job_->import);
     }
-    auto captured = kind == Kind::kResume ? std::nullopt :
+    const bool loading = kind == Kind::kResume || kind == Kind::kImport;
+    auto captured = loading ? std::nullopt :
         CaptureState(hooks.blank, hooks.private_save, hooks.capacity, digest, frame, kind == Kind::kPark);
-    const bool restored = kind == Kind::kResume && hooks.load(recovery.data(), recovery.size(), digest.data());
-    Effects effects{kind == Kind::kResume, kind == Kind::kResume};
+    const bool restored = loading && hooks.load(recovery.data(), recovery.size(), digest.data());
+    if (restored && validate_restore) validate_restore();
+    Effects effects{loading, loading};
     std::lock_guard<std::mutex> lock(mutex_);
     if (kind == Kind::kResume && restored) { parked_ = false; recovery_.clear(); }
     if (stopped_ || !job_ || job_->id != id) return effects;
@@ -158,13 +170,14 @@ class Mailbox {
   }
 
  private:
-  enum class Kind { kCapture, kPark, kResume };
+  enum class Kind { kCapture, kPark, kResume, kImport };
   struct Job {
     int64_t id;
     Kind kind;
     Digest digest;
     bool running = false, cancelled = false;
     std::optional<Reply> reply;
+    Bytes import;
   };
   bool Ready() const {
     return source_ > 0 && !stopped_ && hooks_.blank && hooks_.capacity >= kPrefixBytes && hooks_.capacity <= kMaximumBytes;
@@ -172,7 +185,7 @@ class Mailbox {
   std::optional<int64_t> Queue(Kind kind, const Digest& digest) {
     const auto id = NextIdentity();
     if (!id) return std::nullopt;
-    job_ = Job{*id, kind, digest, false, false, std::nullopt};
+    job_ = Job{*id, kind, digest, false, false, std::nullopt, {}};
     return id;
   }
   mutable std::mutex mutex_;

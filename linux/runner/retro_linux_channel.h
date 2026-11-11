@@ -41,6 +41,19 @@ inline ps1_checkpoint::Digest ReadCheckpointDigest(FlValue* args) {
   return result;
 }
 
+inline ps1_checkpoint::Snapshot ReadMatchCheckpoint(FlValue* args) {
+  auto* frame = Field(args, "frame");
+  if (!frame || fl_value_get_type(frame) != FL_VALUE_TYPE_INT || fl_value_get_int(frame) < 0 ||
+      fl_value_get_int(frame) > ps1_netplay::Timeline::kMaxFrame)
+    throw std::runtime_error("Invalid portable checkpoint frame.");
+  auto* state = Field(args, "state");
+  if (!state || fl_value_get_type(state) != FL_VALUE_TYPE_UINT8_LIST || !fl_value_get_length(state) ||
+      fl_value_get_length(state) > ps1_checkpoint::kMaximumBytes)
+    throw std::runtime_error("Invalid portable checkpoint size.");
+  const auto* bytes = fl_value_get_uint8_list(state);
+  return {static_cast<uint32_t>(fl_value_get_int(frame)), {bytes, bytes + fl_value_get_length(state)}};
+}
+
 inline std::optional<Ps1MatchConfig> ReadPs1Match(FlValue* args) {
   for (const auto* flag : {"ps1NetplayCpu", "ps1PresentationCore", "ps1LocalStaging", "ps3Online"}) {
     if (Field(args, flag)) throw std::runtime_error("This online worker is not yet available on Linux");

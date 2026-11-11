@@ -60,6 +60,13 @@ int main() {
     MustReject([&] { ReadCheckpointDigest(request); });
     fl_value_set_string_take(request, "discHash", fl_value_new_uint8_list(packet.data(), 32));
     Check(ReadCheckpointDigest(request).front() == 42, "Checkpoint digest changed in channel decoding");
+    MustReject([&] { ReadMatchCheckpoint(request); });
+    fl_value_set_string_take(request, "frame", fl_value_new_int(37));
+    MustReject([&] { ReadMatchCheckpoint(request); });
+    fl_value_set_string_take(request, "state", fl_value_new_uint8_list(packet.data(), 8));
+    const auto imported = ReadMatchCheckpoint(request);
+    Check(imported.frame == 37 && imported.state == ps1_checkpoint::Bytes(8, 42),
+          "Checkpoint bytes or frame changed in channel decoding");
 
     g_autoptr(FlValue) offline = fl_value_new_map();
     Check(!ReadPs1Match(offline), "Offline request became a match");

@@ -101,6 +101,7 @@ FlValue* EncodeStatus(const SessionStatus& status) {
   fl_value_set_string_take(result, "presented", fl_value_new_bool(status.presented));
   fl_value_set_string_take(result, "ended", fl_value_new_bool(status.ended));
   fl_value_set_string_take(result, "netplayReady", fl_value_new_bool(status.netplay_ready));
+  fl_value_set_string_take(result, "portableCheckpoint", fl_value_new_bool(status.portable_checkpoint));
   fl_value_set_string_take(result, "error", fl_value_new_string(status.error.c_str()));
   fl_value_set_string_take(result, "aspect", fl_value_new_float(status.aspect));
   fl_value_set_string_take(result, "hardware", fl_value_new_bool(status.hardware));
@@ -323,6 +324,17 @@ class RetroCoreHostLinux::Impl {
           session_->RequestOrdinaryCheckpoint(*source, linux_channel::ReadCheckpointDigest(args),
                                               method == "ps1LocalCheckpointPark");
       Success(call, ticket ? fl_value_new_int(*ticket) : nullptr);
+    } else if (method == "ps1CheckpointExport" || method == "ps1CheckpointImport") {
+      const auto digest = linux_channel::ReadCheckpointDigest(args);
+      std::optional<int64_t> ticket;
+      if (method == "ps1CheckpointImport") {
+        auto snapshot = linux_channel::ReadMatchCheckpoint(args);
+        ticket = session_->RequestMatchImport(digest, snapshot.frame, std::move(snapshot.state));
+      } else {
+        ticket = session_->RequestMatchExport(digest);
+      }
+      if (!ticket) throw std::runtime_error("This core cannot run that checkpoint operation now.");
+      Success(call, fl_value_new_int(*ticket));
     } else if (method == "ps1CheckpointResult" || method == "ps1CheckpointCancel") {
       const auto ticket = args && fl_value_get_type(args) == FL_VALUE_TYPE_INT ? fl_value_get_int(args) : 0;
       if (method == "ps1CheckpointCancel") { session_->CancelCheckpoint(ticket); Success(call); return; }

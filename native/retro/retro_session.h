@@ -77,6 +77,7 @@ struct SessionStatus {
   int64_t recovered_source = 0;
   bool checkpoint_parked = false;
   bool netplay_ready = false;
+  bool portable_checkpoint = false;
   bool ready = false, presented = false, ended = false, hardware = false, graphics_pending = false;
   int32_t frame_width = 0, frame_height = 0;
   double aspect = 4.0 / 3.0;
@@ -140,6 +141,9 @@ class Session {
   std::optional<SessionConfig> DetachOrdinaryRecovery(int64_t source);
   bool AcceptOrdinaryRecovery(int64_t source);
   bool StartNetplay();
+  std::optional<int64_t> RequestMatchExport(const ps1_checkpoint::Digest& digest);
+  std::optional<int64_t> RequestMatchImport(const ps1_checkpoint::Digest& digest, uint32_t frame,
+                                            ps1_checkpoint::Bytes state);
   std::optional<Ps1MatchTick> SyncNetplay(const std::vector<ps1_netplay::FrameInput>& remote,
                                          std::optional<uint32_t> acknowledged);
   ps1_checkpoint::Mailbox::Reply TakeCheckpoint(int64_t ticket);

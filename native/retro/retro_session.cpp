@@ -213,7 +213,8 @@ class Session::Impl {
 
   std::optional<int64_t> RequestOrdinaryCheckpoint(int64_t source, const ps1_checkpoint::Digest& digest, bool park) {
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (!recovery_accepted_ || !presented_ || stop_ || ended_ || source <= 0 || source != checkpoint_.source() ||
+    if (match_timeline_ || !recovery_accepted_ || !presented_ || stop_ || ended_ || source <= 0 ||
+        source != checkpoint_.source() ||
         options_changed_ || graphics_queued_ || graphics_applying_ || pending_disc_ ||
         (discs_ && discs_->busy)) return std::nullopt;
     return checkpoint_.RequestCapture(digest, park);
@@ -246,9 +247,24 @@ class Session::Impl {
   }
   bool StartNetplay() {
     std::lock_guard<std::mutex> lock(match_mutex_);
-    if (!match_ready_ || stop_ || ended_) return false;
+    if (!match_ready_ || stop_ || ended_ || checkpoint_.busy() || match_import_) return false;
     match_timeline_->Start();
+    match_started_ = true;
     return true;
+  }
+  std::optional<int64_t> RequestMatchExport(const ps1_checkpoint::Digest& digest) {
+    std::lock_guard<std::mutex> lock(match_mutex_);
+    if (!match_ready_ || stop_ || ended_ || match_import_) return std::nullopt;
+    return checkpoint_.RequestCapture(digest, false);
+  }
+  std::optional<int64_t> RequestMatchImport(const ps1_checkpoint::Digest& digest, uint32_t frame,
+                                            ps1_checkpoint::Bytes state) {
+    std::lock_guard<std::mutex> lock(match_mutex_);
+    if (!match_ready_ || stop_ || ended_ || match_started_ || frame > ps1_netplay::Timeline::kMaxFrame)
+      return std::nullopt;
+    const auto ticket = checkpoint_.RequestImport(digest, std::move(state));
+    if (ticket) match_import_ = ticket;
+    return ticket;
   }
   std::optional<Ps1MatchTick> SyncNetplay(const std::vector<ps1_netplay::FrameInput>& remote,
                                          std::optional<uint32_t> acknowledged) {
@@ -258,7 +274,14 @@ class Session::Impl {
     return Ps1MatchTick{match_timeline_->frame(), match_timeline_->confirmed(), match_timeline_->received(),
                         match_timeline_->waiting(), match_timeline_->LocalPacket(), match_fingerprints_};
   }
-  ps1_checkpoint::Mailbox::Reply TakeCheckpoint(int64_t ticket) { return checkpoint_.Take(ticket); }
+  ps1_checkpoint::Mailbox::Reply TakeCheckpoint(int64_t ticket) {
+    std::lock_guard<std::mutex> lock(match_mutex_);
+    auto reply = checkpoint_.Take(ticket);
+    if (match_import_ == ticket) {
+      if (const auto* imported = std::get_if<bool>(&reply); imported && *imported) match_import_.reset();
+    }
+    return reply;
+  }
   void CancelCheckpoint(int64_t ticket) { checkpoint_.Cancel(ticket); }
 
   SessionStatus Status() {
@@ -268,8 +291,10 @@ class Session::Impl {
     status.presented = presented_;
     status.ended = ended_;
     status.netplay_ready = match_ready_ && !stop_ && !ended_;
+    status.portable_checkpoint = status.netplay_ready && checkpoint_.ready();
     status.recovered_source = recovered_source_;
-    if (recovery_accepted_ && presented_ && !stop_ && !ended_) status.checkpoint_source = checkpoint_.source();
+    if (!match_timeline_ && recovery_accepted_ && presented_ && !stop_ && !ended_)
+      status.checkpoint_source = checkpoint_.source();
     status.checkpoint_parked = checkpoint_.parked();
     status.error = error_;
     status.aspect = aspect_;
@@ -1016,10 +1041,14 @@ class Session::Impl {
       const auto frame_time = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / fps));
       const uint8_t* match_ram = nullptr;
       constexpr size_t match_ram_size = 2 * 1024 * 1024;
+      std::function<void()> validate_match_memory;
       if (match_timeline_) {
-        match_ram = static_cast<const uint8_t*>(core.Get<void* (*)(unsigned)>("retro_get_memory_data")(2));
-        if (!match_ram || core.Get<size_t (*)(unsigned)>("retro_get_memory_size")(2) != match_ram_size)
-          throw std::runtime_error("PS1 netplay could not access the core's main RAM.");
+        validate_match_memory = [&] {
+          match_ram = static_cast<const uint8_t*>(core.Get<void* (*)(unsigned)>("retro_get_memory_data")(2));
+          if (!match_ram || core.Get<size_t (*)(unsigned)>("retro_get_memory_size")(2) != match_ram_size)
+            throw std::runtime_error("PS1 netplay could not access the core's main RAM.");
+        };
+        validate_match_memory();
         {
           std::lock_guard<std::mutex> lock(settings_mutex_);
           for (const auto& [key, value] : kPs1NetplayOptions) {
@@ -1028,6 +1057,11 @@ class Session::Impl {
               throw std::runtime_error("The PS1 core could not configure the required netplay profile.");
           }
         }
+        const auto save = core.Get<ps1_checkpoint::Save>("retro_anyps5_export_checkpoint_v1", false);
+        const auto load_state = core.Get<ps1_checkpoint::Load>("retro_anyps5_import_checkpoint_v1", false);
+        const auto size = save && load_state ? core.Get<size_t (*)()>("retro_serialize_size")() : 0;
+        if (size && size <= ps1_checkpoint::kMaximumBytes - ps1_checkpoint::kPrefixBytes)
+          checkpoint_.Configure({save, nullptr, load_state, size + ps1_checkpoint::kPrefixBytes});
         match_ready_ = true;
       }
       auto next = Clock::now();
@@ -1054,8 +1088,13 @@ class Session::Impl {
           restore_card();
           hardware_deadline = Clock::now() + std::chrono::seconds(8);
         }
-        const auto checkpoint_effects = checkpoint_.Service(static_cast<uint64_t>(steps_.load()));
-        if (checkpoint_effects.refresh_memory && ps1) {
+        uint64_t checkpoint_frame = static_cast<uint64_t>(steps_.load());
+        if (match_timeline_) {
+          std::lock_guard<std::mutex> lock(match_mutex_);
+          checkpoint_frame = match_timeline_->frame();
+        }
+        const auto checkpoint_effects = checkpoint_.Service(checkpoint_frame, validate_match_memory);
+        if (checkpoint_effects.refresh_memory && ps1 && !match_timeline_) {
           card = core.Get<void* (*)(unsigned)>("retro_get_memory_data")(0);
           card_size = core.Get<size_t (*)(unsigned)>("retro_get_memory_size")(0);
         }
@@ -1150,6 +1189,8 @@ class Session::Impl {
   std::unique_ptr<Ps1MatchStorage> match_storage_;
   std::optional<ps1_netplay::Timeline> match_timeline_;
   std::atomic<bool> match_ready_{false};
+  bool match_started_ = false;
+  std::optional<int64_t> match_import_;
   std::mutex match_mutex_;
   std::array<ps1_netplay::PadInput, 2> match_ports_{};
   std::vector<std::pair<uint32_t, std::string>> match_fingerprints_;
@@ -1214,6 +1255,13 @@ std::optional<int64_t> Session::RequestOrdinaryResume(int64_t source) { return i
 std::optional<SessionConfig> Session::DetachOrdinaryRecovery(int64_t source) { return impl_->DetachOrdinaryRecovery(source); }
 bool Session::AcceptOrdinaryRecovery(int64_t source) { return impl_->AcceptOrdinaryRecovery(source); }
 bool Session::StartNetplay() { return impl_->StartNetplay(); }
+std::optional<int64_t> Session::RequestMatchExport(const ps1_checkpoint::Digest& digest) {
+  return impl_->RequestMatchExport(digest);
+}
+std::optional<int64_t> Session::RequestMatchImport(const ps1_checkpoint::Digest& digest, uint32_t frame,
+                                                   ps1_checkpoint::Bytes state) {
+  return impl_->RequestMatchImport(digest, frame, std::move(state));
+}
 std::optional<Ps1MatchTick> Session::SyncNetplay(const std::vector<ps1_netplay::FrameInput>& remote,
                                                  std::optional<uint32_t> acknowledged) {
   return impl_->SyncNetplay(remote, acknowledged);
