@@ -537,3 +537,20 @@ This narrows the next investigation to execution inside retro_run and its
 callbacks. It does not distinguish core CPU work, callbacks and preemption.
 The 250.587 ms presentation gap and 263.635 ms confirmed PCM gap are separate
 measurements. No frame-budget pass is claimed.
+
+The optional --step-breakdown command further records the synchronous video
+callback's elapsed time and Windows thread cycles around retro_run. Timing
+requires both a paced input trace and an explicit probe opt-in. An unavailable
+cycle reading is reported separately. The comparison is with the mean of
+measured steps in the same run; cycles are not converted into CPU milliseconds.
+
+In the next full physical Windows–Linux race the game placements, 114 RAM
+hashes and 10,104,619 confirmed stereo pairs matched again. The worst Windows
+iteration was 148.184 ms at frame 1,566. Its emulator step took 147.138 ms,
+including 0.598 ms inside the video callback. The worker accumulated
+11,154,077 thread cycles during that step, below its run mean of 15,144,334.
+This is consistent with a wait or preemption during the step. The timing
+does not identify the wait or measure auxiliary core threads. The pinned
+SwanStation source enables an asynchronous CD read worker by default and can
+wait for its result. A controlled read-thread comparison or a wait trace is
+needed before changing the core or the negotiated match settings.

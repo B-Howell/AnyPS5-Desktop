@@ -562,7 +562,8 @@ int main(int argc, char** argv) {
                            std::nullopt, std::nullopt, {},
                            match_cpu, {}, rollback,
                            std::move(audio_sink), std::move(trace), RetroCoreSession::CallbackSlot::kPrimary,
-                           std::nullopt, dualshock);
+                           std::nullopt, dualshock,
+                           GetEnvironmentVariableW(L"ANYPS5_PS1_PROBE_STEP_TIMING", nullptr, 0) == 2);
   if (dual && !session.AttachPresentationCore(std::make_unique<RetroCoreSession>(
       &spare_texture, argv[6], argv[2], "", "", "", std::map<std::string, std::string>{}, seat, argv[3],
       false, std::nullopt, std::nullopt, std::vector<std::string>{}, match_cpu,
@@ -586,6 +587,13 @@ int main(int argc, char** argv) {
     if (dual && command == "presentation-steps") {
       std::cout << session.presentation_steps() << ' ' << session.presentation_frames() << ' '
                 << session.peak_prediction_depth() << std::endl;
+      continue;
+    }
+    if (rollback && command == "step-breakdown") {
+      const auto step = session.trace_step();
+      std::cout << step.frame << ' ' << step.elapsed_us << ' ' << step.video_us << ' '
+                << (step.cycles ? std::to_string(*step.cycles) : "-1") << ' '
+                << step.total_cycles << ' ' << step.cycle_samples << std::endl;
       continue;
     }
     if (rollback && command == "work-breakdown") {

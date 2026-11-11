@@ -4,6 +4,7 @@ import argparse
 import hashlib
 from contextlib import ExitStack
 import json
+import os
 from pathlib import Path
 from queue import Queue
 from shutil import copyfile
@@ -16,7 +17,7 @@ from time import monotonic, perf_counter, sleep
 
 class Peer:
     def __init__(self, executable, core, disc, bios, seat, *, local=False, saves=None, recompiler=False,
-                 rollback=False, audio_control=False, input_trace=None, presentation_core=None, linux=False):
+                 rollback=False, audio_control=False, input_trace=None, presentation_core=None, linux=False, step_breakdown=False):
         self.lines = Queue()
         arguments = [executable, core, disc, bios, str(seat)]
         if local:
@@ -47,6 +48,7 @@ class Peer:
         self.process = Popen(
             arguments,
             stdin=PIPE, stdout=PIPE, text=True,
+            env={**os.environ, "ANYPS5_PS1_PROBE_STEP_TIMING": "1" if step_breakdown else ""},
             creationflags=CREATE_NO_WINDOW | IDLE_PRIORITY_CLASS,
         )
         Thread(target=self._read, daemon=True).start()
@@ -130,14 +132,16 @@ def main():
     parser.add_argument("--linux-core", type=Path, help="Linux SwanStation library accessible from WSL")
     parser.add_argument("--work-breakdown", action="store_true",
                         help="Read per-stage work timing from a rebuilt Windows probe")
+    parser.add_argument("--step-breakdown", action="store_true",
+                        help="Read video-callback time and thread cycles from a rebuilt Windows probe")
     args = parser.parse_args()
     if args.linux_probe or args.linux_core:
         if not (args.linux_probe and args.linux_core and args.rollback and args.trace):
             parser.error("Mixed-platform runs require both Linux paths, --rollback and --trace")
         if args.rollback_recompiler or args.presentation_core:
             parser.error("Mixed-platform runs use the cached interpreter and one worker per peer")
-    if args.work_breakdown and not (args.rollback and args.trace):
-        parser.error("--work-breakdown requires a paced rollback trace")
+    if (args.work_breakdown or args.step_breakdown) and not (args.rollback and args.trace):
+        parser.error("Work and step breakdowns require a paced rollback trace")
     rollback_restore = args.ordinary_restore and args.rollback_recompiler
     if args.rollback_recompiler and not (args.rollback or rollback_restore):
         parser.error("--rollback-recompiler requires --rollback or --ordinary-restore")
@@ -648,7 +652,7 @@ def traced_rollback_race(args, cleanup):
         peer = Peer(probe.resolve(), core.resolve(), args.disc.resolve(), args.bios.resolve(),
                     seat, rollback=True, input_trace=trace, recompiler=args.rollback_recompiler,
                     presentation_core=args.presentation_core.resolve() if args.presentation_core else None,
-                    linux=linux)
+                    linux=linux, step_breakdown=args.step_breakdown and not linux)
         cleanup.callback(peer.close)
         peers.append(peer)
     assert all(peer.receive() == "ready" for peer in peers)
@@ -729,6 +733,14 @@ def traced_rollback_race(args, cleanup):
                   + ", ".join(f"{stage} {value / 1000:.3f} ms" for stage, value in zip(stages, worst)))
             print(f"Seat {seat} dominant overrun stages: "
                   + ", ".join(f"{stage} {count}" for stage, count in zip(stages, dominant)))
+        if args.step_breakdown:
+            frame, step_us, video_us, cycles, total_cycles, samples = map(int, peer.send("step-breakdown").split())
+            assert 0 <= video_us <= step_us and -1 <= cycles <= total_cycles
+            cycle_summary = f"{cycles} thread cycles" if cycles >= 0 else "thread cycles unavailable"
+            if samples:
+                cycle_summary += f" (mean {total_cycles // samples} across {samples} steps)"
+            print(f"Seat {seat} slowest step at frame {frame}: {step_us / 1000:.3f} ms elapsed, "
+                  f"{video_us / 1000:.3f} ms in video, {cycle_summary}.")
         waits, wait_us, late_wakes, peak_wake_us = map(int, peer.send("pacing").split())
         print(f"Seat {seat}: {waits} blocked polls totaling {wait_us / 1000:.3f} ms; "
               f"{late_wakes} deadline wakes over 2 ms, peak {peak_wake_us / 1000:.3f} ms late.")

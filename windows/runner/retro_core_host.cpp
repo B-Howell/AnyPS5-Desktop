@@ -642,6 +642,18 @@ class RetroCoreSession {
     std::lock_guard<std::mutex> lock(trace_breakdown_mutex_);
     return trace_breakdown_;
   }
+  struct TraceStep {
+    uint32_t frame = 0;
+    int64_t elapsed_us = 0;
+    int64_t video_us = 0;
+    std::optional<uint64_t> cycles;
+    uint64_t total_cycles = 0;
+    uint32_t cycle_samples = 0;
+  };
+  TraceStep trace_step() const {
+    std::lock_guard<std::mutex> lock(trace_breakdown_mutex_);
+    return trace_step_;
+  }
   std::array<int64_t, 4> trace_pacing() const {
     return {trace_blocked_polls_, trace_blocked_us_, trace_late_wakes_, trace_peak_wake_us_};
   }
@@ -664,7 +676,8 @@ class RetroCoreSession {
                    bool rollback = false, AudioSink audio_sink = {},
                    std::vector<ps1_netplay::PadInput> input_trace = {},
                    CallbackSlot callback_slot = CallbackSlot::kPrimary,
-                   std::optional<InitialDisc> boot_disc = std::nullopt, bool netplay_dualshock = false)
+                   std::optional<InitialDisc> boot_disc = std::nullopt, bool netplay_dualshock = false,
+                   bool detailed_step_trace = false)
       : registrar_(registrar), core_(std::move(core)), disc_(std::move(disc)),
         netplay_(netplay_seat ? std::make_unique<ps1_netplay::Timeline>(
                                    *netplay_seat, rollback ? ps1_netplay::Timeline::kStandardPrediction : 0)
@@ -673,6 +686,7 @@ class RetroCoreSession {
         netplay_host_(netplay_seat == 0u),
         audio_sink_(std::move(audio_sink)),
         input_trace_(std::move(input_trace)),
+        detailed_step_trace_(detailed_step_trace),
         callback_slot_(callback_slot),
         match_storage_(netplay_ ? std::make_unique<Ps1MatchStorage>(netplay_bios) : nullptr),
         lan_(lan_mac ? std::make_unique<Ps2VirtualLan>(*lan_mac) : nullptr),
@@ -2274,8 +2288,45 @@ class RetroCoreSession {
         audio.overflow = false;
         rollback_audio_capture_ = &audio;
       }
-      trace_stage(kStep, step);
-      const auto* captured_audio = std::exchange(rollback_audio_capture_, nullptr);
+      const auto* captured_audio = rollback_audio_capture_;
+      const auto run_step = [&] {
+        struct ClearAudioCapture {
+          ~ClearAudioCapture() { rollback_audio_capture_ = nullptr; }
+        } clear;
+        step();
+      };
+      if (measure_trace && detailed_step_trace_) {
+        struct VideoTimer {
+          VideoTimer() { trace_video_time_ = &elapsed; }
+          ~VideoTimer() { trace_video_time_ = nullptr; }
+          Clock::duration elapsed{};
+        } video;
+        ULONG64 before_cycles = 0, after_cycles = 0;
+        const auto thread = GetCurrentThread();
+        const bool measured_before = QueryThreadCycleTime(thread, &before_cycles);
+        const auto begin = Clock::now();
+        run_step();
+        const auto elapsed = Clock::now() - begin;
+        const bool measured = measured_before && QueryThreadCycleTime(thread, &after_cycles) &&
+                              after_cycles >= before_cycles;
+        const auto cycles = measured ? after_cycles - before_cycles : 0;
+        stage_times[kStep] += elapsed;
+        using Micros = std::chrono::microseconds;
+        const auto elapsed_us = std::chrono::duration_cast<Micros>(elapsed).count();
+        std::lock_guard<std::mutex> lock(trace_breakdown_mutex_);
+        if (measured) {
+          trace_step_.total_cycles += cycles;
+          ++trace_step_.cycle_samples;
+        }
+        if (elapsed_us > trace_step_.elapsed_us) {
+          trace_step_.frame = frame;
+          trace_step_.elapsed_us = elapsed_us;
+          trace_step_.video_us = std::chrono::duration_cast<Micros>(video.elapsed).count();
+          trace_step_.cycles = measured ? std::optional<uint64_t>(cycles) : std::nullopt;
+        }
+      } else {
+        trace_stage(kStep, run_step);
+      }
       suppress_frame_ = false;
       if (captured_audio && captured_audio->overflow)
         throw std::runtime_error("The PS1 rollback audio frame exceeded its PCM capacity.");
@@ -2367,7 +2418,15 @@ class RetroCoreSession {
         [](unsigned command, void* data) { return active_[Slot].load()->Environment(command, data); });
     Symbol<void (*)(void (*)(const void*, unsigned, unsigned, size_t))>(dll, "retro_set_video_refresh")(
         [](const void* data, unsigned width, unsigned height, size_t pitch) {
-          active_[Slot].load()->Publish(data, width, height, pitch);
+          auto* session = active_[Slot].load();
+          if (trace_video_time_) {
+            using Clock = std::chrono::steady_clock;
+            const auto begin = Clock::now();
+            session->Publish(data, width, height, pitch);
+            *trace_video_time_ += Clock::now() - begin;
+          } else {
+            session->Publish(data, width, height, pitch);
+          }
         });
     Symbol<void (*)(void (*)(int16_t, int16_t))>(dll, "retro_set_audio_sample")(
         [](int16_t left, int16_t right) {
@@ -2721,6 +2780,7 @@ class RetroCoreSession {
   const bool netplay_host_;
   const AudioSink audio_sink_;
   const std::vector<ps1_netplay::PadInput> input_trace_;
+  const bool detailed_step_trace_;
   const CallbackSlot callback_slot_;
   std::unique_ptr<RetroCoreSession> presentation_core_;
   RetroCoreSession* presentation_target_ = nullptr;
@@ -2735,6 +2795,8 @@ class RetroCoreSession {
   std::atomic<int64_t> trace_work_overruns_{0};
   mutable std::mutex trace_breakdown_mutex_;
   TraceBreakdown trace_breakdown_;
+  TraceStep trace_step_;
+  static inline thread_local std::chrono::steady_clock::duration* trace_video_time_ = nullptr;
   std::atomic<int64_t> trace_blocked_polls_{0};
   std::atomic<int64_t> trace_blocked_us_{0};
   std::atomic<int64_t> trace_late_wakes_{0};
