@@ -648,3 +648,21 @@ outbound frame and the run exited with status 1. This does not qualify
 the local two-player path. Compare the dual-worker input and network
 initialization against the successful single-worker run before adding
 WebRTC to this test.
+
+Fork CI for `e913ab8` passed Linux analysis and tests, the Linux and Windows
+release builds, macOS golden and watcher tests, and the required aggregate
+check. See [run 42974101728](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/42974101728).
+A repeat of the two-worker control timed button holds and release intervals
+using the core's emulated step count. Both workers booted, but the control
+ended before LAN configuration and produced no accepted frames. The
+one-worker DHCP result remains the current verified Linux gameplay evidence.
+
+The automated repeat verified both Linux workers at LAN discovery
+using separate scratch cards and distinct MAC and IP assignments. It
+used the production LAN bridge, DHCP responder and frame transport,
+with the encoded room packets forwarded in process. The host created
+a Deathmatch lobby at 1/8 players. The guest's first capture after the
+host opened the lobby still showed an empty match list. The bridge
+forwarded seven frames from the host and five from the guest by that
+capture. Both workers exited with status 0. A guest refresh and join
+remain necessary before qualifying the two-player path.
