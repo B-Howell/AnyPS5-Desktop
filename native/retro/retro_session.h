@@ -3,6 +3,7 @@
 
 #include "libretro_abi.h"
 #include "retro_frame.h"
+#include "ps1_checkpoint.h"
 
 #include <array>
 #include <functional>
@@ -56,6 +57,8 @@ struct DiscStatus {
 };
 
 struct SessionStatus {
+  int64_t checkpoint_source = 0;
+  bool checkpoint_parked = false;
   bool ready = false, presented = false, ended = false, hardware = false, graphics_pending = false;
   int32_t frame_width = 0, frame_height = 0;
   double aspect = 4.0 / 3.0;
@@ -114,6 +117,10 @@ class Session {
   void SetInput(uint16_t buttons, const std::array<int16_t, 4>& axes);
   std::optional<LanFrames> ExchangeLan(const LanFrames& input);
   bool ClearLanFrames();
+  std::optional<int64_t> RequestOrdinaryCheckpoint(int64_t source, const ps1_checkpoint::Digest& digest, bool park);
+  std::optional<int64_t> RequestOrdinaryResume(int64_t source);
+  ps1_checkpoint::Mailbox::Reply TakeCheckpoint(int64_t ticket);
+  void CancelCheckpoint(int64_t ticket);
   bool SetOption(const std::string& key, const std::string& value);
   bool SetTuningOptions(const Options& expected, const Options& values);
   SessionStatus Status();

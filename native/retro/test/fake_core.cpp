@@ -7,6 +7,7 @@
 #include <cstring>
 #include <string>
 #include <thread>
+#include <chrono>
 
 #if defined(_WIN32)
 #define TEST_EXPORT __declspec(dllexport)
@@ -15,6 +16,12 @@
 #endif
 
 namespace {
+#ifdef TEST_CHECKPOINT
+uint32_t checkpoint_card = 7;
+bool checkpoint_loaded = false;
+std::atomic<bool> checkpoint_hold_tray{false}, checkpoint_tray_entered{false};
+std::atomic<bool> checkpoint_hold_export{false}, checkpoint_export_entered{false};
+#endif
 struct GameInfo {
   const char* path;
   const void* data;
@@ -45,6 +52,7 @@ struct DiskControl {
 };
 
 bool (*environment)(unsigned, void*);
+struct Variable { const char* key; const char* value; };
 #ifdef TEST_LAN
 struct LanDescriptor {
   void* opaque;
@@ -52,7 +60,6 @@ struct LanDescriptor {
   bool (*send)(void*, const void*, std::size_t);
   std::size_t (*recv)(void*, void*, std::size_t);
 };
-struct Variable { const char* key; const char* value; };
 std::mutex lan_mutex;
 LanDescriptor lan{};
 bool lan_bound = false;
@@ -75,6 +82,14 @@ void CheckDiskThread() {
 
 bool SetEject(bool value) {
   CheckDiskThread();
+#ifdef TEST_CHECKPOINT
+  if (value && checkpoint_hold_tray) {
+    checkpoint_tray_entered = true;
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (checkpoint_hold_tray && std::chrono::steady_clock::now() < until)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+#endif
   // Disc three simulates missing media. Closing the tray with the old
   // disc is still allowed so the frontend can recover.
   if (!value && image == 2) return false;
@@ -139,6 +154,9 @@ extern "C" TEST_EXPORT bool retro_load_game(const GameInfo* info) {
   lan_loaded = true;
 #endif
   multidisc = playlist;
+#ifdef TEST_CHECKPOINT
+  checkpoint_loaded = true;
+#endif
   ++lifecycle;
   return true;
 }
@@ -151,6 +169,12 @@ extern "C" TEST_EXPORT void retro_init() {
   initial_path.clear();
   ejected = false;
   run_count = 0;
+#ifdef TEST_CHECKPOINT
+  checkpoint_card = 7;
+  checkpoint_loaded = false;
+  const Variable variables[]{{"swanstation_CPU_ExecutionMode", "CPU; Recompiler|CachedInterpreter"}, {nullptr, nullptr}};
+  environment(16, const_cast<Variable*>(variables));
+#endif
   if (!legacy_disk_control) RegisterDiskControl();
 #ifdef TEST_LAN
   lan_seen = lan_sent = 0;
@@ -160,6 +184,9 @@ extern "C" TEST_EXPORT void retro_init() {
 #endif
 }
 extern "C" TEST_EXPORT void retro_unload_game() {
+#ifdef TEST_CHECKPOINT
+  checkpoint_loaded = false;
+#endif
 #ifdef TEST_LAN
   lan_loaded = false;
 #endif
@@ -210,6 +237,62 @@ extern "C" TEST_EXPORT void retro_run() {
   }
 #endif
 }
+
+#ifdef TEST_CHECKPOINT
+extern "C" TEST_EXPORT void test_checkpoint_hold_tray(bool hold) {
+  if (hold) checkpoint_tray_entered = false;
+  checkpoint_hold_tray = hold;
+}
+extern "C" TEST_EXPORT bool test_checkpoint_tray_entered() { return checkpoint_tray_entered; }
+extern "C" TEST_EXPORT void test_checkpoint_hold_export(bool hold) {
+  if (hold) checkpoint_export_entered = false;
+  checkpoint_hold_export = hold;
+}
+extern "C" TEST_EXPORT bool test_checkpoint_export_entered() { return checkpoint_export_entered; }
+extern "C" TEST_EXPORT void* retro_get_memory_data(unsigned kind) {
+  CheckDiskThread();
+  return kind == 0 ? &checkpoint_card : nullptr;
+}
+extern "C" TEST_EXPORT size_t retro_get_memory_size(unsigned kind) {
+  CheckDiskThread();
+  return kind == 0 ? sizeof(checkpoint_card) : 0;
+}
+extern "C" TEST_EXPORT size_t retro_serialize_size() { return 8; }
+extern "C" TEST_EXPORT size_t retro_anyps5_export_checkpoint_v1(void* bytes, size_t capacity, const uint8_t*) {
+  CheckDiskThread();
+  if (!checkpoint_loaded || capacity < 8) return 0;
+  const uint32_t values[]{run_count, checkpoint_card};
+  std::memcpy(bytes, values, sizeof(values));
+  return sizeof(values);
+}
+extern "C" TEST_EXPORT size_t retro_anyps5_export_blank_card_checkpoint_v1(void* bytes, size_t capacity, const uint8_t*) {
+  CheckDiskThread();
+  if (checkpoint_hold_export) {
+    checkpoint_export_entered = true;
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (checkpoint_hold_export && std::chrono::steady_clock::now() < until)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  if (!checkpoint_loaded || capacity < 8) return 0;
+  const uint32_t values[]{run_count, 0};
+  std::memcpy(bytes, values, sizeof(values));
+  return sizeof(values);
+}
+extern "C" TEST_EXPORT bool retro_anyps5_import_checkpoint_v1(const void* bytes, size_t size, const uint8_t*) {
+  CheckDiskThread();
+  if (!checkpoint_loaded || size != 8) return false;
+  uint32_t values[2];
+  std::memcpy(values, bytes, sizeof(values));
+  run_count = values[0];
+  checkpoint_card = values[1];
+  return true;
+}
+#endif
+
+#ifndef TEST_CHECKPOINT
+extern "C" TEST_EXPORT void* retro_get_memory_data(unsigned) { CheckDiskThread(); return nullptr; }
+extern "C" TEST_EXPORT size_t retro_get_memory_size(unsigned) { CheckDiskThread(); return 0; }
+#endif
 
 #ifdef TEST_LAN
 extern "C" TEST_EXPORT bool retro_anyps5_dev9_bind_v1(const LanDescriptor* descriptor) {

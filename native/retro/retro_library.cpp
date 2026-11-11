@@ -28,13 +28,13 @@ DynamicLibrary::~DynamicLibrary() {
 #endif
 }
 
-DynamicLibrary::Address DynamicLibrary::Lookup(const char* name) const {
+DynamicLibrary::Address DynamicLibrary::Lookup(const char* name, bool required) const {
 #if defined(_WIN32)
   const auto address = GetProcAddress(static_cast<HMODULE>(handle_), name);
 #else
   const auto address = dlsym(handle_, name);
 #endif
-  if (!address) throw std::runtime_error(std::string("Core is missing ") + name);
+  if (!address && required) throw std::runtime_error(std::string("Core is missing ") + name);
   Address function;
   static_assert(sizeof(function) == sizeof(address));
   std::memcpy(&function, &address, sizeof(function));

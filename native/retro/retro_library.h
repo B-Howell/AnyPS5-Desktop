@@ -16,9 +16,9 @@ class DynamicLibrary {
   DynamicLibrary& operator=(const DynamicLibrary&) = delete;
 
   template <typename Function>
-  Function Get(const char* name) const {
+  Function Get(const char* name, bool required = true) const {
     static_assert(std::is_pointer_v<Function> && std::is_function_v<std::remove_pointer_t<Function>>);
-    const auto address = Lookup(name);
+    const auto address = Lookup(name, required);
     Function function;
     static_assert(sizeof(function) == sizeof(address));
     std::memcpy(&function, &address, sizeof(function));
@@ -27,7 +27,7 @@ class DynamicLibrary {
 
  private:
   using Address = void (*)();
-  Address Lookup(const char* name) const;
+  Address Lookup(const char* name, bool required) const;
 
   void* handle_;
 };

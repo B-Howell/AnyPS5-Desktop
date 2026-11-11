@@ -133,7 +133,7 @@ class Session::Impl {
   void Start() { worker_ = std::thread([this] { Run(); }); }
 
   bool ended() const { return ended_; }
-  void Stop() { stop_ = true; if (lan_) lan_->Close(); }
+  void Stop() { stop_ = true; checkpoint_.Stop(); if (lan_) lan_->Close(); }
   void Join() { if (worker_.joinable()) worker_.join(); }
 
   void Pause(bool pause) {
@@ -152,6 +152,7 @@ class Session::Impl {
 
   bool ChangeDisc(unsigned index) {
     std::lock_guard<std::mutex> lock(settings_mutex_);
+    if (checkpoint_.busy()) return false;
     if (stop_ || ended_ || !discs_ || discs_->busy ||
         index >= discs_->labels.size() || discs_->inserted == index)
       return false;
@@ -189,12 +190,28 @@ class Session::Impl {
     return !stop_ && !ended_;
   }
 
+  std::optional<int64_t> RequestOrdinaryCheckpoint(int64_t source, const ps1_checkpoint::Digest& digest, bool park) {
+    std::lock_guard<std::mutex> lock(settings_mutex_);
+    if (!presented_ || stop_ || ended_ || source <= 0 || source != checkpoint_.source() ||
+        options_changed_ || graphics_queued_ || graphics_applying_ || pending_disc_ ||
+        (discs_ && discs_->busy)) return std::nullopt;
+    return checkpoint_.RequestCapture(digest, park);
+  }
+  std::optional<int64_t> RequestOrdinaryResume(int64_t source) {
+    if (stop_ || ended_ || source <= 0 || source != checkpoint_.source()) return std::nullopt;
+    return checkpoint_.RequestResume();
+  }
+  ps1_checkpoint::Mailbox::Reply TakeCheckpoint(int64_t ticket) { return checkpoint_.Take(ticket); }
+  void CancelCheckpoint(int64_t ticket) { checkpoint_.Cancel(ticket); }
+
   SessionStatus Status() {
     std::lock_guard<std::mutex> lock(settings_mutex_);
     SessionStatus status;
     status.ready = frame_ready_;
     status.presented = presented_;
     status.ended = ended_;
+    if (presented_ && !stop_ && !ended_) status.checkpoint_source = checkpoint_.source();
+    status.checkpoint_parked = checkpoint_.parked();
     status.error = error_;
     status.aspect = aspect_;
     status.hardware = hardware_frame_;
@@ -227,6 +244,7 @@ class Session::Impl {
 
   bool SetOption(const std::string& key, const std::string& value) {
     std::lock_guard<std::mutex> lock(settings_mutex_);
+    if (checkpoint_.busy()) return false;
     const auto option = options_.find(key);
     if (option == options_.end() ||
         (!option->second.graphics && !option->second.boot && !LiveCoreOption(key, hardware_frame_))) return false;
@@ -252,7 +270,7 @@ class Session::Impl {
     if (!presented_ || !hardware_frame_ || values.empty() || expected.size() != values.size())
       return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (graphics_applying_ || graphics_queued_) return false;
+    if (checkpoint_.busy() || graphics_applying_ || graphics_queued_) return false;
     std::vector<std::pair<Option*, size_t>> changes;
     bool checkpoint = false;
     for (const auto& [key, value] : values) {
@@ -855,6 +873,14 @@ class Session::Impl {
         RestoreCard(card_path, card, card_size);
       };
       restore_card();
+      if (ps1) {
+        const auto blank = core.Get<ps1_checkpoint::Save>("retro_anyps5_export_blank_card_checkpoint_v1", false);
+        const auto private_save = core.Get<ps1_checkpoint::Save>("retro_anyps5_export_checkpoint_v1", false);
+        const auto load_private = core.Get<ps1_checkpoint::Load>("retro_anyps5_import_checkpoint_v1", false);
+        const auto size = blank ? core.Get<size_t (*)()>("retro_serialize_size")() : 0;
+        if (size && size <= ps1_checkpoint::kMaximumBytes - ps1_checkpoint::kPrefixBytes)
+          checkpoint_.Configure({blank, private_save, load_private, size + ps1_checkpoint::kPrefixBytes});
+      }
       AvInfo av{};
       av_info(&av);
       SetAspect(av.geometry.aspect);
@@ -869,8 +895,8 @@ class Session::Impl {
       auto next = Clock::now();
       auto hardware_deadline = next + std::chrono::seconds(8);
       while (!stop_) {
-        ApplyDiscChange();
-        if (ps1 || ps2)
+        if (!checkpoint_.busy()) ApplyDiscChange();
+        if ((ps1 || ps2) && !checkpoint_.busy())
           ApplyCheckpointGraphics(core, reopen, step, ps1, card, card_size, card_path);
         if (!ps3_ && hardware_callbacks_.reset && !frame_ready_ && Clock::now() > hardware_deadline) {
           if (!use_native_resolution()) {
@@ -889,7 +915,14 @@ class Session::Impl {
           restore_card();
           hardware_deadline = Clock::now() + std::chrono::seconds(8);
         }
-        if (paused_ && frame_ready_) {
+        const auto checkpoint_effects = checkpoint_.Service(static_cast<uint64_t>(steps_.load()));
+        if (checkpoint_effects.refresh_memory && ps1) {
+          card = core.Get<void* (*)(unsigned)>("retro_get_memory_data")(0);
+          card_size = core.Get<size_t (*)(unsigned)>("retro_get_memory_size")(0);
+        }
+        if (checkpoint_effects.flush_audio) audio_->Flush();
+        if (stop_) break;
+        if ((paused_ && frame_ready_) || checkpoint_.parked()) {
           std::this_thread::sleep_for(std::chrono::milliseconds(5));
           next = Clock::now();
           continue;
@@ -909,6 +942,7 @@ class Session::Impl {
       error_ = failure.what();
     }
     lan_ready_ = false;
+    checkpoint_.Stop();
     if (lan_) lan_->Close();
     if (loaded) unload();
     const bool lan_detached = !lan_ || lan_->Detach();
@@ -935,6 +969,7 @@ class Session::Impl {
   std::unique_ptr<Video> video_;
   std::unique_ptr<Audio> audio_;
   std::unique_ptr<Ps2VirtualLan> lan_;
+  ps1_checkpoint::Mailbox checkpoint_;
   std::atomic<bool> lan_ready_{false};
   HardwareCallbacks hardware_callbacks_{};
   DiskControlExtCallbacks disk_callbacks_{};
@@ -987,6 +1022,12 @@ bool Session::ChangeDisc(unsigned index) { return impl_->ChangeDisc(index); }
 void Session::SetInput(uint16_t buttons, const std::array<int16_t, 4>& axes) { impl_->SetInput(buttons, axes); }
 std::optional<LanFrames> Session::ExchangeLan(const LanFrames& input) { return impl_->ExchangeLan(input); }
 bool Session::ClearLanFrames() { return impl_->ClearLanFrames(); }
+std::optional<int64_t> Session::RequestOrdinaryCheckpoint(int64_t source, const ps1_checkpoint::Digest& digest, bool park) {
+  return impl_->RequestOrdinaryCheckpoint(source, digest, park);
+}
+std::optional<int64_t> Session::RequestOrdinaryResume(int64_t source) { return impl_->RequestOrdinaryResume(source); }
+ps1_checkpoint::Mailbox::Reply Session::TakeCheckpoint(int64_t ticket) { return impl_->TakeCheckpoint(ticket); }
+void Session::CancelCheckpoint(int64_t ticket) { impl_->CancelCheckpoint(ticket); }
 bool Session::SetOption(const std::string& key, const std::string& value) { return impl_->SetOption(key, value); }
 bool Session::SetTuningOptions(const Options& expected, const Options& values) {
   return impl_->SetTuningOptions(expected, values);

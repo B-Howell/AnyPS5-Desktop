@@ -107,6 +107,9 @@ FlValue* EncodeStatus(const SessionStatus& status) {
   fl_value_set_string_take(result, "frameHeight", fl_value_new_int(status.frame_height));
   fl_value_set_string_take(result, "resolutionError", fl_value_new_string(status.resolution_error.c_str()));
   fl_value_set_string_take(result, "graphicsPending", fl_value_new_bool(status.graphics_pending));
+  if (status.checkpoint_source > 0)
+    fl_value_set_string_take(result, "localBlankCardCheckpoint", fl_value_new_int(status.checkpoint_source));
+  fl_value_set_string_take(result, "ordinaryCheckpointParked", fl_value_new_bool(status.checkpoint_parked));
   fl_value_set_string_take(result, "progressLabel",
                            status.progress_label ? fl_value_new_string(status.progress_label->c_str())
                                                  : fl_value_new_null());
@@ -245,6 +248,28 @@ class RetroCoreHostLinux::Impl {
     } else if (method == "input") {
       SetInput(*session_, args);
       Success(call);
+    } else if (method == "ps1LocalCheckpointExport" || method == "ps1LocalCheckpointPark" ||
+               method == "ps1LocalCheckpointResume") {
+      const auto source = linux_channel::ReadCheckpointSource(args, fl_texture_get_id(FL_TEXTURE(texture_)));
+      if (!source) { Success(call); return; }
+      const auto ticket = method == "ps1LocalCheckpointResume" ? session_->RequestOrdinaryResume(*source) :
+          session_->RequestOrdinaryCheckpoint(*source, linux_channel::ReadCheckpointDigest(args),
+                                              method == "ps1LocalCheckpointPark");
+      Success(call, ticket ? fl_value_new_int(*ticket) : nullptr);
+    } else if (method == "ps1CheckpointResult" || method == "ps1CheckpointCancel") {
+      const auto ticket = args && fl_value_get_type(args) == FL_VALUE_TYPE_INT ? fl_value_get_int(args) : 0;
+      if (method == "ps1CheckpointCancel") { session_->CancelCheckpoint(ticket); Success(call); return; }
+      auto reply = session_->TakeCheckpoint(ticket);
+      if (const auto* completed = std::get_if<bool>(&reply)) {
+        Success(call, fl_value_new_bool(*completed));
+      } else if (auto* snapshot = std::get_if<ps1_checkpoint::Snapshot>(&reply)) {
+        auto* result = fl_value_new_map();
+        fl_value_set_string_take(result, "frame", fl_value_new_int(snapshot->frame));
+        fl_value_set_string_take(result, "state", fl_value_new_uint8_list(snapshot->state.data(), snapshot->state.size()));
+        Success(call, result);
+      } else {
+        Success(call);
+      }
     } else if (method == "ps2LanReset") {
       const bool texture_matches = args && fl_value_get_type(args) == FL_VALUE_TYPE_INT &&
           fl_value_get_int(args) == fl_texture_get_id(FL_TEXTURE(texture_));

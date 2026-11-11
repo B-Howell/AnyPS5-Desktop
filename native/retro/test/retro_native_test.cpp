@@ -29,6 +29,8 @@ void CheckLibrary(const std::filesystem::path& path) {
     missing_symbol = std::string_view(error.what()).find("retro_unavailable") != std::string_view::npos;
   }
   Check(missing_symbol, "A missing export must fail with its name");
+  Check(library.Get<void (*)()>("retro_unavailable", false) == nullptr,
+        "An absent optional hook did not return null");
 
   bool missing_library = false;
   try {

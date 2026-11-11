@@ -203,6 +203,53 @@ title-specific production fallback. The prior assertion was reproduced failing
 locally, and the corrected focused test passes. This test-only correction does
 not resolve the separate macOS golden differences.
 
+## PS1 checkpoint worker port
+
+The shared [checkpoint component](../native/retro/ps1_checkpoint.h) owns bounded
+public exports, private ordinary-game recovery and a single-request mailbox.
+The [Windows host](../windows/runner/retro_core_host.cpp) now uses its capture routine too. Public handoff exports use
+the core's blank-card exporter; private recovery stays in local memory and is
+never included in the public snapshot. Failed private backup cannot park the
+game. Failed restore retains recovery for retry. Cancellation during a core
+export and stopping the owner discard late results instead of parking a closed
+game. Request and source identities are monotonic and do not wrap.
+
+The common session resolves optional private hooks without requiring stock
+offline cores to provide them. Requests run only on the emulation worker, at a
+frame boundary, including while the Quick Menu has paused ordinary play. A park
+freezes execution and configuration/disc changes until resume or cancellation.
+Resume refreshes the core's memory-card pointer and flushes stale audio. The
+Linux channel exposes ordinary export/park/resume and result/cancel methods,
+with the same owned-session guard as other commands and strict source, texture
+and 32-byte digest parsing.
+
+The [checkpoint unit test](../native/retro/test/ps1_checkpoint_test.cpp) covers
+backup/restore failure, bounded frames, cancellation, concurrent export teardown
+and retry. The [native session test](../native/retro/test/retro_ps1_checkpoint_test.cpp)
+parks a multi-disc fake PS1 game, checks that it stops stepping, rejects queued
+configuration/disc changes, resumes without reopening and verifies its saved
+private memory card. Fixture callbacks also detect calls outside the core worker.
+These are generic contracts, not CTR-specific behavior.
+The same native test also boots a plain PS1 fixture without private exports and
+verifies that offline play remains available without advertising handoff.
+
+Independent review identified two transition races. The session now rejects
+capture while a disc callback is already executing, not just while its request
+is queued. It also rechecks stop after checkpoint service before executing the
+next game tick. Both races were reproduced with blocked fake-core callbacks
+before their fixes. The six shared native suites pass on Ubuntu 22.04 after
+those corrections; the real Flutter Linux channel/host/device compile and value
+test also pass. These tests do not use a visible display or a real game's save.
+Windows / MSVC 19.29 Release passes the same six suites, including the ordinary
+core without private hooks. The Windows Vulkan library builds, and the actual
+Windows host passes an MSVC `/Zs` syntax check against the installed Flutter
+headers and the pinned Vulkan headers. This is compilation evidence rather
+than a new Windows gameplay run.
+
+Detach/reopen recovery, match import/catch-up, synchronized input, rollback and
+presentation are still required before exposing Linux PS1 online play. This
+ordinary checkpoint stage alone does not complete an invite or online session.
+
 Local source, builds, temporary files and compiler caches remain on D:.
 Native builds use `nice -n 19 ionice -c3` and at most three jobs. Tests use fake
 video/audio backends and do not control the physical monitor. Flutter 3.47.1

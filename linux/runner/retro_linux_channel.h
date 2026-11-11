@@ -4,6 +4,7 @@
 #include <flutter_linux/flutter_linux.h>
 
 #include <cstdint>
+#include <algorithm>
 #include <optional>
 #include <stdexcept>
 
@@ -21,6 +22,23 @@ inline std::optional<FlValue*> OwnedArguments(FlValue* args, int64_t active_sess
   if (!owner || fl_value_get_type(owner) != FL_VALUE_TYPE_INT || active_session <= 0 ||
       fl_value_get_int(owner) != active_session) return std::nullopt;
   return Field(args, "value");
+}
+
+inline std::optional<int64_t> ReadCheckpointSource(FlValue* args, int64_t texture_id) {
+  auto* texture = Field(args, "texture");
+  auto* source = Field(args, "source");
+  if (!texture || fl_value_get_type(texture) != FL_VALUE_TYPE_INT || fl_value_get_int(texture) != texture_id ||
+      !source || fl_value_get_type(source) != FL_VALUE_TYPE_INT || fl_value_get_int(source) <= 0) return std::nullopt;
+  return fl_value_get_int(source);
+}
+
+inline ps1_checkpoint::Digest ReadCheckpointDigest(FlValue* args) {
+  auto* digest = Field(args, "discHash");
+  if (!digest || fl_value_get_type(digest) != FL_VALUE_TYPE_UINT8_LIST || fl_value_get_length(digest) != 32)
+    throw std::runtime_error("Expected a 32-byte verified disc digest");
+  ps1_checkpoint::Digest result;
+  std::copy_n(fl_value_get_uint8_list(digest), result.size(), result.begin());
+  return result;
 }
 
 inline void ValidateOnlineStart(FlValue* args) {

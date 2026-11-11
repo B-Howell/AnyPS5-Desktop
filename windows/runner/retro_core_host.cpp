@@ -1,5 +1,6 @@
 #include "retro_core_host.h"
 #include "../../native/retro/ps1_netplay_timeline.h"
+#include "../../native/retro/ps1_checkpoint.h"
 #include "../../native/retro/ps2_virtual_lan.h"
 #include "ps3_package_batch.h"
 #include "retro_vulkan_video.h"
@@ -180,9 +181,9 @@ struct D3D11Interface {
 constexpr int kD3D11 = 7;
 constexpr char kPs3Resolution[] = "rpcs3_resolution_scale";
 constexpr unsigned kMaxFrameSize = 4096;
-constexpr size_t kMaxPs1Checkpoint = 12 * 1024 * 1024;
+constexpr size_t kMaxPs1Checkpoint = anyps5::retro::ps1_checkpoint::kMaximumBytes;
 constexpr size_t kMaxPs1AudioSamplesPerFrame = 8192;
-constexpr size_t kPs1CheckpointPrefix = 40;
+constexpr size_t kPs1CheckpointPrefix = anyps5::retro::ps1_checkpoint::kPrefixBytes;
 constexpr uint32_t kPs1CatchupHistory = 1024;
 constexpr uint32_t kPs1CatchupBatch = 120;
 using Ps1DiscHash = std::array<uint8_t, 32>;
@@ -1836,21 +1837,13 @@ class RetroCoreSession {
         std::lock_guard<std::mutex> lock(netplay_mutex_);
         frame = StagingLocal() ? local_frame_ : netplay_->frame();
       }
-      CheckpointBytes bytes(capacity);
-      const auto used = frame <= ps1_netplay::Timeline::kMaxFrame
-                            ? save(bytes.data(), bytes.size(), work->digest.data())
-                            : 0;
-      if (used && used <= bytes.size()) {
-        if (work->action == CheckpointAction::kParkOrdinary) {
-          recovery.resize(capacity);
-          const auto private_size = save_private(recovery.data(), recovery.size(), work->digest.data());
-          recovery.resize(private_size <= recovery.size() ? private_size : 0);
-        }
-        if (work->action != CheckpointAction::kParkOrdinary || !recovery.empty()) {
-          bytes.resize(used);
-          result = Value(Map{{Value("frame"), Value(frame)},
-                             {Value("state"), Value(std::move(bytes))}});
-        }
+      auto captured = anyps5::retro::ps1_checkpoint::CaptureState(
+          save, save_private, capacity, work->digest, static_cast<uint64_t>(frame),
+          work->action == CheckpointAction::kParkOrdinary);
+      if (captured) {
+        recovery = std::move(captured->private_state);
+        result = Value(Map{{Value("frame"), Value(frame)},
+                           {Value("state"), Value(std::move(captured->snapshot.state))}});
       }
     } else if (!work->restore.empty()) {
       const bool imported = load(work->restore.data(), work->restore.size(), work->digest.data());

@@ -50,6 +50,17 @@ int main() {
     fl_value_set_string_take(request, "frames", fl_value_new_null());
     MustReject([&] { ReadLanFrames(request, 123); });
 
+    fl_value_set_string_take(request, "source", fl_value_new_int(9));
+    Check(ReadCheckpointSource(request, 123) == 9 && !ReadCheckpointSource(request, 124),
+          "Checkpoint source ignored surface ownership");
+    fl_value_set_string_take(request, "source", fl_value_new_int(0));
+    Check(!ReadCheckpointSource(request, 123), "Invalid checkpoint source was accepted");
+    MustReject([&] { ReadCheckpointDigest(request); });
+    fl_value_set_string_take(request, "discHash", fl_value_new_uint8_list(packet.data(), 31));
+    MustReject([&] { ReadCheckpointDigest(request); });
+    fl_value_set_string_take(request, "discHash", fl_value_new_uint8_list(packet.data(), 32));
+    Check(ReadCheckpointDigest(request).front() == 42, "Checkpoint digest changed in channel decoding");
+
     g_autoptr(FlValue) offline = fl_value_new_map();
     ValidateOnlineStart(offline);
     fl_value_set_string_take(offline, "ps2LanMac", fl_value_new_uint8_list(packet.data(), 6));

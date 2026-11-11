@@ -21,6 +21,26 @@ foreach(name ps1_netplay_timeline ps2_virtual_lan)
   add_test(NAME ${name} COMMAND ${name}_test)
 endforeach()
 
+add_executable(ps1_checkpoint_test ps1_checkpoint_test.cpp)
+target_link_libraries(ps1_checkpoint_test PRIVATE anyps5_retro)
+add_test(NAME ps1_checkpoint COMMAND ps1_checkpoint_test)
+
+add_library(retro_fake_checkpoint_core SHARED fake_core.cpp)
+target_compile_definitions(retro_fake_checkpoint_core PRIVATE TEST_CHECKPOINT=1)
+set_target_properties(retro_fake_checkpoint_core PROPERTIES PREFIX "" OUTPUT_NAME "swanstation_libretro"
+  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/checkpoint"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/checkpoint"
+  ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/checkpoint")
+add_executable(retro_ps1_checkpoint_test retro_ps1_checkpoint_test.cpp)
+target_link_libraries(retro_ps1_checkpoint_test PRIVATE anyps5_retro)
+add_library(retro_fake_plain_ps1_core SHARED fake_core.cpp)
+set_target_properties(retro_fake_plain_ps1_core PROPERTIES PREFIX "" OUTPUT_NAME "swanstation_libretro"
+  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/no_checkpoint"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/no_checkpoint"
+  ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/no_checkpoint")
+add_test(NAME retro_ps1_checkpoint COMMAND retro_ps1_checkpoint_test
+  "$<TARGET_FILE:retro_fake_checkpoint_core>" "$<TARGET_FILE:retro_fake_plain_ps1_core>")
+
 add_library(retro_fake_lan_core SHARED fake_core.cpp)
 target_compile_definitions(retro_fake_lan_core PRIVATE TEST_LAN=1)
 add_library(retro_fake_no_lan_core SHARED fake_core.cpp)
