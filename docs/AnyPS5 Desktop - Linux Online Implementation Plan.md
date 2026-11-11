@@ -819,3 +819,11 @@ PS1 and PS2 preview flags in the existing wrapper. In a disposable
 Linux home it installed both archives and produced the same wrapper
 on a second run. The laptop SSH check timed out, so no remote files
 were changed and a hosted CTR session was not started.
+
+After sharing the embedded x64 capability with PS2 LAN, the focused
+Linux PS1 setup and media suites passed 17 tests with 18 platform or
+fixture skips. The active cases used the pinned SwanStation ZIP, the
+local CTR disc and BIOS. Both hosting from Game Settings and resuming
+a mixed-platform guest invite after package selection passed against
+the simulated room service. This validates the invite and setup path
+separately from the pending hosted gameplay test.
