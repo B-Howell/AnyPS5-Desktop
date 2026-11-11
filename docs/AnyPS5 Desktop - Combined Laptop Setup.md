@@ -1,6 +1,30 @@
 # AnyPS5 Desktop combined laptop setup
 
-## Source snapshot
+## Linux emulator correction
+
+The original laptop installation at `681f8a7` was incomplete: it launched the
+combined source but hid Emulator settings and lacked a Linux native emulator
+host. The corrective `codex/linux-combined-emulators` branch integrates the
+existing Linux PS1/PS2/PS3 host into the newer combined launcher. See
+[Linux embedded emulators](<AnyPS5 Desktop - Linux Embedded Emulators.md>) for
+the implementation, installation requirements and precise limits.
+
+Linux now has real managed emulator setup, host-appropriate `.so` downloads
+and validation, embedded offline play and native graphics/audio support.
+Windows online worker support remains a separate capability. Linux synchronized
+PS1, PS2 virtual-LAN and PS3 native provider integration remain unimplemented;
+the native host rejects online launch arguments rather than treating them as
+ordinary offline play. A visible settings menu is not an online readiness claim.
+
+The laptop's actual managed installation succeeded for SwanStation, LRPS2 and
+the pinned Linux RPCS3 package, and the transferred PS1 BIOS was imported.
+Regression tests first reproduced the missing menu and DLL/ELF mismatch.
+After correction, analysis and translations passed, 178 focused Dart tests
+passed with 48 Windows/private-fixture skips, and the native fake-core suite
+passed. The Linux release build also succeeded. Actual installed-game acceptance
+is recorded separately from these tests.
+
+## Original source handoff (superseded for Linux emulators)
 
 The `codex/combined-laptop-20261110` branch preserves the combined Windows
 launcher and emulator online preview for a second-machine setup. Its base is
@@ -43,14 +67,15 @@ applicable tests, and `flutter build linux --release`. Install the complete
 release bundle into a user-owned application directory and create a desktop
 entry. Preserve any existing profile and saves. Confirm the actual app opens.
 
-## Linux online blocker
+## Original Linux limitation and remaining online work
 
-The combined source currently gates managed retro to Windows x64 in
+The original `681f8a7` source gated managed retro to Windows x64 in
 [AppModel](../lib/ui/app_model.dart). The
-[managed installer](../lib/core/managed_retro.dart) selects and validates
-Windows DLLs. The [Linux runner](../linux/runner/CMakeLists.txt) does not
-compile the embedded retro host. The PS1 and PS2 online entry points require
-that host. A successful Linux launcher build alone cannot establish that it
+[managed installer](../lib/core/managed_retro.dart) selected and validated
+Windows DLLs. Its [Linux runner](../linux/runner/CMakeLists.txt) did not
+compile the embedded retro host. The correction above supplies offline Linux
+hosting; the newer online protocols still need native integration. A
+successful Linux launcher build alone cannot establish that it
 can play against the Windows peer. Keep those gates until a real Linux
 implementation exists; changing the gate alone does not supply one.
 
@@ -78,7 +103,7 @@ use isolated test state. Report installation, offline play, local paired
 tests and actual Windows-to-Linux online gameplay as distinct results.
 Only a completed two-machine test can close the laptop online-play gate.
 
-## Verification for publication
+## Original verification for publication
 
 Record the actual command results in the publication handoff. Linux build,
 laptop installation and cross-platform online gameplay have not been verified

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:anyps5_desktop/core/controllers/pad_info.dart';
 import 'package:anyps5_desktop/core/game_library.dart';
+import 'package:anyps5_desktop/core/managed_retro.dart';
 import 'package:anyps5_desktop/ui/embedded_retro_game.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,7 +17,7 @@ void main() {
     final root = await Directory.systemTemp.createTemp('ps3-offline-launch-');
     addTearDown(() => root.delete(recursive: true));
     addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
-    await File(p.join(root.path, 'rpcs3_libretro.dll')).writeAsBytes([0]);
+    await File(p.join(root.path, ManagedRetro.libraryName(RetroPlatform.ps3))).writeAsBytes([0]);
     final calls = <MethodCall>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
       calls.add(call);

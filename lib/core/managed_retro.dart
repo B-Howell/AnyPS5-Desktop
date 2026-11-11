@@ -7,14 +7,19 @@ import 'package:crypto/crypto.dart' show sha256;
 import 'package:path/path.dart' as p;
 
 import 'binary.dart';
+import 'embedded_core_host.dart';
 import 'game_library.dart';
 import 'online/ps1_netplay_media.dart';
 import 'toolkit_download.dart';
 
+export 'embedded_core_host.dart' show EmbeddedCoreHost;
+
 class ManagedRetro {
-  ManagedRetro(this.root, {this.packageDirectory, this.ps3CoreDigests, this.ps2LanCoreDigests});
+  ManagedRetro(this.root, {EmbeddedCoreHost? host, this.packageDirectory, this.ps3CoreDigests, this.ps2LanCoreDigests})
+    : host = host ?? EmbeddedCoreHost.current ?? EmbeddedCoreHost.windowsX64;
 
   final String root;
+  final EmbeddedCoreHost host;
   final String? packageDirectory;
   final String? ps3CoreDigests;
   final String? ps2LanCoreDigests;
@@ -29,12 +34,13 @@ class ManagedRetro {
   // upgrades an already installed legacy core before booting a PS3 title.
   static const _patchedPs3Archive = 'd472de683cb57aba711453e214a6da91420486a5d739e5cba2d492de300f8083';
   static const _patchedPs3Library = '874b90826fccd5eb162fbdbe2e48a970e21a09867d4167c8eee63f4b16ad6d51';
+  static const _linuxPs3Archive = '1417330424b7d0693f3e1547e639f88060dfe5ad69e91ba2c07a3b3465d1588f';
+  static const _linuxPs3Library = '1a9e839e304114e2618c7b2f4abfe0a819fb347b6a8e8cbe4f66b95c6f7043d2';
 
-  static String libraryName(RetroPlatform platform) => switch (platform) {
-    RetroPlatform.ps1 => 'swanstation_libretro.dll',
-    RetroPlatform.ps2 => 'pcsx2_libretro.dll',
-    RetroPlatform.ps3 => 'rpcs3_libretro.dll',
-  };
+  static String libraryName(RetroPlatform platform, {EmbeddedCoreHost? host}) =>
+      (host ?? EmbeddedCoreHost.current ?? EmbeddedCoreHost.windowsX64).libraryName(platform);
+
+  String libraryPath(RetroPlatform platform) => p.join(root, host.libraryName(platform));
 
   static String platformName(RetroPlatform platform) => switch (platform) {
     RetroPlatform.ps1 => 'PS1',
@@ -42,7 +48,9 @@ class ManagedRetro {
     RetroPlatform.ps3 => 'PS3',
   };
 
-  bool isInstalled(RetroPlatform platform) => _windowsX64Library(File(p.join(root, libraryName(platform))));
+  bool isInstalled(RetroPlatform platform) => _hostLibrary(File(libraryPath(platform)));
+
+  bool _hostLibrary(File file) => host == EmbeddedCoreHost.linuxX64 ? _linuxX64Library(file) : _windowsX64Library(file);
 
   Future<String?> verifiedPs1NetplayBios(String? offlinePath) async {
     final home = Directory(root);
@@ -98,6 +106,9 @@ class ManagedRetro {
 
   /// Checkpoint handoff has its own core. Never upgrade the offline PS1 DLL.
   Future<String> ensurePs1NetplayCore({Ps1NetplayExecution execution = Ps1NetplayExecution.standard}) async {
+    if (host != EmbeddedCoreHost.windowsX64) {
+      throw const FormatException('PS1 online play requires the Windows native match worker.');
+    }
     final (directory, archiveName, archivePin, corePin) = switch (execution) {
       Ps1NetplayExecution.standard || Ps1NetplayExecution.standardAnalog => (
         'PS1-Netplay',
@@ -121,7 +132,7 @@ class ManagedRetro {
     final home = await Directory(root).create(recursive: true);
     final resolvedHome = await home.resolveSymbolicLinks();
     final target = Directory(p.join(resolvedHome, directory));
-    final name = libraryName(RetroPlatform.ps1);
+    final name = host.libraryName(RetroPlatform.ps1);
     final installed = File(p.join(target.path, name));
     final destinations = [
       installed,
@@ -185,10 +196,10 @@ class ManagedRetro {
 
   /// Imports are enabled only for the explicitly configured reviewer package.
   Future<String?> verifiedPs3UpdateCore() async {
-    if (ps3CoreDigests == null) return null;
+    if (host != EmbeddedCoreHost.windowsX64 || ps3CoreDigests == null) return null;
     try {
       final (_, digest) = _coreDigests(ps3CoreDigests, (_patchedPs3Archive, _patchedPs3Library), 'PS3');
-      final expected = p.join(await Directory(root).resolveSymbolicLinks(), libraryName(RetroPlatform.ps3));
+      final expected = p.join(await Directory(root).resolveSymbolicLinks(), host.libraryName(RetroPlatform.ps3));
       final file = File(expected);
       if (!p.equals(await file.resolveSymbolicLinks(), expected) ||
           !_windowsX64Library(file, requiredExport: 'retro_anyps5_ps3_network_policy_v1')) {
@@ -202,7 +213,8 @@ class ManagedRetro {
     }
   }
 
-  bool get supportsPs2Lan => _ps2LanLibrary(File(p.join(root, libraryName(RetroPlatform.ps2))));
+  bool get supportsPs2Lan =>
+      host == EmbeddedCoreHost.windowsX64 && _ps2LanLibrary(File(p.join(root, host.libraryName(RetroPlatform.ps2))));
 
   static bool _ps2LanLibrary(File library) => _windowsX64Library(library, requiredExport: 'retro_anyps5_dev9_bind_v1');
 
@@ -211,12 +223,13 @@ class ManagedRetro {
   String? get configuredPs2LanPackage {
     final directory = packageDirectory;
     if (directory == null || !p.isAbsolute(directory)) return null;
-    final archive = File(p.join(directory, '${libraryName(RetroPlatform.ps2)}.zip'));
+    final archive = File(p.join(directory, '${host.libraryName(RetroPlatform.ps2)}.zip'));
     return archive.existsSync() ? archive.path : null;
   }
 
   String? get installedPs2LanHome {
-    final library = File(p.join(_ps2LanHome, libraryName(RetroPlatform.ps2)));
+    if (host != EmbeddedCoreHost.windowsX64) return null;
+    final library = File(p.join(_ps2LanHome, host.libraryName(RetroPlatform.ps2)));
     final stat = library.statSync();
     if (stat.type != FileSystemEntityType.file || stat.size <= 0 || stat.size > 128 * 1024 * 1024) return null;
     try {
@@ -250,6 +263,9 @@ class ManagedRetro {
   }
 
   Future<void> installPs2Lan(String package) async {
+    if (host != EmbeddedCoreHost.windowsX64) {
+      throw const FormatException('PS2 LAN play requires the Windows native network worker.');
+    }
     final (archiveDigest, libraryDigest) = _coreDigests(ps2LanCoreDigests, (
       _patchedPs2Archive,
       _patchedPs2Library,
@@ -273,7 +289,7 @@ class ManagedRetro {
         throw const FormatException('The PS2 LAN core folder must be separate from the offline emulator.');
       }
       await _publishCore(
-        libraryName(RetroPlatform.ps2),
+        host.libraryName(RetroPlatform.ps2),
         archive.path,
         destination: destination.path,
         verify: (file) async {
@@ -282,20 +298,23 @@ class ManagedRetro {
           }
         },
       );
-      _ps2LanChecks.remove(p.absolute(p.join(_ps2LanHome, libraryName(RetroPlatform.ps2))));
+      _ps2LanChecks.remove(p.absolute(p.join(_ps2LanHome, host.libraryName(RetroPlatform.ps2))));
     } finally {
       await stage.delete(recursive: true);
     }
   }
 
   Future<void> install(RetroPlatform platform, {void Function(int, int)? progress}) async {
-    final name = libraryName(platform);
+    final name = host.libraryName(platform);
     final installed = isInstalled(platform);
     if (platform == RetroPlatform.ps3) {
-      final (archiveDigest, libraryDigest) = _coreDigests(ps3CoreDigests, (
-        _patchedPs3Archive,
-        _patchedPs3Library,
-      ), 'PS3');
+      final (archiveDigest, libraryDigest) = _coreDigests(
+        ps3CoreDigests,
+        host == EmbeddedCoreHost.linuxX64
+            ? (_linuxPs3Archive, _linuxPs3Library)
+            : (_patchedPs3Archive, _patchedPs3Library),
+        'PS3',
+      );
       if (installed && await AssetDownload.sha256Of(p.join(root, name)) == libraryDigest) return;
       final directory = packageDirectory;
       if (directory == null) {
@@ -322,7 +341,7 @@ class ManagedRetro {
       return;
     }
     if (installed) return;
-    final url = Uri.https('buildbot.libretro.com', '/nightly/windows/x86_64/latest/$name.zip');
+    final url = Uri.https('buildbot.libretro.com', '/nightly/${host.buildbotPlatform}/x86_64/latest/$name.zip');
     final (size, revision) = await _buildbotPackage(url);
     final digest = switch (revision) {
       0x356fa26d => 'b640a70f660fd0b5ca4adecad5c90281f481a46802a752b9f66e2aa2791474dc',
@@ -373,7 +392,7 @@ class ManagedRetro {
     try {
       await SafeUnpack.unpack(archive, stage.path);
       final candidate = File(p.join(stage.path, name));
-      if (!_windowsX64Library(candidate)) throw const FormatException('The download contains no Windows x64 core.');
+      if (!_hostLibrary(candidate)) throw const FormatException('The download contains no compatible x86-64 core.');
       await verify(candidate);
       await candidate.rename(p.join(directory.path, name));
     } finally {
@@ -481,6 +500,55 @@ class ManagedRetro {
     final target = File(p.join(folder.path, 'anyps5-imported.bin'));
     final staged = await File('${target.path}.part').writeAsBytes(bytes, flush: true);
     await staged.rename(target.path);
+  }
+
+  static bool _linuxX64Library(File file) {
+    try {
+      final source = file.openSync();
+      try {
+        final header = source.readSync(64);
+        if (header.length != 64 ||
+            header[0] != 0x7f ||
+            header[1] != 0x45 ||
+            header[2] != 0x4c ||
+            header[3] != 0x46 ||
+            header[4] != 2 ||
+            header[5] != 1 ||
+            header[6] != 1) {
+          return false;
+        }
+        final fields = ByteData.sublistView(header);
+        if (fields.getUint16(16, Endian.little) != 3 ||
+            fields.getUint16(18, Endian.little) != 62 ||
+            fields.getUint32(20, Endian.little) != 1 ||
+            fields.getUint16(52, Endian.little) != 64 ||
+            fields.getUint16(54, Endian.little) != 56) {
+          return false;
+        }
+        final offset = fields.getUint64(32, Endian.little);
+        final count = fields.getUint16(56, Endian.little);
+        final length = source.lengthSync();
+        if (offset < 64 || count == 0 || count > 1024 || offset + count * 56 > length) return false;
+        var executable = false;
+        source.setPositionSync(offset);
+        for (var index = 0; index < count; index++) {
+          final program = source.readSync(56);
+          if (program.length != 56) return false;
+          final entry = ByteData.sublistView(program);
+          if (entry.getUint32(0, Endian.little) != 1) continue;
+          final fileOffset = entry.getUint64(8, Endian.little);
+          final fileSize = entry.getUint64(32, Endian.little);
+          final memorySize = entry.getUint64(40, Endian.little);
+          if (fileOffset < 0 || fileSize < 0 || memorySize < fileSize || fileOffset + fileSize > length) return false;
+          executable |= entry.getUint32(4, Endian.little) & 1 != 0 && fileSize > 0;
+        }
+        return executable;
+      } finally {
+        source.closeSync();
+      }
+    } on FileSystemException {
+      return false;
+    }
   }
 
   static bool _windowsX64Library(File file, {String? requiredExport}) {

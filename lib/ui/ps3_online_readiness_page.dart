@@ -66,6 +66,10 @@ extension Ps3OnlineReadinessPage on AppModel {
     Future<void> Function(Ps3OnlineProfile)? onPartyReady,
     EmbeddedRetroGame? repairSession,
   }) {
+    if (!embeddedOnlineAvailable) {
+      show(T.text('ps3PartyCompatibility'));
+      return;
+    }
     final disc = game.retro!;
     final managed = _managedRetro;
     final releases = services.ps3OnlineReleases
@@ -288,13 +292,19 @@ extension Ps3OnlineReadinessPage on AppModel {
     Ps3OnlineProfile profile, {
     required bool Function() canBoot,
     Object? party,
-  }) => _playRetro(
-    game,
-    game.retro!,
-    onlineProfile: profile,
-    ps3Party: party,
-    canBoot: () => !_disposed && !_quitting && canBoot(),
-  );
+  }) async {
+    if (!embeddedOnlineAvailable) {
+      show(T.text('ps3PartyCompatibility'));
+      return;
+    }
+    await _playRetro(
+      game,
+      game.retro!,
+      onlineProfile: profile,
+      ps3Party: party,
+      canBoot: () => !_disposed && !_quitting && canBoot(),
+    );
+  }
 }
 
 PanelCategory _ps3OnlineReadinessPanel(

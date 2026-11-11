@@ -2,6 +2,7 @@ part of 'app_model.dart';
 
 extension _Ps3UpdatePanel on AppModel {
   PanelRow? _ps3UpdateRow(Ps3OnlineReadiness report) {
+    if (!embeddedOnlineAvailable) return null;
     final chain = Ps3UpdateChain.forDisc(report.titleId, report.discVersion);
     final managed = _managedRetro;
     if (chain == null || managed.ps3CoreDigests == null || services.pickFolder == null) return null;

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:anyps5_desktop/core/controllers/pad_info.dart';
 import 'package:anyps5_desktop/core/game_library.dart';
+import 'package:anyps5_desktop/core/managed_retro.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/embedded_retro_game.dart';
@@ -19,7 +20,7 @@ void main() {
     final fixture = makeFixture();
     final temp = fixture.temp.path;
     final disc = File(p.join(temp, 'one.cue'))..createSync();
-    File(p.join(temp, 'swanstation_libretro.dll')).createSync();
+    File(p.join(temp, ManagedRetro.libraryName(RetroPlatform.ps1))).createSync();
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     final inputs = <List<dynamic>>[];
     var ended = false;
@@ -70,7 +71,7 @@ void main() {
     final fixture = makeFixture(environment: env);
     final model = fixture.model;
     env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
-    File(p.join(fixture.temp.path, 'swanstation_libretro.dll')).createSync();
+    File(p.join(fixture.temp.path, ManagedRetro.libraryName(RetroPlatform.ps1))).createSync();
     for (final name in ['First', 'Second']) {
       final folder = Directory(p.join(model.root!, name))..createSync();
       File(p.join(folder.path, 'one.cue')).createSync();

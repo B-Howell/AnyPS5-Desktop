@@ -33,7 +33,7 @@ final class _Ps2LanAttempt {
 }
 
 extension TogetherPs2Lan on TogetherModel {
-  bool get _ps2LanEnabled => environment['ANYPS5_PS2_LAN'] == '1' && app.managedRetroAvailable;
+  bool get _ps2LanEnabled => environment['ANYPS5_PS2_LAN'] == '1' && app.embeddedOnlineAvailable;
 
   bool get _ps2LaunchAvailable =>
       app.running == null && app.starting == null && !app.stopping && app.managedSetupConsole == null;

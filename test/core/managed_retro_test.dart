@@ -12,6 +12,19 @@ import 'package:path/path.dart' as p;
 
 import '../support/fixtures.dart' show ps2LanFixtureDll;
 
+ManagedRetro _windowsManagedRetro(
+  String root, {
+  String? packageDirectory,
+  String? ps3CoreDigests,
+  String? ps2LanCoreDigests,
+}) => ManagedRetro(
+  root,
+  host: EmbeddedCoreHost.windowsX64,
+  packageDirectory: packageDirectory,
+  ps3CoreDigests: ps3CoreDigests,
+  ps2LanCoreDigests: ps2LanCoreDigests,
+);
+
 void main() {
   test('PS1 online BIOS validation leaves offline and previously imported files intact', () async {
     final root = Directory.systemTemp.createTempSync('anyps5-managed-');
@@ -23,7 +36,7 @@ void main() {
       ..createSync(recursive: true)
       ..writeAsBytesSync([2]);
     final invalid = File(p.join(root.path, 'wrong.bin'))..writeAsBytesSync(Uint8List(512 * 1024)..[0] = 3);
-    final managed = ManagedRetro(root.path);
+    final managed = _windowsManagedRetro(root.path);
 
     expect(await managed.verifiedPs1NetplayBios(offline.path), isNull);
     await expectLater(managed.importPs1NetplayBios(invalid.path), throwsFormatException);
@@ -38,7 +51,7 @@ void main() {
     final packages = Directory(p.join(root.path, 'packages'))..createSync();
     File(p.join(packages.path, 'swanstation-netplay.zip')).writeAsBytesSync([1, 2, 3, 4]);
     File(p.join(packages.path, 'swanstation-netplay-ordinary.zip')).writeAsBytesSync([4, 3, 2, 1]);
-    final managed = ManagedRetro(root.path, packageDirectory: packages.path);
+    final managed = _windowsManagedRetro(root.path, packageDirectory: packages.path);
 
     await expectLater(managed.ensurePs1NetplayCore(), throwsFormatException);
     await expectLater(
@@ -54,9 +67,9 @@ void main() {
   test('installs and repairs both verified rollback cores without touching the offline core', () async {
     final root = await Directory.systemTemp.createTemp('anyps5-rollback-core-');
     addTearDown(() => root.delete(recursive: true));
-    final name = ManagedRetro.libraryName(RetroPlatform.ps1);
+    final name = EmbeddedCoreHost.windowsX64.libraryName(RetroPlatform.ps1);
     final offline = File(p.join(root.path, name))..writeAsBytesSync([1]);
-    final managed = ManagedRetro(root.path, packageDirectory: rollbackPackages);
+    final managed = _windowsManagedRetro(root.path, packageDirectory: rollbackPackages);
     const execution = Ps1NetplayExecution.rollbackPreview;
     final primary = await managed.ensurePs1NetplayCore(execution: execution);
     expect(p.basename(p.dirname(primary)), 'PS1-Netplay-Rollback');
@@ -65,7 +78,7 @@ void main() {
     for (final path in [primary, spare]) {
       expect(await AssetDownload.sha256Of(path), Ps1NetplayMedia.rollbackCorePin);
     }
-    final installedOnly = ManagedRetro(root.path);
+    final installedOnly = _windowsManagedRetro(root.path);
     expect(await installedOnly.ensurePs1NetplayCore(execution: execution), primary);
     await File(spare).writeAsBytes([2]);
     await expectLater(installedOnly.ensurePs1NetplayCore(execution: execution), throwsFormatException);
@@ -79,16 +92,16 @@ void main() {
     final [String packages, String disc, String bios] = jsonDecode(await File(ordinaryFixture!).readAsString()) as List;
     final root = await Directory.systemTemp.createTemp('anyps5-ordinary-core-');
     addTearDown(() => root.delete(recursive: true));
-    final name = ManagedRetro.libraryName(RetroPlatform.ps1);
+    final name = EmbeddedCoreHost.windowsX64.libraryName(RetroPlatform.ps1);
     final offline = File(p.join(root.path, name))..writeAsBytesSync([1]);
     final staged = File(p.join(root.path, 'PS1-Netplay', name))
       ..createSync(recursive: true)
       ..writeAsBytesSync([2]);
     const execution = Ps1NetplayExecution.ordinaryHandoff;
-    final managed = ManagedRetro(root.path, packageDirectory: packages);
+    final managed = _windowsManagedRetro(root.path, packageDirectory: packages);
     final installed = await managed.ensurePs1NetplayCore(execution: execution);
     expect(p.basename(p.dirname(installed)), 'PS1-Netplay-Ordinary');
-    expect(await ManagedRetro(root.path).ensurePs1NetplayCore(execution: execution), installed);
+    expect(await _windowsManagedRetro(root.path).ensurePs1NetplayCore(execution: execution), installed);
     final profile = Ps1NetplayProfile.tryRead('SCUS94426')!;
     final media = await Ps1NetplayMedia.verify(
       profile: profile,
@@ -113,8 +126,8 @@ void main() {
   test('PS2 LAN verifies the DEV9 export and installs separately from the offline core', () async {
     final root = Directory.systemTemp.createTempSync('anyps5-managed-');
     addTearDown(() => root.deleteSync(recursive: true));
-    final managed = ManagedRetro(root.path);
-    final file = File(p.join(root.path, ManagedRetro.libraryName(RetroPlatform.ps2)));
+    final managed = _windowsManagedRetro(root.path);
+    final file = File(p.join(root.path, EmbeddedCoreHost.windowsX64.libraryName(RetroPlatform.ps2)));
     const pe = 64;
     const optional = pe + 24;
     const section = optional + 120;
@@ -143,7 +156,7 @@ void main() {
     file.writeAsBytesSync(bytes);
     expect(managed.supportsPs2Lan, isFalse, reason: 'A forwarded export is not a DEV9 implementation.');
     final offline = file.readAsBytesSync();
-    final preview = ManagedRetro(root.path, ps2LanCoreDigests: '$archiveDigest:$libraryDigest');
+    final preview = _windowsManagedRetro(root.path, ps2LanCoreDigests: '$archiveDigest:$libraryDigest');
     expect(preview.installedPs2LanHome, isNull);
     await expectLater(managed.installPs2Lan(package.path), throwsFormatException);
     expect(preview.installedPs2LanHome, isNull);
@@ -163,11 +176,11 @@ void main() {
       );
     final wrongArchiveDigest = await AssetDownload.sha256Of(wrongCore.path);
     final wrongLibraryDigest = await AssetDownload.sha256Of(file.path);
-    final wrong = ManagedRetro(root.path, ps2LanCoreDigests: '$wrongArchiveDigest:$wrongLibraryDigest');
+    final wrong = _windowsManagedRetro(root.path, ps2LanCoreDigests: '$wrongArchiveDigest:$wrongLibraryDigest');
     await expectLater(wrong.installPs2Lan(wrongCore.path), throwsFormatException);
     expect(await AssetDownload.sha256Of(installed.path), libraryDigest);
     await installed.writeAsBytes([0], mode: FileMode.append);
-    expect(ManagedRetro(p.dirname(installed.path)).supportsPs2Lan, isTrue);
+    expect(_windowsManagedRetro(p.dirname(installed.path)).supportsPs2Lan, isTrue);
     expect(
       preview.installedPs2LanHome,
       isNull,
@@ -181,11 +194,11 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('anyps5-managed-');
     addTearDown(() => temp.deleteSync(recursive: true));
     final packages = Directory(p.join(temp.path, 'packages'))..createSync();
-    final managed = ManagedRetro(p.join(temp.path, 'emulators'), packageDirectory: packages.path);
+    final managed = _windowsManagedRetro(p.join(temp.path, 'emulators'), packageDirectory: packages.path);
 
     expect(managed.isInstalled(RetroPlatform.ps3), isFalse);
     await expectLater(
-      ManagedRetro(managed.root).install(RetroPlatform.ps3),
+      _windowsManagedRetro(managed.root).install(RetroPlatform.ps3),
       throwsA(isA<FormatException>().having((error) => error.message, 'message', contains('verified RPCS3 package'))),
     );
     await expectLater(managed.install(RetroPlatform.ps3), throwsFormatException);
@@ -197,14 +210,15 @@ void main() {
   test('an existing PS3 DLL still needs a matching digest', () async {
     final root = Directory.systemTemp.createTempSync('anyps5-managed-');
     addTearDown(() => root.deleteSync(recursive: true));
-    final managed = ManagedRetro(root.path);
+    final managed = _windowsManagedRetro(root.path);
     final dll = ByteData(88)
       ..setUint16(0, 0x5a4d, Endian.little)
       ..setUint32(60, 64, Endian.little)
       ..setUint32(64, 0x4550, Endian.little)
       ..setUint16(68, 0x8664, Endian.little)
       ..setUint16(86, 0x2000, Endian.little);
-    File(p.join(root.path, ManagedRetro.libraryName(RetroPlatform.ps3))).writeAsBytesSync(dll.buffer.asUint8List());
+    File(p.join(root.path, EmbeddedCoreHost.windowsX64.libraryName(RetroPlatform.ps3)))
+        .writeAsBytesSync(dll.buffer.asUint8List());
 
     expect(managed.isInstalled(RetroPlatform.ps3), isTrue);
     await expectLater(managed.install(RetroPlatform.ps3), throwsFormatException);
@@ -213,7 +227,7 @@ void main() {
   test('a clean profile can install a locally built PS3 package using explicit digests', () async {
     final root = Directory.systemTemp.createTempSync('anyps5-managed-');
     addTearDown(() => root.deleteSync(recursive: true));
-    final name = ManagedRetro.libraryName(RetroPlatform.ps3);
+    final name = EmbeddedCoreHost.windowsX64.libraryName(RetroPlatform.ps3);
     final dll = ByteData(88)
       ..setUint16(0, 0x5a4d, Endian.little)
       ..setUint32(60, 64, Endian.little)
@@ -229,7 +243,7 @@ void main() {
     final libraryDigest = await AssetDownload.sha256Of(original.path);
     final emulatorRoot = p.join(root.path, 'emulators');
     ManagedRetro configured(String digests) =>
-        ManagedRetro(emulatorRoot, packageDirectory: packages.path, ps3CoreDigests: digests);
+        _windowsManagedRetro(emulatorRoot, packageDirectory: packages.path, ps3CoreDigests: digests);
 
     await expectLater(configured('malformed').install(RetroPlatform.ps3), throwsFormatException);
     await expectLater(configured('$libraryDigest:$libraryDigest').install(RetroPlatform.ps3), throwsFormatException);
@@ -245,7 +259,7 @@ void main() {
   test('a verified PS3 core update replaces only the core and is repeat safe', () async {
     final root = Directory.systemTemp.createTempSync('anyps5-managed-');
     addTearDown(() => root.deleteSync(recursive: true));
-    final name = ManagedRetro.libraryName(RetroPlatform.ps3);
+    final name = EmbeddedCoreHost.windowsX64.libraryName(RetroPlatform.ps3);
     Uint8List dllBytes(int marker) {
       final dll = ByteData(88)
         ..setUint16(0, 0x5a4d, Endian.little)
@@ -273,7 +287,7 @@ void main() {
     final updatedCandidate = File(p.join(root.path, 'updated.dll'))..writeAsBytesSync(updated);
     final archiveDigest = await AssetDownload.sha256Of(package.path);
     // A mismatched DLL pin must fail before replacing the installed core.
-    final rejected = ManagedRetro(
+    final rejected = _windowsManagedRetro(
       root.path,
       packageDirectory: packages.path,
       ps3CoreDigests: '$archiveDigest:${'0' * 64}',
@@ -283,7 +297,7 @@ void main() {
 
     final updatedDigests =
         '${await AssetDownload.sha256Of(package.path)}:${await AssetDownload.sha256Of(updatedCandidate.path)}';
-    final managed = ManagedRetro(root.path, packageDirectory: packages.path, ps3CoreDigests: updatedDigests);
+    final managed = _windowsManagedRetro(root.path, packageDirectory: packages.path, ps3CoreDigests: updatedDigests);
     await managed.install(RetroPlatform.ps3);
     expect(await core.readAsBytes(), updated);
     expect(await firmware.readAsString(), 'firmware');
@@ -298,7 +312,7 @@ void main() {
   test('a rejected BIOS replacement preserves the private copy', () async {
     final temp = Directory.systemTemp.createTempSync('anyps5-managed-');
     addTearDown(() => temp.deleteSync(recursive: true));
-    final managed = ManagedRetro(p.join(temp.path, 'emulators'));
+    final managed = _windowsManagedRetro(p.join(temp.path, 'emulators'));
     final source = File(p.join(temp.path, 'source.rom'));
     final bytes = Uint8List(512 * 1024)..[0] = 1;
     await source.writeAsBytes(bytes);

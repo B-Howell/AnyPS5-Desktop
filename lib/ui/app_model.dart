@@ -3954,11 +3954,14 @@ class AppModel extends ChangeNotifier {
 
   ManagedRetro get _managedRetro => ManagedRetro(
     p.join(p.dirname(paths.toolkits), 'Emulators'),
+    host: system == HostSystem.windows ? EmbeddedCoreHost.windowsX64 : EmbeddedCoreHost.linuxX64,
     packageDirectory: (services.environment ?? Platform.environment)['ANYPS5_MANAGED_CORE_PACKAGES'],
     ps3CoreDigests: (services.environment ?? Platform.environment)['ANYPS5_PS3_CORE_DIGESTS'],
     ps2LanCoreDigests: (services.environment ?? Platform.environment)['ANYPS5_PS2_LAN_CORE_DIGESTS'],
   );
-  bool get managedRetroAvailable => system == HostSystem.windows && Abi.current() == Abi.windowsX64;
+  bool get managedRetroAvailable =>
+      embeddedOnlineAvailable || (system == HostSystem.linux && Abi.current() == Abi.linuxX64);
+  bool get embeddedOnlineAvailable => system == HostSystem.windows && Abi.current() == Abi.windowsX64;
   String? get retroCoreOverride => (services.environment ?? Platform.environment)['ANYPS5_LIBRETRO_HOME'];
 
   ({bool installed, bool systemReady}) managedRetroStatus(RetroPlatform platform) {
@@ -4148,7 +4151,9 @@ class AppModel extends ChangeNotifier {
     required bool Function() canBoot,
   }) async {
     final disc = game.retro;
-    if (disc == null || !managedRetroAvailable) throw StateError('PS1 netplay requires embedded play on Windows x64.');
+    if (disc == null || !embeddedOnlineAvailable) {
+      throw StateError('PS1 netplay requires embedded play on Windows x64.');
+    }
     final booted = Completer<EmbeddedRetroGame?>();
     closeOverlay();
     final launch = _playRetro(game, disc, booted: booted, canBoot: canBoot, netplay: (media: media, seat: seat));
@@ -4209,7 +4214,7 @@ class AppModel extends ChangeNotifier {
   }) async {
     final disc = game.retro;
     final bios = ps2LanBiosPath;
-    if (!managedRetroAvailable || disc?.platform != RetroPlatform.ps2 || bios == null) {
+    if (!embeddedOnlineAvailable || disc?.platform != RetroPlatform.ps2 || bios == null) {
       throw StateError('PS2 LAN requires the embedded emulator and a PS2 BIOS.');
     }
     if (!canBoot()) throw StateError('The PS2 LAN room closed before the game could start.');
@@ -4395,6 +4400,10 @@ class AppModel extends ChangeNotifier {
     Object? ps3Party,
     ({int ticket, String core, String home})? ordinaryRecovery,
   }) async {
+    if (!embeddedOnlineAvailable &&
+        (netplay != null || ps2Lan != null || onlineProfile != null || ordinaryRecovery != null)) {
+      throw StateError('This online mode requires the Windows native match worker.');
+    }
     if (_disposed ||
         _retroDiscLaunch != null ||
         managedSetupConsole != null ||
@@ -4523,7 +4532,8 @@ class AppModel extends ChangeNotifier {
             return;
           }
         }
-        if (disc.platform == RetroPlatform.ps1 &&
+        if (embeddedOnlineAvailable &&
+            disc.platform == RetroPlatform.ps1 &&
             (services.environment ?? Platform.environment)['ANYPS5_PS1_NETPLAY'] == '1') {
           try {
             ordinaryCore = await managed.ensurePs1NetplayCore(execution: Ps1NetplayExecution.ordinaryHandoff);
@@ -6271,7 +6281,7 @@ class AppModel extends ChangeNotifier {
               ?together.ps1NetplayDashboardLink(game, _emulatorMenu.openPage),
               ?together.ps2LanDashboardLink(game, _emulatorMenu.openPage),
               ?together.ps3PartyDashboardLink(game, _emulatorMenu.openPage),
-              if (managedRetroAvailable && game.retro?.platform == RetroPlatform.ps3) _ps3OnlineReadinessRow(game),
+              if (embeddedOnlineAvailable && game.retro?.platform == RetroPlatform.ps3) _ps3OnlineReadinessRow(game),
               if (game.retro case final RetroDisc disc)
                 PanelRow(
                   id: 'game-emulators',
@@ -7027,7 +7037,7 @@ class AppModel extends ChangeNotifier {
           updates.channelRow(),
         ],
       ),
-      if (system == HostSystem.windows) _emulatorMenu.entry,
+      if (managedRetroAvailable) _emulatorMenu.entry,
     ];
   }
 

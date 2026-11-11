@@ -31,6 +31,7 @@ void main() {
       system: HostSystem.windows,
       persist: false,
       preferences: preferences,
+      services: LauncherServices(environment: {'ANYPS5_LIBRETRO_HOME': fixture.temp.path}),
     );
     addTearDown(() {
       app.dispose();
@@ -61,6 +62,7 @@ void main() {
         persist: true,
         preferences: Preferences()..onboarded = true,
         services: LauncherServices(
+          environment: {'ANYPS5_LIBRETRO_HOME': fixture.temp.path},
           retroHardware: () async => const RetroHardware(
             displayHeight: 1440,
             logicalProcessors: 12,

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:anyps5_desktop/core/game_library.dart';
+import 'package:anyps5_desktop/core/managed_retro.dart';
 import 'package:anyps5_desktop/ui/retro_restart_tuning.dart';
 import 'package:anyps5_desktop/ui/retro_game_tuning.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
@@ -59,7 +60,7 @@ void main() {
     final app = fixture.model;
     final home = fixture.temp.path;
     environment['ANYPS5_LIBRETRO_HOME'] = home;
-    File(p.join(home, 'swanstation_libretro.dll')).createSync();
+    File(p.join(home, ManagedRetro.libraryName(RetroPlatform.ps1))).createSync();
     final disc = File(p.join(home, 'test.cue'))..createSync();
     final game = Game(
       folder: home,
