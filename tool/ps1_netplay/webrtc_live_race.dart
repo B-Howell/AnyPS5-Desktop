@@ -55,7 +55,7 @@ Future<String> runLivePs1Race(String config) async {
     final other = (friends['friends'] as List? ?? const [])
         .whereType<Map<String, dynamic>>()
         .where((entry) => entry['handle']?.toString().toLowerCase() == friend.toLowerCase())
-        .singleOrNull?['id'];
+        .singleOrNull?['userId'];
     if (other is! String || other == me.id) {
       throw StateError('The requested peer must be a distinct AnyTogether friend.');
     }

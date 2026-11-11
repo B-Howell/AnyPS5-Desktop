@@ -950,3 +950,21 @@ A hosted Windows–Linux CTR race still requires two approved, distinct
 AnyTogether test sessions. The isolated Windows and Linux session
 stores were unsigned at deployment. The offscreen dashboard checks
 verify installation only.
+
+### Hosted Windows–Linux Crash Team Racing race
+
+The [hosted race probe](../tool/ps1_netplay/webrtc_live_race.dart) now
+reads the friend card's `userId`, matching the
+[launcher friend card parser](../lib/core/together/people.dart). The
+first hosted attempt stopped at this lookup before creating a room.
+After correction and approval of both test devices, the Windows host
+sent an AnyTogether invite to the Linux guest. The two rollback peers
+ran a full Coco Park race with recorded digital controller input.
+
+The coordinator exited successfully after verifying both receipts
+and clean peer shutdown. Both peers reported 13,706 frames, 114 matching
+confirmed RAM fingerprints through frame 13,679, and the same finish
+placements. The selected WebRTC path was direct on the test network.
+This verifies hosted signaling and mixed-platform rollback on two
+physical machines. The race used offscreen test peers and did not
+exercise the dashboard controls or a relayed path.
