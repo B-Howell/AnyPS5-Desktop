@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:anyps5_desktop/core/controllers/pad_info.dart';
+import 'package:anyps5_desktop/core/embedded_core_host.dart';
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_match.dart';
@@ -44,6 +45,7 @@ Future<String> verifyOrdinaryWebRtc(String config) async {
   Future<EmbeddedRetroGame> open({int? seat, int? recovery}) => EmbeddedRetroGame.start(
     work.path,
     (platform: RetroPlatform.ps1, path: media.disc),
+    coreHost: EmbeddedCoreHost.windowsX64,
     ordinaryCore: media.core,
     ordinaryRecovery: recovery,
     netplay: seat == null ? null : (media: media, seat: seat),

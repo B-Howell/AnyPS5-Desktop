@@ -380,3 +380,12 @@ ctest --test-dir build/linux-channel --output-on-failure
 
 These checks require `gtk+-3.0`, EGL, Epoxy and PulseAudio development libraries
 through `pkg-config`. They do not launch the app, an emulator or a visible window.
+
+## Hosted analysis regression
+
+The Linux test job at 7346fbd stopped during Flutter analysis because the
+[ordinary WebRTC diagnostic](../tool/ps1_netplay/webrtc_ordinary_probe.dart)
+omitted the required embedded-core host argument. The diagnostic loads a
+Windows native worker, so it now selects Windows x64 explicitly. Whole-project
+analysis under Flutter 3.47.1 passed after the fix. The macOS job in the same
+run was canceled by the next push. It produced no golden comparison result.
