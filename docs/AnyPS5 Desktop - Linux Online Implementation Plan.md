@@ -477,10 +477,11 @@ launcher account store nor adds friends. Do not share approval codes,
 tokens or the session files in logs or commit them.
 
 Start the guest and wait for its hosted gateway readiness message before
-starting the host. At the confirmed finish, each peer writes a receipt
-with the actual placements, frame count, confirmed RAM hashes and selected
-route. Compare both receipts, including all 114 hashes, before creating
-both release files. The probe then closes its own room and native worker.
+starting the host. Each peer waits for the confirmed finish and the last RAM
+fingerprint comparison over WebRTC. It then publishes a complete receipt with
+the placements, frame count, confirmed RAM hashes and selected route. Compare
+both receipts, including all 114 hashes, before creating both release files.
+Require both runners to exit successfully after closing the room and workers.
 A successful local room fixture is insufficient evidence for this test.
 
 The setup commit `cc758fd` passed all five hosted CI jobs in
@@ -494,3 +495,5 @@ The rollback adapter also completed a 240-frame smoke with two real Linux
 workers. Both matched the confirmed RAM samples at frames 119 and 239.
 This exercises the Dart worker protocol independently of hosted admission.
 The full analyzer passed with the hosted probe present.
+The focused session suite passed all 23 cases after adding the matching
+fingerprint frontier, including a divergence that must never advance it.

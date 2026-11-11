@@ -91,6 +91,7 @@ final class Ps1NetplaySession {
   Ps1NetplayEnd? _ended;
   Ps1NetplayMismatch? _mismatch;
   int? _desyncFrame;
+  int? _lastMatchingFingerprint;
   Timer? _watchdog;
   Timer? _stallTimer;
   final _done = Completer<void>();
@@ -138,6 +139,7 @@ final class Ps1NetplaySession {
   Ps1NetplayEnd? get ended => _ended;
   Ps1NetplayMismatch? get mismatch => _mismatch;
   int? get desyncFrame => _desyncFrame;
+  int? get lastMatchingFingerprint => _lastMatchingFingerprint;
   bool get waiting => _waiting;
   bool get progressStalled => _progressStalled;
   int? get confirmedFrame => _confirmed;
@@ -299,7 +301,9 @@ final class Ps1NetplaySession {
     if (local != peer) {
       _desyncFrame = frame;
       _close(Ps1NetplayEnd.desync);
+      return;
     }
+    _lastMatchingFingerprint = frame;
   }
 
   Future<void> _receiveCatchup(Uint8List bytes) async {

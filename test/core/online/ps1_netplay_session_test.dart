@@ -462,6 +462,8 @@ void main() {
         expect(p.guest.ended, Ps1NetplayEnd.desync);
         expect(p.host.desyncFrame, 119);
         expect(p.guest.desyncFrame, 119);
+        expect(p.host.lastMatchingFingerprint, isNull);
+        expect(p.guest.lastMatchingFingerprint, isNull);
         expect(p.h.stopCalls, 1);
         expect(p.g.stopCalls, 1);
         expect(sent, 2);
@@ -470,6 +472,8 @@ void main() {
         expect(p.guest.phase, Ps1NetplayPhase.running);
         expect(p.host.confirmedFrame, 244);
         expect(p.guest.confirmedFrame, 244);
+        expect(p.host.lastMatchingFingerprint, 239);
+        expect(p.guest.lastMatchingFingerprint, 239);
         expect(sent, 4, reason: 'each peer announces each checkpoint once');
       }
     });

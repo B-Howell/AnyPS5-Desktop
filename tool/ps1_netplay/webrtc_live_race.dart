@@ -6,6 +6,7 @@ import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/online/online_peer.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_match.dart';
 import 'package:anyps5_desktop/core/online/ps1_netplay_media.dart';
+import 'package:anyps5_desktop/core/online/ps1_netplay_session.dart';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:anyps5_desktop/core/together/account.dart';
 import 'package:anyps5_desktop/core/together/game_sessions.dart';
@@ -126,7 +127,10 @@ Future<String> runLivePs1Race(String config) async {
     }
     final clock = Stopwatch()..start();
     var nextReport = 1800;
-    while ((activeMatch.session?.confirmedFrame ?? -1) < finishFrame || placements == null) {
+    final lastExpectedHash = (race.frames.length ~/ 120) * 120 - 1;
+    while ((activeMatch.session?.confirmedFrame ?? -1) < finishFrame ||
+        (activeMatch.session?.lastMatchingFingerprint ?? -1) < lastExpectedHash ||
+        placements == null) {
       if (activeMatch.closed || clock.elapsed > const Duration(minutes: 7)) {
         throw StateError('The hosted race ended before the confirmed finish.');
       }
@@ -145,15 +149,34 @@ Future<String> runLivePs1Race(String config) async {
       'role': role,
       'frames': race.frames.length,
       'placements': placements,
+      'matchedThrough': lastExpectedHash,
       'fingerprints': fingerprints.map((frame, hash) => MapEntry('$frame', hash)),
       'relayed': activeMatch.connectionPath?.relayed,
     });
-    await receiptFile.writeAsString(receipt, flush: true);
+    if (activeMatch.closed || activeMatch.session?.ended != null) {
+      throw StateError('The hosted match ended before its receipt was published.');
+    }
+    final partial = await File('${receiptFile.path}.part').create(exclusive: true);
+    try {
+      await partial.writeAsString(receipt, flush: true);
+      if (await receiptFile.exists() || activeMatch.closed || activeMatch.session?.ended != null) {
+        throw StateError('The hosted receipt became stale before publication.');
+      }
+      await partial.rename(receiptFile.path);
+    } finally {
+      if (await partial.exists()) await partial.delete();
+    }
     final coordination = Stopwatch()..start();
-    while (!await releaseFile.exists()) {
-      if (activeMatch.closed ||
-          activeMatch.session?.ended != null ||
-          coordination.elapsed > const Duration(seconds: 20)) {
+    while (true) {
+      // One peer can close after the coordinator releases it while the other
+      // is still waiting for its own release file.
+      final released = await releaseFile.exists();
+      final end = activeMatch.session?.ended;
+      if (end != null && end != Ps1NetplayEnd.left && end != Ps1NetplayEnd.peerLeft) {
+        throw StateError('The hosted match ended during receipt coordination: $end.');
+      }
+      if (released) break;
+      if (coordination.elapsed > const Duration(seconds: 20)) {
         throw StateError('The peers did not agree on both race receipts before closing.');
       }
       await Future<void>.delayed(const Duration(milliseconds: 50));
