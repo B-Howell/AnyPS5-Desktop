@@ -933,3 +933,20 @@ The [launcher regression](../test/ui/ps3_settings_test.dart) exercises
 15 setup and invite paths on Linux x64, including missing catalog data,
 cancellation, timeouts, and provider rejection. These paths use local
 fixtures and do not certify a real provider or a Windows–Linux match.
+
+### Linux laptop test installation
+
+The fork revision `d3330620bfbfd97a17f7b701211b567bd610f1a7`
+passed all five jobs in
+[CI run 43001988697](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/43001988697).
+It was built and installed on the Ubuntu test laptop. The candidate and
+the normal application-menu launcher both opened a dashboard on an
+isolated Xvfb display. The previous application bundle `cc758fd` was
+removed after those checks. The user's library, saves, BIOS and profile
+were preserved. The PS1 rollback and PS2 LAN package SHA-256 checks
+passed, and the application-menu launcher enables both previews.
+
+A hosted Windows–Linux CTR race still requires two approved, distinct
+AnyTogether test sessions. The isolated Windows and Linux session
+stores were unsigned at deployment. The offscreen dashboard checks
+verify installation only.
