@@ -371,7 +371,7 @@ extension TogetherPs1Netplay on TogetherModel {
               profile: profile,
               disc: runningGame!.retro!.path,
               bios: bios!,
-              core: ordinaryWorker.corePath,
+              resolveCore: () => ordinaryWorker.corePath,
               execution: Ps1NetplayExecution.ordinaryHandoff,
               canContinue: active,
             );
@@ -576,13 +576,16 @@ extension TogetherPs1Netplay on TogetherModel {
     }
   }
 
-  void _showPs1MediaError(Ps1NetplayMediaFailure error, {required bool handoff}) => app.show(
-    T.text(switch (error.problem) {
+  void _showPs1MediaError(Ps1NetplayMediaFailure error, {required bool handoff}) {
+    final message = switch (error.problem) {
       Ps1NetplayMediaProblem.disc => 'ps1OnlineDisc',
       Ps1NetplayMediaProblem.bios => 'ps1OnlineBios',
       Ps1NetplayMediaProblem.core => handoff ? 'ps1OnlineHandoffCore' : 'ps1OnlineCore',
-    }),
-  );
+      Ps1NetplayMediaProblem.package => 'ps1OnlinePackageInvalid',
+      Ps1NetplayMediaProblem.canceled => null,
+    };
+    if (message != null) app.show(T.text(message));
+  }
 
   Future<(Game, Ps1NetplayMedia)> _verifiedPs1(
     Ps1NetplayProfile profile,
@@ -602,9 +605,10 @@ extension TogetherPs1Netplay on TogetherModel {
           requireHandoff: mode.needsCheckpoint,
           execution: mode.execution,
           expectedCore: expectedCore,
+          expectedDisc: invitedDigest,
           canContinue: canContinue,
         );
-        if (invitedDigest == null || media.discDigest == invitedDigest) return (game, media);
+        return (game, media);
       } on Ps1NetplayMediaFailure catch (error) {
         if (error.problem != Ps1NetplayMediaProblem.disc) rethrow;
       }

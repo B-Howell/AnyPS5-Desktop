@@ -18,7 +18,7 @@ Future<String> verifyDualShockWebRtc(String config, {String? raceTrace, String? 
   const mode = Ps1NetplayRoomMode.freshAnalog;
   final media = await Ps1NetplayMedia.verify(
     profile: profile,
-    core: args[1],
+    resolveCore: () => args[1],
     disc: args[2],
     bios: args[3],
     execution: mode.execution,

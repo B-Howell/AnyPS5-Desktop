@@ -56,7 +56,7 @@ void main() {
       profile: Ps1NetplayProfile.tryRead('SCUS94426')!,
       disc: disc,
       bios: bios,
-      core: core,
+      resolveCore: () => core,
       execution: Ps1NetplayExecution.ordinaryHandoff,
     );
     final files = _FileAccess();
@@ -163,8 +163,21 @@ void main() {
   test('installs the pinned Linux rollback package in a fresh profile', () async {
     final package = Platform.environment['ANYPS5_TEST_PS1_LINUX_PACKAGE_DIR']!;
     final profileRoot = p.join(folder.path, 'emulators');
-    final managed = ManagedRetro(profileRoot, host: EmbeddedCoreHost.linuxX64, packageDirectory: package);
-    final installed = await managed.ensurePs1NetplayCore(execution: Ps1NetplayExecution.mixedRollback);
+    const archiveName = 'swanstation-netplay-rollback-linux-x64.zip';
+    final configured = await Directory(p.join(folder.path, 'configured')).create();
+    final corrupt = await File(p.join(configured.path, archiveName)).writeAsString('bad package');
+    final managed = ManagedRetro(profileRoot, host: EmbeddedCoreHost.linuxX64, packageDirectory: configured.path);
+    var selections = 0;
+    final installed = await managed.ensurePs1NetplayCore(
+      execution: Ps1NetplayExecution.mixedRollback,
+      pickArchive: (name) async {
+        expect(name, archiveName);
+        selections++;
+        return p.join(package, name);
+      },
+    );
+    expect(selections, 1);
+    expect(await corrupt.readAsString(), 'bad package');
     expect(p.basename(installed), 'swanstation_libretro.so');
     expect(p.isWithin(profileRoot, installed), isTrue);
     final digest = await sha256.bind(File(installed).openRead()).first;

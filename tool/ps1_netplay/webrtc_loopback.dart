@@ -70,7 +70,12 @@ Future<String> _nativeExercise(String config) async {
   if (args.length != 5) throw const FormatException('Expected a worker, core, CUE, BIOS and disc serial.');
   final profile = Ps1NetplayProfile.tryRead(args[4]);
   if (profile == null) throw const FormatException('Invalid PS1 disc serial.');
-  final media = await Ps1NetplayMedia.verify(profile: profile, core: args[1], disc: args[2], bios: args[3]);
+  final media = await Ps1NetplayMedia.verify(
+    profile: profile,
+    resolveCore: () => args[1],
+    disc: args[2],
+    bios: args[3],
+  );
   if (!media.supportsHandoff) throw StateError('The test needs the portable core.');
   final work = await Directory.systemTemp.createTemp('anyps5-ps1-webrtc-');
   final hostState = File('${work.path}/host.state');

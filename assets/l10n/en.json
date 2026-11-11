@@ -283,6 +283,8 @@
   "ps1OnlineDisc": "Add the supported CUE and track files for this game to your PS1 library.",
   "ps1OnlineBios": "PS1 online play needs a matching SCPH-1001 BIOS dump. Try again with the correct file.",
   "ps1OnlineBiosPicker": "Select your SCPH-1001 BIOS dump for PS1 online play",
+  "ps1OnlinePackagePicker": "Select the PS1 online core ZIP (%@)",
+  "ps1OnlinePackageInvalid": "The PS1 online core ZIP could not be verified. Select the matching package for this computer.",
   "ps1OnlineCore": "Install the supported SwanStation core in PS1 Setup.",
   "ps1OnlineHandoffCore": "Online couch co-op needs this build's checkpoint-enabled SwanStation package.",
   "ps1OnlineReturnFailed": "The original game could not resume. Select Play to try again.",

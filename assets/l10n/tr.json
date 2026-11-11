@@ -283,6 +283,8 @@
   "ps1OnlineDisc": "Bu oyunun desteklenen CUE ve parça dosyalarını PS1 kitaplığına ekle.",
   "ps1OnlineBios": "Çevrimiçi PS1 oyunu için eşleşen bir SCPH-1001 BIOS dökümü gerekir. Doğru dosyayla tekrar dene.",
   "ps1OnlineBiosPicker": "Çevrimiçi PS1 oyunu için SCPH-1001 BIOS dökümünü seç",
+  "ps1OnlinePackagePicker": "Çevrimiçi PS1 çekirdeği ZIP dosyasını seç (%@)",
+  "ps1OnlinePackageInvalid": "Çevrimiçi PS1 çekirdeği ZIP dosyası doğrulanamadı. Bu bilgisayara uygun paketi seç.",
   "ps1OnlineCore": "PS1 Kurulumu'nda desteklenen SwanStation çekirdeğini yükle.",
   "ps1OnlineHandoffCore": "Çevrimiçi yerel eşli oyun için bu sürümün kontrol noktası destekli SwanStation paketi gerekir.",
   "ps1OnlineReturnFailed": "Asıl oyuna dönülemedi. Yeniden denemek için Oyna'yı seçin.",

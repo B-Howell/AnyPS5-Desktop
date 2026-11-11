@@ -358,7 +358,7 @@ void main() {
       profile: Ps1NetplayProfile.tryRead('SCUS94426')!,
       disc: disc,
       bios: bios,
-      core: core,
+      resolveCore: () => core,
       execution: execution,
     );
     const channel = MethodChannel('anyps5/retro_core');
@@ -877,7 +877,7 @@ void main() {
       profile: Ps1NetplayProfile.tryRead(titleId)!,
       disc: disc,
       bios: localBios.path,
-      core: hostCore,
+      resolveCore: () => hostCore,
       execution: mode.execution,
     );
     final room = {
@@ -1270,19 +1270,28 @@ void main() {
         },
       );
       server.answers['POST $path/join'] = (409, {'error': 'fixture refused admission'});
+      var zipPicks = 0;
       final fixture = makeFixture(
         together: server.base,
         system: mixed ? HostSystem.current : HostSystem.windows,
         environment: {
           'ANYPS5_PS1_NETPLAY': '1',
           if (rollback) 'ANYPS5_PS1_ROLLBACK': '1',
-          'ANYPS5_MANAGED_CORE_PACKAGES': rollback
-              ? rollbackPackages!
-              : fresh
-              ? p.dirname(standard![0])
-              : packages,
+          if (!mixed)
+            'ANYPS5_MANAGED_CORE_PACKAGES': rollback
+                ? rollbackPackages!
+                : fresh
+                ? p.dirname(standard![0])
+                : packages,
         },
-        pickFile: (_, _) async => bios,
+        pickFile: (_, extensions) async {
+          if (!extensions.contains('zip')) return bios;
+          if (++zipPicks == 1) return null;
+          final name = Platform.isLinux
+              ? 'swanstation-netplay-rollback-linux-x64.zip'
+              : 'swanstation-netplay-rollback.zip';
+          return p.join(packages, name);
+        },
       );
       final model = fixture.model;
       addTearDown(() {
@@ -1309,6 +1318,20 @@ void main() {
           retroSerial: invite.titleId,
         ),
       );
+      if (mixed) {
+        final room = server.answers['GET $path']!.$2 as Map;
+        final properties = room['properties'] as Map;
+        final digest = properties['discSha256'];
+        properties['discSha256'] = '0' * 64;
+        await model.together.joinPs1Netplay(invite);
+        expect(zipPicks, 0);
+        expect(server.callsTo('$path/join'), isEmpty);
+        properties['discSha256'] = digest;
+        await model.together.joinPs1Netplay(invite);
+        expect(zipPicks, 1);
+        expect(server.callsTo('$path/join'), isEmpty);
+        expect(model.running, isNull);
+      }
       await model.together.joinPs1Netplay(invite);
       final join = server.callsTo('$path/join').single;
       expect(join.body, {'gameVersion': mode.version, 'engineBuild': invite.engineBuild});

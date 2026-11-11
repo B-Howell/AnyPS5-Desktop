@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,7 +10,7 @@ import '../ps1_disc_serial.dart';
 import 'ps1_netplay_identity.dart';
 import 'retro_online_rooms.dart';
 
-enum Ps1NetplayMediaProblem { disc, bios, core }
+enum Ps1NetplayMediaProblem { disc, bios, core, package, canceled }
 
 enum Ps1NetplayExecution {
   standard('CachedInterpreter'),
@@ -136,7 +137,8 @@ final class Ps1NetplayMedia {
     required Ps1NetplayProfile profile,
     required String disc,
     required String bios,
-    required String core,
+    required FutureOr<String> Function() resolveCore,
+    String? expectedDisc,
     Ps1NetplayExecution execution = Ps1NetplayExecution.standard,
     bool Function()? canContinue,
   }) async {
@@ -145,12 +147,15 @@ final class Ps1NetplayMedia {
     try {
       if (Ps1DiscSerial.read(disc) != profile.titleId) throw const FormatException('Wrong PS1 disc serial.');
       cue = await cueDigest(disc, canContinue: canContinue);
+      if (expectedDisc != null && expectedDisc != cue) throw const FormatException('Wrong PS1 disc contents.');
     } on FileSystemException {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
     } on FormatException {
       throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
     }
     final firmware = await _verify(Ps1NetplayMediaProblem.bios, {biosPin}, () => _hashFile(bios, canContinue));
+    _checkActive(canContinue);
+    final core = await resolveCore();
     final library = await _verifiedCoreDigest(core, execution, canContinue);
     return Ps1NetplayMedia._(
       p.absolute(disc),

@@ -26,7 +26,7 @@ Future<String> verifyOrdinaryWebRtc(String config) async {
   const mode = Ps1NetplayRoomMode.ordinary;
   final media = await Ps1NetplayMedia.verify(
     profile: profile,
-    core: args[1],
+    resolveCore: () => args[1],
     disc: args[2],
     bios: args[3],
     execution: mode.execution,

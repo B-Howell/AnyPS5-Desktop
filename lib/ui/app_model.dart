@@ -4081,6 +4081,7 @@ class AppModel extends ChangeNotifier {
     bool requireHandoff = false,
     Ps1NetplayExecution execution = Ps1NetplayExecution.standard,
     String? expectedCore,
+    String? expectedDisc,
     bool preferPortable = false,
     bool Function()? canContinue,
   }) async {
@@ -4092,11 +4093,13 @@ class AppModel extends ChangeNotifier {
       profile: profile,
       disc: disc.path,
       bios: bios,
-      core: await resolvePs1NetplayCore(
+      expectedDisc: expectedDisc,
+      resolveCore: () => resolvePs1NetplayCore(
         execution,
         requireHandoff: requireHandoff,
         expectedCore: expectedCore,
         preferPortable: preferPortable,
+        canContinue: canContinue,
       ),
       execution: execution,
       canContinue: canContinue,
@@ -4112,12 +4115,28 @@ class AppModel extends ChangeNotifier {
     required bool requireHandoff,
     String? expectedCore,
     bool preferPortable = false,
+    bool Function()? canContinue,
   }) async {
     final managed = _managedRetro;
     final override = retroCoreOverride;
     if (!execution.usesRollback && override != null) {
       return p.join(override, embeddedCoreHost.libraryName(RetroPlatform.ps1));
     }
+    var selectedPackage = false;
+    Future<String> pickPackage(String filename) async {
+      if (_disposed || canContinue?.call() == false) {
+        throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.canceled);
+      }
+      final picker = services.pickFile;
+      if (picker == null) throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+      final selected = await picker(T.format('ps1OnlinePackagePicker', [filename]), const ['zip']);
+      if (selected == null || _disposed || canContinue?.call() == false) {
+        throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.canceled);
+      }
+      selectedPackage = true;
+      return selected;
+    }
+
     try {
       if (execution.usesStandardCore && !requireHandoff) {
         final existing = File(p.join(managed.root, embeddedCoreHost.libraryName(RetroPlatform.ps1)));
@@ -4140,11 +4159,16 @@ class AppModel extends ChangeNotifier {
           throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
         }
       }
-      return await managed.ensurePs1NetplayCore(execution: execution);
+      return await managed.ensurePs1NetplayCore(
+        execution: execution,
+        pickArchive: execution == Ps1NetplayExecution.mixedRollback ? pickPackage : null,
+      );
     } on FormatException {
-      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+      throw Ps1NetplayMediaFailure(selectedPackage ? Ps1NetplayMediaProblem.package : Ps1NetplayMediaProblem.core);
     } on FileSystemException {
-      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+      throw Ps1NetplayMediaFailure(selectedPackage ? Ps1NetplayMediaProblem.package : Ps1NetplayMediaProblem.core);
+    } on PlatformException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.package);
     }
   }
 

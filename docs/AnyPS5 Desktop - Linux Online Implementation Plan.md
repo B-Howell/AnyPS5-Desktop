@@ -377,8 +377,15 @@ The ZIP used one deflated entry with the default ZIP epoch timestamp.
 Archive contents are supplied separately. No emulator binaries or game data
 are committed.
 
-For the preview, set `ANYPS5_MANAGED_CORE_PACKAGES` to the absolute local
-directory containing the platform`s ZIP. Enable `ANYPS5_PS1_NETPLAY=1` on
+After verifying the disc and BIOS, the mixed-platform invite checks for an
+installed core and then the configured reviewer package. If the configured
+archive is missing or fails verification, the launcher asks the player to
+select the ZIP for their platform. It verifies and installs that package before
+sending or joining the original room. Dismissing the picker ends the attempt
+without changing room membership. A subsequent invite reuses the installed
+core. Automatic release downloads still require a distribution source.
+
+For the preview, enable `ANYPS5_PS1_NETPLAY=1` on
 both machines and `ANYPS5_PS1_ROLLBACK=1` on a Windows host to select the
 mixed-platform room when inviting from the dashboard or Friends. Linux
 uses the mixed room automatically. A Windows guest with PS1 netplay enabled
@@ -391,8 +398,11 @@ The [media and installer tests](../test/core/online/ps1_netplay_media_test.dart)
 cover platform-specific hash rejection, matching wire identity and a fresh
 Linux install. The [room setup test](../test/ui/ps1_netplay_setup_test.dart)
 uses an optional JSON fixture containing the package directory, a matching
-CTR CUE and the user`s BIOS. It checks installation and the original room
-admission request without loading a visible core. A real AnyTogether
+CTR CUE and the user's BIOS. It checks that a wrong disc never opens the
+package picker, canceling the picker leaves the invite unjoined, and selecting
+the correct ZIP resumes the original admission request. The installer test
+also checks that a corrupt configured archive falls back to the picker.
+These tests run without loading a visible core. A real AnyTogether
 session on separate machines still needs acceptance.
 
 Local source, builds, temporary files and compiler caches remain on D:.

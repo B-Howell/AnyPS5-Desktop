@@ -111,7 +111,10 @@ class ManagedRetro {
   }
 
   /// Checkpoint handoff has its own core. Never upgrade the offline PS1 DLL.
-  Future<String> ensurePs1NetplayCore({Ps1NetplayExecution execution = Ps1NetplayExecution.standard}) async {
+  Future<String> ensurePs1NetplayCore({
+    Ps1NetplayExecution execution = Ps1NetplayExecution.standard,
+    Future<String> Function(String filename)? pickArchive,
+  }) async {
     if (host == EmbeddedCoreHost.linuxX64 && execution != Ps1NetplayExecution.mixedRollback) {
       throw const FormatException('This PS1 online mode has no Linux core package.');
     }
@@ -174,20 +177,37 @@ class ManagedRetro {
     if (execution.usesStandardCore && await pinned(legacy)) return legacy.path;
 
     final packages = packageDirectory;
-    if (packages == null || !p.isAbsolute(packages)) {
-      throw const FormatException('The PS1 netplay core package is missing.');
-    }
-    final source = File(p.join(packages, archiveName));
-    final info = await source.stat();
-    if (info.type != FileSystemEntityType.file || info.size <= 0 || info.size > 32 * 1024 * 1024) {
-      throw const FormatException('The PS1 netplay core package is missing or has an unexpected size.');
-    }
+    final configured = packages != null && p.isAbsolute(packages) ? File(p.join(packages, archiveName)) : null;
     final staging = await home.createTemp('ps1-netplay-package-');
     try {
       final archive = File(p.join(staging.path, 'core.zip'));
-      await source.openRead(0, info.size).pipe(archive.openWrite());
-      if (await AssetDownload.sha256Of(archive.path) != archivePin) {
-        throw const FormatException('The PS1 netplay core package did not pass verification.');
+      Future<void> stageArchive(File source) async {
+        final info = await source.stat();
+        if (info.type != FileSystemEntityType.file || info.size <= 0 || info.size > 32 * 1024 * 1024) {
+          throw const FormatException('The PS1 netplay core package is missing or has an unexpected size.');
+        }
+        await source.openRead(0, info.size).pipe(archive.openWrite());
+        if (await AssetDownload.sha256Of(archive.path) != archivePin) {
+          throw const FormatException('The PS1 netplay core package did not pass verification.');
+        }
+      }
+
+      Future<bool> tryConfiguredArchive(File source) async {
+        try {
+          await stageArchive(source);
+          return true;
+        } on FormatException {
+          if (pickArchive == null) rethrow;
+          return false;
+        } on FileSystemException {
+          if (pickArchive == null) rethrow;
+          return false;
+        }
+      }
+
+      if (configured == null || !await tryConfiguredArchive(configured)) {
+        if (pickArchive == null) throw const FormatException('The PS1 netplay core package is missing.');
+        await stageArchive(File(await pickArchive(archiveName)));
       }
       await target.create();
       await checkDirectory(target);

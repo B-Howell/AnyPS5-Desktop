@@ -97,14 +97,14 @@ void main() {
       profile: profile,
       disc: disc,
       bios: bios,
-      core: installed,
+      resolveCore: () => installed,
       execution: execution,
     );
     expect(media.execution, execution);
     expect(media.identity.toJson()['profile'], execution.digest);
     expect(media.identity.toJson()['core'], Ps1NetplayMedia.ordinaryHandoffCorePin);
     await expectLater(
-      Ps1NetplayMedia.verify(profile: profile, disc: disc, bios: bios, core: installed),
+      Ps1NetplayMedia.verify(profile: profile, disc: disc, bios: bios, resolveCore: () => installed),
       throwsA(
         isA<Ps1NetplayMediaFailure>().having((failure) => failure.problem, 'problem', Ps1NetplayMediaProblem.core),
       ),
