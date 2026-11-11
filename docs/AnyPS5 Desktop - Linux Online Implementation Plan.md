@@ -799,3 +799,8 @@ The full focused Linux run passed 27 tests without skips, including the
 [ELF checks](../test/core/elf_core_library_test.dart) and card lease
 tests. Local Windows Flutter testing stopped before executing tests
 because its native-asset hook did not discover the installed compiler.
+
+A standalone Windows Dart check also held the card lock from a separate
+process, observed the launcher's card-in-use exception, released the
+lock, and reopened the profile. This check bypassed Flutter's native
+asset build and exercised the production file-lock code directly.
