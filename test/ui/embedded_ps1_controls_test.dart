@@ -68,7 +68,7 @@ void main() {
     await session.exitCode;
   });
 
-  testWidgets('Quick Menu face swap persists for one game and is restored on launch', (tester) async {
+  testWidgets('Per-game Controls face swap persists for one game and is restored on launch', (tester) async {
     final env = <String, String>{};
     final fixture = makeFixture(environment: env);
     final model = fixture.model;
@@ -106,6 +106,11 @@ void main() {
     final second = model.games.singleWhere((game) => game.name == 'Second');
     ToggleRow toggleForCurrent() {
       model.open(Layer.quickMenu);
+      expect(model.panelCategories().single.rows.map((row) => row.id), isNot(contains('retroSwapCrossCircle')));
+      model.selected = model.games.indexWhere((game) => game.id == model.running!.$1.id);
+      model.open(Layer.gameSettings);
+      (model.panelCategories().single.rows.singleWhere((row) => row.id == 'controls').kind as ActionRow).run();
+      expect(model.overlay, Layer.controls);
       return model.panelCategories().single.rows.singleWhere((row) => row.id == 'retroSwapCrossCircle').kind
           as ToggleRow;
     }

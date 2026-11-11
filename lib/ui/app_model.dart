@@ -5136,7 +5136,7 @@ class AppModel extends ChangeNotifier {
       revealedTrophies = {};
     }
     if (next == Layer.trophies || next == Layer.gallery) _loadShots();
-    if (next == Layer.controls && selectedGame != null) _readControls(selectedGame!);
+    if (next == Layer.controls && selectedGame?.retro == null && selectedGame != null) _readControls(selectedGame!);
     // The screens that show the own name and handle read them again first.
     if (next == Layer.friends || next == Layer.profile || next == Layer.settings || next == Layer.profilePicker) {
       together.refreshOwnProfile();
@@ -6468,8 +6468,6 @@ class AppModel extends ChangeNotifier {
                   detail: embeddedGame == null ? 'Queue changes for the next launch.' : 'Adjust the running game.',
                   kind: ActionRow(() => open(Layer.retroGraphics)),
                 ),
-              if (embeddedGame != null && running!.$1.retro?.platform == RetroPlatform.ps1)
-                _retroSwapCrossCircleRow(running!.$1),
               if (embeddedGame?.discs case final EmbeddedDiscs discs)
                 PanelRow(
                   id: 'retro-disc-menu',
@@ -7459,6 +7457,8 @@ class AppModel extends ChangeNotifier {
     if (game.retro != null) {
       return [
         ...together.ps1LocalLaunchRows(game),
+        if (game.retro?.platform == RetroPlatform.ps1)
+          PanelRow(id: 'controls', title: T.text('controls'), kind: ActionRow(() => open(Layer.controls))),
         PanelRow(id: 'log', title: T.text('openLog'), kind: ActionRow(() => open(Layer.log))),
         PanelRow(
           id: 'folder',
@@ -7879,6 +7879,9 @@ class AppModel extends ChangeNotifier {
   }
 
   List<PanelRow> _controlRows(Game game) {
+    if (game.retro case final RetroDisc disc) {
+      return [if (disc.platform == RetroPlatform.ps1) _retroSwapCrossCircleRow(game)];
+    }
     final settings = currentSettings(game);
     final changes = settings.controls ?? const <String, List<String>>{};
     // The game's own actions, when its files name them, under each button.

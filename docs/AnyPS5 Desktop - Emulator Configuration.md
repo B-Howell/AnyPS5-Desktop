@@ -2,7 +2,7 @@
 
 ## Windows and Linux preview status
 
-The Windows preview exposes managed PS1, PS2 and PS3. On Linux x64, PS1 uses the managed SwanStation setup, PS2 LAN has its own setup, and general managed offline PS3 setup remains gated. See the [Linux implementation plan](<AnyPS5 Desktop - Linux Online Implementation Plan.md#managed-ps1-setup-on-linux>) for the installed PS1 setup proof and the [multiplayer design](<AnyPS5 Desktop - Emulator Multiplayer Design.md#product-direction>) for parity and lobby requirements. PS5 onboarding does not include emulator setup. Swap Cross and Circle is currently on the PS1 Quick Menu and is slated to move to per-game Controls.
+The Windows preview exposes managed PS1, PS2 and PS3. On Linux x64, PS1 uses the managed SwanStation setup, PS2 LAN has its own setup, and general managed offline PS3 setup remains gated. See the [Linux implementation plan](<AnyPS5 Desktop - Linux Online Implementation Plan.md#managed-ps1-setup-on-linux>) for the installed PS1 setup proof and the [multiplayer design](<AnyPS5 Desktop - Emulator Multiplayer Design.md#product-direction>) for parity and lobby requirements. PS5 onboarding does not include emulator setup. Swap Cross and Circle is in per-game Controls (Game settings → Controls) for PS1 games, not in the Quick Menu.
 
 
 This Windows x64 preview adds optional PS1, PS2 and PS3 support to the PS5
@@ -187,7 +187,12 @@ the emulation advances. The offscreen Windows SwanStation check booted Metal
 Gear Solid on Disc 2 and Final Fantasy VII on Disc 3, swapped both to Disc 1
 while paused, then resumed each on its original texture. The
 [per-game face-button toggle](../lib/ui/retro_embedded_controls.dart) swaps
-Cross and Circle while keeping Start and the stick axes unchanged.
+Cross and Circle while keeping Start and the stick axes unchanged. It is the
+only row in a PS1 game's [Controls page](../lib/ui/app_model.dart), opened from
+Game settings → Controls; PS5 remapping rows do not apply to emulated games.
+Toggling it while that game runs updates the live session. The
+[controls test](../test/ui/embedded_ps1_controls_test.dart) checks that the
+Quick Menu no longer lists it and that the choice persists per game.
 
 ## RPCS3 preview and release gates
 
