@@ -1,5 +1,10 @@
 # AnyPS5 Desktop PS1 netplay implementation plan
 
+## Current release gate
+
+Start the lobby from an ordinary running PS1 game using the PS Quick Menu on Windows and Linux. [The running-game host-mode check](../lib/ui/together_ps1_netplay.dart) still excludes Linux. The [hosted CTR result](<AnyPS5 Desktop - Linux Online Implementation Plan.md#hosted-windowslinux-crash-team-racing-race>) verifies mixed-platform scripted race execution. Release acceptance requires manual Quick Menu host, join, race and leave/resume on both builds. The dashboard flow is diagnostic. See [product direction](<AnyPS5 Desktop - Emulator Multiplayer Design.md#product-direction>).
+
+
 > **Execution workflow:** Use superpowers:executing-plans after implementation is requested. This document is a plan.
 
 **Goal:** Two players complete a Crash Team Racing split-screen race over the internet, each running and rendering a matching PS1 copy inside AnyPS5 Desktop.

@@ -2,6 +2,10 @@
 
 ## Product direction
 
+The required host entry is the PS Quick Menu in a running game on both Windows and Linux. In a focused embedded session, the PS button or Esc opens that menu. The host starts the lobby, chooses an AnyTogether friend, and returns to play. A dashboard ellipsis or prelaunch-only entry cannot fulfill this requirement. Ship the complete feature set in one integrated source revision on both platforms. Move Swap Cross and Circle to per-game Controls.
+
+The current Linux PS1 Quick Menu cannot host from ordinary play because [host mode selection](../lib/ui/together_ps1_netplay.dart) still requires the Windows-only managed capability. Closing the gap requires a qualified Linux core and safe running-session handoff, as well as the visible action.
+
 Windows and Linux are required platforms for the emulator online feature.
 Windows-only implementation or qualification cannot satisfy release acceptance.
 The Linux port is the immediate implementation priority; the platform gaps
@@ -14,7 +18,7 @@ inputs. The streaming path is outside this design.
 
 ## Integration status
 
-The online experiment is implemented on the Windows preview branch.
+The fork integrates Windows and Linux online work with different remaining platform gaps.
 The offline emulator review slices remain upstream PRs #85, #86 and #87.
 The online branch also carries subsequent optimizer, disc-menu and
 console-artwork changes so local integration preserves those features.
@@ -24,11 +28,11 @@ tracks integration and qualification while the upstream slices are reviewed.
 
 | Requirement | Current evidence | Still required |
 | --- | --- | --- |
-| PS1 couch co-op from the Quick Menu or Game Settings | The launcher performs compatibility checks, transfers an isolated checkpoint, assigns the remote controller and returns to the local game afterward. Two native CTR copies completed a full race in confirmed-input mode through the local TURN fixture with dropped input packets. | Hosted signaling, separate-network acceptance, separate rollback qualification and current physical controller/video/audio checks. |
+| PS1 couch co-op from the running game Quick Menu | The launcher performs compatibility checks, transfers an isolated checkpoint, assigns the remote controller and returns to the local game afterward. Two native CTR copies completed a full race in confirmed-input mode through the local TURN fixture with dropped input packets. | A scripted physical Windows/Linux race passed with hosted signaling and direct WebRTC. Manual in-game hosting, controller verification and separate-network acceptance remain open. |
 | PS2 native LAN through AnyTogether | The virtual NIC and room bridge carry local and relayed Ethernet traffic. Two native TimeSplitters copies completed a round after a simulated route failure. | A complete GT4 race, active gameplay with the latest native queue-reset callback, physical network-loss tests and separate-network acceptance. |
 | PS3 native online handoff | The launcher verifies an isolated provider profile, prepares its firmware/update, handles invitations and shows provider/membership state. Core and launcher checks use local fixtures. | Approved provider profile and identities, qualified binaries, and a real private level with two clients. The public release catalog is empty. |
 | Couch co-op for PS2 and PS3 games without native LAN/online support | The current PS1 input-synchronization adapter is specific to the PS1 core. | An additional synchronization adapter for each core. The existing PS2 LAN and PS3 provider paths do not cover this requirement. |
-| Linux and macOS online gameplay | The upstream offline emulator slices have separate platform work. | Online adapter ports and matching native/launcher acceptance on those platforms. Windows online qualification does not cover them. |
+| Windows and Linux feature parity | Linux has PS1 managed setup, mixed-platform rollback, PS2 LAN setup and PS3 channel support. | Qualify matching combined packages and the ordinary running-game Quick Menu path. macOS offline review and CI are tracked separately. |
 | Fresh installation and ordinary-user operation | Managed package verification, missing-setup recovery, in-game invites, cancellation, retry messages and isolated storage have focused regression coverage. | Approved immutable online-core distribution and a fresh-profile end-to-end run with the production room service. |
 
 Detailed evidence and constraints belong to the

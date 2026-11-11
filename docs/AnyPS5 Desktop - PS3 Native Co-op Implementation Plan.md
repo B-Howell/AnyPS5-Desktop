@@ -1,5 +1,10 @@
 # AnyPS5 Desktop PS3 native co-op implementation plan
 
+## Shared release gate
+
+For a qualified native-online PS3 title, expose invitation and room status through the running game's PS Quick Menu on Windows and Linux. This depends on the provider catalog, protected core and actual room qualification. See the [multiplayer acceptance requirements](<AnyPS5 Desktop - Emulator Multiplayer Design.md#product-direction>) and [Linux core preflight](<AnyPS5 Desktop - Linux Online Implementation Plan.md#linux-rpcs3-online-core-build-preflight>).
+
+
 > **Execution workflow:** Use superpowers:executing-plans after implementation is requested. This document is a plan.
 
 **Goal:** Two invited players complete a LittleBigPlanet Game of the Year level through the game's native online mode, each using their own embedded RPCS3 session.

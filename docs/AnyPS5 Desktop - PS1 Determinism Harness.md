@@ -1,5 +1,10 @@
 # AnyPS5 Desktop PS1 determinism harness
 
+## Scope of this evidence
+
+This harness covers recorded inputs, checkpoint and transport experiments. The [hosted Windows and Linux race](<AnyPS5 Desktop - Linux Online Implementation Plan.md#hosted-windowslinux-crash-team-racing-race>) adds real AnyTogether signaling evidence. Neither harness exercises the ordinary running game's Quick Menu workflow. See [release acceptance](<AnyPS5 Desktop - Emulator Multiplayer Design.md#product-direction>).
+
+
 This local tool compares independent SwanStation processes on Windows. The
 [coordinator](../tool/ps1_netplay/determinism.py) runs at most two workers
 at once. Each [worker](../tool/ps1_netplay/headless_core.py) loads the same

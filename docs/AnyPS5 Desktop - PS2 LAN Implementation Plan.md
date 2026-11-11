@@ -1,5 +1,10 @@
 # AnyPS5 Desktop PS2 LAN implementation plan
 
+## Shared release gate
+
+For a compatible PS2 LAN title, the host must start the AnyTogether lobby from the running game's PS Quick Menu on Windows and Linux. Preserve the game's native LAN lobby and control flow. The staged setup and local or mixed-platform probes are partial evidence. Follow the [multiplayer acceptance requirements](<AnyPS5 Desktop - Emulator Multiplayer Design.md#product-direction>) for a complete manual two-device run.
+
+
 > **Execution workflow:** Use superpowers:executing-plans after implementation is requested. This document is a plan.
 
 **Goal:** Two players finish a Gran Turismo 4 LAN race from separate networks, each running and rendering their own PS2 copy in AnyPS5.

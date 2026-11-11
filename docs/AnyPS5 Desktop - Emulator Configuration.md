@@ -1,5 +1,10 @@
 # AnyPS5 Desktop emulator configuration
 
+## Windows and Linux preview status
+
+The Windows preview exposes managed PS1, PS2 and PS3. On Linux x64, PS1 uses the managed SwanStation setup, PS2 LAN has its own setup, and general managed offline PS3 setup remains gated. See the [Linux implementation plan](<AnyPS5 Desktop - Linux Online Implementation Plan.md#managed-ps1-setup-on-linux>) for the installed PS1 setup proof and the [multiplayer design](<AnyPS5 Desktop - Emulator Multiplayer Design.md#product-direction>) for parity and lobby requirements. PS5 onboarding does not include emulator setup. Swap Cross and Circle is currently on the PS1 Quick Menu and is slated to move to per-game Controls.
+
+
 This Windows x64 preview adds optional PS1, PS2 and PS3 support to the PS5
 launcher. It uses the existing Home, library, controller navigation and
 Quick Menu. Emulator setup stays under Settings. On Windows x64 the

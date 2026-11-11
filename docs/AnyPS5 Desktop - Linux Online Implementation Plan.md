@@ -1,5 +1,10 @@
 # AnyPS5 Desktop Linux online implementation plan
 
+## Current deployment and acceptance
+
+The Windows portable bundle is ebfcf6f. The laptop was subsequently updated to 0a9386a for managed PS1 setup. A release smoke test on a private Xvfb display verified Settings → Emulators → PS1 → Setup, the installed core and BIOS, the CTR tile, and Finish setup. The running-game PS1 host mode still rejects Linux in [the PS1 invite controller](../lib/ui/together_ps1_netplay.dart). The dashboard procedure below is diagnostic. The [required in-game lobby path](<AnyPS5 Desktop - Emulator Multiplayer Design.md#product-direction>) and full Windows/Linux parity remain open.
+
+
 Windows and Linux are both required for the emulator online feature. A working
 Windows build does not satisfy this requirement. The combined online branch
 previously omitted the Linux embedded host already present in review slice #87
@@ -969,7 +974,7 @@ This verifies hosted signaling and mixed-platform rollback on two
 physical machines. The race used offscreen test peers and did not
 exercise the dashboard controls or a relayed path.
 
-### Manual CTR dashboard test
+### Diagnostic CTR dashboard test
 
 The Windows portable bundle for fork revision `ebfcf6f` was staged from
 [workflow run 43035328354](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/43035328354).
