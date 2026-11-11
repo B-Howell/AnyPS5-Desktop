@@ -5412,6 +5412,14 @@ class AppModel extends ChangeNotifier {
       revealedTrophies = {};
       if (!trophies.containsKey(selectedGame?.id)) overlay = null;
     }
+    // Another game's Controls have other rows: the focus goes back on the controller.
+    if (overlay == Layer.controls) {
+      _endRetroCapture();
+      editingValue = null;
+      panelRow = 0;
+      _skipToFocusable();
+      if (selectedGame?.retro != null) _focusRetroLabel(retroLabelFocus);
+    }
     measureSelected();
     _changed();
   }
@@ -5560,6 +5568,14 @@ class AppModel extends ChangeNotifier {
             sounds.play(Cue.back);
             _changed();
           }
+          return;
+        }
+        // A row of an emulated game's Controls being changed with a controller: Back ends
+        // that, as Select does, and only the next Back leaves the page.
+        if (command == Command.back && editingValue != null && selectedGame?.retro != null) {
+          editingValue = null;
+          sounds.play(Cue.back);
+          _changed();
           return;
         }
         if (command == Command.back || command == Command.options) {

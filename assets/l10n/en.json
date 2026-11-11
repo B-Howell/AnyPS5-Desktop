@@ -2366,6 +2366,7 @@
   "retroProfileDefaultName": "Profile %d",
   "retroProfileSaved": "Saved as %@",
   "retroProfileRename": "Profile name",
+  "retroProfileRenameKeys": "Use a keyboard to rename a profile.",
   "retroProfileDelete": "Delete this profile",
   "retroProfileDeleteDetail": "Games that use it go back to their own layout.",
   "retroControlsReset": "Reset to standard layout",

@@ -343,8 +343,58 @@ void main() {
     expect(focused(model), 'retroControlsPlayer');
     model.padCommand(PadCommand.select);
     expect(model.editingValue, isNull);
+    model.padCommand(PadCommand.select);
+    model.padCommand(PadCommand.back);
+    expect(model.editingValue, isNull, reason: 'Back ends changing a value');
+    expect(model.overlay, Layer.controls, reason: 'and does not leave the page with it');
     model.padCommand(PadCommand.left);
     expect(focused(model), 'retroButton-south', reason: 'and afterwards left goes back again');
+
+    final first = model.selectedGame!;
+    model.preferences.retroControls.edit(first.id, RetroButtonMap.standard.give(PadButton.north, PadButton.r1));
+    model.refresh();
+    model.panelRow = rows(model).indexWhere((row) => row.id == 'retroProfileSave');
+    model.padCommand(PadCommand.select);
+    expect(model.preferences.retroControlProfiles.keys, ['Profile 1']);
+    expect(focused(model), 'retroControlsPreset', reason: 'the row that went leaves the focus on Profile, not on what took its place');
+    model.panelRow = rows(model).indexWhere((row) => row.id == 'retroProfileRename');
+    model.padCommand(PadCommand.select);
+    expect(model.editingRow, isNull, reason: 'a controller cannot type a name, so it is not put in the field');
+    expect(model.toast, 'Use a keyboard to rename a profile.');
+    model.padCommand(PadCommand.down);
+    expect(focused(model), 'retroProfileDelete', reason: 'and it can move on');
+    model.padCommand(PadCommand.select);
+    expect(model.preferences.retroControlProfiles, isEmpty);
+    expect(focused(model), 'retroControlsPreset');
+    model.preferences.retroControls.useLayout(first.id, RetroButtonMap.standard);
+    model.refresh();
+
+    model.padCommand(PadCommand.left);
+    model.panelRow = rows(model).length - 1;
+    model.padCommand(PadCommand.nextGame);
+    model.padCommand(PadCommand.previousGame);
+    expect(model.overlay, Layer.controls);
+    expect(focused(model), startsWith('retroButton-'), reason: "another game's Controls put the focus back on a label");
+
+    const guest = PadInfo(id: 'sdl1', name: 'DualShock 4', kind: PadKind.dualShock4, connection: PadConnection.usb, driver: 'SDL');
+    model.controllers.preview([guest, pad], playerOne: guest.id, states: const {});
+    model.localSeatPads.add(guest.id);
+    expect(model.retroControlsPadId, pad.id, reason: "Player 1's controller is never one seated as another player");
+    model.localSeatPads.clear();
+    model.controllers.preview([pad], playerOne: pad.id, states: const {});
+    model.padCommand(PadCommand.right);
+    model.padCommand(PadCommand.left);
+    expect(focused(model), startsWith('retroButton-'));
+    while (focused(model) != 'retroButton-south') {
+      model.padCommand(PadCommand.down);
+      if (focused(model) == 'retroButton-r3') break;
+    }
+    if (focused(model) != 'retroButton-south') {
+      for (var step = 0; step < 2; step++) {
+        model.padCommand(PadCommand.up);
+      }
+    }
+    expect(focused(model), 'retroButton-south');
 
     for (final step in [PadCommand.up, PadCommand.up, PadCommand.left, PadCommand.down]) {
       model.padCommand(step);

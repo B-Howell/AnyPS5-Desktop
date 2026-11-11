@@ -2362,6 +2362,7 @@
   "retroProfileDefaultName": "Profil %d",
   "retroProfileSaved": "%@ olarak kaydedildi",
   "retroProfileRename": "Profil adı",
+  "retroProfileRenameKeys": "Profili yeniden adlandırmak için klavye kullanın.",
   "retroProfileDelete": "Bu profili sil",
   "retroProfileDeleteDetail": "Onu kullanan oyunlar kendi düzenlerine döner.",
   "retroControlsActsAs": "%@ tuşu %@ gibi davranır",

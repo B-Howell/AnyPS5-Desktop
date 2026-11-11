@@ -49,11 +49,16 @@ extension RetroEmbeddedControls on AppModel {
   /// it is not one seated as another player, else the launcher's Player 1.
   String? get retroControlsPadId {
     if (retroControlsPlayer <= 1) {
+      // Never a controller seated as another player: using one moves it to the front of the
+      // launcher's list, so that list's first is no proof of whose it is.
+      final free = [
+        for (final pad in controllers.pads)
+          if (!localSeatPads.contains(pad.id)) pad.id,
+      ];
       final driving = _navigator?.lastPad;
-      if (driving != null && !localSeatPads.contains(driving) && controllers.pads.any((pad) => pad.id == driving)) {
-        return driving;
-      }
-      return (controllers.playerOne ?? controllers.pads.firstOrNull)?.id;
+      if (free.contains(driving)) return driving;
+      final first = controllers.playerOne?.id;
+      return free.contains(first) ? first : free.firstOrNull;
     }
     final index = retroControlsPlayer - 2;
     return index < localSeatPads.length ? localSeatPads[index] : null;
@@ -75,13 +80,16 @@ extension RetroEmbeddedControls on AppModel {
 
   /// [change] made to the profiles or layouts: it reaches the game being played, every seat of
   /// it, and is saved. A row can appear or go with it (Save as a profile), so the focus is put
-  /// back on the row it was on.
+  /// back on the row it was on, or on Profile when that row is gone: never on whatever row
+  /// happens to have taken its place.
   void _changeRetroControls(void Function() change) {
     final rows = _currentRows;
     final focused = panelRow >= 0 && panelRow < rows.length ? rows[panelRow].id : null;
     change();
-    final row = _currentRows.indexWhere((row) => row.id == focused);
-    if (row >= 0) panelRow = row;
+    final after = _currentRows;
+    final row = after.indexWhere((row) => row.id == focused);
+    final profile = after.indexWhere((row) => row.id == 'retroControlsPreset');
+    panelRow = row >= 0 ? row : (profile >= 0 ? profile : 0);
     _retroControlsChanged();
   }
 
@@ -268,6 +276,13 @@ extension RetroEmbeddedControls on AppModel {
     if (current == null) {
       // A row being changed with a controller keeps every direction until that is done.
       if (_viaPad && editingValue != null) return false;
+      // A name is typed, and a controller cannot type here: choosing the row with one would
+      // leave it stuck in the field.
+      if (_viaPad && command == Command.select && row?.kind is TextRow) {
+        sounds.play(Cue.bump);
+        show(T.text('retroProfileRenameKeys'));
+        return true;
+      }
       final valued = row?.kind is ChoiceRow || row?.kind is StepperRow || row?.kind is ToggleRow;
       final stepped = valued && !_viaPad;
       if ((command == Command.up && panelRow == first) || (command == Command.left && !stepped)) {

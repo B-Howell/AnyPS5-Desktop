@@ -287,9 +287,14 @@ the first row. With a controller that holds for every row: a controller changes
 a row's value only after the row is chosen with Cross (then left and right are
 the value until Cross or Back), so until then left is free and always goes
 back. With the keys, left and right step a value at once, so left goes back
-only from a row that has no value. Player 1's controller on this page is the
-one driving the launcher, the last to have moved the focus, not necessarily
-the launcher's first controller. The labels are rows after the
+only from a row that has no value. While a row's value is being changed with a
+controller, Back ends that and a second Back leaves the page. Player 1's
+controller on this page is the one driving the launcher, the last to have moved
+the focus, and never one seated as another player. Profile name is typed, so
+choosing it with a controller only says to use a keyboard. L1 and R1 move to
+the next game's Controls, and the focus goes back on a label there. When a
+focused row goes (Save as a profile, Delete this profile), the focus moves to
+Profile. The labels are rows after the
 list's last so that one can hold the focus; `_retroLabelCommand` holds these
 moves, and a change that adds or removes a row (Save as a profile) puts the
 focus back on the row it was on. With the mouse a label is clicked. On a
