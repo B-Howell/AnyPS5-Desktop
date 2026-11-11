@@ -434,3 +434,13 @@ optimizer row. The Windows capability is now supplied explicitly in those
 fixtures. Production still detects the native host ABI. The restart-tuning
 test now creates the mock core filename for the test's host, so it can
 exercise the same temporary-settings and Apply contract on Linux.
+
+The macOS job in [run 42953521356](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/42953521356/job/130303283377)
+passed the recursive watcher and reported 146 pixel mismatches. Its recorded
+reference files exactly matched the tracked PNGs. All 146 replacement PNGs
+were byte-identical to the corresponding actual images in
+[run 42938934662](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/42938934662/job/130255797843).
+The refresh uses only the filenames reported by the current job. In particular,
+the older onboarding screenshot included in the artifact is excluded because
+the current onboarding comparison passed. Exact pixel comparison remains
+enabled in the workflow.
