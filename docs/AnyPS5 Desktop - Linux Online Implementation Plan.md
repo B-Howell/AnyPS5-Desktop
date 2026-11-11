@@ -747,3 +747,21 @@ This run verifies cross-platform LAN discovery and admission only.
 
 All five hosted jobs passed on the Linux PS2 setup commit `8db28a3`.
 See [run 42984202592](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/42984202592).
+
+The initial mixed-platform failure occurred on multiple Linux threads
+at the same generated instruction, an indexed byte read
+`movzbl (%rbx,%rax),%eax`. The instruction sequence corresponds to the
+pinned LRPS2 software renderer's palette-indexed texture read in
+`GSDrawScanlineCodeGenerator2::ReadTexelImpl`. A plain debugger run
+stopped earlier on an Emotion Engine generated memory read during
+boot, so that early debugger stop does not identify the match failure.
+The DEV9 RX thread was waiting when inspected. No renderer setting or
+core package changed in the follow-up.
+
+A repeat with the debugger passing unrelated signals reached the
+same multiplayer map on the Windows host and Linux guest. Both were
+still in gameplay at the 90-second capture, with 1,510 host and 759
+guest frames forwarded. Both workers exited normally. This verifies
+mixed-platform local gameplay on the repeat. The intermittent
+software-renderer fault still needs an exact reproduction, and the
+repeat did not exercise hosted WebRTC or play through the results.
