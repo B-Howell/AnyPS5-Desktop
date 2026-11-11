@@ -894,3 +894,27 @@ catalog. Linux app admission and actual provider gameplay remain open.
 The focused profile and offline-boot suites passed all 13 tests.
 The preceding shared-policy head passed all five hosted jobs in
 [run 42995259037](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/42995259037).
+
+### Linux RPCS3 online core build preflight
+
+The existing Linux `rpcs3_libretro.so.zip` was inspected with
+`nm -D`. Its SO exports Libretro's API version but has neither
+`retro_anyps5_ps3_network_policy_v3` nor
+`retro_anyps5_ps3_provider_status_v1`, so it cannot boot an online
+profile through the new Linux runner.
+
+A fresh scratch checkout at
+`74b3fa37beb294418230b1f039bab4de97f18479` accepted the frontend,
+network policy, patch attestation, RPCN identity and provider status
+patches in the same order as the
+[Windows preview builder](../tool/build-rpcs3-preview.sh).
+`git diff --check` passed after application. Local Linux configuration
+stopped before compilation because the installed CMake is 3.22.1 and
+this source requires at least 3.28. Its compiler gate also requires
+GCC 13 or Clang 19 and the available local tools are GCC 11 and Clang
+14. No Linux core was built or qualified in this preflight.
+
+The pinned source's Linux CI recipe uses `rpcs3/rpcs3-ci-jammy:2.1`
+with a newer compiler and LLVM under `/opt/llvm`. A build in that
+environment still needs to verify both exports, dependency resolution,
+and boot with the Linux Vulkan runner before assigning a release pin.
