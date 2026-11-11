@@ -637,3 +637,14 @@ real 342-byte requests and generated 342-byte replies. This establishes
 that the title can configure networking and reach LAN discovery on the
 Linux core. No other peer was attached, so lobby visibility, joining,
 and gameplay across the room link remain unverified.
+
+A two-worker control ran two isolated TimeSplitters instances with
+distinct virtual MAC addresses, separate copies of the scratch memory
+card, and production LAN bridge and frame routing between the workers.
+Both loaded the profile and reached the main menu. Selecting Network
+returned to the main menu on both instances. DEV9 logged the initial
+adapter self-test send on each, but neither worker drained a valid
+outbound frame and the run exited with status 1. This does not qualify
+the local two-player path. Compare the dual-worker input and network
+initialization against the successful single-worker run before adding
+WebRTC to this test.
