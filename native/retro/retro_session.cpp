@@ -121,6 +121,15 @@ class Session::Impl {
       : config_(std::move(config)), content_(std::filesystem::u8path(config_.disc).parent_path().u8string()),
         console_(ConsoleForCore(config_.core)), ps3_(console_ == Console::kPs3),
         frame_available_(std::move(frame_available)), video_(std::move(video)), audio_(std::move(audio)) {
+    if (config_.recovery) {
+      const auto& recovery = *config_.recovery;
+      if (console_ != Console::kPs1 || recovery.source <= 0 || recovery.state.empty() ||
+          recovery.state.size() > ps1_checkpoint::kMaximumBytes)
+        throw std::invalid_argument("Invalid private PS1 recovery checkpoint");
+      recovery_accepted_ = false;
+      paused_ = true;
+      suppress_frame_ = true;
+    }
     if (config_.lan_mac) {
       if (console_ != Console::kPs2 || !Ps2VirtualLan::ValidMac(*config_.lan_mac))
         throw std::invalid_argument("Expected a private PS2 LAN address");
@@ -152,7 +161,7 @@ class Session::Impl {
 
   bool ChangeDisc(unsigned index) {
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (checkpoint_.busy()) return false;
+    if (!recovery_accepted_ || checkpoint_.busy()) return false;
     if (stop_ || ended_ || !discs_ || discs_->busy ||
         index >= discs_->labels.size() || discs_->inserted == index)
       return false;
@@ -164,6 +173,7 @@ class Session::Impl {
 
   void SetInput(uint16_t buttons, const std::array<int16_t, 4>& axes) {
     std::lock_guard<std::mutex> lock(input_mutex_);
+    if (!recovery_accepted_) return;
     buttons_ = buttons;
     axes_ = axes;
   }
@@ -192,7 +202,7 @@ class Session::Impl {
 
   std::optional<int64_t> RequestOrdinaryCheckpoint(int64_t source, const ps1_checkpoint::Digest& digest, bool park) {
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (!presented_ || stop_ || ended_ || source <= 0 || source != checkpoint_.source() ||
+    if (!recovery_accepted_ || !presented_ || stop_ || ended_ || source <= 0 || source != checkpoint_.source() ||
         options_changed_ || graphics_queued_ || graphics_applying_ || pending_disc_ ||
         (discs_ && discs_->busy)) return std::nullopt;
     return checkpoint_.RequestCapture(digest, park);
@@ -200,6 +210,28 @@ class Session::Impl {
   std::optional<int64_t> RequestOrdinaryResume(int64_t source) {
     if (stop_ || ended_ || source <= 0 || source != checkpoint_.source()) return std::nullopt;
     return checkpoint_.RequestResume();
+  }
+  std::optional<SessionConfig> DetachOrdinaryRecovery(int64_t source) {
+    std::lock_guard<std::mutex> lock(settings_mutex_);
+    if (!recovery_accepted_ || stop_ || ended_ || !checkpoint_.parked()) return std::nullopt;
+    SessionConfig reopen = config_;
+    if (discs_) {
+      if (!discs_->inserted || discs_->inserted_path.empty()) return std::nullopt;
+      reopen.initial_disc = InitialDisc{*discs_->inserted, discs_->inserted_path};
+    }
+    reopen.initial_graphics.clear();
+    for (const auto& [key, option] : options_)
+      reopen.initial_graphics.emplace(key, option.values[option.selected]);
+    auto recovery = std::make_shared<ps1_checkpoint::Recovery>();
+    if (!checkpoint_.Detach(source, *recovery)) return std::nullopt;
+    stop_ = true;
+    reopen.recovery = std::move(recovery);
+    return reopen;
+  }
+  bool AcceptOrdinaryRecovery(int64_t source) {
+    if (source <= 0 || recovered_source_ != source || !presented_ || stop_ || ended_) return false;
+    bool pending = false;
+    return recovery_accepted_.compare_exchange_strong(pending, true);
   }
   ps1_checkpoint::Mailbox::Reply TakeCheckpoint(int64_t ticket) { return checkpoint_.Take(ticket); }
   void CancelCheckpoint(int64_t ticket) { checkpoint_.Cancel(ticket); }
@@ -210,7 +242,8 @@ class Session::Impl {
     status.ready = frame_ready_;
     status.presented = presented_;
     status.ended = ended_;
-    if (presented_ && !stop_ && !ended_) status.checkpoint_source = checkpoint_.source();
+    status.recovered_source = recovered_source_;
+    if (recovery_accepted_ && presented_ && !stop_ && !ended_) status.checkpoint_source = checkpoint_.source();
     status.checkpoint_parked = checkpoint_.parked();
     status.error = error_;
     status.aspect = aspect_;
@@ -244,7 +277,7 @@ class Session::Impl {
 
   bool SetOption(const std::string& key, const std::string& value) {
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (checkpoint_.busy()) return false;
+    if (!recovery_accepted_ || checkpoint_.busy()) return false;
     const auto option = options_.find(key);
     if (option == options_.end() ||
         (!option->second.graphics && !option->second.boot && !LiveCoreOption(key, hardware_frame_))) return false;
@@ -270,7 +303,7 @@ class Session::Impl {
     if (!presented_ || !hardware_frame_ || values.empty() || expected.size() != values.size())
       return false;
     std::lock_guard<std::mutex> lock(settings_mutex_);
-    if (checkpoint_.busy() || graphics_applying_ || graphics_queued_) return false;
+    if (!recovery_accepted_ || checkpoint_.busy() || graphics_applying_ || graphics_queued_) return false;
     std::vector<std::pair<Option*, size_t>> changes;
     bool checkpoint = false;
     for (const auto& [key, value] : values) {
@@ -338,6 +371,7 @@ class Session::Impl {
         choice = std::find(option.values.begin(), option.values.end(), row->default_value);
       }
       if (choice != option.values.end()) option.selected = static_cast<size_t>(choice - option.values.begin());
+      ApplyRecoveryOption(key, option);
       ApplyPrivateLanOption(key, option);
       if (!option.values.empty()) options_.emplace(key, std::move(option));
     }
@@ -486,6 +520,14 @@ class Session::Impl {
     if (enabled != option.values.end()) option.selected = static_cast<size_t>(enabled - option.values.begin());
   }
 
+  void ApplyRecoveryOption(const std::string& key, Option& option) const {
+    if (!config_.recovery) return;
+    const auto saved = config_.initial_graphics.find(key);
+    if (saved == config_.initial_graphics.end()) return;
+    const auto value = std::find(option.values.begin(), option.values.end(), saved->second);
+    if (value != option.values.end()) option.selected = static_cast<size_t>(value - option.values.begin());
+  }
+
   void SetVariables(const Variable* variables) {
     std::lock_guard<std::mutex> lock(settings_mutex_);
     for (; variables->key && variables->value; ++variables) {
@@ -527,6 +569,7 @@ class Session::Impl {
             option.selected = static_cast<size_t>(choice - option.values.begin());
         }
       }
+      ApplyRecoveryOption(key, option);
       ApplyPrivateLanOption(key, option);
       if (!option.values.empty()) options_.emplace(key, std::move(option));
     }
@@ -777,7 +820,7 @@ class Session::Impl {
           [](int16_t left, int16_t right) {
             auto* session = active_.load();
             const int16_t stereo[]{left, right};
-            if (!session->paused_ && !session->suppress_frame_) {
+            if (!session->paused_ && !session->suppress_frame_ && session->recovery_accepted_) {
               ++session->audio_frames_;
               session->audio_->Write(stereo, 1);
             }
@@ -785,7 +828,7 @@ class Session::Impl {
       core.Get<void (*)(size_t (*)(const int16_t*, size_t))>("retro_set_audio_sample_batch")(
           [](const int16_t* samples, size_t frames) {
             auto* session = active_.load();
-            if (!session->paused_ && !session->suppress_frame_) {
+            if (!session->paused_ && !session->suppress_frame_ && session->recovery_accepted_) {
               session->audio_frames_ += frames;
               session->audio_->Write(samples, frames);
             }
@@ -859,7 +902,7 @@ class Session::Impl {
         const auto scale = options_.find(ps2 ? "pcsx2_upscale_multiplier" : "swanstation_GPU_ResolutionScale");
         return scale != options_.end() && std::exchange(scale->second.selected, 0) != 0;
       };
-      if (!reopen() && (!use_native_resolution() || !reopen()))
+      if (!reopen() && (config_.recovery || !use_native_resolution() || !reopen()))
         throw std::runtime_error("The core could not boot this disc. Check its BIOS and game files.");
       void* card = nullptr;
       size_t card_size = 0;
@@ -870,7 +913,7 @@ class Session::Impl {
         card_size = core.Get<size_t (*)(unsigned)>("retro_get_memory_size")(0);
         card_path = std::filesystem::u8path(config_.saves) / std::filesystem::u8path(config_.disc).stem();
         card_path += ".srm";
-        RestoreCard(card_path, card, card_size);
+        if (!config_.recovery) RestoreCard(card_path, card, card_size);
       };
       restore_card();
       if (ps1) {
@@ -880,6 +923,28 @@ class Session::Impl {
         const auto size = blank ? core.Get<size_t (*)()>("retro_serialize_size")() : 0;
         if (size && size <= ps1_checkpoint::kMaximumBytes - ps1_checkpoint::kPrefixBytes)
           checkpoint_.Configure({blank, private_save, load_private, size + ps1_checkpoint::kPrefixBytes});
+        if (config_.recovery) {
+          {
+            std::lock_guard<std::mutex> lock(settings_mutex_);
+            for (const auto& [key, value] : config_.initial_graphics) {
+              const auto option = options_.find(key);
+              if (option == options_.end() || option->second.values[option->second.selected] != value)
+                throw std::runtime_error("The original PS1 settings are unavailable.");
+            }
+          }
+          const auto& recovery = *config_.recovery;
+          if (!load_private || !load_private(recovery.state.data(), recovery.state.size(), recovery.digest.data()))
+            throw std::runtime_error("The emulator could not recover the original PS1 game.");
+          card = core.Get<void* (*)(unsigned)>("retro_get_memory_data")(0);
+          card_size = core.Get<size_t (*)(unsigned)>("retro_get_memory_size")(0);
+          const auto source = recovery.source;
+          {
+            std::lock_guard<std::mutex> lock(settings_mutex_);
+            config_.recovery.reset();
+          }
+          suppress_frame_ = false;
+          recovered_source_ = source;
+        }
       }
       AvInfo av{};
       av_info(&av);
@@ -894,11 +959,12 @@ class Session::Impl {
       const auto frame_time = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / fps));
       auto next = Clock::now();
       auto hardware_deadline = next + std::chrono::seconds(8);
+      std::optional<Clock::time_point> recovery_deadline;
       while (!stop_) {
         if (!checkpoint_.busy()) ApplyDiscChange();
         if ((ps1 || ps2) && !checkpoint_.busy())
           ApplyCheckpointGraphics(core, reopen, step, ps1, card, card_size, card_path);
-        if (!ps3_ && hardware_callbacks_.reset && !frame_ready_ && Clock::now() > hardware_deadline) {
+        if (!recovered_source_ && !ps3_ && hardware_callbacks_.reset && !frame_ready_ && Clock::now() > hardware_deadline) {
           if (!use_native_resolution()) {
             std::lock_guard<std::mutex> lock(settings_mutex_);
             auto& renderer = options_.at(ps2 ? "pcsx2_renderer" : "swanstation_GPU_Renderer");
@@ -922,7 +988,15 @@ class Session::Impl {
         }
         if (checkpoint_effects.flush_audio) audio_->Flush();
         if (stop_) break;
-        if ((paused_ && frame_ready_) || checkpoint_.parked()) {
+        if (recovered_source_ && !frame_ready_ && !paused_) {
+          const auto now = Clock::now();
+          if (!recovery_deadline) recovery_deadline = now + std::chrono::seconds(8);
+          if (now >= *recovery_deadline)
+            throw std::runtime_error("The restored PS1 game did not present a visible frame.");
+        } else {
+          recovery_deadline.reset();
+        }
+        if ((paused_ && (frame_ready_ || recovered_source_)) || checkpoint_.parked()) {
           std::this_thread::sleep_for(std::chrono::milliseconds(5));
           next = Clock::now();
           continue;
@@ -936,7 +1010,7 @@ class Session::Impl {
         if (next < now - frame_time) next = now;
         std::this_thread::sleep_until(next);
       }
-      if (card) StoreCard(card_path, card, card_size);
+      if (card && recovery_accepted_) StoreCard(card_path, card, card_size);
     } catch (const std::exception& failure) {
       std::lock_guard<std::mutex> lock(settings_mutex_);
       error_ = failure.what();
@@ -960,7 +1034,7 @@ class Session::Impl {
   }
 
   static std::atomic<Session::Impl*> active_;
-  const SessionConfig config_;
+  SessionConfig config_;
   const std::string content_;
   const Console console_;
   const bool ps3_;
@@ -970,6 +1044,8 @@ class Session::Impl {
   std::unique_ptr<Audio> audio_;
   std::unique_ptr<Ps2VirtualLan> lan_;
   ps1_checkpoint::Mailbox checkpoint_;
+  std::atomic<bool> recovery_accepted_{true};
+  std::atomic<int64_t> recovered_source_{0};
   std::atomic<bool> lan_ready_{false};
   HardwareCallbacks hardware_callbacks_{};
   DiskControlExtCallbacks disk_callbacks_{};
@@ -1026,6 +1102,8 @@ std::optional<int64_t> Session::RequestOrdinaryCheckpoint(int64_t source, const 
   return impl_->RequestOrdinaryCheckpoint(source, digest, park);
 }
 std::optional<int64_t> Session::RequestOrdinaryResume(int64_t source) { return impl_->RequestOrdinaryResume(source); }
+std::optional<SessionConfig> Session::DetachOrdinaryRecovery(int64_t source) { return impl_->DetachOrdinaryRecovery(source); }
+bool Session::AcceptOrdinaryRecovery(int64_t source) { return impl_->AcceptOrdinaryRecovery(source); }
 ps1_checkpoint::Mailbox::Reply Session::TakeCheckpoint(int64_t ticket) { return impl_->TakeCheckpoint(ticket); }
 void Session::CancelCheckpoint(int64_t ticket) { impl_->CancelCheckpoint(ticket); }
 bool Session::SetOption(const std::string& key, const std::string& value) { return impl_->SetOption(key, value); }

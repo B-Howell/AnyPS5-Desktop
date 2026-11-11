@@ -110,6 +110,8 @@ FlValue* EncodeStatus(const SessionStatus& status) {
   if (status.checkpoint_source > 0)
     fl_value_set_string_take(result, "localBlankCardCheckpoint", fl_value_new_int(status.checkpoint_source));
   fl_value_set_string_take(result, "ordinaryCheckpointParked", fl_value_new_bool(status.checkpoint_parked));
+  if (status.recovered_source > 0)
+    fl_value_set_string_take(result, "ps1RecoveredSource", fl_value_new_int(status.recovered_source));
   fl_value_set_string_take(result, "progressLabel",
                            status.progress_label ? fl_value_new_string(status.progress_label->c_str())
                                                  : fl_value_new_null());
@@ -220,6 +222,20 @@ class RetroCoreHostLinux::Impl {
       Start(call, args);
       return;
     }
+    if (method == "ps1LocalCheckpointReopen" || method == "ps1LocalCheckpointDiscard") {
+      const auto source = args && fl_value_get_type(args) == FL_VALUE_TYPE_INT ? fl_value_get_int(args) : 0;
+      if (!ordinary_recovery_ || source != ordinary_recovery_->recovery->source)
+        throw std::runtime_error("The private PS1 recovery checkpoint is unavailable.");
+      if (session_ && session_->ended()) Release();
+      if (session_) throw std::runtime_error("An embedded game is already running.");
+      if (method == "ps1LocalCheckpointDiscard") {
+        ordinary_recovery_.reset();
+        Success(call, fl_value_new_bool(true));
+      } else {
+        StartSession(call, *ordinary_recovery_, Console::kPs1);
+      }
+      return;
+    }
     // The registered texture survives individual games. Commands must carry
     // the run owner as well, so a delayed callback cannot mutate a later game.
     const auto owned = linux_channel::OwnedArguments(args, active_session_);
@@ -248,6 +264,23 @@ class RetroCoreHostLinux::Impl {
     } else if (method == "input") {
       SetInput(*session_, args);
       Success(call);
+    } else if (method == "ps1LocalCheckpointDetach" || method == "ps1LocalCheckpointAccept") {
+      const auto source = linux_channel::ReadCheckpointSource(args, fl_texture_get_id(FL_TEXTURE(texture_)));
+      if (!source) throw std::runtime_error("The PS1 recovery session changed.");
+      if (method == "ps1LocalCheckpointDetach") {
+        if (ordinary_recovery_) throw std::runtime_error("PS1 recovery is already pending.");
+        auto recovery = session_->DetachOrdinaryRecovery(*source);
+        if (!recovery) throw std::runtime_error("The original PS1 game is not parked.");
+        ordinary_recovery_ = std::move(recovery);
+        Release();
+        Success(call, fl_value_new_int(*source));
+      } else {
+        if (!ordinary_recovery_ || *source != ordinary_recovery_->recovery->source ||
+            !session_->AcceptOrdinaryRecovery(*source))
+          throw std::runtime_error("The original PS1 game is not ready to resume.");
+        ordinary_recovery_.reset();
+        Success(call, fl_value_new_bool(true));
+      }
     } else if (method == "ps1LocalCheckpointExport" || method == "ps1LocalCheckpointPark" ||
                method == "ps1LocalCheckpointResume") {
       const auto source = linux_channel::ReadCheckpointSource(args, fl_texture_get_id(FL_TEXTURE(texture_)));
@@ -336,8 +369,6 @@ class RetroCoreHostLinux::Impl {
       return;
     }
     try {
-      if (session_serial_ == std::numeric_limits<int64_t>::max())
-        throw std::runtime_error("The native session counter is exhausted");
       linux_channel::ValidateOnlineStart(args);
       std::optional<std::array<uint8_t, 6>> lan_mac;
       if (auto* mac = ReadField(args, "ps2LanMac")) {
@@ -357,14 +388,25 @@ class RetroCoreHostLinux::Impl {
         if (index < 0 || index >= 128) throw std::runtime_error("Invalid initial disc");
         initial_disc = InitialDisc{static_cast<unsigned>(index), initial_path};
       }
+      StartSession(call, SessionConfig{core, disc, system, saves, resolution ? resolution : "",
+                       ReadOptions(ReadField(args, "graphics")).value_or(Options{}), std::move(initial_disc), lan_mac},
+                   console);
+    } catch (const std::exception& error) {
+      fl_method_call_respond_error(call, "start", error.what(), nullptr, nullptr);
+    }
+  }
+
+  void StartSession(FlMethodCall* call, SessionConfig config, Console console) {
+    try {
+      if (session_serial_ == std::numeric_limits<int64_t>::max())
+        throw std::runtime_error("The native session counter is exhausted");
       // Keep one registration for this view. A raster callback can still hold
       // the previous frame while a session releases or the next one starts.
       if (!texture_) texture_ = static_cast<RetroTexture*>(g_object_new(retro_texture_get_type(), nullptr));
       if (!registered_) registered_ = fl_texture_registrar_register_texture(registrar_, FL_TEXTURE(texture_));
       if (!registered_) throw std::runtime_error("Could not register the game surface");
       session_ = std::make_unique<Session>(
-          SessionConfig{core, disc, system, saves, resolution ? resolution : "",
-                        ReadOptions(ReadField(args, "graphics")).value_or(Options{}), std::move(initial_disc), lan_mac},
+          std::move(config),
           console == Console::kPs3 ? CreateVulkanVideo() : CreateLinuxVideo(), CreateLinuxAudio(),
           [this] { ScheduleFrame(); });
       {
@@ -381,10 +423,10 @@ class RetroCoreHostLinux::Impl {
       fl_value_set_string_take(handle, "texture", fl_value_new_int(fl_texture_get_id(FL_TEXTURE(texture_))));
       fl_value_set_string_take(handle, "session", fl_value_new_int(active_session_));
       Success(call, handle);
-    } catch (const std::exception& error) {
+    } catch (...) {
       if (session_) session_->Stop();
       Release();
-      fl_method_call_respond_error(call, "start", error.what(), nullptr, nullptr);
+      throw;
     }
   }
 
@@ -410,6 +452,7 @@ class RetroCoreHostLinux::Impl {
   GMainContext* platform_context_;
   FlMethodChannel* channel_;
   std::unique_ptr<Session> session_;
+  std::optional<SessionConfig> ordinary_recovery_;
   RetroTexture* texture_ = nullptr;
   std::mutex notification_mutex_;
   GSource* notification_ = nullptr;

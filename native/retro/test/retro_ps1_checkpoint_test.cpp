@@ -93,6 +93,74 @@ int main(int argc, char** argv) {
           !ordinary.RequestOrdinaryCheckpoint(source, digest, false),
           "An ordinary core required or advertised private checkpoint hooks");
     ordinary.Stop(); ordinary.Join();
+    Session original({argv[1], "test.cue", "", saves.u8string(), "",
+                      {{"swanstation_CPU_ExecutionMode", "CachedInterpreter"}}},
+                     std::make_unique<TestVideo>(), std::make_unique<TestAudio>(), [] {});
+    original.Start();
+    WaitFor([&] { original.AcquireFrame(); return original.Status().telemetry.steps >= 3; },
+            "Original game did not advance before detach");
+    const auto origin = original.Status().checkpoint_source;
+    const auto park = original.RequestOrdinaryCheckpoint(origin, digest, true);
+    Check(park.has_value(), "Could not park the original game");
+    Check(!original.DetachOrdinaryRecovery(origin), "Detached an unconsumed park result");
+    WaitFor([&] { reply = original.TakeCheckpoint(*park); return !std::holds_alternative<std::monostate>(reply); },
+            "Original park did not finish");
+    const auto saved_frame = std::get<ps1_checkpoint::Snapshot>(reply).frame;
+    Check(!original.DetachOrdinaryRecovery(origin + 1), "Wrong source detached the game");
+    const auto recovery = original.DetachOrdinaryRecovery(origin);
+    Check(recovery.has_value(), "Parked game did not detach");
+    original.Join();
+    // A failed or abandoned reopen must leave the on-disk card untouched.
+    {
+      const uint32_t marker = 11;
+      std::ofstream file(card_file, std::ios::binary | std::ios::trunc);
+      file.write(reinterpret_cast<const char*>(&marker), sizeof(marker));
+    }
+    {
+      auto invalid = *recovery;
+      auto rejected = std::make_shared<ps1_checkpoint::Recovery>(*invalid.recovery);
+      rejected->state.pop_back();
+      invalid.recovery = rejected;
+      Session failed(std::move(invalid), std::make_unique<TestVideo>(), std::make_unique<TestAudio>(), [] {});
+      failed.Start();
+      failed.Join();
+      Check(!failed.Status().error.empty() && !failed.Status().recovered_source && !failed.AcquireFrame(),
+            "A rejected private checkpoint was reported as restored");
+      std::ifstream file(card_file, std::ios::binary);
+      file.read(reinterpret_cast<char*>(&card), sizeof(card));
+      Check(file.good() && card == 11, "Failed recovery changed the on-disk card");
+    }
+    for (const bool accept : {false, true}) {
+      Session returned(*recovery, std::make_unique<TestVideo>(), std::make_unique<TestAudio>(), [] {});
+      returned.Start();
+      WaitFor([&] { return returned.Status().recovered_source == origin || returned.ended(); },
+              "Detached recovery did not load");
+      Check(returned.Status().error.empty(), "Detached recovery failed to load");
+      Check(!returned.AcceptOrdinaryRecovery(origin), "Recovery accepted before presenting");
+      returned.Pause(false);
+      WaitFor([&] { return static_cast<bool>(returned.AcquireFrame()); }, "Restored frame did not appear");
+      Check(returned.Status().options.at("swanstation_CPU_ExecutionMode").active_value == "CachedInterpreter",
+            "Recovery lost the original CPU setting");
+      Check(!returned.SetOption("swanstation_CPU_ExecutionMode", "Recompiler"),
+            "Unaccepted recovery allowed settings changes");
+      Check(!returned.AcceptOrdinaryRecovery(origin + 1), "Wrong source accepted recovery");
+      if (accept) {
+        Check(returned.AcceptOrdinaryRecovery(origin), "Visible recovery was not accepted");
+        const auto capture = returned.RequestOrdinaryCheckpoint(returned.Status().checkpoint_source, digest, false);
+        Check(capture.has_value(), "Recovered game could not capture again");
+        WaitFor([&] { reply = returned.TakeCheckpoint(*capture); return !std::holds_alternative<std::monostate>(reply); },
+                "Recovered capture did not finish");
+        const auto& snapshot = std::get<ps1_checkpoint::Snapshot>(reply);
+        uint32_t position = 0;
+        std::memcpy(&position, snapshot.state.data(), sizeof(position));
+        Check(position > saved_frame && position == saved_frame + snapshot.frame,
+              "Reopened game lost its original position");
+      }
+      returned.Stop(); returned.Join();
+      std::ifstream file(card_file, std::ios::binary);
+      file.read(reinterpret_cast<char*>(&card), sizeof(card));
+      Check(file.good() && card == (accept ? 7u : 11u), "Recovery wrote the wrong card or wrote before acceptance");
+    }
     std::filesystem::remove_all(saves);
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

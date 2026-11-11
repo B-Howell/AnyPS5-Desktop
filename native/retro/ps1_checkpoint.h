@@ -23,6 +23,7 @@ using Save = size_t (*)(void*, size_t, const uint8_t*);
 using Load = bool (*)(const void*, size_t, const uint8_t*);
 
 struct Snapshot { uint32_t frame; Bytes state; };
+struct Recovery { int64_t source = 0; Digest digest{}; Bytes state; };
 struct Capture { Snapshot snapshot; Bytes private_state; };
 struct Hooks { Save blank = nullptr, private_save = nullptr; Load load = nullptr; size_t capacity = 0; };
 
@@ -146,6 +147,14 @@ class Mailbox {
   void Stop() {
     std::lock_guard<std::mutex> lock(mutex_);
     stopped_ = true; parked_ = false; job_.reset(); recovery_.clear();
+  }
+
+  bool Detach(int64_t source, Recovery& recovery) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!Ready() || source != source_ || !parked_ || job_ || recovery_.empty()) return false;
+    recovery = {source_, recovery_digest_, std::move(recovery_)};
+    stopped_ = true;
+    return true;
   }
 
  private:

@@ -31,6 +31,7 @@ struct SessionConfig {
   Options initial_graphics;
   std::optional<InitialDisc> initial_disc = std::nullopt;
   std::optional<std::array<uint8_t, 6>> lan_mac = std::nullopt;
+  std::shared_ptr<const ps1_checkpoint::Recovery> recovery = nullptr;
 };
 
 using LanFrames = std::vector<std::vector<uint8_t>>;
@@ -58,6 +59,7 @@ struct DiscStatus {
 
 struct SessionStatus {
   int64_t checkpoint_source = 0;
+  int64_t recovered_source = 0;
   bool checkpoint_parked = false;
   bool ready = false, presented = false, ended = false, hardware = false, graphics_pending = false;
   int32_t frame_width = 0, frame_height = 0;
@@ -119,6 +121,8 @@ class Session {
   bool ClearLanFrames();
   std::optional<int64_t> RequestOrdinaryCheckpoint(int64_t source, const ps1_checkpoint::Digest& digest, bool park);
   std::optional<int64_t> RequestOrdinaryResume(int64_t source);
+  std::optional<SessionConfig> DetachOrdinaryRecovery(int64_t source);
+  bool AcceptOrdinaryRecovery(int64_t source);
   ps1_checkpoint::Mailbox::Reply TakeCheckpoint(int64_t ticket);
   void CancelCheckpoint(int64_t ticket);
   bool SetOption(const std::string& key, const std::string& value);

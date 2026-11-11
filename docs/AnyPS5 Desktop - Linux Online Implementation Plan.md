@@ -246,9 +246,21 @@ Windows host passes an MSVC `/Zs` syntax check against the installed Flutter
 headers and the pinned Vulkan headers. This is compilation evidence rather
 than a new Windows gameplay run.
 
-Detach/reopen recovery, match import/catch-up, synchronized input, rollback and
-presentation are still required before exposing Linux PS1 online play. This
-ordinary checkpoint stage alone does not complete an invite or online session.
+The Linux host now detaches a parked ordinary session after the public export
+has been collected. It retains the private recovery in memory under the source
+ticket and joins the old worker before opening another core. Reopening uses
+the saved active options and the inserted media when a playlist is in use.
+The worker imports the private state before presenting, and the launcher
+accepts it only after the restored frame arrives. Failed or abandoned attempts
+retain the recovery ticket and leave the on-disk card unchanged.
+
+The native fixture checks failed import, retry, restored position and CPU
+selection, ticket ownership, and card persistence after acceptance. The
+fixture covers a single-disc reopen. A multi-disc reopen and a real core still
+need qualification.
+
+Match import and catch-up, synchronized input, rollback and presentation
+are still required before exposing Linux PS1 online play.
 
 Local source, builds, temporary files and compiler caches remain on D:.
 Native builds use `nice -n 19 ionice -c3` and at most three jobs. Tests use fake
