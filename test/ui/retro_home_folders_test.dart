@@ -37,7 +37,7 @@ void _installFixtureCore(AppModel model, RetroPlatform platform) {
     ..setUint32(64, 0x4550, Endian.little)
     ..setUint16(68, 0x8664, Endian.little)
     ..setUint16(86, 0x2000, Endian.little);
-  final path = p.join(p.dirname(model.paths.toolkits), 'Emulators', ManagedRetro.libraryName(platform));
+  final path = p.join(p.dirname(model.paths.toolkits), 'Emulators', EmbeddedCoreHost.windowsX64.libraryName(platform));
   final file = File(path);
   file.parent.createSync(recursive: true);
   file.writeAsBytesSync(image.buffer.asUint8List());

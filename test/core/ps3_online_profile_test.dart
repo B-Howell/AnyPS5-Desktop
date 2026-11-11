@@ -1,3 +1,5 @@
+import 'package:anyps5_desktop/core/embedded_core_host.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -252,6 +254,7 @@ $ppu:
       root.path,
       (platform: RetroPlatform.ps3, path: path),
       onlineProfile: profile,
+      coreHost: EmbeddedCoreHost.windowsX64,
       internalResolution: null,
       graphics: const {},
       onResolutionSelected: (_) {},
@@ -293,6 +296,7 @@ $ppu:
       root.path,
       (platform: RetroPlatform.ps3, path: disc),
       onlineProfile: profile,
+      coreHost: EmbeddedCoreHost.windowsX64,
       internalResolution: null,
       graphics: const {},
       onResolutionSelected: (_) {},

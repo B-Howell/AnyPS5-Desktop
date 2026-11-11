@@ -50,7 +50,8 @@ class RetroSettingsModel {
               detail: override,
               kind: const InfoRow('Configured'),
             ),
-            if (ManagedRetro(override).isInstalled(platform) && !inUse) _gamesFolderRow(platform),
+            if (ManagedRetro(override, host: app.embeddedCoreHost).isInstalled(platform) && !inUse)
+              _gamesFolderRow(platform),
           ]
         : !hasPortable && app.managedRetroAvailable
         ? _managedSetupRows(platform)

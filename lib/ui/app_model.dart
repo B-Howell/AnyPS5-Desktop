@@ -3954,10 +3954,13 @@ class AppModel extends ChangeNotifier {
 
   ManagedRetro get _managedRetro => ManagedRetro(
     p.join(p.dirname(paths.toolkits), 'Emulators'),
+    host: embeddedCoreHost,
     packageDirectory: (services.environment ?? Platform.environment)['ANYPS5_MANAGED_CORE_PACKAGES'],
     ps3CoreDigests: (services.environment ?? Platform.environment)['ANYPS5_PS3_CORE_DIGESTS'],
     ps2LanCoreDigests: (services.environment ?? Platform.environment)['ANYPS5_PS2_LAN_CORE_DIGESTS'],
   );
+  EmbeddedCoreHost get embeddedCoreHost =>
+      system == HostSystem.windows ? EmbeddedCoreHost.windowsX64 : EmbeddedCoreHost.linuxX64;
   bool get managedRetroAvailable => system == HostSystem.windows && Abi.current() == Abi.windowsX64;
   String? get retroCoreOverride => (services.environment ?? Platform.environment)['ANYPS5_LIBRETRO_HOME'];
 
@@ -4109,11 +4112,11 @@ class AppModel extends ChangeNotifier {
     final managed = _managedRetro;
     final override = retroCoreOverride;
     if (!execution.usesPresentationCore && override != null) {
-      return p.join(override, ManagedRetro.libraryName(RetroPlatform.ps1));
+      return p.join(override, embeddedCoreHost.libraryName(RetroPlatform.ps1));
     }
     try {
       if (execution.usesStandardCore && !requireHandoff) {
-        final existing = File(p.join(managed.root, ManagedRetro.libraryName(RetroPlatform.ps1)));
+        final existing = File(p.join(managed.root, embeddedCoreHost.libraryName(RetroPlatform.ps1)));
         if (await existing.exists()) {
           final digest = await AssetDownload.sha256Of(existing.path);
           if (execution.coreDigests.contains(digest) && (expectedCore == null || expectedCore == digest)) {
@@ -4247,7 +4250,7 @@ class AppModel extends ChangeNotifier {
 
   String get _ps2LanCoreHome => _managedRetro.installedPs2LanHome ?? retroCoreOverride ?? _managedRetro.root;
 
-  bool get ps2LanCoreInstalled => ManagedRetro(_ps2LanCoreHome).supportsPs2Lan;
+  bool get ps2LanCoreInstalled => ManagedRetro(_ps2LanCoreHome, host: embeddedCoreHost).supportsPs2Lan;
   bool get _ps2LanPackageAvailable => _managedRetro.configuredPs2LanPackage != null;
 
   void openPs2LanSetup({VoidCallback? onReady}) {
@@ -4377,7 +4380,7 @@ class AppModel extends ChangeNotifier {
 
   String? get ps2LanBiosPath =>
       _managedRetro.biosPath(RetroPlatform.ps2) ??
-      ManagedRetro(retroCoreOverride ?? _managedRetro.root).biosPath(RetroPlatform.ps2);
+      ManagedRetro(retroCoreOverride ?? _managedRetro.root, host: embeddedCoreHost).biosPath(RetroPlatform.ps2);
 
   ({Game game, List<String> paths, Completer<String?> selection})? _retroDiscLaunch;
 
@@ -4614,6 +4617,7 @@ class AppModel extends ChangeNotifier {
         run = await EmbeddedRetroGame.start(
           embeddedHome,
           disc,
+          coreHost: embeddedCoreHost,
           internalResolution: preferences.retroInternalResolution[game.id],
           graphics: {if (ps3) ...preferences.retroPs3Defaults, ...?graphics[graphicsId], ...trialOptions},
           initialDisc: initialDisc,

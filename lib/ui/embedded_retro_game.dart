@@ -162,6 +162,7 @@ class EmbeddedRetroGame extends RunningGame {
   static Future<EmbeddedRetroGame> start(
     String folder,
     RetroDisc disc, {
+    required EmbeddedCoreHost coreHost,
     required String? internalResolution,
     required void Function(String) onResolutionSelected,
     required Map<String, String> graphics,
@@ -191,7 +192,7 @@ class EmbeddedRetroGame extends RunningGame {
     if (netplay != null && (disc.platform != RetroPlatform.ps1 || p.absolute(disc.path) != netplay.media.disc)) {
       throw ArgumentError('Netplay must use the verified PS1 disc.');
     }
-    final core = netplay?.media.core ?? ordinaryCore ?? p.join(folder, ManagedRetro.libraryName(disc.platform));
+    final core = netplay?.media.core ?? ordinaryCore ?? p.join(folder, coreHost.libraryName(disc.platform));
     if (onlineProfile != null) {
       if (disc.platform != RetroPlatform.ps3 ||
           !p.equals(p.absolute(core), onlineProfile.core) ||

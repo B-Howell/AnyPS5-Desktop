@@ -1,3 +1,5 @@
+import 'package:anyps5_desktop/core/embedded_core_host.dart';
+
 import 'dart:io';
 
 import 'package:anyps5_desktop/core/controllers/pad_info.dart';
@@ -42,6 +44,7 @@ void main() {
       final game = await EmbeddedRetroGame.start(
         folder,
         (platform: RetroPlatform.ps1, path: disc.path),
+        coreHost: EmbeddedCoreHost.windowsX64,
         internalResolution: null,
         onResolutionSelected: (_) {},
         graphics: const {},

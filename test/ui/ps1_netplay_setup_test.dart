@@ -161,6 +161,7 @@ void main() {
     final game = await EmbeddedRetroGame.start(
       root.path,
       (platform: RetroPlatform.ps1, path: p.join(root.path, 'game.cue')),
+      coreHost: EmbeddedCoreHost.windowsX64,
       internalResolution: null,
       graphics: const {},
       onResolutionSelected: (_) {},
@@ -348,7 +349,11 @@ void main() {
     final root = await Directory.systemTemp.createTemp('anyps5-source-capture-');
     addTearDown(() => root.delete(recursive: true));
     const execution = Ps1NetplayExecution.ordinaryHandoff;
-    final core = await ManagedRetro(root.path, packageDirectory: packages).ensurePs1NetplayCore(execution: execution);
+    final core = await ManagedRetro(
+      root.path,
+      host: EmbeddedCoreHost.windowsX64,
+      packageDirectory: packages,
+    ).ensurePs1NetplayCore(execution: execution);
     final media = await Ps1NetplayMedia.verify(
       profile: Ps1NetplayProfile.tryRead('SCUS94426')!,
       disc: disc,
@@ -405,6 +410,7 @@ void main() {
     final source = await EmbeddedRetroGame.start(
       p.dirname(core),
       (platform: RetroPlatform.ps1, path: disc),
+      coreHost: EmbeddedCoreHost.windowsX64,
       internalResolution: null,
       graphics: const {},
       onResolutionSelected: (_) {},
@@ -676,21 +682,29 @@ void main() {
     final home = p.join(p.dirname(model.paths.toolkits), 'Emulators');
     final system = await Directory(p.join(home, 'system')).create(recursive: true);
     final localBios = await File(bios).copy(p.join(system.path, 'scph1001.bin'));
-    final managed = ManagedRetro(home, packageDirectory: packageDirectory);
+    final managed = ManagedRetro(home, host: EmbeddedCoreHost.windowsX64, packageDirectory: packageDirectory);
     final matchCore = switch (mode) {
       Ps1NetplayRoomMode.ordinary ||
       Ps1NetplayRoomMode.rollbackHandoff => await managed.ensurePs1NetplayCore(execution: mode.execution),
       Ps1NetplayRoomMode.rollbackPreview => throw StateError('Rollback preview requires a fresh game.'),
-      Ps1NetplayRoomMode.staged => p.join(home, 'PS1-Netplay', ManagedRetro.libraryName(RetroPlatform.ps1)),
+      Ps1NetplayRoomMode.staged => p.join(
+        home,
+        'PS1-Netplay',
+        EmbeddedCoreHost.windowsX64.libraryName(RetroPlatform.ps1),
+      ),
       Ps1NetplayRoomMode.fresh || Ps1NetplayRoomMode.freshAnalog => (await File(
         stockCore!,
-      ).copy(p.join(home, ManagedRetro.libraryName(RetroPlatform.ps1)))).path,
+      ).copy(p.join(home, EmbeddedCoreHost.windowsX64.libraryName(RetroPlatform.ps1)))).path,
     };
     var hostCore = matchCore;
     if (mode == Ps1NetplayRoomMode.staged) {
       final hostHome = await Directory.systemTemp.createTemp('anyps5-ps1-staged-host-');
       addTearDown(() => hostHome.delete(recursive: true));
-      hostCore = await ManagedRetro(hostHome.path, packageDirectory: packageDirectory).ensurePs1NetplayCore();
+      hostCore = await ManagedRetro(
+        hostHome.path,
+        host: EmbeddedCoreHost.windowsX64,
+        packageDirectory: packageDirectory,
+      ).ensurePs1NetplayCore();
     }
     final game = Game(
       folder: p.dirname(disc),

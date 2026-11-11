@@ -33,7 +33,7 @@ void main() {
       fixture.dispose();
     });
     env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
-    File(p.join(fixture.temp.path, 'swanstation_libretro.dll')).createSync();
+    File(p.join(fixture.temp.path, model.embeddedCoreHost.libraryName(RetroPlatform.ps1))).createSync();
     final folder = Directory(p.join(model.root!, 'Multi'))..createSync();
     final playlist = File(p.join(folder.path, 'multi.m3u'))..writeAsStringSync('One.cue\nTwo.cue\n');
     for (final name in ['One.cue', 'Two.cue']) {
@@ -304,7 +304,7 @@ void main() {
     });
     final folder = fixture.temp.path;
     env['ANYPS5_LIBRETRO_HOME'] = folder;
-    File(p.join(folder, 'swanstation_libretro.dll')).createSync();
+    File(p.join(folder, model.embeddedCoreHost.libraryName(RetroPlatform.ps1))).createSync();
     final disc = File(p.join(folder, 'boot.cue'))..createSync();
     final icon = File(p.join(folder, 'cover.png'))..writeAsBytesSync(iconArt(0x102030, 0x304050));
     final game = Game(
@@ -405,7 +405,7 @@ void main() {
         fixture.dispose();
       });
       env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
-      final core = platform == RetroPlatform.ps1 ? 'swanstation_libretro.dll' : 'pcsx2_libretro.dll';
+      final core = model.embeddedCoreHost.libraryName(platform);
       File(p.join(fixture.temp.path, core)).createSync();
       final folder = Directory(p.join(model.root!, 'Embedded'))..createSync();
       final disc = platform == RetroPlatform.ps1 ? 'game.cue' : 'game.iso';

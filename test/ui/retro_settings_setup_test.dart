@@ -57,7 +57,8 @@ Directory _installFixtureCore(AppModel model, RetroPlatform platform, {bool lan 
     header.buffer.asUint8List().setAll(raw + 52, 'retro_anyps5_dev9_bind_v1'.codeUnits);
   }
   final emulator = Directory(p.join(p.dirname(model.paths.toolkits), 'Emulators'))..createSync(recursive: true);
-  File(p.join(emulator.path, ManagedRetro.libraryName(platform))).writeAsBytesSync(header.buffer.asUint8List());
+  File(p.join(emulator.path, EmbeddedCoreHost.windowsX64.libraryName(platform)))
+      .writeAsBytesSync(header.buffer.asUint8List());
   return emulator;
 }
 

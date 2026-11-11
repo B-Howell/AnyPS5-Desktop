@@ -193,7 +193,7 @@ extension Ps3OnlineReadinessPage on AppModel {
         profile = await Ps3OnlineProfile.verify(
           provider: release.provider,
           disc: disc.path,
-          core: p.join(managedRoot, ManagedRetro.libraryName(RetroPlatform.ps3)),
+          core: p.join(managedRoot, managed.libraryName(RetroPlatform.ps3)),
           onlineRoot: onlineRoot,
           offlineSystemRoot: managed.systemPath,
           releases: [release],

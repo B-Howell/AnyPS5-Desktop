@@ -126,6 +126,74 @@ Windows and Ubuntu 22.04, plus actual Flutter channel value checks on Linux.
 The Linux app job explicitly installs EGL and Epoxy development libraries rather
 than assuming a Windows build covers Linux compilation.
 
+The same focused launcher test selection was also executed using the native
+Linux Flutter SDK in a separate checkout at `6d5f040`: thirteen tests passed;
+the existing Windows-only PS2 LAN profile fixture was skipped. The Linux
+channel and worker suites above provide separate PS2 adapter evidence. This
+does not replace a real Linux LAN game run.
+
+## Platform-aware managed packages
+
+[EmbeddedCoreHost](../lib/core/embedded_core_host.dart) names the library and
+Buildbot path for each target. [Managed setup](../lib/core/managed_retro.dart)
+requires an explicit host, so production callers cannot quietly select a DLL on
+Linux. The [application model](../lib/ui/app_model.dart),
+[folder grouping](../lib/ui/retro_home_folders.dart),
+[settings model](../lib/ui/retro_settings_model.dart),
+[PS3 readiness page](../lib/ui/ps3_online_readiness_page.dart) and embedded game
+pass that selection through. The existing application availability gate stays
+closed on Linux until the missing online contracts and package qualification
+are completed together.
+
+[ELF inspection](../lib/core/elf_core_library.dart) checks a 64-bit little-endian
+x86-64 shared object, rejects PIE executables, and resolves required hooks from
+defined visible dynamic function symbols in executable sections. Symbol and string
+tables must agree with the runtime `PT_DYNAMIC` entries, and the function's file
+bytes must agree with an executable `PT_LOAD` mapping. It uses bounded
+file reads rather than loading an untrusted library or matching a name anywhere
+in its bytes. Archive/library hashes still establish package provenance. This
+inspection does not prove runtime dependency compatibility or gameplay.
+
+Windows default online pins apply only to Windows. Until Linux binaries are
+qualified, PS1 online setup fails explicitly; Linux PS2 LAN and PS3 reviewer
+imports require their own configured package/library digests. Existing Windows
+pins and isolated online storage are preserved. Offline Buildbot requests use
+the selected platform's path and retain the existing index/CRC validation.
+
+[ELF and Linux managed-package tests](../test/core/elf_core_library_test.dart)
+exercise wrong architectures, truncated tables, missing/hidden/data hooks,
+isolated verified `.so` publication and preservation of offline files. Setting
+`ANYPS5_TEST_ELF_CORE` to the native LAN fixture additionally validates an actual
+compiled Linux shared library. Existing
+[managed setup tests](../test/core/managed_retro_test.dart),
+[setup-menu tests](../test/ui/retro_settings_setup_test.dart),
+[folder tests](../test/ui/retro_home_folders_test.dart),
+[PS1 setup tests](../test/ui/ps1_netplay_setup_test.dart),
+[media tests](../test/core/online/ps1_netplay_media_test.dart),
+[embedded game tests](../test/ui/embedded_retro_game_test.dart),
+[controller tests](../test/ui/embedded_ps1_controls_test.dart),
+[PS3 boot tests](../test/ui/ps3_online_boot_test.dart) and
+[PS3 profile tests](../test/core/ps3_online_profile_test.dart) now follow their
+selected synthetic host rather than depending on the machine running the tests.
+
+For this host-aware setup stage, the focused regression selection passed 63 tests
+on Windows (18 fixture-dependent skips) and 53 on Ubuntu 22.04 (28 skips).
+Independent review then found that section flags alone did not establish a
+loadable hook. A new mapping test reproduced that false acceptance; the validator
+now requires the matching runtime tables and executable load mapping. Its seven
+ELF/package tests passed on Windows and Ubuntu 22.04 after that correction, including inspection
+of the compiled Linux private-NIC fixture. This remains structural/package
+qualification, not Linux online gameplay acceptance.
+
+Static analysis of `lib` and the new ELF/managed/ownership tests passes with
+`dart analyze --fatal-infos`. Independent review approved the bounded stage
+after the loader-mapping correction; live Linux online remains unverified.
+
+Hosted CI at `6d5f040` built the full Linux and Windows launchers and passed
+their native checks. The overall run is not green: the broad Linux tests found
+an outdated PS1 invite-title assertion, and macOS golden images differ. These
+must be resolved separately; successful build jobs do not imply passing CI.
+
 Local source, builds, temporary files and compiler caches remain on D:.
 Native builds use `nice -n 19 ionice -c3` and at most three jobs. Tests use fake
 video/audio backends and do not control the physical monitor. Flutter 3.47.1

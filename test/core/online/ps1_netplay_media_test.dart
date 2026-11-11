@@ -49,6 +49,7 @@ void main() {
     final [_, String stock] = jsonDecode(await File(standardFixture!).readAsString()) as List;
     final core = await ManagedRetro(
       folder.path,
+      host: EmbeddedCoreHost.windowsX64,
       packageDirectory: packages,
     ).ensurePs1NetplayCore(execution: Ps1NetplayExecution.ordinaryHandoff);
     final source = await Ps1NetplayMedia.verify(

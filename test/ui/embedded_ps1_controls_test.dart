@@ -1,3 +1,5 @@
+import 'package:anyps5_desktop/core/embedded_core_host.dart';
+
 import 'dart:convert';
 import 'dart:io';
 
@@ -38,6 +40,7 @@ void main() {
     final session = await EmbeddedRetroGame.start(
       temp,
       (platform: RetroPlatform.ps1, path: disc.path),
+      coreHost: EmbeddedCoreHost.windowsX64,
       internalResolution: null,
       onResolutionSelected: (_) {},
       graphics: const {},
@@ -70,7 +73,7 @@ void main() {
     final fixture = makeFixture(environment: env);
     final model = fixture.model;
     env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
-    File(p.join(fixture.temp.path, 'swanstation_libretro.dll')).createSync();
+    File(p.join(fixture.temp.path, model.embeddedCoreHost.libraryName(RetroPlatform.ps1))).createSync();
     for (final name in ['First', 'Second']) {
       final folder = Directory(p.join(model.root!, name))..createSync();
       File(p.join(folder.path, 'one.cue')).createSync();

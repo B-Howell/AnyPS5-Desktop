@@ -129,6 +129,8 @@ jobs:
             -DFLUTTER_ENGINE_DIR="$flutter_root/bin/cache/artifacts/engine/linux-x64"
           cmake --build build/linux-channel --parallel 3
           ctest --test-dir build/linux-channel --output-on-failure
+          ANYPS5_TEST_ELF_CORE="$PWD/build/retro-native/lan/pcsx2_libretro.so" \
+            flutter test --no-pub test/core/elf_core_library_test.dart
       - name: Bundle size and the libraries carried for the clip player
         run: |
           du -sh build/linux/x64/release/bundle build/linux/x64/release/bundle/lib
