@@ -765,3 +765,23 @@ guest frames forwarded. Both workers exited normally. This verifies
 mixed-platform local gameplay on the repeat. The intermittent
 software-renderer fault still needs an exact reproduction, and the
 repeat did not exercise hosted WebRTC or play through the results.
+
+### PS2 LAN card ownership on Linux
+
+The [profile lease](../lib/core/online/ps2_lan_profile.dart) reserves
+the resolved lock path in the launcher before opening the OS lock. POSIX
+locks are process-scoped, so the OS lock alone allowed a duplicate open
+within the same launcher. The OS lock still protects separate processes.
+A contended Linux lock now reaches the same card-in-use handling as
+Windows. Failure and close release both forms of ownership, and repeated
+close cannot release a newer lease. The [profile tests](../test/core/online/ps2_lan_profile_test.dart)
+reproduced the duplicate open before the fix and cover reopen, duplicate
+close and failed BIOS refresh. An external POSIX lock also produced the
+busy result and allowed reopening after release.
+
+The extended mixed-platform TimeSplitters run joined and started the
+match again. The Windows worker then terminated with an access violation
+(`0xc0000005`, unknown faulting module in the Windows Application log).
+The harness closed the Linux guest, which exited normally. This did not
+reproduce the earlier Linux software-renderer fault or complete a
+mixed-platform match.

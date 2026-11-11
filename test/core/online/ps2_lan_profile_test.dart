@@ -34,10 +34,12 @@ void main() {
     final reopened = await open('alice');
     try {
       expect(reopened.system, first.system);
+      await first.close();
+      await expectLater(open('alice'), throwsA(isA<Ps2LanProfileInUse>()));
     } finally {
       await reopened.close();
     }
-  }, skip: !Platform.isWindows);
+  });
 
   test('a failed BIOS refresh releases the lease and preserves the card', () async {
     final first = await open('alice');
