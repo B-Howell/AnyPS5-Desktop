@@ -692,5 +692,28 @@ installer cap. Archive SHA-256 is
 `27a80722e2d079de8330d32267eb7236c2573cbe3b2458e7166dbf74929fb411`,
 and the extracted library matched the tested Linux core SHA-256
 `800a2bc3ed710734b36bed6e311100b9d00f87e2634ae3cd5c33c2075135238e`.
-This is a local test package. Linux still needs the in-app capability
-and package selection wired up before this is available to users.
+The next section covers the launcher integration for this local test package.
+
+### Install the tested Linux PS2 LAN core in the launcher
+
+The PS2 LAN preview uses the same embedded x64 capability check as PS1
+netplay. With `ANYPS5_PS2_LAN=1`, Linux x64 shows **Settings → Emulators →
+PS2 → Setup → PS2 LAN Network Setup**. The existing setup action uses
+`pcsx2_libretro.so.zip` in `ANYPS5_MANAGED_CORE_PACKAGES` when supplied,
+or opens the package picker. The [managed installer](../lib/core/managed_retro.dart)
+selects distinct Linux and Windows digest pairs and verifies the native
+DEV9 export. Linux uses the verified `PS2-LAN` install. Windows still
+supports its existing compatible core override.
+
+The [launcher regression](../test/ui/ps2_lan_invite_test.dart) navigates
+the Settings route. With `ANYPS5_TEST_PS2_LAN_PACKAGE` set to the actual
+Linux package, the test also presses Install and verifies the installed
+core is recognized. The [ELF tests](../test/core/elf_core_library_test.dart)
+cover installation isolation, rejection of an unverified package, and
+validation against the real compiled library. The Linux package is
+still a locally staged artifact. Public package delivery and a hosted
+PS2 match remain open.
+
+The final focused Linux run passed 16 tests with 19 platform- or
+fixture-dependent skips. Flutter analysis of all seven touched Dart files
+reported no issues.

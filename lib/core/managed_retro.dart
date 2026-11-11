@@ -254,6 +254,14 @@ class ManagedRetro {
 
   String get _ps2LanHome => p.join(root, 'PS2-LAN');
 
+  (String, String) get _ps2LanDigests => _coreDigests(ps2LanCoreDigests, switch (host) {
+    EmbeddedCoreHost.windowsX64 => (_patchedPs2Archive, _patchedPs2Library),
+    EmbeddedCoreHost.linuxX64 => (
+      '27a80722e2d079de8330d32267eb7236c2573cbe3b2458e7166dbf74929fb411',
+      '800a2bc3ed710734b36bed6e311100b9d00f87e2634ae3cd5c33c2075135238e',
+    ),
+  }, 'PS2 LAN');
+
   String? get configuredPs2LanPackage {
     final directory = packageDirectory;
     if (directory == null || !p.isAbsolute(directory)) return null;
@@ -266,7 +274,7 @@ class ManagedRetro {
     final stat = library.statSync();
     if (stat.type != FileSystemEntityType.file || stat.size <= 0 || stat.size > 128 * 1024 * 1024) return null;
     try {
-      final (_, digest) = _onlineDigests(ps2LanCoreDigests, (_patchedPs2Archive, _patchedPs2Library), 'PS2 LAN');
+      final (_, digest) = _ps2LanDigests;
       final key = p.absolute(library.path);
       final cached = _ps2LanChecks[key];
       if (cached != null &&
@@ -296,10 +304,7 @@ class ManagedRetro {
   }
 
   Future<void> installPs2Lan(String package) async {
-    final (archiveDigest, libraryDigest) = _onlineDigests(ps2LanCoreDigests, (
-      _patchedPs2Archive,
-      _patchedPs2Library,
-    ), 'PS2 LAN');
+    final (archiveDigest, libraryDigest) = _ps2LanDigests;
     final source = File(package);
     final info = await source.stat();
     if (info.type != FileSystemEntityType.file || info.size <= 0 || info.size > 16 * 1024 * 1024) {

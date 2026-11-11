@@ -130,16 +130,17 @@ class _EmulatorMenu {
     title: 'Emulators',
     rows: [
       for (final platform in RetroPlatform.values)
-        PanelRow(
-          id: 'emulators-${platform.name}',
-          title: ManagedRetro.platformName(platform),
-          detail: switch (platform) {
-            RetroPlatform.ps1 => app.retroSettings.program(platform) == null ? 'SwanStation' : platform.emulator,
-            RetroPlatform.ps2 => app.retroSettings.program(platform) == null ? 'LRPS2' : platform.emulator,
-            RetroPlatform.ps3 => 'RPCS3',
-          },
-          kind: ActionRow(() => openConsole(platform)),
-        ),
+        if (app.system == HostSystem.windows || platform == RetroPlatform.ps2)
+          PanelRow(
+            id: 'emulators-${platform.name}',
+            title: ManagedRetro.platformName(platform),
+            detail: switch (platform) {
+              RetroPlatform.ps1 => app.retroSettings.program(platform) == null ? 'SwanStation' : platform.emulator,
+              RetroPlatform.ps2 => app.retroSettings.program(platform) == null ? 'LRPS2' : platform.emulator,
+              RetroPlatform.ps3 => 'RPCS3',
+            },
+            kind: ActionRow(() => openConsole(platform)),
+          ),
       PanelRow(
         id: 'emulators-show-folders',
         title: 'Show as folders',

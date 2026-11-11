@@ -8,7 +8,7 @@ final class _Ps1InviteVerification {
 }
 
 extension TogetherPs1Netplay on TogetherModel {
-  bool get _ps1NetplayEnabled => environment['ANYPS5_PS1_NETPLAY'] == '1' && app.ps1NetplayAvailable;
+  bool get _ps1NetplayEnabled => environment['ANYPS5_PS1_NETPLAY'] == '1' && app.embeddedOnlineRetroAvailable;
   bool get _ps1RollbackEnabled => environment['ANYPS5_PS1_ROLLBACK'] == '1';
 
   Ps1NetplayRoomMode get _ps1FreshMode => !app.managedRetroAvailable || _ps1RollbackEnabled

@@ -113,6 +113,37 @@ void main() {
     expect(lan.overlay, Layer.friends);
   }, skip: Abi.current() != Abi.windowsX64);
 
+  test('Linux x64 can open PS2 LAN core setup in the launcher', () async {
+    final package = Platform.environment['ANYPS5_TEST_PS2_LAN_PACKAGE'];
+    final fixture = makeFixture(
+      system: HostSystem.linux,
+      environment: {'ANYPS5_PS2_LAN': '1', if (package != null) 'ANYPS5_MANAGED_CORE_PACKAGES': p.dirname(package)},
+    );
+    final model = fixture.model;
+    addTearDown(() {
+      model.dispose();
+      fixture.dispose();
+    });
+
+    expect(model.together.ps2LanSetupAvailable, isTrue);
+    model.open(Layer.settings);
+    final emulators = model.panelCategories().singleWhere((category) => category.id == 'emulators');
+    final console = emulators.rows.singleWhere((row) => row.id == 'emulators-ps2');
+    (console.kind as ActionRow).run();
+    expect(model.overlay, Layer.emulatorMenu);
+    final setup = model.panelCategories().single.rows.singleWhere((row) => row.id == 'emulator-group-setup');
+    (setup.kind as ActionRow).run();
+    final network = model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps2-lan-setup');
+    (network.kind as ActionRow).run();
+    final install = model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps2-lan-setup-install');
+    expect(install.kind, isA<ActionRow>());
+    if (package != null) {
+      (install.kind as ActionRow).run();
+      await until(() => model.ps2LanCoreInstalled && model.managedSetupConsole == null);
+      expect(model.panelCategories().single.rows.map((row) => row.id), isNot(contains(install.id)));
+    }
+  }, skip: Abi.current() != Abi.linuxX64);
+
   Future<void> verifyBundledSetup({
     required bool expired,
     bool configureCard = false,

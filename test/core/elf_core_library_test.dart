@@ -96,7 +96,9 @@ void main() {
   test('Linux online setup cannot reuse unqualified Windows core pins', () async {
     final linux = ManagedRetro(temp.path, host: EmbeddedCoreHost.linuxX64);
     await expectLater(linux.ensurePs1NetplayCore(), throwsFormatException);
-    await expectLater(linux.installPs2Lan('missing.zip'), throwsFormatException);
+    final wrongPackage = File('${temp.path}/pcsx2_libretro.dll.zip')..writeAsBytesSync([0, 1, 2, 3]);
+    await expectLater(linux.installPs2Lan(wrongPackage.path), throwsFormatException);
+    expect(linux.installedPs2LanHome, isNull);
     await expectLater(linux.install(RetroPlatform.ps3), throwsFormatException);
     expect(await linux.verifiedPs3UpdateCore(), isNull);
   });

@@ -3964,7 +3964,7 @@ class AppModel extends ChangeNotifier {
       system == HostSystem.windows ? EmbeddedCoreHost.windowsX64 : EmbeddedCoreHost.linuxX64;
   EmbeddedCoreHost? get _nativeRetroHost => services.nativeRetroHost ?? EmbeddedCoreHost.current;
   bool get managedRetroAvailable => system == HostSystem.windows && _nativeRetroHost == EmbeddedCoreHost.windowsX64;
-  bool get ps1NetplayAvailable =>
+  bool get embeddedOnlineRetroAvailable =>
       managedRetroAvailable || (system == HostSystem.linux && _nativeRetroHost == EmbeddedCoreHost.linuxX64);
   String? get retroCoreOverride => (services.environment ?? Platform.environment)['ANYPS5_LIBRETRO_HOME'];
 
@@ -4179,7 +4179,7 @@ class AppModel extends ChangeNotifier {
     required bool Function() canBoot,
   }) async {
     final disc = game.retro;
-    if (disc == null || !ps1NetplayAvailable) throw StateError('PS1 netplay requires an embedded x64 core.');
+    if (disc == null || !embeddedOnlineRetroAvailable) throw StateError('PS1 netplay requires an embedded x64 core.');
     final booted = Completer<EmbeddedRetroGame?>();
     closeOverlay();
     final launch = _playRetro(game, disc, booted: booted, canBoot: canBoot, netplay: (media: media, seat: seat));
@@ -4240,7 +4240,7 @@ class AppModel extends ChangeNotifier {
   }) async {
     final disc = game.retro;
     final bios = ps2LanBiosPath;
-    if (!managedRetroAvailable || disc?.platform != RetroPlatform.ps2 || bios == null) {
+    if (!embeddedOnlineRetroAvailable || disc?.platform != RetroPlatform.ps2 || bios == null) {
       throw StateError('PS2 LAN requires the embedded emulator and a PS2 BIOS.');
     }
     if (!canBoot()) throw StateError('The PS2 LAN room closed before the game could start.');
@@ -4276,9 +4276,15 @@ class AppModel extends ChangeNotifier {
     }
   }
 
-  String get _ps2LanCoreHome => _managedRetro.installedPs2LanHome ?? retroCoreOverride ?? _managedRetro.root;
+  String? get _ps2LanCoreHome =>
+      _managedRetro.installedPs2LanHome ??
+      (system == HostSystem.windows ? retroCoreOverride ?? _managedRetro.root : null);
 
-  bool get ps2LanCoreInstalled => ManagedRetro(_ps2LanCoreHome, host: embeddedCoreHost).supportsPs2Lan;
+  bool get ps2LanCoreInstalled {
+    final home = _ps2LanCoreHome;
+    return home != null && ManagedRetro(home, host: embeddedCoreHost).supportsPs2Lan;
+  }
+
   bool get _ps2LanPackageAvailable => _managedRetro.configuredPs2LanPackage != null;
 
   void openPs2LanSetup({VoidCallback? onReady}) {
@@ -7059,7 +7065,7 @@ class AppModel extends ChangeNotifier {
           updates.channelRow(),
         ],
       ),
-      if (system == HostSystem.windows) _emulatorMenu.entry,
+      if (system == HostSystem.windows || together.ps2LanSetupEnabled) _emulatorMenu.entry,
     ];
   }
 
