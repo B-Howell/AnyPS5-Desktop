@@ -17,7 +17,7 @@ final class WebRtcCtrRace {
   static const _endStickFrame = 6660;
   final List<Ps1FrameInputs> frames;
 
-  static Future<WebRtcCtrRace> load(String path, String disc) async {
+  static Future<WebRtcCtrRace> load(String path, String disc, {bool analog = true}) async {
     final file = File(path);
     if (disc != _disc || await file.length() > 65536) {
       throw const FormatException('Use the pinned CTR USA disc and Coco Park trace.');
@@ -30,8 +30,8 @@ final class WebRtcCtrRace {
     for (final span in (jsonDecode(source) as List).cast<List<dynamic>>()) {
       final [count, first, second] = span.cast<int>();
       for (var i = 0; i < count; i++) {
-        final analog = frames.length >= _firstStickFrame && frames.length < _endStickFrame;
-        frames.add((_pad(first, analog), _pad(second, analog)));
+        final steerWithStick = analog && frames.length >= _firstStickFrame && frames.length < _endStickFrame;
+        frames.add((_pad(first, steerWithStick), _pad(second, steerWithStick)));
       }
     }
     return WebRtcCtrRace._(frames);
@@ -45,12 +45,10 @@ final class WebRtcCtrRace {
     rightY: 0,
   );
 
-  Future<File> writeSeat(Directory work, int seat) async {
+  Future<File> writeSeat(Directory work, int seat, {bool digital = false}) async {
     final file = File('${work.path}/seat-$seat.trace');
-    final rows = [
-      for (final pair in frames)
-        if (seat == 0) '${pair.$1.buttons} ${pair.$1.leftX} 0 0 0' else '${pair.$2.buttons} ${pair.$2.leftX} 0 0 0',
-    ];
+    String encode(Ps1PadInput input) => digital ? '${input.buttons}' : '${input.buttons} ${input.leftX} 0 0 0';
+    final rows = [for (final pair in frames) encode(seat == 0 ? pair.$1 : pair.$2)];
     return file.writeAsString(rows.join('\n'));
   }
 
@@ -78,12 +76,12 @@ final class CtrRaceReceipt {
     }
     if (frame == race.frames.length && finish == null) {
       finalFingerprint = await worker.readFingerprint();
-      finish = await _readFinish(worker);
+      finish = await readFinish(worker);
     }
   }
 
   // Game-owned result fields from the pinned CTR fixture in determinism.py.
-  Future<String> _readFinish(WebRtcNativeWorker worker) async {
+  Future<String> readFinish(WebRtcNativeWorker worker) async {
     const tracker = 0x096B20;
     Future<ByteData> read(int address, int size) async => ByteData.sublistView(await worker.readRam(address, size));
     final mode = (await read(tracker, 4)).getUint32(0, Endian.little);

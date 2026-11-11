@@ -9,7 +9,7 @@ import 'package:anyps5_desktop/core/online/ps1_netplay_wire.dart';
 
 /// Drives the windowless Windows worker probe over its command pipes.
 final class WebRtcNativeWorker implements Ps1NetplayRunner {
-  WebRtcNativeWorker._(this._process, this._state, this._dualShock, this._onSync)
+  WebRtcNativeWorker._(this._process, this._state, this._dualShock, this._rollback, this._onSync)
     : _output = StreamIterator(_process.stdout.transform(utf8.decoder).transform(const LineSplitter())) {
     unawaited(_process.stderr.drain<void>());
   }
@@ -17,6 +17,7 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
   final Process _process;
   final File _state;
   final bool _dualShock;
+  final bool _rollback;
   final Future<void> Function(WebRtcNativeWorker worker, int frame)? _onSync;
   final StreamIterator<String> _output;
   Future<String>? _pending;
@@ -31,18 +32,29 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
     bool local = false,
     bool recompiler = false,
     bool dualShock = false,
+    bool rollback = false,
     File? trace,
     Future<void> Function(WebRtcNativeWorker worker, int frame)? onSync,
   }) async {
     if (dualShock && (local || recompiler)) throw ArgumentError('DualShock requires a fresh match worker.');
-    if (trace != null && !dualShock) throw ArgumentError('Signed traces require DualShock mode.');
+    if (rollback && (local || recompiler || dualShock || trace == null)) {
+      throw ArgumentError('Rollback requires a digital input trace on an isolated seat.');
+    }
+    if (trace != null && !dualShock && !rollback) throw ArgumentError('Traces require DualShock or rollback mode.');
     final process = await Process.start(launch.first, [
       ...launch.skip(1),
       '$seat',
-      if (local) 'local' else if (recompiler) 'recompiler' else if (dualShock) 'dualshock',
+      if (local)
+        'local'
+      else if (recompiler)
+        'recompiler'
+      else if (dualShock)
+        'dualshock'
+      else if (rollback)
+        'rollback',
       if (trace != null) trace.path,
     ]);
-    final worker = WebRtcNativeWorker._(process, state, dualShock, onSync);
+    final worker = WebRtcNativeWorker._(process, state, dualShock, rollback, onSync);
     try {
       final ready = await worker._read();
       if (ready != 'ready') throw StateError('Unexpected worker greeting: $ready.');
@@ -108,6 +120,8 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
 
   Future<void> setInput(Ps1PadInput pad) => _expect('pad ${_encodePad(pad).join(' ')}', 'pad');
 
+  Future<int> confirmedFrame() async => int.parse(await _command('confirmed'));
+
   Future<String> readFingerprint() => _command('fingerprint');
 
   Future<Uint8List> readRam(int address, int length) async {
@@ -164,6 +178,7 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
 
   @override
   Future<Ps1NetplayTick> sync(List<Ps1NetplayFrame> remote, int? acknowledgedFrame) async {
+    final confirmed = _rollback ? await confirmedFrame() : null;
     final request = [
       acknowledgedFrame ?? -1,
       remote.length,
@@ -179,12 +194,13 @@ final class WebRtcNativeWorker implements Ps1NetplayRunner {
     final hashes = next();
     final current = <int, String>{for (var item = 0; item < hashes; item++) next(): fields[index++]};
     if (index != fields.length) throw StateError('Native input packet is malformed.');
+    if (confirmed != null) current.removeWhere((frame, _) => frame > confirmed);
     fingerprints.addAll(current);
     sentButtons.addAll(local.map((sample) => sample.input.buttons));
     await _onSync?.call(this, frame);
     return (
       frame: frame,
-      confirmedFrame: frame == 0 ? null : frame - 1,
+      confirmedFrame: _rollback ? (confirmed! < 0 ? null : confirmed) : (frame == 0 ? null : frame - 1),
       receivedFrame: received < 0 ? null : received,
       waiting: received < frame,
       local: local,

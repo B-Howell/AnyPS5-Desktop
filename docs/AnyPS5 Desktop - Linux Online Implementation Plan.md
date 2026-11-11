@@ -454,3 +454,43 @@ The refresh uses only the filenames reported by the current job. In particular,
 the older onboarding screenshot included in the artifact is excluded because
 the current onboarding comparison passed. Exact pixel comparison remains
 enabled in the workflow.
+
+## Hosted mixed-platform race acceptance
+
+The [hosted race probe](../tool/ps1_netplay/webrtc_live_race.dart) uses
+AnyTogether's hosted account, gateway and room APIs and the production
+WebRTC match transport. It runs one native rollback core per machine and
+plays the pinned digital two-player CTR trace. A Windows Flutter engine
+can run without a view through the
+[headless probe runner](../windows/runner/tests/ps1_webrtc_loopback.cpp).
+The Linux test bundle runs on a private virtual X display. Neither arm
+requires access to the user's physical desktop.
+
+Build the probe entry point [webrtc_loopback.dart](../tool/ps1_netplay/webrtc_loopback.dart)
+and set `ANYPS5_PS1_WEBRTC_LIVE` to a JSON file with these values in order:
+role (`host` or `guest`), friend handle, native probe executable, platform
+core, local CUE, local BIOS, pinned race trace, isolated device-session
+directory, receipt path and release path. The session file name is
+`live-session`. Use dedicated approved AnyTogether device sessions with
+two accounts that are already friends. The probe neither reads the normal
+launcher account store nor adds friends. Do not share approval codes,
+tokens or the session files in logs or commit them.
+
+Start the guest and wait for its hosted gateway readiness message before
+starting the host. At the confirmed finish, each peer writes a receipt
+with the actual placements, frame count, confirmed RAM hashes and selected
+route. Compare both receipts, including all 114 hashes, before creating
+both release files. The probe then closes its own room and native worker.
+A successful local room fixture is insufficient evidence for this test.
+
+The setup commit `cc758fd` passed all five hosted CI jobs in
+[run 42958932127](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/42958932127).
+The Windows windowless engine and the separate Ubuntu laptop's private
+virtual display both reached the expected unsigned-in preflight. Two
+isolated device requests expired before approval. No hosted race was
+started and the existing launcher sessions were left alone.
+
+The rollback adapter also completed a 240-frame smoke with two real Linux
+workers. Both matched the confirmed RAM samples at frames 119 and 239.
+This exercises the Dart worker protocol independently of hosted admission.
+The full analyzer passed with the hosted probe present.

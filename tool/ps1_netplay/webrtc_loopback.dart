@@ -17,6 +17,7 @@ import 'package:flutter/widgets.dart';
 import 'webrtc_dualshock_probe.dart';
 import 'webrtc_native_worker.dart';
 import 'webrtc_lan_probe.dart';
+import 'webrtc_live_race.dart';
 import 'webrtc_ordinary_probe.dart';
 import 'webrtc_room_fixture.dart';
 
@@ -24,6 +25,16 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   const report = MethodChannel('anyps5/ps1_webrtc_probe');
   try {
+    final live = Platform.environment['ANYPS5_PS1_WEBRTC_LIVE'];
+    if (live != null) {
+      final result = await runLivePs1Race(live);
+      if (Platform.isLinux) {
+        stdout.writeln(result);
+        exit(0);
+      }
+      await report.invokeMethod<void>('pass', result);
+      return;
+    }
     final config = Platform.environment['ANYPS5_PS1_WEBRTC_NATIVE'] ?? '';
     final lan = Platform.environment['ANYPS5_PS2_WEBRTC_LAN'] == '1';
     final ordinary = Platform.environment['ANYPS5_PS1_WEBRTC_ORDINARY'] == '1';
@@ -61,6 +72,10 @@ Future<void> main() async {
           : await _nativeExercise(config),
     );
   } on Object catch (error, stack) {
+    if (Platform.isLinux && Platform.environment.containsKey('ANYPS5_PS1_WEBRTC_LIVE')) {
+      stderr.writeln('Hosted PS1 probe failed: $error');
+      exit(1);
+    }
     await report.invokeMethod<void>('fail', '$error\n$stack');
   }
 }

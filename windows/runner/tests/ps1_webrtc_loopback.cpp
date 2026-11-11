@@ -53,7 +53,8 @@ int wmain(int argc, wchar_t** argv) {
   });
 
   const bool race = GetEnvironmentVariableW(L"ANYPS5_PS1_WEBRTC_RACE_TRACE", nullptr, 0) > 1;
-  const auto timeout = std::chrono::seconds(race ? 420 : 65);
+  const bool live = GetEnvironmentVariableW(L"ANYPS5_PS1_WEBRTC_LIVE", nullptr, 0) > 1;
+  const auto timeout = std::chrono::seconds(live ? 600 : (race ? 420 : 65));
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (!status && std::chrono::steady_clock::now() < deadline) {
     MSG message;
