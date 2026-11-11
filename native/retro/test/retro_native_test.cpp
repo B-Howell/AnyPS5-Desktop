@@ -76,11 +76,11 @@ void CheckSession(const std::filesystem::path& path) {
   busy.Join();
   Check(!busy.Status().error.empty() && lifecycle() == 2, "Concurrent session did not reject C callback reuse");
 
-  session.SetInput(1, {});
+  session.SetInput(0x8021, {});
   WaitFor([&] {
     const auto frame = session.AcquireFrame();
     return frame && frame->pixels == std::vector<uint8_t>{255, 0, 0, 255};
-  }, "Session did not deliver player input");
+  }, "Session did not deliver the packed player input mask");
   const auto active = session.Status();
   Check(active.presented && active.telemetry.audio_frames > 0 && active.telemetry.audio_rate == 48000.0,
         "Session did not report video and audio");

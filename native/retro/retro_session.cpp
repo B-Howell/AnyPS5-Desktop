@@ -870,6 +870,7 @@ class Session::Impl {
       stop_ = true;
       return true;
     }
+    if (command == kGetInputBitmasks) return true;
     if (!data) return false;
     switch (command) {
       case kMessageVersion:
@@ -921,8 +922,6 @@ class Session::Impl {
       case kCanDupe:
         *static_cast<bool*>(data) = true;
         return true;
-      case kGetInputBitmasks:
-        return match_timeline_.has_value();
       case kSystemDirectory:
         *static_cast<const char**>(data) = config_.system.c_str();
         return true;
@@ -1004,6 +1003,7 @@ class Session::Impl {
     if (suppress_frame_) return 0;
     if (port != 0 || paused_) return 0;
     std::lock_guard<std::mutex> lock(input_mutex_);
+    if (device == 1 && id == 256) return static_cast<int16_t>(buttons_);
     if (device == 1 && id < 16) return (buttons_ & (1u << id)) != 0;
     if (device == 5 && index < 2 && id < 2) return axes_[index * 2 + id];
     return 0;

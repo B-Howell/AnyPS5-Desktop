@@ -581,3 +581,39 @@ default and investigate the Windows worker's wait or scheduling state around
 individual overruns. The control's longest callback uses the headless
 registrar, which copies its pixel buffer synchronously; the trace does not
 establish the same callback cost with the Flutter display registrar.
+
+### Laptop dashboard build for manual multiplayer
+
+The Linux laptop’s application-menu entry points to the normal release
+launcher built from fork commit `cc758fd84b8616336ab104bca5a15faee32e4b50`.
+This is the [CI-verified core setup revision](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/42958932127).
+The on-device release build succeeded. The installed launcher and Dart
+bundle matched the build byte for byte, the launcher resolved its shared
+libraries, and the desktop entry passed validation. The two superseded
+installed bundles were removed. The user profile, managed core packages,
+games, BIOS and saves were left in place. The private hosted test bundle
+remains separate from the application-menu installation.
+
+The installed application-menu wrapper was also exercised on the laptop
+with a private Xvfb display and isolated XDG directories. The launcher
+mapped its 1600 × 900 AnyPS5 window, then the smoke closed its own process.
+This verifies startup of the installed build. Hosted match acceptance is
+still pending two approved AnyTogether sessions.
+
+### Linux PS2 input and LAN smoke
+
+The pinned LRPS2 Linux core with the DEV9 patch loaded TimeSplitters
+Future Perfect (SLUS-21148) and produced 2,194 video frames in a private
+session. Its DEV9 startup send did not produce an accepted Ethernet frame.
+The production adapter requires a frame sourced from the session's
+assigned MAC. LAN discovery and a second player are still unverified.
+
+LRPS2 polls the libretro packed joypad mask in ordinary gameplay. The
+[shared native session](../native/retro/retro_session.cpp) now advertises
+packed input on the capability query, including a null payload, and returns
+the full 16-bit mask for player one. The ordinary single-button, analog,
+pause and port checks remain in place. The
+[native regression](../native/retro/test/retro_native_test.cpp) failed
+before the fix and passed afterward along with all seven Linux native
+suites. This verifies the callback contract needed to drive the real
+game's Network menu. It does not verify a real LAN session.
