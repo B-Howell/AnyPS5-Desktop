@@ -2,7 +2,7 @@
 
 ## Windows and Linux preview status
 
-The Windows preview exposes managed PS1, PS2 and PS3. On Linux x64, PS1 uses the managed SwanStation setup, PS2 LAN has its own setup, and general managed offline PS3 setup remains gated. See the [Linux implementation plan](<AnyPS5 Desktop - Linux Online Implementation Plan.md#managed-ps1-setup-on-linux>) for the installed PS1 setup proof and the [multiplayer design](<AnyPS5 Desktop - Emulator Multiplayer Design.md#product-direction>) for parity and lobby requirements. PS5 onboarding does not include emulator setup. Swap Cross and Circle is in per-game Controls (Game settings → Controls) for PS1 games, not in the Quick Menu.
+The Windows preview exposes managed PS1, PS2 and PS3. On Linux x64, PS1 uses the managed SwanStation setup, PS2 LAN has its own setup, and general managed offline PS3 setup remains gated. See the [Linux implementation plan](<AnyPS5 Desktop - Linux Online Implementation Plan.md#managed-ps1-setup-on-linux>) for the installed PS1 setup proof and the [multiplayer design](<AnyPS5 Desktop - Emulator Multiplayer Design.md#product-direction>) for parity and lobby requirements. PS5 onboarding does not include emulator setup. Button layouts for emulated games live on the per-game Controls page (Game settings → Controls, or Controls in the PS menu while playing), not in the Quick Menu.
 
 
 This Windows x64 preview adds optional PS1, PS2 and PS3 support to the PS5
@@ -187,12 +187,20 @@ the emulation advances. The offscreen Windows SwanStation check booted Metal
 Gear Solid on Disc 2 and Final Fantasy VII on Disc 3, swapped both to Disc 1
 while paused, then resumed each on its original texture. The
 [per-game face-button toggle](../lib/ui/retro_embedded_controls.dart) swaps
-Cross and Circle while keeping Start and the stick axes unchanged. It is the
-only row in a PS1 game's [Controls page](../lib/ui/app_model.dart), opened from
-Game settings → Controls; PS5 remapping rows do not apply to emulated games.
-Toggling it while that game runs updates the live session. The
-[controls test](../test/ui/embedded_ps1_controls_test.dart) checks that the
-Quick Menu no longer lists it and that the choice persists per game.
+Cross and Circle while keeping Start and the stick axes unchanged. It is now one preset of the
+[button layout](../lib/core/retro_button_map.dart). The emulated game's
+[Controls page](../lib/ui/retro_embedded_controls.dart) offers a Player
+chooser, the presets Standard, Swap Cross and Circle, and Custom, a choice of
+function (or Not used) for every button, Swap sticks, the controller test and
+Reset. Layouts are stored per game and per player (`gameId`, `gameId#p2`, …)
+and apply to the running game straight away. The
+[controller pane](../lib/ui/retro_controls_art.dart) beside the list lights
+what the selected player presses and tints the chosen input. It draws the
+existing `PadDiagram` as a placeholder until the console controller artwork
+from the separate art session replaces its `_art` method. The
+[controls test](../test/ui/embedded_ps1_controls_test.dart) covers presets,
+persistence, the older swap setting, the PS menu entry and a second controller
+taking Player 2.
 
 ## RPCS3 preview and release gates
 
