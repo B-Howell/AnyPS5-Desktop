@@ -804,3 +804,18 @@ A standalone Windows Dart check also held the card lock from a separate
 process, observed the launcher's card-in-use exception, released the
 lock, and reopened the profile. This check bypassed Flutter's native
 asset build and exercised the production file-lock code directly.
+
+### Laptop preview preflight
+
+The application-menu wrapper installed with the normal laptop build
+set the managed package directory but did not enable the PS1 netplay
+preview. To expose the hosted CTR flow in the regular launcher,
+the wrapper must export `ANYPS5_PS1_NETPLAY=1`. Windows hosts also
+need `ANYPS5_PS1_ROLLBACK=1` when creating a mixed-platform room.
+
+The local laptop staging helper checks the exact PS1 and PS2 package
+hashes, refuses to replace a mismatching package, and enables the
+PS1 and PS2 preview flags in the existing wrapper. In a disposable
+Linux home it installed both archives and produced the same wrapper
+on a second run. The laptop SSH check timed out, so no remote files
+were changed and a hosted CTR session was not started.
