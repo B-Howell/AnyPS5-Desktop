@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import '../embedded_core_host.dart';
 import '../ps1_disc_serial.dart';
 import 'ps1_netplay_identity.dart';
 import 'retro_online_rooms.dart';
@@ -15,17 +16,23 @@ enum Ps1NetplayExecution {
   standardAnalog('CachedInterpreter'),
   ordinaryHandoff('Recompiler'),
   rollbackPreview('CachedInterpreter'),
-  rollbackHandoff('Recompiler');
+  rollbackHandoff('Recompiler'),
+  mixedRollback('CachedInterpreter');
 
   const Ps1NetplayExecution(this.cpu);
   final String cpu;
   bool get usesDualShock => this == standardAnalog;
   bool get usesStandardCore => this == standard || this == standardAnalog;
   bool get usesPresentationCore => this == rollbackPreview || this == rollbackHandoff;
+  bool get usesRollback => usesPresentationCore || this == mixedRollback;
   bool get usesRecompiler => this == ordinaryHandoff || this == rollbackHandoff;
 
   String get digest {
-    final rollback = usesPresentationCore ? ';rollback=16;presentation-core=1' : '';
+    final rollback = switch (this) {
+      rollbackPreview || rollbackHandoff => ';rollback=16;presentation-core=1',
+      mixedRollback => ';rollback=8;presentation-core=0',
+      _ => '',
+    };
     final pads = usesDualShock ? 'two-dualshock-pads' : 'two-digital-pads';
     return sha256
         .convert(utf8.encode('Software;1x;$cpu;block-linking=0;gpu-thread=0;fast-boot=0;$pads;delay=2$rollback'))
@@ -36,7 +43,18 @@ enum Ps1NetplayExecution {
     standard || standardAnalog => const {Ps1NetplayMedia.corePin, Ps1NetplayMedia.portableCorePin},
     ordinaryHandoff || rollbackHandoff => const {Ps1NetplayMedia.ordinaryHandoffCorePin},
     rollbackPreview => const {Ps1NetplayMedia.rollbackCorePin},
+    mixedRollback => {Ps1NetplayMedia.mixedRoomCoreIdentity},
   };
+
+  String? verifiedCoreIdentity(EmbeddedCoreHost? host, String binaryDigest) {
+    if (this != mixedRollback) return coreDigests.contains(binaryDigest) ? binaryDigest : null;
+    final required = switch (host) {
+      EmbeddedCoreHost.windowsX64 => Ps1NetplayMedia.rollbackCorePin,
+      EmbeddedCoreHost.linuxX64 => Ps1NetplayMedia.linuxRollbackCorePin,
+      null => null,
+    };
+    return binaryDigest == required ? Ps1NetplayMedia.mixedRoomCoreIdentity : null;
+  }
 }
 
 enum Ps1NetplayRoomMode {
@@ -45,14 +63,15 @@ enum Ps1NetplayRoomMode {
   ordinary('3'),
   rollbackPreview('4'),
   rollbackHandoff('5'),
-  freshAnalog('6');
+  freshAnalog('6'),
+  mixedRollback('7');
 
   const Ps1NetplayRoomMode(this.version);
   final String version;
 
   static Ps1NetplayRoomMode? tryRead(String version) => values.where((mode) => mode.version == version).singleOrNull;
 
-  bool get freshFromDisc => this == fresh || this == freshAnalog;
+  bool get freshFromDisc => this == fresh || this == freshAnalog || this == mixedRollback;
   bool get needsCheckpoint => this == staged || handoffFromOrdinary;
   bool get handoffFromOrdinary => this == ordinary || this == rollbackHandoff;
   Ps1NetplayExecution get execution => switch (this) {
@@ -61,6 +80,7 @@ enum Ps1NetplayRoomMode {
     ordinary => Ps1NetplayExecution.ordinaryHandoff,
     rollbackPreview => Ps1NetplayExecution.rollbackPreview,
     rollbackHandoff => Ps1NetplayExecution.rollbackHandoff,
+    mixedRollback => Ps1NetplayExecution.mixedRollback,
   };
 }
 
@@ -93,6 +113,11 @@ final class Ps1NetplayMedia {
   static const portableCorePin = '5ef8eba64119146e405a90c5e9243a249c9d57c405fd75415fb4234d5b6080eb';
   static const ordinaryHandoffCorePin = 'd1619715fe11db0faa280890c741aff876fd5fd682f3cd00fbcafaa04732b7ac';
   static const rollbackCorePin = '9e72d4ded35ed5308916e16448edc1c3c39651969c2f6fde68b4e3293eea6347';
+
+  static const linuxRollbackCorePin = '0fc6f1c2522573b570a4481b1526b0e27e3fd8367c32912b4ba5ceac590ffdd0';
+
+  // Identify the qualified pair on the wire. Each peer still verifies its own binary.
+  static final mixedRoomCoreIdentity = _hashText('anyps5-ps1-mixed-rollback-v1;$rollbackCorePin;$linuxRollbackCorePin');
 
   static String presentationCorePath(String primary) => p.join(p.dirname(primary), 'Presentation', p.basename(primary));
 
@@ -161,8 +186,20 @@ final class Ps1NetplayMedia {
     );
   }
 
-  static Future<String> _verifiedCoreDigest(String path, Ps1NetplayExecution execution, bool Function()? canContinue) =>
-      _verify(Ps1NetplayMediaProblem.core, execution.coreDigests, () => _hashFile(path, canContinue));
+  static Future<String> _verifiedCoreDigest(
+    String path,
+    Ps1NetplayExecution execution,
+    bool Function()? canContinue,
+  ) async {
+    try {
+      final binaryDigest = await _hashFile(path, canContinue);
+      final identity = execution.verifiedCoreIdentity(EmbeddedCoreHost.current, binaryDigest);
+      if (identity != null) return identity;
+    } on FileSystemException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+    }
+    throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+  }
 
   static Future<String> _verify(
     Ps1NetplayMediaProblem problem,

@@ -28,6 +28,7 @@ class ManagedRetro {
   static final _ps2LanChecks = <String, ({FileStat stat, String digest, bool valid})>{};
   static const _ps1NetplayArchive = '86ab673a1a1b4260dc73256955d600dd64a5ee57e78e17696ae3504791a6633e';
   static const _ps1OrdinaryHandoffArchive = 'df69b0ad16984b34240b875fa14bcb6a742daaaf9bbb5815e448510b810de036';
+  static const _ps1LinuxRollbackArchive = '724fea1bb0f87216d4d3a8cd61a2ad251e208b73069a0c3fb4600712a444c7b3';
   static const _ps1RollbackArchive = '7446d092547a9ec3ce2a47aff748511a83c3357989ff592dab406024c3d9d1da';
   // This package persists native SPU objects across launches. Keep the old
   // core out of the default pins so a launcher build with the matching ZIP
@@ -111,8 +112,8 @@ class ManagedRetro {
 
   /// Checkpoint handoff has its own core. Never upgrade the offline PS1 DLL.
   Future<String> ensurePs1NetplayCore({Ps1NetplayExecution execution = Ps1NetplayExecution.standard}) async {
-    if (host != EmbeddedCoreHost.windowsX64) {
-      throw const FormatException('A qualified Linux PS1 online core package is required.');
+    if (host == EmbeddedCoreHost.linuxX64 && execution != Ps1NetplayExecution.mixedRollback) {
+      throw const FormatException('This PS1 online mode has no Linux core package.');
     }
     final (directory, archiveName, archivePin, corePin) = switch (execution) {
       Ps1NetplayExecution.standard || Ps1NetplayExecution.standardAnalog => (
@@ -127,12 +128,20 @@ class ManagedRetro {
         _ps1OrdinaryHandoffArchive,
         Ps1NetplayMedia.ordinaryHandoffCorePin,
       ),
-      Ps1NetplayExecution.rollbackPreview => (
+      Ps1NetplayExecution.rollbackPreview ||
+      Ps1NetplayExecution.mixedRollback when host == EmbeddedCoreHost.windowsX64 => (
         'PS1-Netplay-Rollback',
         'swanstation-netplay-rollback.zip',
         _ps1RollbackArchive,
         Ps1NetplayMedia.rollbackCorePin,
       ),
+      Ps1NetplayExecution.mixedRollback => (
+        'PS1-Netplay-Rollback',
+        'swanstation-netplay-rollback-linux-x64.zip',
+        _ps1LinuxRollbackArchive,
+        Ps1NetplayMedia.linuxRollbackCorePin,
+      ),
+      Ps1NetplayExecution.rollbackPreview => throw StateError('Linux does not support the PS1 presentation core.'),
     };
     final home = await Directory(root).create(recursive: true);
     final resolvedHome = await home.resolveSymbolicLinks();
@@ -152,7 +161,8 @@ class ManagedRetro {
     Future<bool> pinned(File file) async =>
         await file.exists() &&
         p.equals(await file.resolveSymbolicLinks(), file.path) &&
-        await AssetDownload.sha256Of(file.path) == corePin;
+        await AssetDownload.sha256Of(file.path) == corePin &&
+        (host == EmbeddedCoreHost.windowsX64 || _hostLibrary(file, requiredExport: 'retro_unserialize'));
     await checkDirectory(target);
     final missing = <File>[];
     for (final file in destinations) {

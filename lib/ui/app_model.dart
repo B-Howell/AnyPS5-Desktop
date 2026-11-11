@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ffi' show Abi;
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
@@ -1185,6 +1184,7 @@ class LauncherServices {
     this.pads,
     this.systemProbe,
     this.retroHardware,
+    this.nativeRetroHost,
     this.ps3OnlineReleases = Ps3OnlineRelease.catalog,
     this.displays,
     this.moveToDisplay,
@@ -1286,6 +1286,7 @@ class LauncherServices {
   /// setting, permissions); nothing asked when not given.
   final SystemProbe Function()? systemProbe;
   final Future<RetroHardware?> Function()? retroHardware;
+  final EmbeddedCoreHost? nativeRetroHost;
   final Future<List<LauncherDisplay>> Function()? displays;
   final Future<bool> Function(String id, {int? pid})? moveToDisplay;
   final Future<bool> Function(int pid)? gameWindowReady;
@@ -3961,7 +3962,10 @@ class AppModel extends ChangeNotifier {
   );
   EmbeddedCoreHost get embeddedCoreHost =>
       system == HostSystem.windows ? EmbeddedCoreHost.windowsX64 : EmbeddedCoreHost.linuxX64;
-  bool get managedRetroAvailable => system == HostSystem.windows && Abi.current() == Abi.windowsX64;
+  EmbeddedCoreHost? get _nativeRetroHost => services.nativeRetroHost ?? EmbeddedCoreHost.current;
+  bool get managedRetroAvailable => system == HostSystem.windows && _nativeRetroHost == EmbeddedCoreHost.windowsX64;
+  bool get ps1NetplayAvailable =>
+      managedRetroAvailable || (system == HostSystem.linux && _nativeRetroHost == EmbeddedCoreHost.linuxX64);
   String? get retroCoreOverride => (services.environment ?? Platform.environment)['ANYPS5_LIBRETRO_HOME'];
 
   ({bool installed, bool systemReady}) managedRetroStatus(RetroPlatform platform) {
@@ -4111,7 +4115,7 @@ class AppModel extends ChangeNotifier {
   }) async {
     final managed = _managedRetro;
     final override = retroCoreOverride;
-    if (!execution.usesPresentationCore && override != null) {
+    if (!execution.usesRollback && override != null) {
       return p.join(override, embeddedCoreHost.libraryName(RetroPlatform.ps1));
     }
     try {
@@ -4151,7 +4155,7 @@ class AppModel extends ChangeNotifier {
     required bool Function() canBoot,
   }) async {
     final disc = game.retro;
-    if (disc == null || !managedRetroAvailable) throw StateError('PS1 netplay requires embedded play on Windows x64.');
+    if (disc == null || !ps1NetplayAvailable) throw StateError('PS1 netplay requires an embedded x64 core.');
     final booted = Completer<EmbeddedRetroGame?>();
     closeOverlay();
     final launch = _playRetro(game, disc, booted: booted, canBoot: canBoot, netplay: (media: media, seat: seat));

@@ -8,8 +8,16 @@ final class _Ps1InviteVerification {
 }
 
 extension TogetherPs1Netplay on TogetherModel {
-  bool get _ps1NetplayEnabled => environment['ANYPS5_PS1_NETPLAY'] == '1' && app.managedRetroAvailable;
+  bool get _ps1NetplayEnabled => environment['ANYPS5_PS1_NETPLAY'] == '1' && app.ps1NetplayAvailable;
   bool get _ps1RollbackEnabled => environment['ANYPS5_PS1_ROLLBACK'] == '1';
+
+  Ps1NetplayRoomMode get _ps1FreshMode => !app.managedRetroAvailable || _ps1RollbackEnabled
+      ? Ps1NetplayRoomMode.mixedRollback
+      : Ps1NetplayRoomMode.freshAnalog;
+
+  bool _ps1SupportsMode(Ps1NetplayRoomMode mode) => app.managedRetroAvailable
+      ? !mode.execution.usesPresentationCore || _ps1RollbackEnabled
+      : mode == Ps1NetplayRoomMode.mixedRollback;
 
   bool get ps1ProgressStalled => _ps1Match?.session?.progressStalled == true;
 
@@ -21,6 +29,7 @@ extension TogetherPs1Netplay on TogetherModel {
 
   List<PanelRow> ps1LocalLaunchRows(Game game) {
     if (!_ps1NetplayEnabled ||
+        !app.managedRetroAvailable ||
         app.running != null ||
         app.starting != null ||
         _verifyingPs1 ||
@@ -76,6 +85,7 @@ extension TogetherPs1Netplay on TogetherModel {
   }
 
   Ps1NetplayRoomMode? _ps1HostMode(EmbeddedRetroGame host, Game? game) {
+    if (!app.managedRetroAvailable) return null;
     if (host.stagedNetplayMedia != null) return Ps1NetplayRoomMode.staged;
     final disc = game?.retro;
     if (!app.ordinaryPs1RecoveryPending &&
@@ -180,9 +190,14 @@ extension TogetherPs1Netplay on TogetherModel {
     final profile = Ps1NetplayProfile.tryRead(selected?.retroSerial);
     if (selected == null || profile == null) return const [];
     return [
-      for (final mode in [Ps1NetplayRoomMode.freshAnalog, if (_ps1RollbackEnabled) Ps1NetplayRoomMode.rollbackPreview])
+      for (final mode in [
+        _ps1FreshMode,
+        if (app.managedRetroAvailable && _ps1RollbackEnabled) Ps1NetplayRoomMode.rollbackPreview,
+      ])
         PanelRow(
-          id: mode.freshFromDisc ? 'ps1-netplay-host-${profile.titleId}' : 'ps1-netplay-rollback-${profile.titleId}',
+          id: mode == Ps1NetplayRoomMode.rollbackPreview
+              ? 'ps1-netplay-rollback-${profile.titleId}'
+              : 'ps1-netplay-host-${profile.titleId}',
           title: T.format(mode == Ps1NetplayRoomMode.rollbackPreview ? 'ps1OnlineRollbackInvite' : 'ps1OnlineInvite', [
             selected.name,
           ]),
@@ -218,7 +233,7 @@ extension TogetherPs1Netplay on TogetherModel {
       available: available,
       invite: (friend) {
         app.open(Layer.friends);
-        unawaited(_startPs1Netplay(profile, friendId: friend.person.id, selectedGame: game));
+        unawaited(_startPs1Netplay(profile, friendId: friend.person.id, selectedGame: game, mode: _ps1FreshMode));
       },
     );
   }
@@ -238,8 +253,8 @@ extension TogetherPs1Netplay on TogetherModel {
         game?.retroSerial != invite.titleId ||
         worker == null ||
         mode == null ||
-        mode == Ps1NetplayRoomMode.rollbackPreview ||
-        (mode.execution.usesPresentationCore && !_ps1RollbackEnabled) ||
+        (mode.execution.usesRollback && !mode.handoffFromOrdinary) ||
+        !_ps1SupportsMode(mode) ||
         _ps1HostMode(worker, game)?.handoffFromOrdinary != true) {
       return null;
     }
@@ -249,7 +264,12 @@ extension TogetherPs1Netplay on TogetherModel {
   Future<void> joinPs1Netplay(GameInvite invite) async {
     final profile = Ps1NetplayProfile.tryRead(invite.titleId);
     final mode = Ps1NetplayRoomMode.tryRead(invite.gameVersion);
-    if (profile == null || mode == null || (mode.execution.usesPresentationCore && !_ps1RollbackEnabled)) {
+    if (profile == null || mode == null) {
+      await _unsupportedRetroInvite();
+      return;
+    }
+    if (!_ps1NetplayEnabled) return app.show(T.text('ps1OnlineUnavailable'));
+    if (!_ps1SupportsMode(mode)) {
       await _unsupportedRetroInvite();
       return;
     }
@@ -273,12 +293,12 @@ extension TogetherPs1Netplay on TogetherModel {
     String? expectedHost,
     EmbeddedRetroGame? localWorker,
     Game? selectedGame,
-    Ps1NetplayRoomMode mode = Ps1NetplayRoomMode.freshAnalog,
+    required Ps1NetplayRoomMode mode,
   }) async {
     final me = account.user?.id;
     final owner = app.currentProfile?.id;
     final candidates = _ps1Candidates(profile).toList();
-    if (!_ps1NetplayEnabled || me == null || hub.socket.status != SocketStatus.ready) {
+    if (!_ps1NetplayEnabled || !_ps1SupportsMode(mode) || me == null || hub.socket.status != SocketStatus.ready) {
       app.show(T.text('ps1OnlineUnavailable'));
       return;
     }

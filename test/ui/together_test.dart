@@ -1914,7 +1914,7 @@ void main() {
       model.open(Layer.friends);
       final accept = model.panelCategories().single.rows.singleWhere((row) => row.id == 'game-accept-ps1-ana');
       (accept.kind as ActionRow).run();
-      expect(model.toast, contains('enabled Windows build'));
+      expect(model.toast, contains('enabled x64 build'));
       expect(server.callsTo('game-sessions/ps1-ana/join'), isEmpty);
       expect(model.running, isNull);
     });

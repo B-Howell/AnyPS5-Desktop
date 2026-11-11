@@ -59,7 +59,7 @@ void main() {
     final app = fixture.model;
     final home = fixture.temp.path;
     environment['ANYPS5_LIBRETRO_HOME'] = home;
-    File(p.join(home, 'swanstation_libretro.dll')).createSync();
+    File(p.join(home, app.embeddedCoreHost.libraryName(RetroPlatform.ps1))).createSync();
     final disc = File(p.join(home, 'test.cue'))..createSync();
     final game = Game(
       folder: home,

@@ -279,7 +279,7 @@
   "ps1OnlineConnecting": "Connecting to the other player",
   "ps1OnlinePreparing": "Preparing both games",
   "ps1OnlineEnding": "Ending online play",
-  "ps1OnlineUnavailable": "PS1 online play needs an enabled Windows build and an AnyTogether connection.",
+  "ps1OnlineUnavailable": "PS1 online play needs an enabled x64 build and an AnyTogether connection.",
   "ps1OnlineDisc": "Add the supported CUE and track files for this game to your PS1 library.",
   "ps1OnlineBios": "PS1 online play needs a matching SCPH-1001 BIOS dump. Try again with the correct file.",
   "ps1OnlineBiosPicker": "Select your SCPH-1001 BIOS dump for PS1 online play",

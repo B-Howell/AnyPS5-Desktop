@@ -2946,6 +2946,16 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
         }
         netplay_dualshock = *enabled;
       }
+      bool rollback = false;
+      if (const auto field = fields->find(Value("ps1NetplayRollback")); field != fields->end()) {
+        const auto* enabled = std::get_if<bool>(&field->second);
+        if (!enabled || !netplay_seat || (local_staging && *local_staging) ||
+            match_cpu != Ps1MatchCpu::kCachedInterpreter || netplay_dualshock ||
+            fields->count(Value("ps1PresentationCore"))) {
+          return result->Error("argument", "Single-core rollback requires an isolated digital PS1 match.");
+        }
+        rollback = *enabled;
+      }
       const std::string* presentation = nullptr;
       if (const auto found = fields->find(Value("ps1PresentationCore")); found != fields->end()) {
         presentation = std::get_if<std::string>(&found->second);
@@ -3050,7 +3060,7 @@ void RetroCoreHost::Handle(const flutter::MethodCall<Value>& call,
                                                    netplay_seat, netplay_bios ? *netplay_bios : "",
                                                    local_staging && *local_staging, lan_mac, std::move(online),
                                                    std::vector<std::string>{}, match_cpu, nullptr,
-                                                   presentation != nullptr, RetroCoreSession::AudioSink{},
+                                                   rollback || presentation != nullptr, RetroCoreSession::AudioSink{},
                                                    std::vector<ps1_netplay::PadInput>{}, RetroCoreSession::CallbackSlot::kPrimary,
                                                    std::move(boot_disc), netplay_dualshock);
       if (presentation) {

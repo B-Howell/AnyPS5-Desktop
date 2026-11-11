@@ -301,7 +301,7 @@ predicting remote input. It restores a same-instance state and replays
 corrected input on the core worker. It suppresses replay video, replaces
 speculative PCM and releases audio and RAM fingerprints only after
 confirmation. The two-frame input buffer is unchanged. The GTK adapter
-accepts a boolean 'ps1NetplayRollback' start argument. A staged host can
+accepts a boolean `ps1NetplayRollback` start argument. A staged host can
 still export and hold before starting the match. Once rollback starts,
 the worker rejects live export and hold because the core may be ahead of
 the confirmed frame.
@@ -315,13 +315,13 @@ cmake -S native/retro/test -B build/linux-retro -G Ninja -DCMAKE_BUILD_TYPE=Rele
 cmake --build build/linux-retro --target ps1_match_probe --parallel 3
 ```
 
-Build the Linux SwanStation library from '631f0fb31b809e0f889d7c551fe695788e39c1d3'
+Build the Linux SwanStation library from `631f0fb31b809e0f889d7c551fe695788e39c1d3`
 using GNU 11.4, CMake RelWithDebInfo and Ninja. Apply the
 [SPU patch](../tool/patches/swanstation-spu-checkpoint.patch),
 [portable checkpoint patch](../tool/patches/swanstation-portable-checkpoint.patch)
 and [blank-card patch](../tool/patches/swanstation-blank-card-checkpoint.patch)
 in that order. If building from a Windows checkout, use LF patch copies
-for 'git apply'. The resulting local Linux candidate SHA-256 was
+for `git apply`. The resulting local Linux candidate SHA-256 was
 '0fc6f1c2522573b570a4481b1526b0e27e3fd8367c32912b4ba5ceac590ffdd0'.
 The Windows cached-interpreter test DLL SHA-256 was
 '9e72d4ded35ed5308916e16448edc1c3c39651969c2f6fde68b4e3293eea6347'.
@@ -330,7 +330,7 @@ Run the [paced driver](../windows/runner/tests/run_ps1_netplay_probe.py)
 from Windows with the native Windows probe and both locally built libraries.
 The five WSL arguments must be accessible through the Ubuntu distribution's
 drive mounts. Keep Windows TEMP and TMP on the scratch drive. The Ubuntu
-probe uses private temporary storage under '/dev/shm'.
+probe uses private temporary storage under `/dev/shm`.
 
 ```powershell
 python -B windows/runner/tests/run_ps1_netplay_probe.py --probe "$winProbe" --core "$winCore" `
@@ -352,11 +352,48 @@ each and reordered 1,680 and 1,672 packets, respectively. The Windows probe
 reported 11 native work iterations over 16.667 ms, with a 148.311 ms maximum.
 
 The mixed-platform probe exercises native rollback over a simulated
-network. The app still requires a qualified Linux package and compatible
-room identity. Linux uses one core and skips video during catch-up; the
+network. Linux uses one core and skips video during catch-up. The
 headless probe does not qualify its frame budget or PulseAudio playback
 during a burst of confirmed PCM. The Windows spare presentation core and
 rollback handoff mode remain separate from this Linux worker.
+
+## Mixed-platform launcher preview
+
+The [media verifier](../lib/core/online/ps1_netplay_media.dart) adds PS1
+room version 7. Each platform verifies its own exact executable library
+hash before using the same room identity. This identity is derived from
+both qualified binary digests and is used in room metadata and the reliable
+handshake. Media verification still checks the complete disc layout, tracks
+and BIOS. Existing room versions retain their original identities.
+
+The [managed installer](../lib/core/managed_retro.dart) accepts the
+Windows rollback ZIP and the Linux x64 rollback ZIP in the configured
+reviewer package directory. It verifies the archive, executable library
+and Linux ELF rollback export before installing. The Linux archive is
+`swanstation-netplay-rollback-linux-x64.zip`, with
+`swanstation_libretro.so` at its root and SHA-256
+`724fea1bb0f87216d4d3a8cd61a2ad251e208b73069a0c3fb4600712a444c7b3`.
+The ZIP used one deflated entry with the default ZIP epoch timestamp.
+Archive contents are supplied separately. No emulator binaries or game data
+are committed.
+
+For the preview, set `ANYPS5_MANAGED_CORE_PACKAGES` to the absolute local
+directory containing the platform`s ZIP. Enable `ANYPS5_PS1_NETPLAY=1` on
+both machines and `ANYPS5_PS1_ROLLBACK=1` on a Windows host to select the
+mixed-platform room when inviting from the dashboard or Friends. Linux
+uses the mixed room automatically. A Windows guest with PS1 netplay enabled
+can accept this room. The [embedded game adapter](../lib/ui/embedded_retro_game.dart)
+opts both workers into single-core rollback for this room. The mode uses two
+digital pads and starts from the disc. Windows-only DualShock, dual-core
+presentation and live handoff remain separate modes.
+
+The [media and installer tests](../test/core/online/ps1_netplay_media_test.dart)
+cover platform-specific hash rejection, matching wire identity and a fresh
+Linux install. The [room setup test](../test/ui/ps1_netplay_setup_test.dart)
+uses an optional JSON fixture containing the package directory, a matching
+CTR CUE and the user`s BIOS. It checks installation and the original room
+admission request without loading a visible core. A real AnyTogether
+session on separate machines still needs acceptance.
 
 Local source, builds, temporary files and compiler caches remain on D:.
 Native builds use `nice -n 19 ionice -c3` and at most three jobs. Tests use fake
@@ -389,3 +426,11 @@ omitted the required embedded-core host argument. The diagnostic loads a
 Windows native worker, so it now selects Windows x64 explicitly. Whole-project
 analysis under Flutter 3.47.1 passed after the fix. The macOS job in the same
 run was canceled by the next push. It produced no golden comparison result.
+
+With analysis fixed, hosted run 42953521356 passed translation validation
+and reached the complete Linux test suite. Four optimizer tests combined a
+simulated Windows launcher with the real Linux ABI, which hid the managed
+optimizer row. The Windows capability is now supplied explicitly in those
+fixtures. Production still detects the native host ABI. The restart-tuning
+test now creates the mock core filename for the test's host, so it can
+exercise the same temporary-settings and Apply contract on Linux.

@@ -118,6 +118,7 @@ void main() {
         '4',
         '5',
         '6',
+        '7',
       });
     }
     expect(Ps1NetplayProfile.tryRead('Not a disc serial'), isNull);
@@ -141,6 +142,36 @@ void main() {
     expect(mode.execution.digest, isNot(Ps1NetplayExecution.standard.digest));
     expect(mode.execution.coreDigests.intersection(Ps1NetplayExecution.standard.coreDigests), isEmpty);
   });
+
+  test('mixed rollback accepts only the qualified library for each host', () {
+    final mode = Ps1NetplayRoomMode.tryRead('7')!;
+    const windows = EmbeddedCoreHost.windowsX64;
+    const linux = EmbeddedCoreHost.linuxX64;
+    const dll = Ps1NetplayMedia.rollbackCorePin;
+    const so = '0fc6f1c2522573b570a4481b1526b0e27e3fd8367c32912b4ba5ceac590ffdd0';
+    expect(mode.freshFromDisc, isTrue);
+    expect(mode.execution.usesPresentationCore, isFalse);
+    expect(mode.execution.usesRollback, isTrue);
+    final identity = mode.execution.verifiedCoreIdentity(windows, dll);
+    expect(identity, isNot(anyOf(isNull, dll, so)));
+    expect(mode.execution.verifiedCoreIdentity(linux, so), identity);
+    expect(mode.execution.verifiedCoreIdentity(windows, so), isNull);
+    expect(mode.execution.verifiedCoreIdentity(linux, dll), isNull);
+    expect(mode.execution.verifiedCoreIdentity(linux, Ps1NetplayMedia.portableCorePin), isNull);
+  });
+
+  test('installs the pinned Linux rollback package in a fresh profile', () async {
+    final package = Platform.environment['ANYPS5_TEST_PS1_LINUX_PACKAGE_DIR']!;
+    final profileRoot = p.join(folder.path, 'emulators');
+    final managed = ManagedRetro(profileRoot, host: EmbeddedCoreHost.linuxX64, packageDirectory: package);
+    final installed = await managed.ensurePs1NetplayCore(execution: Ps1NetplayExecution.mixedRollback);
+    expect(p.basename(installed), 'swanstation_libretro.so');
+    expect(p.isWithin(profileRoot, installed), isTrue);
+    final digest = await sha256.bind(File(installed).openRead()).first;
+    expect(digest.toString(), Ps1NetplayMedia.linuxRollbackCorePin);
+    expect(await managed.ensurePs1NetplayCore(execution: Ps1NetplayExecution.mixedRollback), installed);
+    expect(managed.isInstalled(RetroPlatform.ps1), isFalse);
+  }, skip: !Platform.isLinux || Platform.environment['ANYPS5_TEST_PS1_LINUX_PACKAGE_DIR'] == null);
 
   test('rollback handoff preserves the ordinary CPU with a distinct execution identity', () {
     const mode = Ps1NetplayRoomMode.rollbackHandoff;

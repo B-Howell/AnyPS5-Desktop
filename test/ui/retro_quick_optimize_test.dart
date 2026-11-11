@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:anyps5_desktop/core/embedded_core_host.dart';
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/retro_optimizer.dart';
@@ -31,6 +32,7 @@ void main() {
       system: HostSystem.windows,
       persist: false,
       preferences: preferences,
+      services: const LauncherServices(nativeRetroHost: EmbeddedCoreHost.windowsX64),
     );
     addTearDown(() {
       app.dispose();
@@ -61,6 +63,7 @@ void main() {
         persist: true,
         preferences: Preferences()..onboarded = true,
         services: LauncherServices(
+          nativeRetroHost: EmbeddedCoreHost.windowsX64,
           retroHardware: () async => const RetroHardware(
             displayHeight: 1440,
             logicalProcessors: 12,
