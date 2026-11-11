@@ -294,9 +294,69 @@ then imports and catches up both guest seats before checking the synchronized
 RAM fingerprint. Replay rejects gaps and duplicates and suppresses audio
 and video while retaining the recorded controller inputs.
 
-Rollback and presentation still need a Linux implementation. The launcher
-also needs qualified Linux core packages and mixed-platform real-game
-verification before exposing Linux PS1 online play.
+## Linux native rollback
+
+The [native session](../native/retro/retro_session.cpp) checkpoints before
+predicting remote input. It restores a same-instance state and replays
+corrected input on the core worker. It suppresses replay video, replaces
+speculative PCM and releases audio and RAM fingerprints only after
+confirmation. The two-frame input buffer is unchanged. The GTK adapter
+accepts a boolean 'ps1NetplayRollback' start argument. A staged host can
+still export and hold before starting the match. Once rollback starts,
+the worker rejects live export and hold because the core may be ahead of
+the confirmed frame.
+
+The [Linux headless probe](../native/retro/test/ps1_match_probe.cpp) uses
+that production worker with in-memory video and audio sinks. Build it with
+the shared native suite:
+
+```sh
+cmake -S native/retro/test -B build/linux-retro -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/linux-retro --target ps1_match_probe --parallel 3
+```
+
+Build the Linux SwanStation library from '631f0fb31b809e0f889d7c551fe695788e39c1d3'
+using GNU 11.4, CMake RelWithDebInfo and Ninja. Apply the
+[SPU patch](../tool/patches/swanstation-spu-checkpoint.patch),
+[portable checkpoint patch](../tool/patches/swanstation-portable-checkpoint.patch)
+and [blank-card patch](../tool/patches/swanstation-blank-card-checkpoint.patch)
+in that order. If building from a Windows checkout, use LF patch copies
+for 'git apply'. The resulting local Linux candidate SHA-256 was
+'0fc6f1c2522573b570a4481b1526b0e27e3fd8367c32912b4ba5ceac590ffdd0'.
+The Windows cached-interpreter test DLL SHA-256 was
+'9e72d4ded35ed5308916e16448edc1c3c39651969c2f6fde68b4e3293eea6347'.
+
+Run the [paced driver](../windows/runner/tests/run_ps1_netplay_probe.py)
+from Windows with the native Windows probe and both locally built libraries.
+The five WSL arguments must be accessible through the Ubuntu distribution's
+drive mounts. Keep Windows TEMP and TMP on the scratch drive. The Ubuntu
+probe uses private temporary storage under '/dev/shm'.
+
+```powershell
+python -B windows/runner/tests/run_ps1_netplay_probe.py --probe "$winProbe" --core "$winCore" `
+  --linux-probe "$linuxProbe" --linux-core "$linuxCore" --disc "$cue" --bios "$bios" `
+  --rollback --network-profile 120ms-loss --trace tool/ps1_netplay/fixtures/ctr_usa_coco_park_versus.json
+```
+
+The Windows driver schedules both peers at 60 Hz with 120 ms round-trip
+latency, 25 ms jitter, 5% random loss and a ten-tick loss burst. It checks
+confirmed main RAM every 120 frames, the placement of both racers from
+the finished game`s RAM, and the full confirmed stereo PCM count and hash.
+
+Windows x64 and Ubuntu 22.04 under WSL finished all 13,706 frames in
+244.24 seconds using the cached interpreter on both peers. Both reported the
+same placements and 114 confirmed RAM fingerprints. The full PCM hashes
+matched across 10,104,619 stereo sample pairs. The Linux guest restored
+1,268 checkpoints. The two links dropped 753 and 729 packets out of 14,655
+each and reordered 1,680 and 1,672 packets, respectively. The Windows probe
+reported 11 native work iterations over 16.667 ms, with a 148.311 ms maximum.
+
+The mixed-platform probe exercises native rollback over a simulated
+network. The app still requires a qualified Linux package and compatible
+room identity. Linux uses one core and skips video during catch-up; the
+headless probe does not qualify its frame budget or PulseAudio playback
+during a burst of confirmed PCM. The Windows spare presentation core and
+rollback handoff mode remain separate from this Linux worker.
 
 Local source, builds, temporary files and compiler caches remain on D:.
 Native builds use `nice -n 19 ionice -c3` and at most three jobs. Tests use fake

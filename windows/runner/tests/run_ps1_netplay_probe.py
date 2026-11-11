@@ -1,4 +1,4 @@
-"""Check two real Windows runner workers without opening a desktop window."""
+"""Check real PS1 runner workers on Windows or Windows and WSL without opening a window."""
 
 import argparse
 import hashlib
@@ -16,7 +16,7 @@ from time import monotonic, perf_counter, sleep
 
 class Peer:
     def __init__(self, executable, core, disc, bios, seat, *, local=False, saves=None, recompiler=False,
-                 rollback=False, audio_control=False, input_trace=None, presentation_core=None):
+                 rollback=False, audio_control=False, input_trace=None, presentation_core=None, linux=False):
         self.lines = Queue()
         arguments = [executable, core, disc, bios, str(seat)]
         if local:
@@ -34,6 +34,16 @@ class Peer:
             arguments.append("audio-control-recompiler" if recompiler else "audio-control")
         if saves is not None:
             arguments.extend(("ordinary", saves))
+        if linux:
+            paths = [executable, core, disc, bios, input_trace]
+            linux_paths = [
+                run(["wsl.exe", "-d", "Ubuntu", "--", "wslpath", "-a", path.as_posix()],
+                    capture_output=True, text=True, check=True, creationflags=CREATE_NO_WINDOW).stdout.strip()
+                for path in paths
+            ]
+            arguments = ["wsl.exe", "-d", "Ubuntu", "--", "env", "TMPDIR=/dev/shm",
+                         "nice", "-n", "19", "ionice", "-c3", "timeout", "-k", "10s", "540s",
+                         *linux_paths[:4], str(seat), "rollback", linux_paths[4]]
         self.process = Popen(
             arguments,
             stdin=PIPE, stdout=PIPE, text=True,
@@ -58,10 +68,13 @@ class Peer:
         return self.receive()
 
     def close(self):
-        if self.process.poll() is None:
-            self.process.stdin.write("quit\n")
-            self.process.stdin.flush()
         try:
+            if self.process.poll() is None:
+                try:
+                    self.process.stdin.write("quit\n")
+                    self.process.stdin.flush()
+                except BrokenPipeError:
+                    pass
             self.process.wait(timeout=10)
         except TimeoutExpired:
             self.process.kill()
@@ -113,7 +126,14 @@ def main():
                         help="Exercise replacing and recovering workers through the native method channel")
     parser.add_argument("--ordinary-continue", action="store_true",
                         help="Recover the latest confirmed rollback frame through the native method channel")
+    parser.add_argument("--linux-probe", type=Path, help="Use a headless Ubuntu worker for seat two")
+    parser.add_argument("--linux-core", type=Path, help="Linux SwanStation library accessible from WSL")
     args = parser.parse_args()
+    if args.linux_probe or args.linux_core:
+        if not (args.linux_probe and args.linux_core and args.rollback and args.trace):
+            parser.error("Mixed-platform runs require both Linux paths, --rollback and --trace")
+        if args.rollback_recompiler or args.presentation_core:
+            parser.error("Mixed-platform runs use the cached interpreter and one worker per peer")
     rollback_restore = args.ordinary_restore and args.rollback_recompiler
     if args.rollback_recompiler and not (args.rollback or rollback_restore):
         parser.error("--rollback-recompiler requires --rollback or --ordinary-restore")
@@ -618,9 +638,13 @@ def traced_rollback_race(args, cleanup):
     for seat in range(2):
         trace = directory / f"seat-{seat}.txt"
         trace.write_text("\n".join(str(pads[seat]) for pads in frames), encoding="ascii")
-        peer = Peer(args.probe.resolve(), args.core.resolve(), args.disc.resolve(), args.bios.resolve(),
+        linux = seat == 1 and args.linux_probe is not None
+        probe = args.linux_probe if linux else args.probe
+        core = args.linux_core if linux else args.core
+        peer = Peer(probe.resolve(), core.resolve(), args.disc.resolve(), args.bios.resolve(),
                     seat, rollback=True, input_trace=trace, recompiler=args.rollback_recompiler,
-                    presentation_core=args.presentation_core.resolve() if args.presentation_core else None)
+                    presentation_core=args.presentation_core.resolve() if args.presentation_core else None,
+                    linux=linux)
         cleanup.callback(peer.close)
         peers.append(peer)
     assert all(peer.receive() == "ready" for peer in peers)
@@ -678,6 +702,13 @@ def traced_rollback_race(args, cleanup):
     print(f"Finished {target} frames in {perf_counter() - epoch:.2f}s: {outcome}; "
           f"{len(expected)} matching RAM fingerprints and {pcm[0][0]} stereo pairs.")
     for seat, (peer, link) in enumerate(zip(peers, links), 1):
+        if seat == 2 and args.linux_probe:
+            corrections = int(peer.send("corrections"))
+            if args.network_profile != "clean" and args.sample_frames is None:
+                assert corrections > 0, "The Linux worker never restored a rollback checkpoint"
+            print(f"Seat {seat} (Linux): {link.dropped}/{link.sent} packets dropped, "
+                  f"{link.reordered} reordered; {corrections} rollback corrections.")
+            continue
         published, video_gap, long_gaps, audio_gap, work, overruns = map(int, peer.send("presentation").split())
         print(f"Seat {seat}: {link.dropped}/{link.sent} packets dropped, {link.reordered} reordered; "
               f"{published} video updates, max gap {video_gap / 1000:.3f} ms, "

@@ -58,3 +58,8 @@ add_executable(retro_lan_test retro_lan_test.cpp)
 target_link_libraries(retro_lan_test PRIVATE anyps5_retro)
 add_test(NAME retro_lan_session COMMAND retro_lan_test
   "$<TARGET_FILE:retro_fake_lan_core>" "$<TARGET_FILE:retro_fake_no_lan_core>")
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(ps1_match_probe ps1_match_probe.cpp)
+  target_link_libraries(ps1_match_probe PRIVATE anyps5_retro ${CMAKE_DL_LIBS})
+endif()

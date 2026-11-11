@@ -31,6 +31,8 @@ struct Ps1MatchConfig {
   std::string bios;
   bool dualshock = false;
   bool local_staging = false;
+  bool rollback = false;
+  std::vector<ps1_netplay::PadInput> input_trace{};
 };
 
 using Ps1Ports = std::array<ps1_netplay::PadInput, 2>;
@@ -85,6 +87,8 @@ struct SessionStatus {
   int64_t recovered_source = 0;
   bool checkpoint_parked = false;
   bool netplay_ready = false;
+  int64_t confirmed_audio_frame = -1;
+  uint64_t rollback_corrections = 0;
   bool portable_checkpoint = false;
   bool ready = false, presented = false, ended = false, hardware = false, graphics_pending = false;
   int32_t frame_width = 0, frame_height = 0;

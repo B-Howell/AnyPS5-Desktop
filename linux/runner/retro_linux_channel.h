@@ -66,14 +66,17 @@ inline std::optional<Ps1MatchConfig> ReadPs1Match(FlValue* args) {
   auto* bios = Field(args, "ps1NetplayBios");
   auto* dualshock = Field(args, "ps1NetplayDualShock");
   auto* staging = Field(args, "ps1LocalStaging");
-  if (!seat && !bios && !dualshock && !staging) return std::nullopt;
+  auto* rollback = Field(args, "ps1NetplayRollback");
+  if (!seat && !bios && !dualshock && !staging && !rollback) return std::nullopt;
   if (!seat || fl_value_get_type(seat) != FL_VALUE_TYPE_INT || fl_value_get_int(seat) < 0 ||
       fl_value_get_int(seat) > 1 || !bios || fl_value_get_type(bios) != FL_VALUE_TYPE_STRING ||
       (dualshock && fl_value_get_type(dualshock) != FL_VALUE_TYPE_BOOL) ||
-      (staging && fl_value_get_type(staging) != FL_VALUE_TYPE_BOOL))
+      (staging && fl_value_get_type(staging) != FL_VALUE_TYPE_BOOL) ||
+      (rollback && fl_value_get_type(rollback) != FL_VALUE_TYPE_BOOL))
     throw std::runtime_error("Invalid synchronized PS1 seat or BIOS.");
   return Ps1MatchConfig{static_cast<unsigned>(fl_value_get_int(seat)), fl_value_get_string(bios),
-                       dualshock && fl_value_get_bool(dualshock), staging && fl_value_get_bool(staging)};
+                       dualshock && fl_value_get_bool(dualshock), staging && fl_value_get_bool(staging),
+                       rollback && fl_value_get_bool(rollback)};
 }
 
 struct MatchExchange {

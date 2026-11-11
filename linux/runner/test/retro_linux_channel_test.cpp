@@ -73,7 +73,7 @@ int main() {
     fl_value_set_string_take(offline, "ps2LanMac", fl_value_new_uint8_list(packet.data(), 6));
     Check(!ReadPs1Match(offline), "PS2 request became a PS1 match");
     for (const auto* flag : {"ps1NetplaySeat", "ps1NetplayBios", "ps1NetplayDualShock", "ps1NetplayCpu",
-                             "ps1PresentationCore", "ps1LocalStaging", "ps3Online"}) {
+                             "ps1PresentationCore", "ps1LocalStaging", "ps1NetplayRollback", "ps3Online"}) {
       g_autoptr(FlValue) unsupported = fl_value_new_map();
       fl_value_set_string_take(unsupported, flag, fl_value_new_null());
       MustReject([&] { ReadPs1Match(unsupported); });
@@ -83,6 +83,11 @@ int main() {
     Check(ReadPs1Match(offline)->seat == 1, "PS1 seat changed at the channel");
     fl_value_set_string_take(offline, "ps1LocalStaging", fl_value_new_bool(true));
     Check(ReadPs1Match(offline)->local_staging, "PS1 staging flag changed at the channel");
+    Check(!ReadPs1Match(offline)->rollback, "Ordinary netplay opted into rollback");
+    fl_value_set_string_take(offline, "ps1NetplayRollback", fl_value_new_bool(true));
+    Check(ReadPs1Match(offline)->rollback, "PS1 rollback flag changed at the channel");
+    fl_value_set_string_take(offline, "ps1NetplayRollback", fl_value_new_int(1));
+    MustReject([&] { ReadPs1Match(offline); });
     auto* remote = fl_value_new_list();
     auto* row = fl_value_new_list();
     for (const int value : {0, 65535, -32768, 32767, 0, 0})

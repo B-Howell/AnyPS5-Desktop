@@ -128,7 +128,8 @@ class Session::Impl {
         throw std::invalid_argument("Invalid synchronized PS1 launch configuration");
       if (config_.ps1_match->local_staging && config_.ps1_match->seat != 0)
         throw std::invalid_argument("Only the PS1 host can stage a local match.");
-      match_timeline_.emplace(config_.ps1_match->seat);
+      match_timeline_.emplace(config_.ps1_match->seat, config_.ps1_match->rollback
+          ? ps1_netplay::Timeline::kStandardPrediction : 0);
       match_storage_ = std::make_unique<Ps1MatchStorage>(config_.ps1_match->bios);
       config_.system = match_storage_->system();
       config_.saves = match_storage_->saves();
@@ -264,7 +265,8 @@ class Session::Impl {
   }
   std::optional<int64_t> RequestMatchExport(const ps1_checkpoint::Digest& digest) {
     std::lock_guard<std::mutex> lock(match_mutex_);
-    if (!MatchCheckpointIdle() || match_import_ || match_replay_cursor_) return std::nullopt;
+    if (!MatchCheckpointIdle() || match_import_ || match_replay_cursor_ ||
+        (config_.ps1_match->rollback && match_started_)) return std::nullopt;
     return checkpoint_.RequestCapture(digest, false);
   }
   std::optional<int64_t> RequestMatchImport(const ps1_checkpoint::Digest& digest, uint32_t frame,
@@ -282,6 +284,7 @@ class Session::Impl {
   std::optional<uint32_t> HoldNetplay() {
     std::lock_guard<std::mutex> lock(match_mutex_);
     if (!MatchCheckpointIdle() || !checkpoint_.ready() || match_frame_in_flight_) return std::nullopt;
+    if (config_.ps1_match->rollback && match_started_) return std::nullopt;
     if (!StagingLocal() && (!match_started_ || !match_timeline_->Hold())) return std::nullopt;
     match_held_ = true;
     return MatchFrame();
@@ -299,7 +302,8 @@ class Session::Impl {
   }
   std::optional<Ps1MatchHistory> MatchHistory(uint32_t first) {
     std::lock_guard<std::mutex> lock(match_mutex_);
-    if (!match_ready_ || stop_ || ended_ || !checkpoint_.ready() || (!StagingLocal() && !match_started_))
+    if (!match_ready_ || stop_ || ended_ || !checkpoint_.ready() ||
+        (!StagingLocal() && (!match_started_ || config_.ps1_match->rollback)))
       return std::nullopt;
     const auto next = MatchFrame();
     const auto oldest = next - static_cast<uint32_t>(match_history_.size());
@@ -323,6 +327,7 @@ class Session::Impl {
     std::lock_guard<std::mutex> lock(match_mutex_);
     if (!match_ready_ || stop_ || ended_ || StagingLocal() || remote.size() > 32 ||
         !match_timeline_->Receive(remote, acknowledged)) return std::nullopt;
+    ConfirmFingerprint();
     return Ps1MatchTick{match_timeline_->frame(), match_timeline_->confirmed(), match_timeline_->received(),
                         match_timeline_->waiting(), match_timeline_->LocalPacket(), match_fingerprints_};
   }
@@ -358,6 +363,8 @@ class Session::Impl {
     std::lock_guard<std::mutex> lock(settings_mutex_);
     SessionStatus status;
     status.ready = frame_ready_;
+    status.confirmed_audio_frame = confirmed_audio_frame_;
+    status.rollback_corrections = rollback_corrections_;
     status.presented = presented_;
     status.ended = ended_;
     status.netplay_ready = match_ready_ && !stop_ && !ended_;
@@ -821,7 +828,44 @@ class Session::Impl {
     RefreshDiscs(!changed);
   }
 
+  void ConfirmFingerprint() {
+    if (!pending_fingerprint_ || match_timeline_->confirmed() < pending_fingerprint_->first) return;
+    if (match_fingerprints_.size() == 16) match_fingerprints_.erase(match_fingerprints_.begin());
+    match_fingerprints_.push_back(std::move(*pending_fingerprint_));
+    pending_fingerprint_.reset();
+  }
+
+  struct MatchAudio {
+    std::array<int16_t, 8192> samples;
+    size_t count = 0;
+    bool overflow = false;
+  };
+
+  void WriteAudio(const int16_t* samples, size_t frames) {
+    if (frames == 0) return;
+    if (auto* capture = audio_capture_) {
+      if (frames > (capture->samples.size() - capture->count) / 2) {
+        capture->overflow = true;
+        return;
+      }
+      std::copy_n(samples, frames * 2, capture->samples.data() + capture->count);
+      capture->count += frames * 2;
+    } else if (!paused_ && !suppress_frame_ && recovery_accepted_) {
+      audio_frames_ += frames;
+      audio_->Write(samples, frames);
+    }
+  }
+
   bool Environment(unsigned command, void* data) {
+    constexpr unsigned kSavestateContext = 72 | 0x10000;
+    if (command == kSavestateContext) {
+      if (!rollback_context_) return false;
+      if (data) {
+        *static_cast<int*>(data) = 1;  // Same core instance.
+        rollback_context_queried_ = true;
+      }
+      return true;
+    }
     if (command == kShutdown) {
       stop_ = true;
       return true;
@@ -1004,20 +1048,12 @@ class Session::Impl {
           });
       core.Get<void (*)(void (*)(int16_t, int16_t))>("retro_set_audio_sample")(
           [](int16_t left, int16_t right) {
-            auto* session = active_.load();
             const int16_t stereo[]{left, right};
-            if (!session->paused_ && !session->suppress_frame_ && session->recovery_accepted_) {
-              ++session->audio_frames_;
-              session->audio_->Write(stereo, 1);
-            }
+            active_.load()->WriteAudio(stereo, 1);
           });
       core.Get<void (*)(size_t (*)(const int16_t*, size_t))>("retro_set_audio_sample_batch")(
           [](const int16_t* samples, size_t frames) {
-            auto* session = active_.load();
-            if (!session->paused_ && !session->suppress_frame_ && session->recovery_accepted_) {
-              session->audio_frames_ += frames;
-              session->audio_->Write(samples, frames);
-            }
+            active_.load()->WriteAudio(samples, frames);
             return frames;
           });
       core.Get<void (*)(void (*)())>("retro_set_input_poll")([] {});
@@ -1174,8 +1210,22 @@ class Session::Impl {
           checkpoint_.Configure({save, nullptr, load_state, size + ps1_checkpoint::kPrefixBytes});
         if (config_.ps1_match->local_staging && !checkpoint_.ready())
           throw std::runtime_error("Local PS1 hosting requires the portable checkpoint core.");
-        match_ready_ = true;
       }
+      const bool rollback = match_timeline_ && config_.ps1_match->rollback;
+      const auto serialize = rollback ? core.Get<bool (*)(void*, size_t)>("retro_serialize") : nullptr;
+      const auto restore = rollback ? core.Get<bool (*)(const void*, size_t)>("retro_unserialize") : nullptr;
+      const auto state_size = rollback ? core.Get<size_t (*)()>("retro_serialize_size")() : 0;
+      if (rollback && (!state_size || state_size > ps1_checkpoint::kMaximumBytes))
+        throw std::runtime_error("Invalid PS1 rollback checkpoint size.");
+      const auto window = rollback ? match_timeline_->prediction_window() : 0;
+      struct Snapshot {
+        std::optional<uint32_t> frame;
+        ps1_checkpoint::Bytes bytes;
+      };
+      std::vector<Snapshot> snapshots(window);
+      std::vector<MatchAudio> match_audio(rollback ? window + 1 : 0);
+      uint32_t next_audio = 0;
+      if (match_timeline_) match_ready_ = true;
       auto next = Clock::now();
       auto hardware_deadline = next + std::chrono::seconds(8);
       std::optional<Clock::time_point> recovery_deadline;
@@ -1226,6 +1276,43 @@ class Session::Impl {
           next = Clock::now();
           continue;
         }
+        bool replaying = false;
+        if (rollback) {
+          std::optional<uint32_t> confirmed, correction;
+          {
+            std::lock_guard<std::mutex> lock(match_mutex_);
+            confirmed = match_timeline_->confirmed();
+            correction = match_timeline_->correction();
+          }
+          while (confirmed && next_audio <= *confirmed) {
+            const auto& pcm = match_audio[next_audio % match_audio.size()];
+            if (pcm.count) {
+              audio_->Write(pcm.samples.data(), pcm.count / 2);
+              audio_frames_ += pcm.count / 2;
+            }
+            confirmed_audio_frame_ = next_audio++;
+          }
+          if (correction) {
+            const auto& snapshot = snapshots[*correction % window];
+            if (snapshot.frame != correction)
+              throw std::runtime_error("Missing PS1 rollback checkpoint.");
+            suppress_frame_ = true;
+            rollback_context_queried_ = false;
+            rollback_context_ = true;
+            const bool restored = restore(snapshot.bytes.data(), snapshot.bytes.size());
+            rollback_context_ = false;
+            if (!restored || !rollback_context_queried_)
+              throw std::runtime_error("The PS1 core rejected a rollback checkpoint.");
+            validate_match_memory();
+            std::lock_guard<std::mutex> lock(match_mutex_);
+            if (match_timeline_->Rewind(*correction)) {
+              ++rollback_corrections_;
+              if (pending_fingerprint_ && pending_fingerprint_->first >= *correction)
+                pending_fingerprint_.reset();
+            }
+            continue;
+          }
+        }
         if (match_timeline_) {
           ps1_netplay::PadInput local;
           {
@@ -1234,18 +1321,26 @@ class Session::Impl {
           }
           bool prepared;
           bool staging;
+          bool checkpoint_needed = false;
           uint32_t frame;
           {
             std::lock_guard<std::mutex> lock(match_mutex_);
             staging = StagingLocal();
-            frame = MatchFrame();
+            frame = staging ? MatchFrame() : match_timeline_->cursor();
             if (staging) {
               if (frame == ps1_netplay::Timeline::kMaxFrame)
                 throw std::runtime_error("PS1 staging reached its frame limit.");
               prepared = !match_held_;
               match_ports_ = {local, {}};
             } else {
-              prepared = match_timeline_->Prepare(local, match_ports_);
+              const auto& trace = config_.ps1_match->input_trace;
+              if (!trace.empty())
+                local = frame + ps1_netplay::Timeline::kDelay < trace.size()
+                    ? trace[frame + ps1_netplay::Timeline::kDelay] : ps1_netplay::PadInput{};
+              prepared = (trace.empty() || frame < trace.size()) &&
+                  match_timeline_->Prepare(local, match_ports_);
+              checkpoint_needed = match_timeline_->needs_checkpoint();
+              replaying = frame < match_timeline_->frame();
             }
             match_frame_in_flight_ = prepared;
           }
@@ -1255,28 +1350,43 @@ class Session::Impl {
             continue;
           }
           if (stop_) break;
-          suppress_frame_ = false;
+          if (checkpoint_needed) {
+            auto& snapshot = snapshots[frame % window];
+            snapshot.bytes.resize(state_size);
+            rollback_context_ = true;
+            const bool saved = serialize(snapshot.bytes.data(), snapshot.bytes.size());
+            rollback_context_ = false;
+            if (!saved) throw std::runtime_error("Could not save a PS1 rollback checkpoint.");
+            snapshot.frame = frame;
+          }
+          suppress_frame_ = replaying;
+          if (rollback && !staging) {
+            audio_capture_ = &match_audio[frame % match_audio.size()];
+            audio_capture_->count = 0;
+            audio_capture_->overflow = false;
+          }
           step();
+          auto* captured = std::exchange(audio_capture_, nullptr);
+          if (captured && captured->overflow) throw std::runtime_error("PS1 rollback audio overflow.");
           auto fingerprint = !staging && (frame + 1) % 120 == 0 ?
               NetplayFingerprint(match_ram, match_ram_size) : std::string{};
           std::lock_guard<std::mutex> lock(match_mutex_);
           if (staging) ++match_local_frame_;
           else match_timeline_->Commit();
           match_frame_in_flight_ = false;
-          if (checkpoint_.ready()) {
+          if (checkpoint_.ready() && (staging || !rollback)) {
             if (match_history_.size() == 1024) match_history_.pop_front();
             match_history_.push_back(match_ports_);
           }
-          if (!fingerprint.empty()) {
-            if (match_fingerprints_.size() == 16) match_fingerprints_.erase(match_fingerprints_.begin());
-            match_fingerprints_.emplace_back(frame, std::move(fingerprint));
-          }
+          if (!fingerprint.empty()) pending_fingerprint_ = std::make_pair(frame, std::move(fingerprint));
+          ConfirmFingerprint();
         } else {
           step();
         }
         if (!paused_) ++steps_;
         if (video_->UnsupportedSync())
           throw std::runtime_error("This RPCS3 core uses Vulkan synchronization AnyPS5 does not support.");
+        if (replaying) continue;
         next += frame_time;
         const auto now = Clock::now();
         if (next < now - frame_time) next = now;
@@ -1287,6 +1397,8 @@ class Session::Impl {
       std::lock_guard<std::mutex> lock(settings_mutex_);
       error_ = failure.what();
     }
+    audio_capture_ = nullptr;
+    rollback_context_ = false;
     lan_ready_ = false;
     checkpoint_.Stop();
     if (lan_) lan_->Close();
@@ -1329,6 +1441,11 @@ class Session::Impl {
   std::mutex match_mutex_;
   std::array<ps1_netplay::PadInput, 2> match_ports_{};
   std::vector<std::pair<uint32_t, std::string>> match_fingerprints_;
+  std::optional<std::pair<uint32_t, std::string>> pending_fingerprint_;
+  std::atomic<int64_t> confirmed_audio_frame_{-1};
+  std::atomic<uint64_t> rollback_corrections_{0};
+  std::atomic<bool> rollback_context_{false}, rollback_context_queried_{false};
+  inline static thread_local MatchAudio* audio_capture_ = nullptr;
   std::atomic<bool> recovery_accepted_{true};
   std::atomic<int64_t> recovered_source_{0};
   std::atomic<bool> lan_ready_{false};
