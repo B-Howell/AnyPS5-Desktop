@@ -29,7 +29,7 @@ void main() {
     ..createSync(recursive: true)
     ..writeAsBytesSync(bytes);
 
-  void makeRelease() {
+  void makeRelease({String? linuxCoreSha256}) {
     release = Ps3OnlineRelease(
       provider: 'fixture',
       titleId: 'ABCD12345',
@@ -37,6 +37,7 @@ void main() {
       updateTreeDigest: updateTreeDigest,
       generatedUpdateFiles: const {'USRDIR/generated.dat'},
       coreSha256: sha256.convert([1]).toString(),
+      linuxCoreSha256: linuxCoreSha256,
       executableSha256: sha256.convert([2]).toString(),
       protection: Ps3SprxProtection('provider.sprx', sha256.convert([3]).toString()),
       rpcnHost: 'rpcn.example.invalid',
@@ -76,16 +77,43 @@ void main() {
   Future<Ps3OnlineProfile> verify({
     String? provider,
     String? onlineRoot,
+    String? corePath,
     ({Ps3UpdateChain chain, String root})? preparedUpdate,
   }) => Ps3OnlineProfile.verify(
     provider: provider ?? release.provider,
     disc: disc,
-    core: core,
+    core: corePath ?? core,
     onlineRoot: onlineRoot ?? online,
     offlineSystemRoot: offline,
     releases: [release],
     preparedUpdate: preparedUpdate,
   );
+
+  test('PS3 online uses separate platform pins and one mixed-platform party identity', () async {
+    final windowsOnlyFingerprint = release.partyFingerprint;
+    final linuxCore = write('rpcs3_libretro.so', [6]);
+    Future<Ps3OnlineProfile> verifyLinux(String path) => Ps3OnlineProfile.verify(
+      provider: release.provider,
+      disc: disc,
+      core: path,
+      coreHost: EmbeddedCoreHost.linuxX64,
+      onlineRoot: online,
+      offlineSystemRoot: offline,
+      releases: [release],
+    );
+
+    await expectLater(verifyLinux(linuxCore.path), throwsA(Ps3OnlineIssue.core));
+    makeRelease(linuxCoreSha256: sha256.convert([6]).toString());
+    final windows = await verify();
+    final linux = await verifyLinux(linuxCore.path);
+    expect(windows.release.partyFingerprint, linux.release.partyFingerprint);
+    expect(linux.release.partyFingerprint, isNot(windowsOnlyFingerprint));
+    await expectLater(verifyLinux(core), throwsA(Ps3OnlineIssue.core));
+    await expectLater(verify(corePath: linuxCore.path), throwsA(Ps3OnlineIssue.core));
+    await linux.revalidate();
+    linuxCore.writeAsBytesSync([7]);
+    await expectLater(linux.revalidate(), throwsA(Ps3OnlineIssue.core));
+  });
 
   test('validates a provider-independent release and exposes only typed launch values', () async {
     final profile = await verify();

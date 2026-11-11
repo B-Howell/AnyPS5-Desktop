@@ -105,6 +105,7 @@ extension TogetherPs3Online on TogetherModel {
         .where(
           (release) =>
               release.hasManagedProfile &&
+              release.coreSha256For(app.embeddedCoreHost) != null &&
               game.titleId == 'PS3-${release.titleId}' &&
               (version == null || release.updateVersion == version),
         )

@@ -872,3 +872,25 @@ tests, and the Linux channel test passed after compiling the actual
 runner bridge. These tests exercise the launch contract with fixtures.
 The launcher still requires a qualified provider profile and a real
 Linux core with both exports before Linux PS3 online can be offered.
+
+### PS3 provider release identity across hosts
+
+A [PS3 provider release](../lib/core/ps3_online_profile.dart) may carry
+distinct Windows and Linux core SHA-256 pins for the same game update,
+provider and protection. Each host verifies only its own pin and keeps
+that host selection for revalidation immediately before launch. Both
+pins contribute to the shared party fingerprint when a release covers
+both hosts. Windows-only releases retain their previous fingerprint.
+[Readiness](../lib/ui/ps3_online_readiness_page.dart) and
+[party selection](../lib/ui/together_ps3_online.dart) exclude releases
+without a pin for the current host.
+
+The [profile regression](../test/core/ps3_online_profile_test.dart)
+checks both platforms' fixture digests, rejection when Linux has no
+pin, rejection of the other platform's bytes, and detection of a
+changed Linux core at revalidation. No provider was added to the
+catalog. Linux app admission and actual provider gameplay remain open.
+
+The focused profile and offline-boot suites passed all 13 tests.
+The preceding shared-policy head passed all five hosted jobs in
+[run 42995259037](https://github.com/B-Howell/AnyPS5-Desktop/actions/runs/42995259037).

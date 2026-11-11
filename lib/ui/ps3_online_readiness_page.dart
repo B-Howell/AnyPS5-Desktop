@@ -69,7 +69,12 @@ extension Ps3OnlineReadinessPage on AppModel {
     final disc = game.retro!;
     final managed = _managedRetro;
     final releases = services.ps3OnlineReleases
-        .where((release) => release.hasManagedProfile && (partyRelease == null || release == partyRelease))
+        .where(
+          (release) =>
+              release.hasManagedProfile &&
+              release.coreSha256For(embeddedCoreHost) != null &&
+              (partyRelease == null || release == partyRelease),
+        )
         .toList();
     Ps3OnlineReadiness inspect() =>
         Ps3OnlineReadiness.inspect(disc: disc.path, managedSystem: managed.systemPath, releases: releases);
@@ -194,6 +199,7 @@ extension Ps3OnlineReadinessPage on AppModel {
           provider: release.provider,
           disc: disc.path,
           core: p.join(managedRoot, managed.libraryName(RetroPlatform.ps3)),
+          coreHost: embeddedCoreHost,
           onlineRoot: onlineRoot,
           offlineSystemRoot: managed.systemPath,
           releases: [release],

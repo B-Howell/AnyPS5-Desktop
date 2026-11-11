@@ -65,6 +65,7 @@ final class Ps3OnlineRelease {
     this.updateTreeDigest,
     this.generatedUpdateFiles = const {},
     required this.coreSha256,
+    this.linuxCoreSha256,
     required this.executableSha256,
     required this.protection,
     required this.rpcnHost,
@@ -86,6 +87,7 @@ final class Ps3OnlineRelease {
   /// Exact paths created by the game after a verified launch, relative to the title directory.
   final Set<String> generatedUpdateFiles;
   final String coreSha256;
+  final String? linuxCoreSha256;
   final String executableSha256;
   final Ps3OnlineProtection protection;
   final String rpcnHost;
@@ -97,6 +99,11 @@ final class Ps3OnlineRelease {
   final Ps3Dns dns;
   final bool upnp;
 
+  String? coreSha256For(EmbeddedCoreHost host) => switch (host) {
+    EmbeddedCoreHost.windowsX64 => coreSha256,
+    EmbeddedCoreHost.linuxX64 => linuxCoreSha256,
+  };
+
   /// Public compatibility identity. Account and local filesystem data are excluded.
   String get partyFingerprint => sha256
       .convert(
@@ -107,7 +114,7 @@ final class Ps3OnlineRelease {
             updateVersion,
             updateTreeDigest,
             generatedUpdateFiles.toList()..sort(),
-            coreSha256,
+            if (linuxCoreSha256 case final linux?) [coreSha256, linux] else coreSha256,
             executableSha256,
             protection.sha256,
             if (protection case Ps3YamlProtection(:final ppuHash, :final patches, :final basePatchSha256))
@@ -187,6 +194,7 @@ final class Ps3OnlineProfile {
     this.systemRoot,
     this.saveRoot,
     this._offlineSystemRoot,
+    this._coreHost,
     this._patchProtection,
   );
 
@@ -196,6 +204,7 @@ final class Ps3OnlineProfile {
   final String systemRoot;
   final String saveRoot;
   final String _offlineSystemRoot;
+  final EmbeddedCoreHost _coreHost;
   final Map<String, Object>? _patchProtection;
 
   static Future<String> managedProfileRoot(String managedRoot, Ps3OnlineRelease release, {bool create = false}) async {
@@ -371,6 +380,7 @@ final class Ps3OnlineProfile {
       provider: release.provider,
       disc: disc,
       core: core,
+      coreHost: _coreHost,
       onlineRoot: p.dirname(systemRoot),
       offlineSystemRoot: _offlineSystemRoot,
       releases: [release],
@@ -383,6 +393,7 @@ final class Ps3OnlineProfile {
     required String provider,
     required String disc,
     required String core,
+    EmbeddedCoreHost coreHost = EmbeddedCoreHost.windowsX64,
     required String onlineRoot,
     required String offlineSystemRoot,
     Iterable<Ps3OnlineRelease> releases = Ps3OnlineRelease.catalog,
@@ -424,7 +435,9 @@ final class Ps3OnlineProfile {
       throw Ps3OnlineIssue.storage;
     }
 
-    await _verifyHash(File(core), release.coreSha256, Ps3OnlineIssue.core);
+    final coreDigest = release.coreSha256For(coreHost);
+    if (coreDigest == null) throw Ps3OnlineIssue.core;
+    await _verifyHash(File(core), coreDigest, Ps3OnlineIssue.core);
     final hdd = p.join(rpcs3Root, 'dev_hdd0');
     final update = p.join(hdd, 'game', title);
     Future<void> verifyUpdate() async {
@@ -496,6 +509,7 @@ final class Ps3OnlineProfile {
       systemRoot,
       saveRoot,
       offlineSystemRoot,
+      coreHost,
       patchProtection,
     );
   }
