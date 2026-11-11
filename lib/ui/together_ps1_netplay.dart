@@ -15,9 +15,10 @@ extension TogetherPs1Netplay on TogetherModel {
       ? Ps1NetplayRoomMode.mixedRollback
       : Ps1NetplayRoomMode.freshAnalog;
 
-  bool _ps1SupportsMode(Ps1NetplayRoomMode mode) => app.managedRetroAvailable
-      ? !mode.execution.usesPresentationCore || _ps1RollbackEnabled
-      : mode == Ps1NetplayRoomMode.mixedRollback;
+  bool _ps1SupportsMode(Ps1NetplayRoomMode mode) =>
+      mode == Ps1NetplayRoomMode.mixedRollback ||
+      mode == Ps1NetplayRoomMode.mixedHandoff ||
+      (app.managedRetroAvailable && (!mode.execution.usesPresentationCore || _ps1RollbackEnabled));
 
   bool get ps1ProgressStalled => _ps1Match?.session?.progressStalled == true;
 
@@ -70,23 +71,83 @@ extension TogetherPs1Netplay on TogetherModel {
 
   List<PanelRow> ps1QuickRows() {
     if (!_ps1NetplayEnabled) return const [];
-    if (_ps1Match != null) return ps1NetplayRows();
     final host = app.embeddedGame;
-    if (host != null && identical(_ps1InviteVerification?.host, host)) return ps1NetplayRows();
+    if (_ps1Match != null) return host != null && app.running != null ? [_ps1LobbyEntry()] : ps1NetplayRows();
+    if (host != null && identical(_ps1InviteVerification?.host, host)) return [_ps1LobbyEntry()];
     if (_verifyingPs1) return const [];
     if (host == null || _ps1HostMode(host, app.running?.$1) == null) return const [];
+    return [_ps1LobbyEntry()];
+  }
+
+  PanelRow _ps1LobbyEntry() => PanelRow(
+    id: 'ps1-invite-from-game',
+    title: T.text('ps1OnlineCouch'),
+    detail: _ps1Match == null && !_verifyingPs1 ? T.text('coopLobbyEntryDetail') : _ps1PartnerStatus(),
+    kind: ActionRow(() => app.open(Layer.coopLobby)),
+  );
+
+  String? _ps1PartnerName() {
+    final id = _ps1Partner?.id;
+    if (id == null) return null;
+    return hub.friends.friends.where((friend) => friend.person.id == id).firstOrNull?.person.displayName ??
+        T.text('coopFriend');
+  }
+
+  String _ps1PartnerStatus() {
+    final match = _ps1Match;
+    final session = match?.session;
+    if (match == null) return T.text('coopGettingReady');
+    if (match.closed || session?.phase == Ps1NetplayPhase.closed) return T.text('ps1OnlineEnding');
+    if (session?.phase == Ps1NetplayPhase.running) {
+      return T.text(ps1ProgressStalled ? 'ps1OnlineSyncing' : 'coopPlaying');
+    }
+    if (session?.preparingGame == true) return T.text('ps1OnlinePreparing');
+    return T.text(match.hasMatchedPlayer ? 'coopJoining' : 'coopInvited');
+  }
+
+  List<PlayerSlot> ps1LobbySlots() {
+    final partner = _ps1Partner;
+    final me = user?.displayName ?? app.currentProfile?.name ?? T.text('coopYou');
+    final hosting = partner?.hosting ?? true;
+    final friend = partner == null ? null : _ps1PartnerName();
+    final friendStatus = partner == null ? T.text('coopInviteSeat') : '${T.text('coopController2')} · ${_ps1PartnerStatus()}';
+    final mine = PlayerSlot(
+      player: hosting ? 1 : 2,
+      name: me,
+      status: T.text(hosting ? 'coopController1' : 'coopController2'),
+      you: true,
+    );
+    final theirs = PlayerSlot(player: hosting ? 2 : 1, name: friend, status: friendStatus);
+    return [
+      if (hosting) ...[mine, theirs] else ...[theirs, mine],
+      for (final player in [3, 4]) PlayerSlot(player: player, status: T.text('coopTwoPlayers'), available: false),
+    ];
+  }
+
+  List<PanelRow> ps1LobbyRows() {
+    final busy = _ps1Match != null || _ps1InviteVerification != null;
     return [
       PanelRow(
-        id: 'ps1-invite-from-game',
-        title: T.text('ps1OnlineCouch'),
-        kind: ActionRow(() => app.open(Layer.retroOnlineFriends)),
+        id: 'coop-players',
+        title: app.running?.$1.name ?? T.text('ps1OnlineCouch'),
+        kind: InfoRow(T.text('coopLobbyDetail')),
+        playerSlots: ps1LobbySlots(),
       ),
+      if (!busy && !_verifyingPs1)
+        PanelRow(
+          id: 'coop-invite',
+          title: T.text('coopInvite'),
+          detail: T.text('ps1OnlineInviteDetail'),
+          kind: ActionRow(() => app.open(Layer.retroOnlineFriends)),
+        ),
+      ...ps1NetplayRows(),
+      PanelRow(id: 'coop-back-to-game', title: T.text('coopBackToGame'), kind: ActionRow(app.resumeGame)),
     ];
   }
 
   Ps1NetplayRoomMode? _ps1HostMode(EmbeddedRetroGame host, Game? game) {
-    if (!app.managedRetroAvailable) return null;
-    if (host.stagedNetplayMedia != null) return Ps1NetplayRoomMode.staged;
+    if (!app.embeddedOnlineRetroAvailable) return null;
+    if (app.managedRetroAvailable && host.stagedNetplayMedia != null) return Ps1NetplayRoomMode.staged;
     final disc = game?.retro;
     if (!app.ordinaryPs1RecoveryPending &&
         host.canParkOrdinaryPs1 &&
@@ -94,7 +155,7 @@ extension TogetherPs1Netplay on TogetherModel {
         disc.platform == RetroPlatform.ps1 &&
         p.extension(disc.path).toLowerCase() == '.cue' &&
         Ps1NetplayProfile.tryRead(game?.retroSerial) != null) {
-      return _ps1RollbackEnabled ? Ps1NetplayRoomMode.rollbackHandoff : Ps1NetplayRoomMode.ordinary;
+      return Ps1NetplayRoomMode.mixedHandoff;
     }
     return null;
   }
@@ -312,6 +373,8 @@ extension TogetherPs1Netplay on TogetherModel {
         (localWorker == null ? app.running == null : identical(app.embeddedGame, localWorker));
     if (_verifyingPs1 || _ps1Match != null || _ps2LanBusy || !hostAvailable()) return;
     _verifyingPs1 = true;
+    final partner = friendId ?? expectedHost;
+    _ps1Partner = partner == null ? null : (id: partner, hosting: friendId != null);
     final verification = _ps1InviteVerification = _Ps1InviteVerification(localWorker);
     bool active() =>
         identical(_ps1InviteVerification, verification) &&
@@ -372,7 +435,9 @@ extension TogetherPs1Netplay on TogetherModel {
               disc: runningGame!.retro!.path,
               bios: bios!,
               resolveCore: () => ordinaryWorker.corePath,
-              execution: Ps1NetplayExecution.ordinaryHandoff,
+              execution: mode.execution == Ps1NetplayExecution.mixedRollback
+                  ? Ps1NetplayExecution.mixedRollback
+                  : Ps1NetplayExecution.ordinaryHandoff,
               canContinue: active,
             );
       if (!active()) return;
@@ -382,7 +447,7 @@ extension TogetherPs1Netplay on TogetherModel {
       final (game, media) = sourceMedia != null
           ? (
               runningGame!,
-              mode == Ps1NetplayRoomMode.ordinary
+              mode == Ps1NetplayRoomMode.ordinary || mode == Ps1NetplayRoomMode.mixedHandoff
                   ? sourceMedia
                   : await sourceMedia.withVerifiedCore(
                       await app.resolvePs1NetplayCore(
@@ -571,6 +636,7 @@ extension TogetherPs1Netplay on TogetherModel {
       if (holdingTransition) app.setOrdinaryPs1Transition(null);
       if (identical(_ps1Match, opened)) _ps1Match = null;
       if (identical(_ps1InviteVerification, verification)) _ps1InviteVerification = null;
+      if (_ps1Match == null) _ps1Partner = null;
       _verifyingPs1 = false;
       app.refresh();
     }

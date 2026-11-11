@@ -10,7 +10,7 @@ PACKAGES = {
     "ordinary": ("swanstation-netplay-ordinary.zip",
                  "d1619715fe11db0faa280890c741aff876fd5fd682f3cd00fbcafaa04732b7ac"),
     "rollback": ("swanstation-netplay-rollback.zip",
-                 "9e72d4ded35ed5308916e16448edc1c3c39651969c2f6fde68b4e3293eea6347"),
+                 "a9240570cc6e54fbe23edbfd70439f2729fb4ae8760110a1ed0a3e7d93c3fad1"),
 }
 
 

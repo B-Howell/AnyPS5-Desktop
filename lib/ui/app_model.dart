@@ -57,6 +57,7 @@ import '../core/remote/usb_tunnel.dart';
 import '../core/replay_buffer.dart';
 import '../core/retro_optimizer.dart';
 import '../core/retro_launch_optimizer.dart';
+import '../core/retro_button_map.dart';
 import '../core/managed_retro.dart';
 import '../core/save_backup.dart';
 import '../core/steam/steam_launch.dart';
@@ -256,10 +257,13 @@ class Preferences {
         for (final game in games)
           if (game is String) game,
     }
-    ..retroSwapCrossCircle = {
+    ..retroButtonMaps = {
       if (json['retroSwapCrossCircle'] case final List<dynamic> games)
         for (final id in games)
-          if (id is String) id,
+          if (id is String) id: RetroButtonMap.swapCrossCircle,
+      if (json['retroButtonMaps'] case final Map<dynamic, dynamic> maps)
+        for (final MapEntry(:key, :value) in maps.entries)
+          if (key is String && !RetroButtonMap.fromJson(value).isStandard) key: RetroButtonMap.fromJson(value),
     }
     ..retroLastDisc = {
       if (json['retroLastDisc'] case final Map<dynamic, dynamic> discs)
@@ -360,7 +364,7 @@ class Preferences {
   int? launcherVolume;
   Map<String, String> lastPlayed = {};
   Map<String, String> retroLastDisc = {};
-  Set<String> retroSwapCrossCircle = {};
+  Map<String, RetroButtonMap> retroButtonMaps = {};
   Set<String> retroAutoOptimized = {};
   Map<String, String> retroInternalResolution = {};
   bool showRetroFolders = false;
@@ -530,7 +534,8 @@ class Preferences {
     if (launcherVolume != null) 'launcherVolume': launcherVolume,
     'lastPlayed': lastPlayed,
     if (retroLastDisc.isNotEmpty) 'retroLastDisc': retroLastDisc,
-    if (retroSwapCrossCircle.isNotEmpty) 'retroSwapCrossCircle': retroSwapCrossCircle.toList(),
+    if (retroButtonMaps.isNotEmpty)
+      'retroButtonMaps': {for (final MapEntry(:key, :value) in retroButtonMaps.entries) key: value.toJson()},
     if (retroAutoOptimized.isNotEmpty) 'retroAutoOptimized': retroAutoOptimized.toList(),
     if (retroInternalResolution.isNotEmpty) 'retroInternalResolution': retroInternalResolution,
     if (showRetroFolders) 'showRetroFolders': true,
@@ -910,6 +915,7 @@ enum Layer {
   /// PS in a game: the game paused under Resume, Game Settings and Close Game.
   quickMenu,
   retroOnlineFriends,
+  coopLobby,
 
   /// A friend's share play watched full screen (share_play_model.dart): the controller is the
   /// game's, PS leaves.
@@ -981,6 +987,7 @@ class PanelRow {
     this.level,
     this.icon,
     this.previewGames = const [],
+    this.playerSlots = const [],
     this.pinToBottom = false,
   });
 
@@ -1001,6 +1008,7 @@ class PanelRow {
   /// A sign drawn before the title where no one's picture is (a challenge's notifications).
   final PanelIcon? icon;
   final List<Game> previewGames;
+  final List<PlayerSlot> playerSlots;
   final bool pinToBottom;
 
   bool get focusable => switch (kind) {
@@ -1104,6 +1112,16 @@ class TextRow extends RowKind {
 
 /// How a person shows in a row: their initials or picture, a dot for what they are doing, a
 /// ring while they speak in party voice.
+/// One seat in a couch co-op lobby: Player 1 to 4, who holds it and with which controller.
+class PlayerSlot {
+  const PlayerSlot({required this.player, this.name, required this.status, this.you = false, this.available = true});
+  final int player;
+  final String? name;
+  final String status;
+  final bool you;
+  final bool available;
+}
+
 class PanelPerson {
   const PanelPerson({required this.name, this.avatar, this.picture, this.tint, this.status, this.speaking = false});
   final String name;
@@ -1718,13 +1736,22 @@ class AppModel extends ChangeNotifier {
     remote?.setAssist(devices: target.devices, controllers: target.controllers);
   }
 
+  Layer? _controllerTestFrom;
+  bool _controlsFromQuickMenu = false;
+
   void openControllerTest() {
     unawaited(controllers.probe());
+    _controllerTestFrom = overlay == Layer.controls ? Layer.controls : null;
     open(Layer.controllerTest);
   }
 
   /// Back from the controller test to Settings › Controllers, where it was opened from.
   void closeControllerTest() {
+    if (_controllerTestFrom case final Layer from) {
+      _controllerTestFrom = null;
+      open(from, cue: Cue.back);
+      return;
+    }
     open(Layer.settings, cue: Cue.back);
     final categories = panelCategories();
     final index = categories.indexWhere((category) => category.id == 'controllers');
@@ -4565,7 +4592,7 @@ class AppModel extends ChangeNotifier {
         if (disc.platform == RetroPlatform.ps1 &&
             (services.environment ?? Platform.environment)['ANYPS5_PS1_NETPLAY'] == '1') {
           try {
-            ordinaryCore = await managed.ensurePs1NetplayCore(execution: Ps1NetplayExecution.ordinaryHandoff);
+            ordinaryCore = await managed.ensurePs1NetplayCore(execution: Ps1NetplayExecution.mixedRollback);
           } on FormatException {
             // A preview without the matching package can still play locally.
           } on FileSystemException {
@@ -4657,7 +4684,7 @@ class AppModel extends ChangeNotifier {
           internalResolution: preferences.retroInternalResolution[game.id],
           graphics: {if (ps3) ...preferences.retroPs3Defaults, ...?graphics[graphicsId], ...trialOptions},
           initialDisc: initialDisc,
-          swapCrossCircle: disc.platform == RetroPlatform.ps1 && preferences.retroSwapCrossCircle.contains(game.id),
+          buttonMap: preferences.retroButtonMaps[game.id] ?? RetroButtonMap.standard,
           onDiscPlayed: initialDisc == null || trialOptions.isNotEmpty
               ? null
               : (path) {
@@ -4793,6 +4820,7 @@ class AppModel extends ChangeNotifier {
           overlay == Layer.retroGraphics ||
           overlay == Layer.retroDiscs ||
           overlay == Layer.retroOnlineFriends ||
+          overlay == Layer.coopLobby ||
           (overlay == Layer.emulatorMenu && _emulatorMenu.fromGraphics)) {
         overlay = null;
       }
@@ -5235,9 +5263,14 @@ class AppModel extends ChangeNotifier {
     final playing = running?.$1;
     if (playing == null) return false;
     return switch (overlay) {
-      Layer.quickMenu || Layer.closeGame || Layer.retroGraphics || Layer.retroDiscs || Layer.retroOnlineFriends => true,
+      Layer.quickMenu ||
+      Layer.closeGame ||
+      Layer.retroGraphics ||
+      Layer.retroDiscs ||
+      Layer.retroOnlineFriends ||
+      Layer.coopLobby => true,
       Layer.emulatorMenu => _emulatorMenu.fromGraphics || _emulatorMenu.fromQuickMenu,
-      Layer.gameSettings => playing.retro != null && selectedGame?.id == playing.id,
+      Layer.gameSettings || Layer.controls => playing.retro != null && selectedGame?.id == playing.id,
       _ => false,
     };
   }
@@ -5445,7 +5478,9 @@ class AppModel extends ChangeNotifier {
           return;
         }
         if (command == Command.back || command == Command.options) {
-          open(Layer.gameSettings, cue: Cue.back);
+          final fromGame = _controlsFromQuickMenu && running != null;
+          _controlsFromQuickMenu = false;
+          open(fromGame ? Layer.quickMenu : Layer.gameSettings, cue: Cue.back);
           return;
         }
         _panelCommand(command);
@@ -5528,6 +5563,9 @@ class AppModel extends ChangeNotifier {
         if (!together.cancelAsk()) open(Layer.friends, cue: Cue.back);
         return;
       case Layer.retroOnlineFriends when command == Command.back || command == Command.options:
+        open(running?.$1.retro?.platform == RetroPlatform.ps1 ? Layer.coopLobby : Layer.quickMenu, cue: Cue.back);
+        return;
+      case Layer.coopLobby when command == Command.back || command == Command.options:
         open(Layer.quickMenu, cue: Cue.back);
         return;
       case Layer.settings ||
@@ -5547,6 +5585,7 @@ class AppModel extends ChangeNotifier {
           Layer.family ||
           Layer.quickMenu ||
           Layer.retroOnlineFriends ||
+          Layer.coopLobby ||
           Layer.closeGame ||
           Layer.homeMenu ||
           Layer.confirmQuit ||
@@ -6431,10 +6470,18 @@ class AppModel extends ChangeNotifier {
                 RetroPlatform.ps3 => together.ps3PartyInviteFriendRows(),
                 _ => together.ps1InviteFriendRows(),
               },
-              PanelRow(id: 'retro-invite-back', title: T.text('back'), kind: ActionRow(() => open(Layer.quickMenu))),
+              PanelRow(
+                id: 'retro-invite-back',
+                title: T.text('back'),
+                kind: ActionRow(
+                  () => open(running?.$1.retro?.platform == RetroPlatform.ps1 ? Layer.coopLobby : Layer.quickMenu),
+                ),
+              ),
             ],
           ),
         ];
+      case Layer.coopLobby when running != null:
+        return [PanelCategory(id: 'coopLobby', title: T.text('coopLobbyTitle'), rows: together.ps1LobbyRows())];
       case Layer.retroStartDisc:
         return [PanelCategory(id: 'retroStartDisc', title: T.text('retroSelectDisc'), rows: _retroLaunchDiscRows())];
       case Layer.retroDiscs:
@@ -6467,6 +6514,17 @@ class AppModel extends ChangeNotifier {
                   title: 'Graphics',
                   detail: embeddedGame == null ? 'Queue changes for the next launch.' : 'Adjust the running game.',
                   kind: ActionRow(() => open(Layer.retroGraphics)),
+                ),
+              if (embeddedGame != null)
+                PanelRow(
+                  id: 'retroControls',
+                  title: T.text('controls'),
+                  detail: _retroControlsSummary(running!.$1),
+                  kind: ActionRow(() {
+                    selected = games.indexWhere((game) => game.id == running!.$1.id).clamp(0, games.length - 1);
+                    _controlsFromQuickMenu = true;
+                    open(Layer.controls);
+                  }),
                 ),
               if (embeddedGame?.discs case final EmbeddedDiscs discs)
                 PanelRow(
@@ -7457,8 +7515,12 @@ class AppModel extends ChangeNotifier {
     if (game.retro != null) {
       return [
         ...together.ps1LocalLaunchRows(game),
-        if (game.retro?.platform == RetroPlatform.ps1)
-          PanelRow(id: 'controls', title: T.text('controls'), kind: ActionRow(() => open(Layer.controls))),
+        PanelRow(
+          id: 'controls',
+          title: T.text('controls'),
+          detail: T.text('retroControlsDetail'),
+          kind: ActionRow(() => open(Layer.controls)),
+        ),
         PanelRow(id: 'log', title: T.text('openLog'), kind: ActionRow(() => open(Layer.log))),
         PanelRow(
           id: 'folder',
@@ -7880,7 +7942,7 @@ class AppModel extends ChangeNotifier {
 
   List<PanelRow> _controlRows(Game game) {
     if (game.retro case final RetroDisc disc) {
-      return [if (disc.platform == RetroPlatform.ps1) _retroSwapCrossCircleRow(game)];
+      return _retroControlRows(game, disc.platform);
     }
     final settings = currentSettings(game);
     final changes = settings.controls ?? const <String, List<String>>{};

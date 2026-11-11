@@ -119,6 +119,7 @@ void main() {
         '5',
         '6',
         '7',
+        '8',
       });
     }
     expect(Ps1NetplayProfile.tryRead('Not a disc serial'), isNull);
@@ -148,7 +149,7 @@ void main() {
     const windows = EmbeddedCoreHost.windowsX64;
     const linux = EmbeddedCoreHost.linuxX64;
     const dll = Ps1NetplayMedia.rollbackCorePin;
-    const so = '0fc6f1c2522573b570a4481b1526b0e27e3fd8367c32912b4ba5ceac590ffdd0';
+    const so = Ps1NetplayMedia.linuxRollbackCorePin;
     expect(mode.freshFromDisc, isTrue);
     expect(mode.execution.usesPresentationCore, isFalse);
     expect(mode.execution.usesRollback, isTrue);
@@ -158,6 +159,20 @@ void main() {
     expect(mode.execution.verifiedCoreIdentity(windows, so), isNull);
     expect(mode.execution.verifiedCoreIdentity(linux, dll), isNull);
     expect(mode.execution.verifiedCoreIdentity(linux, Ps1NetplayMedia.portableCorePin), isNull);
+  });
+
+  test('a running game hands off into the mixed Windows and Linux room', () {
+    final mode = Ps1NetplayRoomMode.tryRead('8')!;
+    expect(mode, Ps1NetplayRoomMode.mixedHandoff);
+    expect(mode.freshFromDisc, isFalse);
+    expect(mode.needsCheckpoint, isTrue);
+    expect(mode.handoffFromOrdinary, isTrue);
+    expect(mode.execution, Ps1NetplayExecution.mixedRollback);
+    expect(mode.execution.digest, Ps1NetplayRoomMode.mixedRollback.execution.digest);
+    expect(
+      mode.execution.verifiedCoreIdentity(EmbeddedCoreHost.linuxX64, Ps1NetplayMedia.linuxRollbackCorePin),
+      mode.execution.verifiedCoreIdentity(EmbeddedCoreHost.windowsX64, Ps1NetplayMedia.rollbackCorePin),
+    );
   });
 
   test('installs the pinned Linux rollback package in a fresh profile', () async {

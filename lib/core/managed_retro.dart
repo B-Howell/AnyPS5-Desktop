@@ -28,8 +28,8 @@ class ManagedRetro {
   static final _ps2LanChecks = <String, ({FileStat stat, String digest, bool valid})>{};
   static const _ps1NetplayArchive = '86ab673a1a1b4260dc73256955d600dd64a5ee57e78e17696ae3504791a6633e';
   static const _ps1OrdinaryHandoffArchive = 'df69b0ad16984b34240b875fa14bcb6a742daaaf9bbb5815e448510b810de036';
-  static const _ps1LinuxRollbackArchive = '724fea1bb0f87216d4d3a8cd61a2ad251e208b73069a0c3fb4600712a444c7b3';
-  static const _ps1RollbackArchive = '7446d092547a9ec3ce2a47aff748511a83c3357989ff592dab406024c3d9d1da';
+  static const _ps1LinuxRollbackArchive = 'a887945055fac541b09801b364f2ff72e5c47a719404ca3845b169447b11d615';
+  static const _ps1RollbackArchive = 'd29f4bc04acbdb8252273b813903824aa90354d4a4607a939b3595834e5972a7';
   // This package persists native SPU objects across launches. Keep the old
   // core out of the default pins so a launcher build with the matching ZIP
   // upgrades an already installed legacy core before booting a PS3 title.

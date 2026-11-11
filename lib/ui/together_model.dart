@@ -98,6 +98,7 @@ const launcherVersion = '0.1.20';
 /// it. The interface reads it through [AppModel].
 class TogetherModel {
   Ps1NetplayMatch? _ps1Match;
+  ({String id, bool hosting})? _ps1Partner;
   bool _verifyingPs1 = false;
   _Ps1InviteVerification? _ps1InviteVerification;
   _Ps2LanAttempt? _ps2Lan;

@@ -727,7 +727,8 @@ void main() {
       Ps1NetplayRoomMode.ordinary ||
       Ps1NetplayRoomMode.rollbackHandoff => await managed.ensurePs1NetplayCore(execution: mode.execution),
       Ps1NetplayRoomMode.rollbackPreview ||
-      Ps1NetplayRoomMode.mixedRollback => throw StateError('Rollback preview requires a fresh game.'),
+      Ps1NetplayRoomMode.mixedRollback ||
+      Ps1NetplayRoomMode.mixedHandoff => throw StateError('This fixture covers the Windows-only handoff modes.'),
       Ps1NetplayRoomMode.staged => p.join(
         home,
         'PS1-Netplay',
@@ -933,9 +934,22 @@ void main() {
       'GET $path/ice-servers': (200, {'iceServers': []}),
       'DELETE $path': (200, <String, Object>{}),
     });
-    PanelRow row(String id) =>
-        model.panelCategories().expand((category) => category.rows).singleWhere((row) => row.id == id);
+    PanelRow row(String id) {
+      Iterable<PanelRow> rows() => model.panelCategories().expand((category) => category.rows);
+      if (id.startsWith('ps1-netplay-') && model.overlay == Layer.quickMenu && !rows().any((row) => row.id == id)) {
+        (rows().singleWhere((row) => row.id == 'ps1-invite-from-game').kind as ActionRow).run();
+        expect(model.overlay, Layer.coopLobby);
+      }
+      return rows().singleWhere((row) => row.id == id);
+    }
+
     void choose(String id) => (row(id).kind as ActionRow).run();
+    void inviteFromGame() {
+      choose('ps1-invite-from-game');
+      expect(model.overlay, Layer.coopLobby);
+      expect(row('coop-players').playerSlots.map((slot) => slot.player), [1, 2, 3, 4]);
+      choose('coop-invite');
+    }
 
     if (guestMode) {
       server.gameInvites.add({
@@ -1041,7 +1055,7 @@ void main() {
     }
 
     await model.openQuickMenu();
-    choose('ps1-invite-from-game');
+    inviteFromGame();
     expect(model.overlay, Layer.retroOnlineFriends);
     choose('ps1-invite-$friendId');
     expect(model.overlay, isNull);
@@ -1054,7 +1068,8 @@ void main() {
     );
     expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
     expect(native, ['local']);
-    expect(model.overlay, Layer.quickMenu);
+    expect(model.overlay, Layer.coopLobby);
+    await model.openQuickMenu();
     server.answers['GET $path'] = (
       200,
       {
@@ -1064,7 +1079,7 @@ void main() {
         ],
       },
     );
-    choose('ps1-invite-from-game');
+    inviteFromGame();
     choose('ps1-invite-$friendId');
     expect(
       await eventually(() => server.callsTo('$path/invites').isNotEmpty, timeout: const Duration(seconds: 25)),
@@ -1122,7 +1137,7 @@ void main() {
     expect(server.callsTo(path, method: 'DELETE'), hasLength(1));
     expect(native, ['local']);
     await model.openQuickMenu();
-    choose('ps1-invite-from-game');
+    inviteFromGame();
     choose('ps1-invite-$friendId');
     expect(
       await eventually(() => server.callsTo('$path/invites').length == 2, timeout: const Duration(seconds: 25)),

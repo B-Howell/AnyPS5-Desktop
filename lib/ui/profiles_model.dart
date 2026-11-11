@@ -79,6 +79,7 @@ extension LauncherProfiles on AppModel {
     'lastPlayed',
     'retroLastDisc',
     'retroSwapCrossCircle',
+    'retroButtonMaps',
     'compatNever',
     'compatAsked',
   };

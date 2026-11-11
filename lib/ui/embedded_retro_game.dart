@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
+import '../core/retro_button_map.dart';
 import '../core/controllers/pad_info.dart';
 import '../core/game_library.dart';
 import '../core/game_process.dart';
@@ -96,7 +97,7 @@ class EmbeddedRetroGame extends RunningGame {
   bool _acceptsInput = true;
   bool _closing = false;
   bool _awaitNeutral = true;
-  bool _swapCrossCircle = false;
+  RetroButtonMap _buttonMap = RetroButtonMap.standard;
   bool _portableCheckpoint = false;
   int? _ordinaryCheckpointSource;
   String error = '';
@@ -174,7 +175,7 @@ class EmbeddedRetroGame extends RunningGame {
     required void Function() changed,
     ({int index, String path})? initialDisc,
     void Function(String)? onDiscPlayed,
-    bool swapCrossCircle = false,
+    RetroButtonMap buttonMap = RetroButtonMap.standard,
     ({Ps1NetplayMedia media, int seat})? netplay,
     bool localNetplayStaging = false,
     ({Uint8List mac, String system, String saves})? ps2Lan,
@@ -255,7 +256,7 @@ class EmbeddedRetroGame extends RunningGame {
       (core: core, disc: p.absolute(disc.path), system: p.join(folder, 'system')),
       ordinaryRecovery,
     );
-    session._swapCrossCircle = swapCrossCircle;
+    session._buttonMap = buttonMap;
     session._onManualOptionAccepted = onManualOptionAccepted;
     session.tuning = RetroGameTuning(
       platform: disc.platform,
@@ -550,13 +551,16 @@ class EmbeddedRetroGame extends RunningGame {
         _ordinaryCheckpointSource == source &&
         !_closing &&
         !_finished.isCompleted &&
-        activeOptions['swanstation_CPU_ExecutionMode'] == media.execution.cpu;
-    if (source == null ||
-        media.execution != Ps1NetplayExecution.ordinaryHandoff ||
-        !p.equals(_sourcePaths.disc, media.disc) ||
-        !available() ||
-        await AssetDownload.sha256Of(_sourcePaths.core) != Ps1NetplayMedia.ordinaryHandoffCorePin ||
-        !available()) {
+        activeOptions['swanstation_CPU_ExecutionMode'] == Ps1NetplayExecution.ordinaryHandoff.cpu;
+    bool handoffCore(String digest) => switch (media.execution) {
+      Ps1NetplayExecution.ordinaryHandoff => digest == Ps1NetplayMedia.ordinaryHandoffCorePin,
+      Ps1NetplayExecution.mixedRollback => media.execution.verifiedCoreIdentity(EmbeddedCoreHost.current, digest) != null,
+      _ => false,
+    };
+    if (source == null || !p.equals(_sourcePaths.disc, media.disc) || !available()) {
+      throw StateError('The ordinary PS1 session cannot share a match checkpoint.');
+    }
+    if (!handoffCore(await AssetDownload.sha256Of(_sourcePaths.core)) || !available()) {
       throw StateError('The ordinary PS1 session cannot share a match checkpoint.');
     }
     final result = await _exchangeCheckpoint(park ? 'ps1LocalCheckpointPark' : 'ps1LocalCheckpointExport', {
@@ -790,9 +794,11 @@ class EmbeddedRetroGame extends RunningGame {
     }
   }
 
-  void setSwapCrossCircle(bool enabled) {
-    if (_closing || _swapCrossCircle == enabled) return;
-    _swapCrossCircle = enabled;
+  RetroButtonMap get buttonMap => _buttonMap;
+
+  void setButtonMap(RetroButtonMap map) {
+    if (_closing || _buttonMap == map) return;
+    _buttonMap = map;
     _keys.clear();
     _awaitNeutral = true;
     _lastInput = const [];
@@ -815,21 +821,16 @@ class EmbeddedRetroGame extends RunningGame {
       _awaitNeutral = false;
     }
     var mask = 0;
-    for (final button in {...held, ..._keys}) {
-      final mapped = !_swapCrossCircle
-          ? button
-          : switch (button) {
-              PadButton.south => PadButton.east,
-              PadButton.east => PadButton.south,
-              _ => button,
-            };
-      final bit = _buttonCodes[mapped];
-
+    for (final button in _buttonMap.map({...held, ..._keys})) {
+      final bit = _buttonCodes[button];
       if (bit != null) mask |= 1 << bit;
     }
+    final sticks = _buttonMap.swapSticks
+        ? [pad.rightX, pad.rightY, pad.leftX, pad.leftY]
+        : [pad.leftX, pad.leftY, pad.rightX, pad.rightY];
     final input = [
       mask,
-      for (final axis in [pad.leftX, pad.leftY, pad.rightX, pad.rightY]) (axis.clamp(-1, 1) * 32767).round(),
+      for (final axis in sticks) (axis.clamp(-1, 1) * 32767).round(),
     ];
     if (_lastInput.length == input.length &&
         List.generate(input.length, (i) => _lastInput[i] == input[i]).every((e) => e)) {

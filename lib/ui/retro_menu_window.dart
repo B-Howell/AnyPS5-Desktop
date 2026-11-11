@@ -31,7 +31,7 @@ class _RetroMenuWindowState extends State<RetroMenuWindow> {
       final categories = model.panelCategories();
       if (categories.isNotEmpty) {
         final view = View.of(context);
-        final rows = categories[model.panelCategory.clamp(0, categories.length - 1)].rows.length;
+        final rows = categories[model.panelCategory.clamp(0, categories.length - 1)].rows;
         final size = PanelView.gameMenuSize(rows, LayoutScale.of(context) * view.devicePixelRatio);
         region = (
           session.$2.pid,

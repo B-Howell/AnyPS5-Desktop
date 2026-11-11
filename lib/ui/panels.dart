@@ -16,6 +16,7 @@ import 'components.dart';
 import 'glass.dart';
 import 'level_badge.dart';
 import 'messages_view.dart';
+import 'player_slots_strip.dart';
 import 'profile_picture.dart';
 import 'home.dart';
 import 'strings.dart';
@@ -166,7 +167,9 @@ class PanelView extends StatelessWidget {
 
   final AppModel model;
 
-  static Size gameMenuSize(int rows, double scale) => Size(760 * scale, (168 + 62 * rows) * scale);
+  /// The PS menu over a game, as tall as its rows: a row with a second line is taller.
+  static Size gameMenuSize(List<PanelRow> rows, double scale) =>
+      Size(760 * scale, (168 + rows.fold<double>(0, (sum, row) => sum + (row.detail == null ? 62 : 82))) * scale);
 
   @override
   Widget build(BuildContext context) {
@@ -185,6 +188,7 @@ class PanelView extends StatelessWidget {
       Layer.retroDiscs,
       Layer.retroStartDisc,
       Layer.retroOnlineFriends,
+      Layer.coopLobby,
       Layer.homeMenu,
       Layer.launcherReport,
       Layer.profileMenu,
@@ -195,6 +199,7 @@ class PanelView extends StatelessWidget {
     final psMenu = const {
       Layer.quickMenu,
       Layer.retroOnlineFriends,
+      Layer.coopLobby,
       Layer.homeMenu,
       Layer.launcherReport,
       Layer.profileMenu,
@@ -228,7 +233,7 @@ class PanelView extends StatelessWidget {
       _ => category.title,
     };
     final gameMenu = model.overlay == Layer.quickMenu || model.overlay == Layer.closeGame
-        ? gameMenuSize(category.rows.length, scale)
+        ? gameMenuSize(category.rows, scale)
         : null;
     return _Scrim(
       opacity: 0.55,
@@ -249,7 +254,8 @@ class PanelView extends StatelessWidget {
                                   Layer.cloudQuestion => 72,
                                   _ => 62,
                                 } *
-                                category.rows.length
+                                category.rows.length +
+                            (model.overlay == Layer.coopLobby ? 200 : 0)
                       : compact
                       ? (tall ? 560 : 420)
                       : 720) *
@@ -375,6 +381,7 @@ class PanelView extends StatelessWidget {
                         Layer.friendOptions,
                         Layer.quickMenu,
                         Layer.retroOnlineFriends,
+                        Layer.coopLobby,
                       }.contains(model.overlay),
                     ),
                   ],
@@ -920,11 +927,17 @@ class _RowView extends StatelessWidget {
                 SizedBox(height: 12 * scale),
                 _GameCoverPreview(model: model, games: row.previewGames),
               ],
+              if (row.playerSlots.isNotEmpty) ...[
+                SizedBox(height: 4 * scale),
+                PlayerSlotsStrip(slots: row.playerSlots, accent: model.accentChoice.color),
+              ],
             ],
           ),
         ),
-        SizedBox(width: 18 * scale),
-        value(),
+        if (row.playerSlots.isEmpty) ...[
+          SizedBox(width: 18 * scale),
+          value(),
+        ],
       ],
     );
 

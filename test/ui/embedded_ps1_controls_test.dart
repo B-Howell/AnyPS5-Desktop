@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:anyps5_desktop/core/controllers/pad_info.dart';
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
+import 'package:anyps5_desktop/core/retro_button_map.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/embedded_retro_game.dart';
 import 'package:flutter/services.dart';
@@ -52,7 +53,7 @@ void main() {
     pad = const PadState(pressed: {PadButton.south, PadButton.start}, leftX: 0.5);
     await tester.pump(const Duration(milliseconds: 16));
     expect(inputs.last, [(1 << 0) | (1 << 3), 16384, 0, 0, 0]);
-    session.setSwapCrossCircle(true);
+    session.setButtonMap(RetroButtonMap.swapCrossCircle);
     await tester.pump(const Duration(milliseconds: 16));
     expect(inputs.last, [0, 0, 0, 0, 0]);
     pad = PadState.idle;
@@ -63,12 +64,35 @@ void main() {
     pad = const PadState(pressed: {PadButton.east});
     await tester.pump(const Duration(milliseconds: 16));
     expect(inputs.last, [1 << 0, 0, 0, 0, 0]);
+    pad = PadState.idle;
+    session.setButtonMap(
+      RetroButtonMap.standard.assign(PadButton.l1, PadButton.r1).assign(PadButton.select, null).withSwapSticks(true),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    pad = const PadState(pressed: {PadButton.l1, PadButton.select}, leftX: 0.5);
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(inputs.last, [1 << 11, 0, 0, 16384, 0]);
     ended = true;
     await tester.pump(const Duration(milliseconds: 150));
     await session.exitCode;
   });
 
-  testWidgets('Per-game Controls face swap persists for one game and is restored on launch', (tester) async {
+  test('an older saved Cross and Circle swap becomes the matching preset', () {
+    final preferences = Preferences.fromJson({
+      'retroSwapCrossCircle': ['one'],
+      'retroButtonMaps': {
+        'two': {'l1': 'r1', 'select': ''},
+      },
+    });
+    expect(preferences.retroButtonMaps['one'], RetroButtonMap.swapCrossCircle);
+    expect(preferences.retroButtonMaps['two']!.target(PadButton.l1), PadButton.r1);
+    expect(preferences.retroButtonMaps['two']!.target(PadButton.select), isNull);
+    expect(preferences.retroButtonMaps['two']!.preset, RetroControlPreset.custom);
+    final again = Preferences.fromJson(jsonDecode(jsonEncode(preferences.toJson())) as Map<String, dynamic>);
+    expect(again.retroButtonMaps, preferences.retroButtonMaps);
+  });
+
+  testWidgets('Per-game Controls layout persists for one game and opens from the running game', (tester) async {
     final env = <String, String>{};
     final fixture = makeFixture(environment: env);
     final model = fixture.model;
@@ -104,25 +128,33 @@ void main() {
     model.rescan();
     final first = model.games.singleWhere((game) => game.name == 'First');
     final second = model.games.singleWhere((game) => game.name == 'Second');
-    ToggleRow toggleForCurrent() {
+    ChoiceRow presetForCurrent() {
       model.open(Layer.quickMenu);
-      expect(model.panelCategories().single.rows.map((row) => row.id), isNot(contains('retroSwapCrossCircle')));
-      model.selected = model.games.indexWhere((game) => game.id == model.running!.$1.id);
-      model.open(Layer.gameSettings);
-      (model.panelCategories().single.rows.singleWhere((row) => row.id == 'controls').kind as ActionRow).run();
+      final quick = model.panelCategories().single.rows;
+      expect(quick.map((row) => row.id), isNot(contains('retroSwapCrossCircle')));
+      (quick.singleWhere((row) => row.id == 'retroControls').kind as ActionRow).run();
       expect(model.overlay, Layer.controls);
-      return model.panelCategories().single.rows.singleWhere((row) => row.id == 'retroSwapCrossCircle').kind
-          as ToggleRow;
+      final rows = model.panelCategories().single.rows;
+      expect(
+        rows.where((row) => row.id.startsWith('retroButton-')).length,
+        RetroButtonMap.buttons.length,
+      );
+      expect(rows.map((row) => row.id), containsAll(['retroSwapSticks', 'padTest', 'retroControlsReset']));
+      return rows.singleWhere((row) => row.id == 'retroControlsPreset').kind as ChoiceRow;
     }
 
     final firstPlay = model.play(first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 150));
-    final firstToggle = toggleForCurrent();
-    expect(firstToggle.value, isFalse);
-    firstToggle.set(true);
-    expect(Preferences.fromJson(model.preferences.toJson()).retroSwapCrossCircle, {first.id});
-    expect(LauncherProfiles.personalKeys, contains('retroSwapCrossCircle'));
+    final firstPreset = presetForCurrent();
+    expect(firstPreset.selected, 0);
+    firstPreset.set(1);
+    expect(
+      Preferences.fromJson(model.preferences.toJson()).retroButtonMaps,
+      {first.id: RetroButtonMap.swapCrossCircle},
+    );
+    expect(model.embeddedGame!.buttonMap, RetroButtonMap.swapCrossCircle);
+    expect(LauncherProfiles.personalKeys, contains('retroButtonMaps'));
     ended = true;
     await tester.pump(const Duration(milliseconds: 150));
     await firstPlay;
@@ -131,7 +163,7 @@ void main() {
     final secondPlay = model.play(second);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 150));
-    expect(toggleForCurrent().value, isFalse);
+    expect(presetForCurrent().selected, 0);
     ended = true;
     await tester.pump(const Duration(milliseconds: 150));
     await secondPlay;
@@ -140,7 +172,8 @@ void main() {
     final replay = model.play(first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 150));
-    expect(toggleForCurrent().value, isTrue);
+    expect(presetForCurrent().selected, 1);
+    expect(model.embeddedGame!.buttonMap, RetroButtonMap.swapCrossCircle);
     ended = true;
     await tester.pump(const Duration(seconds: 5));
     await replay;

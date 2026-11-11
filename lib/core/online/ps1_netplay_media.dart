@@ -65,7 +65,8 @@ enum Ps1NetplayRoomMode {
   rollbackPreview('4'),
   rollbackHandoff('5'),
   freshAnalog('6'),
-  mixedRollback('7');
+  mixedRollback('7'),
+  mixedHandoff('8');
 
   const Ps1NetplayRoomMode(this.version);
   final String version;
@@ -74,14 +75,14 @@ enum Ps1NetplayRoomMode {
 
   bool get freshFromDisc => this == fresh || this == freshAnalog || this == mixedRollback;
   bool get needsCheckpoint => this == staged || handoffFromOrdinary;
-  bool get handoffFromOrdinary => this == ordinary || this == rollbackHandoff;
+  bool get handoffFromOrdinary => this == ordinary || this == rollbackHandoff || this == mixedHandoff;
   Ps1NetplayExecution get execution => switch (this) {
     fresh || staged => Ps1NetplayExecution.standard,
     freshAnalog => Ps1NetplayExecution.standardAnalog,
     ordinary => Ps1NetplayExecution.ordinaryHandoff,
     rollbackPreview => Ps1NetplayExecution.rollbackPreview,
     rollbackHandoff => Ps1NetplayExecution.rollbackHandoff,
-    mixedRollback => Ps1NetplayExecution.mixedRollback,
+    mixedRollback || mixedHandoff => Ps1NetplayExecution.mixedRollback,
   };
 }
 
@@ -113,12 +114,12 @@ final class Ps1NetplayMedia {
   static const corePin = '1aaa621dab9f53b130ac29d17e9a12ea4c0df975d4b02b53faec3b52c717fd12';
   static const portableCorePin = '5ef8eba64119146e405a90c5e9243a249c9d57c405fd75415fb4234d5b6080eb';
   static const ordinaryHandoffCorePin = 'd1619715fe11db0faa280890c741aff876fd5fd682f3cd00fbcafaa04732b7ac';
-  static const rollbackCorePin = '9e72d4ded35ed5308916e16448edc1c3c39651969c2f6fde68b4e3293eea6347';
+  static const rollbackCorePin = 'a9240570cc6e54fbe23edbfd70439f2729fb4ae8760110a1ed0a3e7d93c3fad1';
 
-  static const linuxRollbackCorePin = '0fc6f1c2522573b570a4481b1526b0e27e3fd8367c32912b4ba5ceac590ffdd0';
+  static const linuxRollbackCorePin = '74d39b719379a21b90546ea7b4aefbcb09656d1b8ac3cbfe852089e51ccfd7b2';
 
   // Identify the qualified pair on the wire. Each peer still verifies its own binary.
-  static final mixedRoomCoreIdentity = _hashText('anyps5-ps1-mixed-rollback-v1;$rollbackCorePin;$linuxRollbackCorePin');
+  static final mixedRoomCoreIdentity = _hashText('anyps5-ps1-mixed-rollback-v2;$rollbackCorePin;$linuxRollbackCorePin');
 
   static String presentationCorePath(String primary) => p.join(p.dirname(primary), 'Presentation', p.basename(primary));
 
@@ -129,7 +130,8 @@ final class Ps1NetplayMedia {
   final Ps1NetplayExecution execution;
   String get discDigest => identity.toJson()['disc'] as String;
   String get coreDigest => identity.toJson()['core'] as String;
-  bool get supportsHandoff => execution.usesRecompiler || coreDigest == portableCorePin;
+  bool get supportsHandoff =>
+      execution.usesRecompiler || execution == Ps1NetplayExecution.mixedRollback || coreDigest == portableCorePin;
 
   static final _file = RegExp(r'^FILE\s+(?:"([^"]+)"|(\S+))\s+(\S+)\s*$', caseSensitive: false);
 
