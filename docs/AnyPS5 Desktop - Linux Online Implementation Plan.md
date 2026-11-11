@@ -666,3 +666,13 @@ host opened the lobby still showed an empty match list. The bridge
 forwarded seven frames from the host and five from the guest by that
 capture. Both workers exited with status 0. A guest refresh and join
 remain necessary before qualifying the two-player path.
+
+Refreshing the guest list after the host created a match exposed the
+lobby. The guest selected it and both cores showed the same Thief lobby
+at 2/8 players. Starting from the host advanced both to the same map
+loading screen. The production bridge relayed 37 frames from the host
+and 26 from the guest before the final captures. Both workers exited
+successfully. Gameplay and the end-of-match result still need a longer
+run. A prior simultaneous boot attempt had a host native SIGSEGV; the
+passing run staggered worker startup by five seconds. The stagger is
+a test control and does not establish the crash's root cause.
