@@ -676,3 +676,21 @@ successfully. Gameplay and the end-of-match result still need a longer
 run. A prior simultaneous boot attempt had a host native SIGSEGV; the
 passing run staggered worker startup by five seconds. The stagger is
 a test control and does not establish the crash's root cause.
+
+A longer two-worker run confirmed both players spawned in the same
+TimeSplitters map. Independent first-person views and the in-game
+radar were visible at 120 and 330 seconds after the first loading
+capture. The LAN bridge relayed 5,912 frames from the host and 2,920
+from the guest. Both workers exited successfully. The last capture
+was still in gameplay, so this run did not establish the match result.
+The harness needs to wait for the score screen after the map loads,
+rather than using a wall-clock cutoff measured from loading.
+
+The Linux LRPS2 package was also staged in scratch as a single-entry
+`pcsx2_libretro.so.zip`. Its 8,756,955 bytes fit the existing 16 MiB
+installer cap. Archive SHA-256 is
+`27a80722e2d079de8330d32267eb7236c2573cbe3b2458e7166dbf74929fb411`,
+and the extracted library matched the tested Linux core SHA-256
+`800a2bc3ed710734b36bed6e311100b9d00f87e2634ae3cd5c33c2075135238e`.
+This is a local test package. Linux still needs the in-app capability
+and package selection wired up before this is available to users.
