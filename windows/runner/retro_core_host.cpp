@@ -631,6 +631,17 @@ class RetroCoreSession {
   int64_t rollback_audio_drained() const { return rollback_audio_drained_; }
   int64_t trace_max_work_us() const { return trace_max_work_us_; }
   int64_t trace_work_overruns() const { return trace_work_overruns_; }
+  enum TraceStage : size_t { kAudio, kRestore, kSave, kStep, kFingerprint, kOther, kTraceStageCount };
+  struct TraceBreakdown {
+    std::array<int64_t, kTraceStageCount> worst_us{};
+    std::array<uint32_t, kTraceStageCount> dominant_overruns{};
+    int64_t total_us = 0;
+    uint32_t frame = 0;
+  };
+  TraceBreakdown trace_breakdown() const {
+    std::lock_guard<std::mutex> lock(trace_breakdown_mutex_);
+    return trace_breakdown_;
+  }
   std::array<int64_t, 4> trace_pacing() const {
     return {trace_blocked_polls_, trace_blocked_us_, trace_late_wakes_, trace_peak_wake_us_};
   }
@@ -2059,6 +2070,18 @@ class RetroCoreSession {
     std::future<bool> presentation_render;
     bool replay_slice = false;
     auto tick_begin = Clock::now();
+    const bool measure_trace = !input_trace_.empty();
+    std::array<Clock::duration, kTraceStageCount> stage_times{};
+    uint32_t trace_frame = 0;
+    const auto trace_stage = [&](TraceStage stage, auto&& operation) {
+      if (!measure_trace) {
+        operation();
+        return;
+      }
+      const auto begin = Clock::now();
+      operation();
+      stage_times[stage] += Clock::now() - begin;
+    };
     while (!stop_) {
       if (confirmed_return_requested_) {
         playout.reset();
@@ -2066,14 +2089,38 @@ class RetroCoreSession {
         while (!stop_) std::this_thread::sleep_for(std::chrono::milliseconds(5));
         return;
       }
-      if (!replay_slice && (presentation_core_ || !input_trace_.empty())) tick_begin = Clock::now();
+      if (!replay_slice && (presentation_core_ || measure_trace)) {
+        tick_begin = Clock::now();
+        stage_times.fill(Clock::duration::zero());
+      }
       const auto record_trace_work = [&] {
-        if (input_trace_.empty()) return;
-        const auto work = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - tick_begin);
-        trace_max_work_us_ = std::max(trace_max_work_us_.load(), work.count());
-        if (work.count() > 16667) ++trace_work_overruns_;
+        if (!measure_trace) return;
+        const auto elapsed = Clock::now() - tick_begin;
+        using Micros = std::chrono::microseconds;
+        const auto work = std::chrono::duration_cast<Micros>(elapsed).count();
+        const bool overrun = work > 16667;
+        if (!overrun && work <= trace_max_work_us_) return;
+        std::array<int64_t, kTraceStageCount> measured{};
+        auto other = elapsed;
+        for (size_t stage = 0; stage < kOther; ++stage) {
+          measured[stage] = std::chrono::duration_cast<Micros>(stage_times[stage]).count();
+          other -= stage_times[stage];
+        }
+        measured[kOther] = std::chrono::duration_cast<Micros>(other).count();
+        std::lock_guard<std::mutex> lock(trace_breakdown_mutex_);
+        if (overrun) {
+          ++trace_work_overruns_;
+          const auto dominant = std::max_element(measured.begin(), measured.end()) - measured.begin();
+          ++trace_breakdown_.dominant_overruns[dominant];
+        }
+        if (work > trace_breakdown_.total_us) {
+          trace_max_work_us_ = work;
+          trace_breakdown_.total_us = work;
+          trace_breakdown_.frame = trace_frame;
+          trace_breakdown_.worst_us = measured;
+        }
       };
-      release_audio();
+      trace_stage(kAudio, release_audio);
       if (rollback_) ServicePresentation(serialize, unserialize, state_size, step);
       if (checkpoint_supported_) ServiceCheckpoint(save, load, maximum + kPs1CheckpointPrefix, step);
       ps1_netplay::PadInput local;
@@ -2141,8 +2188,10 @@ class RetroCoreSession {
         const auto& checkpoint = checkpoints[*correction % checkpoints.size()];
         if (checkpoint.frame != correction)
           throw std::runtime_error("The PS1 rollback checkpoint is unavailable.");
-        if (!RestoreRollback(unserialize, checkpoint.bytes, RollbackContext::kSameInstance))
-          throw std::runtime_error("The PS1 core rejected the in-memory rollback checkpoint.");
+        trace_stage(kRestore, [&] {
+          if (!RestoreRollback(unserialize, checkpoint.bytes, RollbackContext::kSameInstance))
+            throw std::runtime_error("The PS1 core rejected the in-memory rollback checkpoint.");
+        });
         memory = static_cast<const uint8_t*>(memory_data(2));
         if (!memory) throw std::runtime_error("The PS1 core lost main RAM during rollback.");
         std::lock_guard<std::mutex> lock(netplay_mutex_);
@@ -2180,6 +2229,7 @@ class RetroCoreSession {
           advance = false;
         }
       }
+      trace_frame = frame;
       if (started && (!started_before || epoch_reset)) {
         last_advance = Clock::now();
       }
@@ -2196,7 +2246,7 @@ class RetroCoreSession {
             Clock::now() - last_advance > (started ? std::chrono::seconds(15) : std::chrono::seconds(60)))
           throw std::runtime_error(started ? "PS1 netplay stopped waiting for the other player."
                                            : "PS1 netplay did not start in time.");
-        record_trace_work();
+        if (started && frame < input_trace_.size()) record_trace_work();
         replay_slice = false;
         const auto wait_started = Clock::now();
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -2208,11 +2258,13 @@ class RetroCoreSession {
         continue;
       }
       if (checkpoint_needed) {
-        auto& checkpoint = checkpoints[frame % checkpoints.size()];
-        checkpoint.bytes.resize(state_size);
-        if (!SaveRollback(serialize, checkpoint.bytes))
-          throw std::runtime_error("The PS1 core could not save a rollback checkpoint.");
-        checkpoint.frame = frame;
+        trace_stage(kSave, [&] {
+          auto& checkpoint = checkpoints[frame % checkpoints.size()];
+          checkpoint.bytes.resize(state_size);
+          if (!SaveRollback(serialize, checkpoint.bytes))
+            throw std::runtime_error("The PS1 core could not save a rollback checkpoint.");
+          checkpoint.frame = frame;
+        });
       }
       suppress_frame_ = replaying || presentation_render.valid() || (presented_cursor && frame < *presented_cursor);
       if (rollback_) {
@@ -2222,14 +2274,16 @@ class RetroCoreSession {
         audio.overflow = false;
         rollback_audio_capture_ = &audio;
       }
-      step();
+      trace_stage(kStep, step);
       const auto* captured_audio = std::exchange(rollback_audio_capture_, nullptr);
       suppress_frame_ = false;
       if (captured_audio && captured_audio->overflow)
         throw std::runtime_error("The PS1 rollback audio frame exceeded its PCM capacity.");
       ++steps_;
       std::string fingerprint;
-      if (!staging && (frame + 1) % 120 == 0) fingerprint = NetplayFingerprint(memory, memory_size);
+      if (!staging && (frame + 1) % 120 == 0) {
+        trace_stage(kFingerprint, [&] { fingerprint = NetplayFingerprint(memory, memory_size); });
+      }
       {
         std::lock_guard<std::mutex> lock(netplay_mutex_);
         if (staging) {
@@ -2247,7 +2301,7 @@ class RetroCoreSession {
         if (!fingerprint.empty()) netplay_pending_fingerprint_.emplace(frame, std::move(fingerprint));
         PublishConfirmedFingerprint();
       }
-      release_audio();
+      trace_stage(kAudio, release_audio);
       last_advance = Clock::now();
       // The spare can move past the old simulation high-water mark. The
       // primary still needs catch-up work until it reaches the spare's tip.
@@ -2679,6 +2733,8 @@ class RetroCoreSession {
   std::atomic<size_t> audio_queue_peak_{0};
   std::atomic<int64_t> trace_max_work_us_{0};
   std::atomic<int64_t> trace_work_overruns_{0};
+  mutable std::mutex trace_breakdown_mutex_;
+  TraceBreakdown trace_breakdown_;
   std::atomic<int64_t> trace_blocked_polls_{0};
   std::atomic<int64_t> trace_blocked_us_{0};
   std::atomic<int64_t> trace_late_wakes_{0};

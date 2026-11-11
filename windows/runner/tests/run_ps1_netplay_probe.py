@@ -128,12 +128,16 @@ def main():
                         help="Recover the latest confirmed rollback frame through the native method channel")
     parser.add_argument("--linux-probe", type=Path, help="Use a headless Ubuntu worker for seat two")
     parser.add_argument("--linux-core", type=Path, help="Linux SwanStation library accessible from WSL")
+    parser.add_argument("--work-breakdown", action="store_true",
+                        help="Read per-stage work timing from a rebuilt Windows probe")
     args = parser.parse_args()
     if args.linux_probe or args.linux_core:
         if not (args.linux_probe and args.linux_core and args.rollback and args.trace):
             parser.error("Mixed-platform runs require both Linux paths, --rollback and --trace")
         if args.rollback_recompiler or args.presentation_core:
             parser.error("Mixed-platform runs use the cached interpreter and one worker per peer")
+    if args.work_breakdown and not (args.rollback and args.trace):
+        parser.error("--work-breakdown requires a paced rollback trace")
     rollback_restore = args.ordinary_restore and args.rollback_recompiler
     if args.rollback_recompiler and not (args.rollback or rollback_restore):
         parser.error("--rollback-recompiler requires --rollback or --ordinary-restore")
@@ -714,6 +718,17 @@ def traced_rollback_race(args, cleanup):
               f"{published} video updates, max gap {video_gap / 1000:.3f} ms, "
               f"{long_gaps} gaps over two ticks; max confirmed PCM gap {audio_gap / 1000:.3f} ms; "
               f"max native work {work / 1000:.3f} ms, {overruns} iterations over 16.667 ms.")
+        if args.work_breakdown:
+            stages = ("audio", "restore", "save", "step", "fingerprint", "other")
+            frame, total, *samples = map(int, peer.send("work-breakdown").split())
+            assert len(samples) == 2 * len(stages), "Malformed native work timing"
+            worst = samples[:len(stages)]
+            dominant = samples[len(stages):]
+            assert 0 <= total - sum(worst) <= len(stages), "Inconsistent native work timing"
+            print(f"Seat {seat} worst work at frame {frame} ({total / 1000:.3f} ms): "
+                  + ", ".join(f"{stage} {value / 1000:.3f} ms" for stage, value in zip(stages, worst)))
+            print(f"Seat {seat} dominant overrun stages: "
+                  + ", ".join(f"{stage} {count}" for stage, count in zip(stages, dominant)))
         waits, wait_us, late_wakes, peak_wake_us = map(int, peer.send("pacing").split())
         print(f"Seat {seat}: {waits} blocked polls totaling {wait_us / 1000:.3f} ms; "
               f"{late_wakes} deadline wakes over 2 ms, peak {peak_wake_us / 1000:.3f} ms late.")

@@ -516,3 +516,24 @@ Linux made 1,213 corrections. Windows recorded 14 work iterations over
 16.667 ms, with a maximum of 153.003 ms. This verifies the separate
 machines' native cores over the simulated profile. Hosted signaling,
 WebRTC traversal and the frame budget remain open acceptance gates.
+
+### Windows rollback work timing
+
+The Windows [native worker](../windows/runner/retro_core_host.cpp) records
+stage elapsed times only when an input trace is supplied. The
+[probe command](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and
+paced driver's --work-breakdown option report the worst iteration and count
+the largest stage in each overrun. The "other" bucket includes lock and
+pacing work outside named stages. Clock time within a stage can include
+thread preemption. The spare presentation worker runs outside this report.
+
+On the separate Windows PC and Linux laptop, the instrumented 120 ms
+loss-profile race finished all 13,706 frames in 250.47 seconds with matching
+placements, 114 RAM hashes and 10,104,619 confirmed stereo pairs. Linux
+applied 1,208 rollback corrections. All five Windows primary-worker budget
+overruns were dominated by the Libretro step. The worst was 36.534 ms at
+frame 8,456, with 36.528 ms inside step and no checkpoint save or restore.
+This narrows the next investigation to execution inside retro_run and its
+callbacks. It does not distinguish core CPU work, callbacks and preemption.
+The 250.587 ms presentation gap and 263.635 ms confirmed PCM gap are separate
+measurements. No frame-budget pass is claimed.

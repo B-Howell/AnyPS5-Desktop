@@ -588,6 +588,14 @@ int main(int argc, char** argv) {
                 << session.peak_prediction_depth() << std::endl;
       continue;
     }
+    if (rollback && command == "work-breakdown") {
+      const auto breakdown = session.trace_breakdown();
+      std::cout << breakdown.frame << ' ' << breakdown.total_us;
+      for (const auto duration : breakdown.worst_us) std::cout << ' ' << duration;
+      for (const auto count : breakdown.dominant_overruns) std::cout << ' ' << count;
+      std::cout << std::endl;
+      continue;
+    }
     if (rollback && command == "pacing") {
       const auto [blocked, wait_us, late_wakes, wake_us] = session.trace_pacing();
       std::cout << blocked << ' ' << wait_us << ' ' << late_wakes << ' ' << wake_us << std::endl;
