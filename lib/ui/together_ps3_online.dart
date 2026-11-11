@@ -158,8 +158,9 @@ extension TogetherPs3Online on TogetherModel {
     }
     final game = _ps3PartyGame(invite);
     final release = game == null ? null : _ps3PartyRelease(game, version: invite.gameVersion);
-    if (!app.embeddedOnlineRetroAvailable || game == null || release == null)
+    if (!app.embeddedOnlineRetroAvailable || game == null || release == null) {
       return app.show(T.text('ps3PartyCompatibility'));
+    }
     if (!_ps3PartyAvailable) return app.show(T.text('ps3PartyBusy'));
     _openPs3PartySetup(game, release, invite: invite);
   }
