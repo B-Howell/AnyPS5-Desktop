@@ -284,20 +284,23 @@ Select or Start. The list is to the right of the controller, so right from the
 right-hand labels reaches it, as does down from the last label of a side. From
 the list, left returns to the label the focus was last on, and so does up from
 the first row. With a controller that holds for every row: a controller changes
-a row's value only after the row is chosen with Cross (then left and right are
-the value until Cross or Back), so until then left is free and always goes
-back. With the keys, left and right step a value at once, so left goes back
+a row's value only after the row is chosen with the confirm button (Cross, or
+Circle when that is set to confirm; then left and right are the value until
+confirm or Back), so until then left is free and always goes back. With the keys, left and right step a value at once, so left goes back
 only from a row that has no value. While a row's value is being changed with a
 controller, Back ends that and a second Back leaves the page. Player 1's
 controller on this page is the one driving the launcher, the last to have moved
-the focus, and never one seated as another player. Profile name is typed, so
+the focus, unless that one is seated as another player: then it is the
+launcher's first controller that is not, and if every connected controller is
+seated elsewhere Player 1 has none. Choosing a label for a player with no
+controller does not wait; it says that player has no controller connected. Profile name is typed, so
 choosing it with a controller only says to use a keyboard. L1 and R1 move to
 the next game's Controls, and the focus goes back on a label there. When a
 focused row goes (Save as a profile, Delete this profile), the focus moves to
 Profile. The labels are rows after the
 list's last so that one can hold the focus; `_retroLabelCommand` holds these
 moves, and a change that adds or removes a row (Save as a profile) puts the
-focus back on the row it was on. With the mouse a label is clicked. On a
+focus back on the row it was on when that row is still there. With the mouse a label is clicked. On a
 mirrored screen (Arabic, Urdu) the list and the controller change sides but the
 controller is drawn as it is, so among the labels left stays left and the list
 is reached from the left-hand labels; Select and Start are beside neither. If

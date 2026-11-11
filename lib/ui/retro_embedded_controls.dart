@@ -122,10 +122,18 @@ extension RetroEmbeddedControls on AppModel {
       : (_retroHoldWatch.elapsedMilliseconds / AppModel.retroCaptureHold.inMilliseconds).clamp(0.0, 1.0);
 
   /// A label on the controller chosen: it waits for a button to be held, which then takes over
-  /// [function]. Choosing the label that is already waiting cancels.
+  /// [function]. Choosing the label that is already waiting cancels. With no controller for the
+  /// player shown there is nothing to wait for, and it says so.
   void startRetroCapture(PadButton function) {
     if (retroCapture == function) return cancelRetroCapture();
     _endRetroCapture();
+    if (retroControlsPadId == null) {
+      _focusRetroLabel(function);
+      sounds.play(Cue.bump);
+      show(T.format('retroControlsNoPad', ['$retroControlsPlayer']));
+      _changed();
+      return;
+    }
     retroCapture = function;
     _focusRetroLabel(function);
     _retroCaptureTimer = Timer(AppModel.retroCaptureWait, _retroCaptureExpired);

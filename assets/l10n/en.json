@@ -2358,6 +2358,7 @@
   "retroControlsStandard": "Standard",
   "retroControlsCustom": "Custom",
   "retroControlsPress": "Hold a button…",
+  "retroControlsNoPad": "Player %@ has no controller connected.",
   "retroControlsHoldFor": "Hold the button that should be %@. Tap %@ to cancel.",
   "retroControlsAssigned": "%@ is now on %@",
   "retroControlsChoose": "Choose this label to change the button for %@.",
