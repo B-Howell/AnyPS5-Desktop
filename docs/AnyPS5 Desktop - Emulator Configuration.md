@@ -185,22 +185,165 @@ and marks the last played disc. **Quick Menu → Change disc** changes media
 inside the same game surface. An inserted disc becomes last played after
 the emulation advances. The offscreen Windows SwanStation check booted Metal
 Gear Solid on Disc 2 and Final Fantasy VII on Disc 3, swapped both to Disc 1
-while paused, then resumed each on its original texture. The
-[per-game face-button toggle](../lib/ui/retro_embedded_controls.dart) swaps
-Cross and Circle while keeping Start and the stick axes unchanged. It is now one preset of the
-[button layout](../lib/core/retro_button_map.dart). The emulated game's
-[Controls page](../lib/ui/retro_embedded_controls.dart) offers a Player
-chooser, the presets Standard, Swap Cross and Circle, and Custom, a choice of
-function (or Not used) for every button, Swap sticks, the controller test and
-Reset. Layouts are stored per game and per player (`gameId`, `gameId#p2`, …)
-and apply to the running game straight away. The
-[controller pane](../lib/ui/retro_controls_art.dart) beside the list lights
-what the selected player presses and tints the chosen input. It draws the
-existing `PadDiagram` as a placeholder until the console controller artwork
-from the separate art session replaces its `_art` method. The
-[controls test](../test/ui/embedded_ps1_controls_test.dart) covers presets,
-persistence, the older swap setting, the PS menu entry and a second controller
-taking Player 2.
+while paused, then resumed each on its original texture.
+
+The [Controls page](../lib/ui/retro_embedded_controls.dart) of an emulated game
+(Game settings → Controls, or Controls in the PS menu while playing) remaps
+every button, keeps named profiles and decides which games a profile applies
+to.
+
+**The controller.** The left of the page draws the emulated console's own
+controller from one [SVG asset](../assets/retro/controller-dualshock.svg): grey
+for PlayStation, dark for PlayStation 2, black with a round PS button for
+PlayStation 3. The [art reader](../lib/ui/retro_pad_art.dart) turns each shape
+into a path and keeps its `id` and `data-role`. The
+[art view](../lib/ui/retro_pad_art_view.dart) paints it, fills an input with
+its colour as far as it is pressed (L2 and R2 fill gradually), moves the stick
+caps, and puts a label on a line out to every input. Labels are sized like the
+rest of the screen's text and the drawing takes the width left between them;
+labels that would overlap are spread down their side, and a pane too narrow for
+labels shows the drawing alone. The
+[controller pane](../lib/ui/retro_controls_art.dart) feeds it the selected
+player's controller. It shows the older `PadDiagram` until the asset has
+loaded, and keeps showing it if the asset cannot be read.
+
+**Replacing the artwork.** The asset is meant to be swapped, within this
+contract:
+
+- The reader takes `path`, `circle` and `rect` elements that carry a
+  `data-role` (body, part, detail, outline, ring, label, led, symbol). It does
+  not apply `transform` attributes or read other shapes, so coordinates must be
+  final. Paths may use M L H V C S Q A Z, absolute or relative.
+- Every input needs one shape with its id: `btn-cross`, `btn-circle`,
+  `btn-square`, `btn-triangle`, `btn-up`, `btn-down`, `btn-left`, `btn-right`,
+  `btn-l1`, `btn-r1`, `btn-l2`, `btn-r2`, `btn-l3` and `btn-r3` (the stick
+  caps), `btn-select`, `btn-start`. Face-button signs are stroked shapes with
+  `sym-cross`, `sym-circle`, `sym-square`, `sym-triangle`.
+- `data-only="analog"` marks what only the DualShock and DualShock 2 have
+  (`btn-analog`, its light, its lettering); `data-only="ps"` marks the
+  DualShock 3's `btn-ps`.
+- Line weights, the stick travel, the ring drawn in each stick cap and the
+  L1/L2/R1/R2 lettering are set in the art view in the units of a drawing about
+  974 wide, seen from the front with the shoulder buttons above the body. Art
+  at another scale or angle needs those numbers, and the sides the labels sit
+  on (`RetroButtonMap.leftSide`, `rightSide`, `topSide`), revisited.
+
+**What a label says.** Each label names the button on the player's controller
+that presses that PlayStation input, in amber when it is not the standard one.
+An input lights when the button that does it is held, so the drawing shows what
+the game receives. The inputs are not rows in the list beside the controller:
+the labels are the only place to change them.
+
+**Changing a button.** Choosing a label makes it wait ("Hold a button…").
+
+- The button that should take the input is **held** for half a second on the
+  controller of the player being set up; the label fills while it is held. The
+  button that had the input gets the other one's, so the two trade places
+  (`RetroButtonMap.give` in the
+  [button layout](../lib/core/retro_button_map.dart)). An input that had no
+  button leaves the giving button's old input without one, and its label then
+  says Not used. Extra buttons an older layout put on the same input are left
+  unused, so an input always ends with one button.
+- A **tap** does nothing, so a press meant for moving about can never reassign
+  an input. A tap of the launcher's Back button (Circle, or Cross when Circle
+  confirms) cancels, from any controller and whatever else is being held at
+  the time; held on the player's controller for the full half second, Back can
+  be given away like any other button.
+- The wait ends by itself six seconds after the label was chosen; taps do not
+  push that back, and a hold in progress at that moment may finish. Until then
+  no button, stick or key moves the focus. Esc, the controller going away, PS,
+  the page closing, or a click anywhere the launcher draws all end the wait
+  without changing anything. Every such click reaches the launcher's one
+  pointer handler (`_pointerDown` in
+  [the launcher shell](../lib/ui/launcher.dart)) as the button goes down.
+  While a label waits, that handler ends the wait and takes the whole gesture,
+  so what is under the pointer and acts on a tap, a drag or a long press does
+  not: a row, the Back pill, the area around the panel, another label, a toast
+  or a card drawn over the page; the right button's Back is skipped too. This
+  does not depend on the screen having drawn the wait yet. A widget that acts
+  on the bare pointer going down, without a gesture, would still see it; none
+  on this page changes a setting that way.
+- The window's own title bar and edges belong to the system, so a click there
+  never reaches the launcher. What it does to the window ends the wait: going
+  full screen (what the title bar's Maximize does on Windows), a new size
+  (Maximize on Linux, dragging an edge), or the window no longer being the
+  active one (minimised, another window clicked). The wait ends when the
+  launcher is told of the change, which is not guaranteed to be before a
+  button already held completes its half second. A click on the title bar that
+  changes none of those, such as starting to move the window, ends nothing: a
+  button held through it can still take the input, and otherwise the wait runs
+  to its six seconds.
+- Remapping never changes how the launcher's own menus are driven: the layout
+  applies to the game only.
+
+**Moving about with a controller.** The page opens with the focus on a label
+(Cross), since the labels are what the page is for. The directions follow the
+screen: up and down along one side of the controller, left and right across to
+the label level with it on the other side, up from a side's first label to
+Select or Start. The list is to the right of the controller, so right from the
+right-hand labels reaches it, as does down from the last label of a side. From
+the list, up from its first row, or left from a row that has no value to step,
+returns to the label the focus was last on. Rows with a value (Player, Profile,
+Swap sticks) keep left and right for that value. The labels are rows after the
+list's last so that one can hold the focus; `_retroLabelCommand` holds these
+moves, and a change that adds or removes a row (Save as a profile) puts the
+focus back on the row it was on. With the mouse a label is clicked. On a
+mirrored screen (Arabic, Urdu) the list and the controller change sides but the
+controller is drawn as it is, so among the labels left stays left and the list
+is reached from the left-hand labels; Select and Start are beside neither. If
+the asset cannot be read, a smaller plain controller is shown with every
+input's label listed under it, so each can still be chosen with the mouse or
+the controller.
+
+**Profiles.** The [profile store](../lib/core/retro_control_profiles.dart)
+keeps layouts by scope, and every game has its own: `gameId` for Player 1,
+`gameId#p2` and up for the others. So a game always plays with what was chosen
+on its own page, and choosing something for one game changes no other game. A
+scope holds the name of a saved profile, a layout of its own, or both (the
+unsaved layout stays behind a chosen profile, so Custom can be chosen again).
+
+- **Profile** chooses Standard, Swap Cross and Circle, a saved profile, or
+  Custom when the game has an unsaved layout. Changing a button while a saved
+  profile is chosen changes that profile, for every game that uses it.
+  Changing one on Standard or the swap makes the Custom layout.
+- **Save as a profile** appears for a Custom layout and stores it under the
+  first free "Profile 1", "Profile 2", …; a saved profile is offered on every
+  game's page. **Profile name** renames the chosen profile and **Delete this
+  profile** removes it, sending the games that used it back to their own
+  layout.
+
+The three preference keys are `retroButtonMaps` (a scope's own layout),
+`retroControlProfiles` and `retroProfileChoice`; all three travel with a
+launcher profile. Layouts saved before profiles existed used the same per-game
+scopes and are read as they were. A change reaches the running game at once,
+for every seat. Swap sticks, the controller test and Reset stay on the page.
+
+The [screen test](../test/ui/retro_controls_screen_test.dart) reads the real
+asset and checks that every input has a shape and a side. It covers a held
+button taking a label over and a tap not doing so; Back (alone and with
+another button held), the six seconds, the page closing, the controller going
+away, another controller's buttons, a library scan during a hold, and real
+clicks while a label waits (on a row, with no frame drawn in between, with the
+right button, on the Back pill and held down outside the panel), as well as
+the window going full screen or changing size;
+the focus moving between the labels and the list, on a mirrored screen too
+(top labels included), and staying put when a row appears; the page when the
+asset cannot be read; the profile rows; older saved layouts; and
+the trade for layouts with two buttons on one input. It writes pictures of the page to
+`ANYPS5_SCREENSHOT_DIR` when that is set. The
+[controls test](../test/ui/embedded_ps1_controls_test.dart) covers a game
+keeping its layout across launches, the older swap setting, the PS menu entry
+and a second controller taking Player 2. Neither has been run against a built
+launcher with a physical controller.
+
+**Artwork licence.** The drawing comes from the PCSX2 project
+(`pcsx2-qt/resources/images/DualShock_2.svg`) and is GPL-3.0; the source and the
+changes made are recorded in a comment at the top of the asset. This launcher
+is GPL-2.0-only and upstream declined GPL-3 code and assets in
+[AnyTogether/AnyPS5-Desktop#86](https://github.com/AnyTogether/AnyPS5-Desktop/pull/86),
+so this asset stays on the fork and ships in every build made from this
+branch: replace it with artwork under a compatible licence before any of this
+is offered upstream.
 
 ## RPCS3 preview and release gates
 

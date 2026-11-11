@@ -58,7 +58,7 @@ class LauncherShell extends StatefulWidget {
   State<LauncherShell> createState() => _LauncherShellState();
 }
 
-class _LauncherShellState extends State<LauncherShell> {
+class _LauncherShellState extends State<LauncherShell> with WidgetsBindingObserver {
   final FocusNode _focus = FocusNode(debugLabel: 'launcher');
 
   /// A held arrow key repeats on the same pace as a held direction on a controller (the
@@ -125,10 +125,19 @@ class _LauncherShellState extends State<LauncherShell> {
       onStateChange: (state) {
         // A key let go in another window never says so here.
         if (state != AppLifecycleState.resumed) _keys.stop();
+        // Nor does a click there: a Controls label waiting for a button stops waiting.
+        if (state != AppLifecycleState.resumed) widget.model.cancelRetroCapture();
         widget.model.setActive(state == AppLifecycleState.resumed);
       },
     );
+    WidgetsBinding.instance.addObserver(this);
   }
+
+  /// The window resized or moved to another screen. The title bar and the window's edges are the
+  /// system's, so a click on them never reaches [_pointerDown]: what it does to the window is
+  /// what ends a Controls label's wait for a button.
+  @override
+  void didChangeMetrics() => widget.model.cancelRetroCapture();
 
   @override
   void didUpdateWidget(LauncherShell oldWidget) {
@@ -182,6 +191,8 @@ class _LauncherShellState extends State<LauncherShell> {
     widget.model.removeListener(_modelChanged);
     _keys.stop();
     _lifecycle.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    _spentClick.dispose();
     _focus.dispose();
     super.dispose();
   }
@@ -351,11 +362,24 @@ class _LauncherShellState extends State<LauncherShell> {
 
   double _wheel = 0;
 
+  /// Wins a click outright, so that nothing else on the screen acts on it (see [_pointerDown]).
+  final _spentClick = EagerGestureRecognizer();
+
   /// The right button is Back everywhere (as Esc is); on the home screen the wheel moves
   /// between games, in lists it scrolls them. The side buttons are Back (Circle) and Forward.
   void _pointerDown(PointerDownEvent event) {
     final model = widget.model;
     model.usedKeyboard();
+    // A label of an emulated game's Controls is waiting for a button: a click anywhere the
+    // launcher draws ends the wait as it goes down and is spent on that. Every such click
+    // reaches this handler, whatever is drawn under it and whether or not this frame shows the
+    // wait yet; taking the gesture leaves no tap or drag for the row, pill, toast or card under
+    // the pointer.
+    if (model.retroCapture != null) {
+      _spentClick.addPointer(event);
+      model.cancelRetroCapture();
+      return;
+    }
     if (event.kind == PointerDeviceKind.mouse && event.buttons & kBackMouseButton != 0) return model.mouseBack();
     if (event.kind == PointerDeviceKind.mouse && event.buttons & kForwardMouseButton != 0) return model.mouseForward();
     if (event.kind != PointerDeviceKind.mouse || event.buttons & kSecondaryMouseButton == 0) return;

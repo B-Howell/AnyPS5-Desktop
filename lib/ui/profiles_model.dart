@@ -80,6 +80,8 @@ extension LauncherProfiles on AppModel {
     'retroLastDisc',
     'retroSwapCrossCircle',
     'retroButtonMaps',
+    'retroControlProfiles',
+    'retroProfileChoice',
     'compatNever',
     'compatAsked',
   };

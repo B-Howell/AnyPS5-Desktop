@@ -242,7 +242,7 @@ class PanelView extends StatelessWidget {
       onTapOutside: () => model.handle(Command.back),
       child: Center(
         child: SizedBox(
-          width: gameMenu?.width ?? (compact ? 760 : (partyChat ? 1400 : 1180)) * scale,
+          width: gameMenu?.width ?? (compact ? 760 : (retroControls ? 1480 : (partyChat ? 1400 : 1180))) * scale,
           height:
               gameMenu?.height ??
               (psMenu
@@ -401,13 +401,19 @@ class PanelView extends StatelessWidget {
                         SizedBox(width: 22 * scale),
                       ],
                       if (retroControls) ...[
-                        SizedBox(width: 560 * scale, child: RetroControlsArt(model: model)),
+                        SizedBox(width: 830 * scale, child: RetroControlsArt(model: model)),
                         SizedBox(width: 28 * scale),
                       ],
                       Expanded(
                         child: PanelRows(
                           model: model,
-                          rows: category.rows,
+                          // The controller's labels are the last rows and are drawn on it.
+                          rows: retroControls
+                              ? [
+                                  for (final row in category.rows)
+                                    if (RetroEmbeddedControls.rowButton(row.id) == null) row,
+                                ]
+                              : category.rows,
                           idle: partyChat && model.together.partyChatKeys.focused,
                         ),
                       ),

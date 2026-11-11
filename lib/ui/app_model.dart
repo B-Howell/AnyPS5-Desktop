@@ -58,6 +58,7 @@ import '../core/replay_buffer.dart';
 import '../core/retro_optimizer.dart';
 import '../core/retro_launch_optimizer.dart';
 import '../core/retro_button_map.dart';
+import '../core/retro_control_profiles.dart';
 import '../core/managed_retro.dart';
 import '../core/save_backup.dart';
 import '../core/steam/steam_launch.dart';
@@ -266,6 +267,16 @@ class Preferences {
         for (final MapEntry(:key, :value) in maps.entries)
           if (key is String && !RetroButtonMap.fromJson(value).isStandard) key: RetroButtonMap.fromJson(value),
     }
+    ..retroControlProfiles = {
+      if (json['retroControlProfiles'] case final Map<dynamic, dynamic> profiles)
+        for (final MapEntry(:key, :value) in profiles.entries)
+          if (key is String && key.trim().isNotEmpty) key: RetroButtonMap.fromJson(value),
+    }
+    ..retroProfileChoice = {
+      if (json['retroProfileChoice'] case final Map<dynamic, dynamic> choices)
+        for (final MapEntry(:key, :value) in choices.entries)
+          if (key is String && value is String) key: value,
+    }
     ..retroLastDisc = {
       if (json['retroLastDisc'] case final Map<dynamic, dynamic> discs)
         for (final entry in discs.entries)
@@ -366,6 +377,13 @@ class Preferences {
   Map<String, String> lastPlayed = {};
   Map<String, String> retroLastDisc = {};
   Map<String, RetroButtonMap> retroButtonMaps = {};
+  Map<String, RetroButtonMap> retroControlProfiles = {};
+  Map<String, String> retroProfileChoice = {};
+
+  /// The saved control profiles and the layout each emulated game plays with, over the three
+  /// fields above.
+  RetroControlProfiles get retroControls =>
+      RetroControlProfiles(layouts: retroButtonMaps, saved: retroControlProfiles, chosen: retroProfileChoice);
   Set<String> retroAutoOptimized = {};
   Map<String, String> retroInternalResolution = {};
   bool showRetroFolders = false;
@@ -537,6 +555,9 @@ class Preferences {
     if (retroLastDisc.isNotEmpty) 'retroLastDisc': retroLastDisc,
     if (retroButtonMaps.isNotEmpty)
       'retroButtonMaps': {for (final MapEntry(:key, :value) in retroButtonMaps.entries) key: value.toJson()},
+    if (retroControlProfiles.isNotEmpty)
+      'retroControlProfiles': {for (final MapEntry(:key, :value) in retroControlProfiles.entries) key: value.toJson()},
+    if (retroProfileChoice.isNotEmpty) 'retroProfileChoice': retroProfileChoice,
     if (retroAutoOptimized.isNotEmpty) 'retroAutoOptimized': retroAutoOptimized.toList(),
     if (retroInternalResolution.isNotEmpty) 'retroInternalResolution': retroInternalResolution,
     if (showRetroFolders) 'showRetroFolders': true,
@@ -1492,6 +1513,7 @@ class AppModel extends ChangeNotifier {
       return refresh();
     }
     if (shortcutCapture != null) return cancelShortcutCapture();
+    if (retroCapture != null) return cancelRetroCapture();
     final (from, game) = (overlay, selected);
     command(Command.back);
     if (from != null && overlay != from && _forwardLayers.contains(from)) _forward = (from, overlay, game);
@@ -1750,6 +1772,23 @@ class AppModel extends ChangeNotifier {
   Layer? _controllerTestFrom;
   final List<String> localSeatPads = [];
   int retroControlsPlayer = 1;
+
+  /// The console button whose label waits for a controller button on the Controls page. Every
+  /// button can be given away, so none can cancel: the wait ends by itself.
+  PadButton? retroCapture;
+  Timer? _retroCaptureTimer;
+  static const retroCaptureWait = Duration(seconds: 6);
+
+  /// The button being held towards taking that input, how long for, and the hold a button needs:
+  /// a tap while moving about never reassigns anything.
+  PadButton? retroCaptureHeld;
+  String? retroCaptureHeldPad;
+  final Stopwatch _retroHoldWatch = Stopwatch();
+  Timer? _retroHoldTimer;
+  static const retroCaptureHold = Duration(milliseconds: 500);
+
+  /// The label the focus was last on, to come back to from the list beside the controller.
+  PadButton retroLabelFocus = PadButton.south;
   bool _controlsFromQuickMenu = false;
 
   void openControllerTest() {
@@ -1889,12 +1928,22 @@ class AppModel extends ChangeNotifier {
 
   /// A controller's event past the gate: to the navigator, or to Settings › Shortcuts while it
   /// waits for buttons.
+  @visibleForTesting
+  void debugPadEvent(PadEvent event) => _padEvent(event);
+
   void _padEvent(PadEvent event) {
     if (coopPadEvent(event)) return;
     if (event case PadButtonEvent(button: PadButton.guide) when _retroSession) return _navigator?.handle(event);
     if (embeddedGame != null && overlay == null && event is PadButtonEvent) return;
     if (embeddedGame != null && overlay == null && event is PadAxisEvent) return;
     if (shortcutCapture != null && event is PadButtonEvent) return _capturePad(event);
+    if (retroCapture != null) {
+      // Every button could be the one wanted, so none moves the focus until the wait is over.
+      if (event is PadButtonEvent) return captureRetroButton(event);
+      if (event is PadAxisEvent) return;
+      // Anything else (a controller gone) ends the wait and is handled as usual.
+      cancelRetroCapture();
+    }
     _navigator?.handle(event);
   }
 
@@ -4698,8 +4747,8 @@ class AppModel extends ChangeNotifier {
           internalResolution: preferences.retroInternalResolution[game.id],
           graphics: {if (ps3) ...preferences.retroPs3Defaults, ...?graphics[graphicsId], ...trialOptions},
           initialDisc: initialDisc,
-          buttonMap: retroLayout(game.id, 1),
-          seatButtonMaps: [for (var player = 2; player <= 4; player++) retroLayout(game.id, player)],
+          buttonMap: retroLayout(game, 1),
+          seatButtonMaps: [for (var player = 2; player <= 4; player++) retroLayout(game, player)],
           onDiscPlayed: initialDisc == null || trialOptions.isNotEmpty
               ? null
               : (path) {
@@ -5172,6 +5221,7 @@ class AppModel extends ChangeNotifier {
       shortcutCapture = null;
       _captureTimer?.cancel();
     }
+    _endRetroCapture();
     capturing = null;
     if (next == Layer.library) libraryIndex = selected;
     if (next == Layer.gameSettings) _gameFacts.clear();
@@ -5201,6 +5251,8 @@ class AppModel extends ChangeNotifier {
     // The party's chat: its newest messages, read while it shows.
     if (next == Layer.party) together.partyScreenOpened();
     _skipToFocusable();
+    // An emulated game's Controls open on the controller: its labels are what the page is for.
+    if (next == Layer.controls && selectedGame?.retro != null) _focusRetroLabel(PadButton.south);
     _changed();
   }
 
@@ -5295,6 +5347,7 @@ class AppModel extends ChangeNotifier {
 
   void _dismissOverlay() {
     _cancelRetroDiscPicker();
+    _endRetroCapture();
     overlay = null;
     // A crop closed some other way (PS) keeps nothing.
     pictureCrop?.image.dispose();
@@ -5359,6 +5412,14 @@ class AppModel extends ChangeNotifier {
 
   /// Home screen, library and panels: what a command does where the user is.
   void handle(Command command) {
+    if (retroCapture != null) {
+      if (command != Command.home) {
+        if (command == Command.back) cancelRetroCapture();
+        return;
+      }
+      // PS leaves the page: the wait goes with it.
+      _endRetroCapture();
+    }
     // Mirrored screens (Arabic, Urdu): → moves to what is drawn on the right, as on the Mac.
     // Watching a share play the controller is the game's, so it stays as it is there.
     if (T.language.isRightToLeft && overlay != Layer.shareWatch) command = command.mirrored;
@@ -6136,6 +6197,8 @@ class AppModel extends ChangeNotifier {
   /// next start keeps it.
   void windowChangedFullscreen(bool on) {
     _windowLine('${on ? 'full screen' : 'windowed'} by the system');
+    // The title bar's Maximize is a click the launcher never sees: it ends a label's wait.
+    cancelRetroCapture();
     windowFullscreen = on;
     if (preferences.launcherFullscreen != on) {
       preferences.launcherFullscreen = on;
@@ -8075,6 +8138,7 @@ class AppModel extends ChangeNotifier {
 
     final row = panelRow < rows.length ? rows[panelRow] : null;
     if (_searchCommand(command)) return;
+    if (_retroLabelCommand(command)) return;
     // A plain yes or no (ConfirmCard): its two answers side by side, ← to the way back, → to the
     // destructive one, from the keys and the pad alike.
     if (twoChoice && (command == Command.left || command == Command.right)) {
@@ -8245,6 +8309,8 @@ class AppModel extends ChangeNotifier {
 
   /// A click on a row: the focus goes there and the row does what Enter does.
   void activateRow(int index) {
+    // A label waiting for a button: this ends the wait and does nothing more.
+    if (retroCapture != null) return cancelRetroCapture();
     final rows = _currentRows;
     if (index < 0 || index >= rows.length || !rows[index].focusable) return;
     panelRow = index;
@@ -8259,6 +8325,8 @@ class AppModel extends ChangeNotifier {
   /// A click on a row's ‹ › or − + : one step back or on, the focus going to the row. Held, the
   /// arrow repeats ([repeat]) and speeds up as a held key does.
   void stepRow(int index, int delta, {bool repeat = false}) {
+    // A label waiting for a button: this ends the wait and does nothing more.
+    if (retroCapture != null) return cancelRetroCapture();
     final rows = _currentRows;
     if (index < 0 || index >= rows.length || !rows[index].focusable) return;
     pointerFocus = true;
@@ -8277,6 +8345,8 @@ class AppModel extends ChangeNotifier {
 
   /// A slider's bar clicked or dragged: the row takes the focus and the value, with a tick.
   void setRowValue(int index, int value) {
+    // A label waiting for a button: this ends the wait and does nothing more.
+    if (retroCapture != null) return cancelRetroCapture();
     final rows = _currentRows;
     if (index < 0 || index >= rows.length || !rows[index].focusable) return;
     final kind = rows[index].kind;
@@ -8294,6 +8364,8 @@ class AppModel extends ChangeNotifier {
 
   /// The pointer moved over a row: the focus follows it, quietly, and the list stays put.
   void hoverRow(int index) {
+    // A label waiting for a button keeps the focus: the pointer passing over a row does not.
+    if (retroCapture != null) return;
     final rows = _currentRows;
     if ((index == panelRow && !settingsSearchFocused) || index < 0 || index >= rows.length || !rows[index].focusable) {
       return;
@@ -8763,6 +8835,7 @@ class AppModel extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _cancelRetroDiscPicker();
+    _endRetroCapture();
     saveSync.dispose();
     powerWatch.stop();
     for (final watcher in _libraries.values) {

@@ -154,7 +154,10 @@ void main() {
       {first.id: RetroButtonMap.swapCrossCircle},
     );
     expect(model.embeddedGame!.buttonMap, RetroButtonMap.swapCrossCircle);
-    expect(LauncherProfiles.personalKeys, contains('retroButtonMaps'));
+    expect(
+      LauncherProfiles.personalKeys,
+      containsAll(['retroButtonMaps', 'retroControlProfiles', 'retroProfileChoice']),
+    );
     ended = true;
     await tester.pump(const Duration(milliseconds: 150));
     await firstPlay;
