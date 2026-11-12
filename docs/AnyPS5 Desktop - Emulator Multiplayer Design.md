@@ -314,8 +314,8 @@ socket's session names it, and this launcher no longer uses it. A
 launcher that was force-closed mid-match keeps the same device on its
 next run, so the service never saw that device leave and kept the room
 open. Any other existing session gets the "leave your current game"
-message and is not changed. The invite log records `room.leftover` or
-`room.occupied`. The
+message and is not changed. For PS1 the invite log records
+`room.leftover` or `room.occupied`; PS2 and PS3 rooms take no trace. The
 [room tests](../test/core/online/ps1_netplay_rooms_test.dart) cover
 host and guest retries after a stalled read, and the
 [PS3 host fixture](../test/ui/ps3_settings_test.dart) verifies the
