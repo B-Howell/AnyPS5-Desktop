@@ -188,6 +188,7 @@ class _LauncherShellState extends State<LauncherShell> with WidgetsBindingObserv
     _frameLog?.stop();
     _recent.stop();
     _frontWatch.cancel();
+    _escapeHold?.cancel();
     widget.model.removeListener(_modelChanged);
     _keys.stop();
     _lifecycle.dispose();
@@ -197,14 +198,40 @@ class _LauncherShellState extends State<LauncherShell> with WidgetsBindingObserv
     super.dispose();
   }
 
+  /// Escape held in an embedded game or its quick menu: let go before [ShortcutTiming.hold] it
+  /// is what Escape was (the quick menu, or back to the game from it), held that long the home
+  /// screen, as PS is.
+  Timer? _escapeHold;
+
   KeyEventResult _key(FocusNode node, KeyEvent event) {
     final model = widget.model;
     final game = model.embeddedGame;
-    if (game != null && model.overlay == null) {
-      if (event.logicalKey == LogicalKeyboardKey.escape) {
-        if (event is KeyDownEvent) unawaited(model.openQuickMenu());
-        return KeyEventResult.handled;
+    final inGameMenu = model.overlay == null || model.overlay == Layer.quickMenu;
+    if (game != null &&
+        inGameMenu &&
+        !model.gameAtHome &&
+        model.editingRow == null &&
+        event.logicalKey == LogicalKeyboardKey.escape) {
+      if (event is KeyDownEvent) {
+        _escapeHold?.cancel();
+        _escapeHold = Timer(ShortcutTiming.hold, () {
+          _escapeHold = null;
+          model.usedKeyboard();
+          model.homeHeld();
+        });
+      } else if (event is KeyUpEvent && _escapeHold != null) {
+        _escapeHold!.cancel();
+        _escapeHold = null;
+        if (model.overlay == null) {
+          unawaited(model.openQuickMenu());
+        } else {
+          model.usedKeyboard();
+          model.command(Command.back);
+        }
       }
+      return KeyEventResult.handled;
+    }
+    if (game != null && model.overlay == null && !model.gameAtHome) {
       final button = embeddedRetroKeys[event.logicalKey];
       if (button != null) {
         if (event is KeyDownEvent || event is KeyUpEvent) game.key(button, event is KeyDownEvent);
@@ -462,11 +489,12 @@ class _LauncherShellState extends State<LauncherShell> with WidgetsBindingObserv
                                     child: Stack(
                                       fit: StackFit.expand,
                                       children: [
-                                        if (model.embeddedGame case final game?)
+                                        if (model.embeddedGame case final game? when !model.gameAtHome)
                                           EmbeddedRetroView(game: game)
                                         else ...[
                                           Backdrop(model: model, time: widget.time),
-                                          if (model.services.retroMenuRegion != null) RetroMenuWindow(model: model),
+                                          if (model.services.retroMenuRegion != null && model.embeddedGame == null)
+                                            RetroMenuWindow(model: model),
                                           RepaintBoundary(
                                             // Glass's see-through window: under a layer the home screen
                                             // fades out, the layer a pane over the desktop (LayerScrim).
@@ -560,6 +588,7 @@ class _LauncherShellState extends State<LauncherShell> with WidgetsBindingObserv
                                                 // Delete the game?
                                                 Layer.confirmQuit ||
                                                 Layer.closeGame ||
+                                                Layer.switchGame ||
                                                 Layer.confirmDeleteGame => ConfirmCard(model: model),
                                                 Layer.challenge => WithBackPill(
                                                   onBack: () => model.handle(Command.back),
@@ -572,7 +601,7 @@ class _LauncherShellState extends State<LauncherShell> with WidgetsBindingObserv
                                           ),
                                         ),
                                         if (model.embeddedGame case final session?
-                                            when model.overlay == null && session.tuning.recording)
+                                            when model.overlay == null && !model.gameAtHome && session.tuning.recording)
                                           RetroTuningIndicator(message: session.tuning.status),
                                         if (model.together.ringing != null && model.pairing == null)
                                           RingingCard(model: model),

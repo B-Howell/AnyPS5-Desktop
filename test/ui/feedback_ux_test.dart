@@ -11,6 +11,7 @@ import 'package:anyps5_desktop/core/replay_buffer.dart';
 import 'package:anyps5_desktop/core/screenshots.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/components.dart';
+import 'package:anyps5_desktop/ui/game_action.dart';
 import 'package:anyps5_desktop/ui/home.dart' show PhoneIndicator;
 import 'package:anyps5_desktop/ui/strings.dart';
 import 'package:anyps5_desktop/ui/theme.dart';
@@ -467,7 +468,7 @@ void main() {
       await until(() => desktop.calls.contains('raise'));
       expect(desktop.calls, ['key Escape', 'raise'], reason: 'Options is Escape by default, pressed first');
       expect(model.overlay, Layer.quickMenu);
-      expect(model.panelCategories().single.rows.map((row) => row.id), ['resume', 'gameSettings', 'closeGame']);
+      expect(model.panelCategories().single.rows.map((row) => row.id), ['resume', 'home', 'gameSettings', 'closeGame']);
       desktop.focused = true;
       pads.press(PadButton.south);
       expect(model.overlay, isNull);
@@ -494,12 +495,38 @@ void main() {
       desktop.focused = true;
       pads.press(PadButton.dpadDown);
       pads.press(PadButton.dpadDown);
+      pads.press(PadButton.dpadDown);
       pads.press(PadButton.south);
       expect(model.overlay, Layer.closeGame, reason: 'Close game asks first');
       pads.press(PadButton.south);
       await playing;
       expect(model.running, isNull);
       expect(model.overlay, isNull);
+    }, skip: Platform.isWindows ? 'the fake game is a shell script' : false);
+
+    test('Home in the quick menu: the home screen with the game still running; Resume brings it back', () async {
+      final playing = (await startOrbit()).done;
+      final orbit = model.running!.$1;
+      desktop.focused = false;
+      pads.press(PadButton.guide);
+      await until(() => model.overlay == Layer.quickMenu);
+      desktop.focused = true;
+      final home = model.panelCategories().single.rows[1];
+      expect(home.id, 'home');
+      expect(home.detail, 'Friends, settings and your library. The game keeps running.');
+      pads.press(PadButton.dpadDown);
+      pads.press(PadButton.south);
+      expect(model.overlay, isNull);
+      expect(model.gameAtHome, isTrue);
+      expect(model.running?.$1, orbit, reason: 'the game keeps running in its window');
+      expect(model.selectedGame, orbit);
+      expect(GameAction.of(model.stateOf(orbit)).title, 'Resume');
+      desktop.calls.clear();
+      model.primaryAction(orbit);
+      await until(() => desktop.calls.contains('focus'));
+      expect(model.gameAtHome, isFalse);
+      model.stopGame();
+      await playing;
     }, skip: Platform.isWindows ? 'the fake game is a shell script' : false);
 
     test('an engine that takes presses: Options held on player 1 through the bridge, no key typed', () async {

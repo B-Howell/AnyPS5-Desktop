@@ -116,6 +116,51 @@ Resume and Close return to the same session. Losing focus clears held
 inputs. Settings for existing portable DuckStation and PCSX2
 installations remain available as an advanced path.
 
+### Home while a game runs
+
+The launcher follows the PS5: a short PS press opens the Quick Menu, and
+holding PS (or holding Escape on the keyboard) for half a second, in the
+game or in its Quick Menu, goes to the home screen with the embedded game
+kept alive. Escape therefore acts when it is released there. **Quick Menu → Home**
+does the same for the mouse and keyboard. The
+[app model](../lib/ui/app_model.dart) remembers which session the home
+screen was opened over (`gameAtHome`); while it is set the
+[launcher](../lib/ui/launcher.dart) draws the home screen instead of the
+game surface, the controller and keys drive the launcher, and the session's
+`playback` sends the host's existing `pause` call, so the game and its sound
+stop where they were. Friends, Settings, the library and Together all open
+over Home; Back from them stays on Home.
+
+On Home the running game's tile is selected and its button reads
+**Resume** ([game action](../lib/ui/game_action.dart)). A card in the
+bottom-left corner of the [home screen](../lib/ui/home.dart) shows the
+game's icon, its name and *Paused*, and a click on it resumes. A short PS
+press on Home opens the game's Quick Menu, as the PS5 opens its control
+centre there, with Resume first; a second press goes back to the game.
+Holding PS on Home opens the home menu as it does with no game.
+
+Play on a different game while one runs asks *Play … instead?*
+([confirm card](../lib/ui/confirm_card.dart)); **Close and play** closes the
+running game as Close game does, waits for it to end and then starts the
+other through its normal Play path, including the join-or-host question. A
+PS5 game's next start also waits for its Save Sync, through the same
+after-exit start a phone's Launch of another game uses.
+
+A session that cannot pause cannot go Home: a PS1 rollback match, a PS2 LAN
+room or a PS3 online session keeps running for the other players, so the
+Home row says it is not available and pressing it, or holding PS, leaves
+the match in front with a message. The rule is the session's own
+`pausesForOverlay`, the same one the Quick Menu uses.
+
+A PS5 game in its own window gets the same Home row and Resume, but it
+cannot be paused by the launcher: Home brings the launcher in front with
+the game still running behind it, and the corner card says *Playing*. A
+short PS press there keeps its earlier behaviour of bringing the game
+window back, and holding PS in that game still asks *Close game?*. The
+[home tests](../test/ui/home_over_game_test.dart) cover the embedded paths
+and the online match, and the
+[PS button tests](../test/ui/feedback_ux_test.dart) cover the PS5 window.
+
 The existing launch card keeps the title, cover, and single progress bar
 visible during embedded PS1 and PS2 startup, including while the core
 outputs blank frames. The [Windows host](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp)

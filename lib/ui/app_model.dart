@@ -1013,6 +1013,9 @@ enum Layer {
   /// PS held in a game: Close Game?
   closeGame,
 
+  /// Play on another game while one runs: close the one running and start this one?
+  switchGame,
+
   /// PS held in the launcher: Switch Profile, Quit AnyPS5.
   homeMenu,
 
@@ -2098,9 +2101,11 @@ class AppModel extends ChangeNotifier {
   /// The phone pads whose events reached the navigator since it last let go of them.
   final Set<String> _phonePadsMoving = {};
 
-  /// Whether a phone's pad moves the launcher now: with no game starting or playing and the
-  /// launcher in front, as a controller does; otherwise its input is the game's alone.
-  bool get phonePadMovesLauncher => running == null && starting == null && launcherInFront;
+  /// Whether a phone's pad moves the launcher now: with no game starting or playing (or an
+  /// embedded one paused under Home) and the launcher in front, as a controller does; otherwise
+  /// its input is the game's alone.
+  bool get phonePadMovesLauncher =>
+      (running == null || (gameAtHome && embeddedGame != null)) && starting == null && launcherInFront;
 
   void _phonePadEvent(PadEvent event) {
     final navigator = _padNavigator;
@@ -2140,8 +2145,8 @@ class AppModel extends ChangeNotifier {
   void _padEvent(PadEvent event) {
     if (coopPadEvent(event)) return;
     if (event case PadButtonEvent(button: PadButton.guide) when _retroSession) return _navigator?.handle(event);
-    if (embeddedGame != null && overlay == null && event is PadButtonEvent) return;
-    if (embeddedGame != null && overlay == null && event is PadAxisEvent) return;
+    if (embeddedGame != null && overlay == null && !gameAtHome && event is PadButtonEvent) return;
+    if (embeddedGame != null && overlay == null && !gameAtHome && event is PadAxisEvent) return;
     if (shortcutCapture != null && event is PadButtonEvent) return _capturePad(event);
     if (retroCapture != null) {
       // Every button could be the one wanted, so none moves the focus until the wait is over.
@@ -3035,6 +3040,9 @@ class AppModel extends ChangeNotifier {
     _syncEmbeddedPlayback(focused: front);
     // The own profile, read again every few minutes while the launcher is in front.
     if (front) together.refreshOwnProfile(age: TogetherModel.ownProfileAge);
+    // A game in its own window brought in front some other way: the launcher is no longer its
+    // home screen.
+    if (!front && running?.$2 is! EmbeddedRetroGame) _homeOverGame = null;
     if (front == _shownInFront) return;
     _shownInFront = front;
     if (!front) {
@@ -3056,8 +3064,9 @@ class AppModel extends ChangeNotifier {
   /// The game back in front, the launcher behind it (or minimized again, with Hide the
   /// launcher while a game runs).
   Future<void> _showGame(RunningGame run) async {
+    _homeOverGame = null;
     if (run is EmbeddedRetroGame) {
-      _syncEmbeddedPlayback();
+      _changed();
       return;
     }
     final shown = await desktop.focusGame(run.pid);
@@ -3244,7 +3253,7 @@ class AppModel extends ChangeNotifier {
   }
 
   void _syncEmbeddedPlayback({bool? focused}) {
-    embeddedGame?.playback(playing: overlay == null && !stopping, focused: focused ?? launcherInFront);
+    embeddedGame?.playback(playing: overlay == null && !stopping && !gameAtHome, focused: focused ?? launcherInFront);
   }
 
   void savePreferences() {
@@ -3703,7 +3712,14 @@ class AppModel extends ChangeNotifier {
   // Installing.
 
   void primaryAction(Game game) {
-    switch (stateOf(game)) {
+    final state = stateOf(game);
+    // Another game running: asked first whether to close it, as a console does.
+    if (state is Installed && running != null && running!.$1.id != game.id && !stopping) {
+      switchTarget = game;
+      open(Layer.switchGame);
+      return;
+    }
+    switch (state) {
       case Installed(:final outdated):
         // A copy made by another engine than the one at hand is rebuilt on the way (play); a
         // newer engine to download is offered; a game someone the user knows already plays asks
@@ -4492,7 +4508,7 @@ class AppModel extends ChangeNotifier {
         unawaited(services.window?.restore());
       }
       // The quick menu and the question go with the game.
-      if (overlay == Layer.quickMenu || overlay == Layer.closeGame) overlay = null;
+      if (overlay == Layer.quickMenu || overlay == Layer.closeGame || overlay == Layer.switchGame) overlay = null;
       updates.gameEnded();
       together.gameChanged();
       discord.update();
@@ -5374,6 +5390,7 @@ class AppModel extends ChangeNotifier {
       }
       if (overlay == Layer.quickMenu ||
           overlay == Layer.closeGame ||
+          overlay == Layer.switchGame ||
           overlay == Layer.retroGraphics ||
           overlay == Layer.retroDiscs ||
           overlay == Layer.retroOnlineFriends ||
@@ -5891,7 +5908,7 @@ class AppModel extends ChangeNotifier {
       return;
     }
     if (overlay == Layer.emulatorMenu && _emulatorMenu.back()) return;
-    if (_returnsToGame) {
+    if (_returnsToGame && !gameAtHome) {
       resumeGame();
       return;
     }
@@ -6018,6 +6035,12 @@ class AppModel extends ChangeNotifier {
     // At start a profile is picked first: PS waits.
     if (overlay == Layer.profilePicker && profileFlow.atLaunch && command == Command.home) return sounds.play(Cue.bump);
     if (command == Command.home) {
+      // On the home screen over a paused game PS opens the game's quick menu, as a PS5's control
+      // centre does, with Resume first; a second press goes back to the game.
+      if (embeddedGame != null && gameAtHome && overlay != Layer.quickMenu) {
+        unawaited(openQuickMenu());
+        return;
+      }
       if (embeddedGame != null || (_retroSession && running == null)) {
         if (_returnsToGame || overlay == Layer.quickMenu) {
           final front = _frontForGuide;
@@ -6198,7 +6221,7 @@ class AppModel extends ChangeNotifier {
         return;
       case Layer.quickMenu || Layer.closeGame when command == Command.back || command == Command.options:
         // A share play question asked in place (together_ask.dart) is answered Cancel first.
-        if (!together.cancelAsk()) resumeGame();
+        if (!together.cancelAsk()) _backFromGameMenu();
         return;
       case Layer.profilePicker:
         pickerCommand(command);
@@ -6265,6 +6288,7 @@ class AppModel extends ChangeNotifier {
           Layer.retroOnlineFriends ||
           Layer.coopLobby ||
           Layer.closeGame ||
+          Layer.switchGame ||
           Layer.homeMenu ||
           Layer.confirmQuit ||
           Layer.launcherReport ||
@@ -6420,6 +6444,8 @@ class AppModel extends ChangeNotifier {
     }
     final (game, run) = playing;
     final front = _frontForGuide;
+    // From the game itself: the home screen it was left at earlier is behind it now.
+    if (!front) _homeOverGame = null;
     _quickMenuOptionsSent = false;
     if (!front && preferences.pauseOnMenu && game.retro == null) {
       // An engine that takes presses: Options held on player 1's pad through the remote pad
@@ -6457,7 +6483,8 @@ class AppModel extends ChangeNotifier {
     _ => _quickMenuOptionsSent,
   };
 
-  /// PS held: Close Game? over a game in front; the home menu in the launcher.
+  /// PS held: the home screen over an embedded game (paused, as a console's home screen keeps
+  /// it), Close Game? over a game in its own window; the home menu in the launcher.
   void homeHeld() {
     if (!preferences.onboarded) return;
     if (running == null && _retroLaunchGame != null) {
@@ -6465,8 +6492,8 @@ class AppModel extends ChangeNotifier {
       return;
     }
     if (overlay == Layer.profilePicker && profileFlow.atLaunch) return;
-    if (embeddedGame != null && launcherInFront) {
-      open(Layer.closeGame);
+    if (embeddedGame != null && launcherInFront && !gameAtHome) {
+      goHome();
       return;
     }
     final front = _frontForGuide;
@@ -6483,8 +6510,96 @@ class AppModel extends ChangeNotifier {
   /// Back to the game from the quick menu (or Close Game?): the game in front again. Its pause
   /// menu, if the Options press opened one, stays for the player.
   void resumeGame() {
+    _homeOverGame = null;
     _dismissOverlay();
     if (running?.$2 case final RunningGame run) unawaited(_showGame(run));
+  }
+
+  /// The game the home screen was opened over ([goHome]); null while the game is in front.
+  RunningGame? _homeOverGame;
+
+  /// Whether the home screen is shown while a game keeps running behind it: an embedded game
+  /// waits paused, a game in its own window stays where it is.
+  bool get gameAtHome => _homeOverGame != null && identical(_homeOverGame, running?.$2);
+
+  /// Whether the game running can wait on the home screen: an embedded game that cannot pause
+  /// (an online match, a LAN room) keeps going for everyone else, so it cannot, nor can one
+  /// that has not shown its first picture yet.
+  bool get canGoHome => switch (running?.$2) {
+    null => false,
+    EmbeddedRetroGame(:final pausesForOverlay, :final startupVisible) =>
+      pausesForOverlay && startupVisible && !stopping,
+    _ => !stopping,
+  };
+
+  /// PS held in an embedded game, or Home in the quick menu: the home screen with friends,
+  /// settings and the library, the game kept paused behind it with its tile selected. Resume
+  /// (its tile, the corner card, or the quick menu) returns to it where it was.
+  void goHome() {
+    final playing = running;
+    if (playing == null || !preferences.onboarded) return;
+    final (game, run) = playing;
+    if (!canGoHome) {
+      final online = run is EmbeddedRetroGame && (run.isNetplay || run.isPs2Lan || run.isPs3Online);
+      show(T.text(online ? 'homeOnlineUnavailable' : 'homeUnavailable'));
+      return;
+    }
+    _homeOverGame = run;
+    _cancelRetroDiscPicker();
+    _endRetroCapture();
+    overlay = null;
+    together.askingRow = null;
+    panelSections = false;
+    editingValue = null;
+    sounds.play(Cue.back);
+    final index = games.indexWhere((candidate) => candidate.id == game.id);
+    if (index >= 0) {
+      select(index);
+    } else {
+      _changed();
+    }
+    if (!_frontForGuide) unawaited(raiseLauncher());
+  }
+
+  /// Back from the quick menu or Close Game?: to the game, or to the home screen when the menu
+  /// was opened there.
+  void _backFromGameMenu() => gameAtHome ? _dismissOverlay() : resumeGame();
+
+  /// Play on another game while one runs asks first ([Layer.switchGame]); this is the game asked
+  /// about.
+  Game? switchTarget;
+
+  /// The answer to [Layer.switchGame]: the game running closes, and once it has ended the other
+  /// one starts as its Play would start it.
+  void switchToTarget() {
+    final next = switchTarget;
+    final run = running?.$2;
+    switchTarget = null;
+    if (next == null || run == null) return closeOverlay();
+    if (run is! EmbeddedRetroGame && running!.$1.retro == null) {
+      // A PS5 game's saves sync once it has gone; the next one starts after them, as a phone's
+      // Launch of another game does.
+      _launchAfterExit = next.id;
+      closeRunningGame();
+      return;
+    }
+    closeRunningGame();
+    unawaited(_playOnceEnded(run, next));
+  }
+
+  Future<void> _playOnceEnded(RunningGame run, Game next) async {
+    try {
+      await run.exitCode;
+    } on Object {
+      // Ended either way.
+    }
+    for (var waited = 0; waited < 100 && (identical(running?.$2, run) || starting != null); waited++) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    if (_disposed || running != null || starting != null) return;
+    final index = games.indexWhere((candidate) => candidate.id == next.id);
+    if (index < 0) return;
+    primaryAction(games[index]);
   }
 
   /// Close Game from the quick menu or the question.
@@ -6497,7 +6612,7 @@ class AppModel extends ChangeNotifier {
   }
 
   /// The layers that ask a plain yes or no, drawn as ConfirmCard: two answers side by side.
-  static const twoChoiceLayers = {Layer.confirmQuit, Layer.closeGame, Layer.confirmDeleteGame};
+  static const twoChoiceLayers = {Layer.confirmQuit, Layer.closeGame, Layer.switchGame, Layer.confirmDeleteGame};
 
   bool get twoChoice => twoChoiceLayers.contains(overlay);
 
@@ -7384,6 +7499,16 @@ class AppModel extends ChangeNotifier {
             title: running!.$1.name,
             rows: [
               PanelRow(id: 'resume', title: T.text('quickResume'), kind: ActionRow(resumeGame)),
+              PanelRow(
+                id: 'home',
+                title: T.text('quickHome'),
+                detail: T.text(switch (running!.$2) {
+                  _ when !canGoHome => 'quickHomeOnlineDetail',
+                  EmbeddedRetroGame() => 'quickHomeDetail',
+                  _ => 'quickHomeRunningDetail',
+                }),
+                kind: ActionRow(goHome),
+              ),
               ?_ps3ProviderQuickRow(running!.$1),
               // Settings › Battery & Heat: the profile that holds lifted for now.
               if (powerWatch.canUndo)
@@ -7471,7 +7596,23 @@ class AppModel extends ChangeNotifier {
                 detail: T.text('closeGameDetail'),
                 kind: ActionRow(closeRunningGame, destructive: true),
               ),
-              PanelRow(id: 'cancel', title: T.text('cancel'), kind: ActionRow(resumeGame)),
+              PanelRow(id: 'cancel', title: T.text('cancel'), kind: ActionRow(_backFromGameMenu)),
+            ],
+          ),
+        ];
+      case Layer.switchGame when running != null && switchTarget != null:
+        return [
+          PanelCategory(
+            id: 'switchGame',
+            title: T.format('switchGameTitle', [switchTarget!.name]),
+            rows: [
+              PanelRow(id: 'cancel', title: T.text('cancel'), kind: ActionRow(closeOverlay)),
+              PanelRow(
+                id: 'confirmSwitch',
+                title: T.text('switchGameConfirm'),
+                detail: T.format('switchGameDetail', [running!.$1.name]),
+                kind: ActionRow(switchToTarget, destructive: true),
+              ),
             ],
           ),
         ];

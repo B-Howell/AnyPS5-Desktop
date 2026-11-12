@@ -66,7 +66,8 @@ class GameAction {
       tone: ActionTone.busy,
       indeterminate: true,
     ),
-    Running() => GameAction(T.text('running'), Icons.play_circle_outline_rounded),
+    // The game running behind the launcher: back to it where it was.
+    Running() => GameAction(T.text('quickResume'), Icons.play_arrow_rounded),
     Stopping() => GameAction(
       T.text('actionStopping'),
       Icons.stop_circle_outlined,
