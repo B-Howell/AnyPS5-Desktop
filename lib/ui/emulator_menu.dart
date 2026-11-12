@@ -2,7 +2,6 @@ part of 'app_model.dart';
 
 enum _EmulatorGroup {
   setup('Setup'),
-  optimize('Optimize'),
   graphics('Graphics'),
   performance('Performance & Compatibility'),
   controls('Controls'),
@@ -17,7 +16,6 @@ enum _EmulatorGroup {
 
   static _EmulatorGroup forSection(String section) {
     final key = section.toLowerCase();
-    if (key == 'optimize') return optimize;
     if (key.startsWith('graphics-') ||
         key == 'graphics' ||
         const {'gpu', 'display', 'emucore/gs', 'texturereplacements', 'framerate', 'borderoverlay'}.contains(key)) {
@@ -107,7 +105,6 @@ class _EmulatorMenu {
           } else {
             session.framing = index;
           }
-          if (app.running case (final game, _)) app._clearRetroAutoOptimize(game.id);
           _advancedDraft.remove(key);
           continue;
         }
@@ -346,11 +343,11 @@ class _EmulatorMenu {
       title: title,
       rows: [
         for (final group in _EmulatorGroup.values)
-          if (groups.containsKey(group) || (group == _EmulatorGroup.optimize && game != null))
+          if (groups.containsKey(group))
             PanelRow(
               id: 'emulator-group-${group.name}',
               title: group.label,
-              detail: game == null || group == _EmulatorGroup.optimize
+              detail: game == null
                   ? null
                   : platform == RetroPlatform.ps3 && group != _EmulatorGroup.setup
                   ? 'Settings for this game'
@@ -369,89 +366,9 @@ class _EmulatorMenu {
     }
   }
 
-  PanelRow autoOptimizeLink(Game game, [EmbeddedRetroGame? session]) => PanelRow(
-    id: 'emulator-auto-optimize',
-    title: 'Auto Optimize${app.preferences.retroAutoOptimized.contains(game.id) ? ' ✓' : ''}',
-    detail: session == null
-        ? 'Detect your PC and review settings for the next launch.'
-        : 'Review recommended settings for this game and your PC.',
-    kind: session != null && (session.isPs2Lan || session.isNetplay || session.isPs3Online)
-        ? const InfoRow('Available outside an online session.')
-        : ActionRow(() {
-            final panel = RetroAutoOptimizePanel(
-              gameName: game.name,
-              platform: game.retro!.platform,
-              readHardware: app.services.retroHardware,
-              prepare: (hardware) => session == null
-                  ? app._prepareLaunchOptimization(game, hardware)
-                  : liveRetroOptimizePlan(session, game.retro!, hardware),
-              refresh: () {
-                if (!app._disposed) app._changed();
-              },
-            );
-            openChild(panel.build);
-            unawaited(panel.detect());
-          }),
-  );
-
-  PanelRow tuningLink(EmbeddedRetroGame session) => PanelRow(
-    id: 'emulator-tune-game',
-    title: 'Compare gameplay performance',
-    detail: 'Compare two samples of the same gameplay segment.',
-    kind: ActionRow(() => openChild(() => _tuningPage(session))),
-  );
-
-  PanelCategory _tuningPage(EmbeddedRetroGame session) {
-    final playing = app.running;
-    if (playing == null || playing.$2 != session) {
-      return const PanelCategory(
-        id: 'emulator-tune-game',
-        title: 'Tune This Game',
-        rows: [
-          PanelRow(id: 'tuning-closed', title: 'Game closed', kind: InfoRow('Start the game to record a sample.')),
-        ],
-      );
-    }
-    final game = playing.$1;
-    if (app._retroRestartTrials.isTrial(session)) return app._retroRestartTrials.page(game, session);
-    return retroTuningPanel(
-      session,
-      resume: () {
-        if (app.embeddedGame == session && app.spot?.category == 'emulator-tune-game') app.resumeGame();
-      },
-      openRestartTrials: session.isPs2Lan || session.isPs3Online
-          ? null
-          : () => _push(() => app._retroRestartTrials.page(game, session)),
-    );
-  }
-
   PanelCategory _group(RetroPlatform platform, Game? game, _EmulatorGroup group) {
     final title = '${_consoleTitle(platform, game)} › ${group.label}';
     final sections = _groups(platform, game: game)[group] ?? const [];
-    if (group == _EmulatorGroup.optimize && game != null) {
-      final session = app.running?.$1.id == game.id ? app.embeddedGame : null;
-      return PanelCategory(
-        id: 'emulator-group',
-        title: title,
-        rows: [
-          if (session != null || app._canOptimizeBeforeLaunch(game))
-            autoOptimizeLink(game, session)
-          else
-            const PanelRow(
-              id: 'emulator-auto-optimize',
-              title: 'Auto Optimize',
-              kind: InfoRow('Start the game and open Graphics from the Quick Menu.'),
-            ),
-          for (final section in sections)
-            PanelRow(
-              id: section.id,
-              title: 'Optimize standalone emulator',
-              detail: 'Shared console settings',
-              kind: ActionRow(() => _push(() => _section(platform, game, group, section.id))),
-            ),
-        ],
-      );
-    }
     if (sections.length == 1 && sections.single.rows.length <= _pageSize) {
       return PanelCategory(id: 'emulator-group', title: title, rows: sections.single.rows);
     }

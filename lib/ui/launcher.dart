@@ -600,9 +600,6 @@ class _LauncherShellState extends State<LauncherShell> with WidgetsBindingObserv
                                             ),
                                           ),
                                         ),
-                                        if (model.embeddedGame case final session?
-                                            when model.overlay == null && !model.gameAtHome && session.tuning.recording)
-                                          RetroTuningIndicator(message: session.tuning.status),
                                         if (model.together.ringing != null && model.pairing == null)
                                           RingingCard(model: model),
                                         if (model.pairing != null) PairingCard(model: model),

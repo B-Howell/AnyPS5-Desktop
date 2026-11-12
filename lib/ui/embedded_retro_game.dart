@@ -19,9 +19,6 @@ import '../core/online/ps1_netplay_session.dart';
 import '../core/online/ps1_netplay_wire.dart';
 
 import 'retro_core_channel.dart';
-import 'retro_game_tuning.dart';
-
-export 'retro_game_tuning.dart' show EmbeddedOption, RetroTuningPersist;
 
 enum Ps3ProviderStatus {
   unavailable('ps3ProviderUnavailable'),
@@ -50,6 +47,7 @@ enum Ps3ProviderStatus {
   };
 }
 
+typedef EmbeddedOption = ({List<String> values, List<String> labels, String title, bool restart, int selected});
 typedef EmbeddedDiscs = ({List<String> labels, int? inserted, String? path, bool busy, bool failed});
 
 enum _DiscRequest { sending, queued }
@@ -124,7 +122,6 @@ class EmbeddedRetroGame extends RunningGame {
   String? _lastPlayedDisc;
   bool get changingDisc => _discRequest != null || _discs?.busy == true;
 
-  void Function()? _onManualOptionAccepted;
   bool _startupVisible = false;
   bool get startupVisible => _startupVisible;
   ({String label, int? percent})? progress;
@@ -133,7 +130,7 @@ class EmbeddedRetroGame extends RunningGame {
   int framing = 0;
   final options = <String, EmbeddedOption>{};
   final activeOptions = <String, String>{};
-  late final RetroGameTuning tuning;
+  late final RetroPlatform _platform;
   final _keys = <PadButton>{};
   List<int> _lastInput = const [];
   final List<List<int>> _seatInputs = [];
@@ -183,9 +180,6 @@ class EmbeddedRetroGame extends RunningGame {
     required void Function(String) onResolutionSelected,
     required Map<String, String> graphics,
     required void Function(String, String) onGraphicsSelected,
-    RetroTuningPersist? onTuningApplied,
-    RetroTuningPersist? onAutoOptimizeApplied,
-    void Function()? onManualOptionAccepted,
     required PadState Function() readPad,
     List<PadState> Function()? readSeats,
     required void Function() changed,
@@ -279,42 +273,7 @@ class EmbeddedRetroGame extends RunningGame {
     for (var index = 0; index < seatButtonMaps.length && index < 3; index++) {
       session.setSeatButtonMap(index + 2, seatButtonMaps[index]);
     }
-    session._onManualOptionAccepted = onManualOptionAccepted;
-    session.tuning = RetroGameTuning(
-      platform: disc.platform,
-      options: session.options,
-      ready: () =>
-          !session.isPs3Online &&
-          !session._netplay &&
-          !session._ps2Lan &&
-          session.presented &&
-          session.hardwareRendering &&
-          !session._closing,
-      queueReady: () =>
-          !session.isPs3Online && !session._netplay && !session._ps2Lan && session.presented && !session._closing,
-      writeOptions: (expected, values) async {
-        if (onlineProfile != null || session._closing) return false;
-        final accepted = await session._native.invokeMethod<bool>('tuningOptions', {
-          'expected': expected,
-          'values': values,
-        });
-        return accepted == true &&
-            (!values.keys.any(_usesGraphicsCheckpoint) || await session._waitForGraphics(values));
-      },
-      persist:
-          onTuningApplied ??
-          (previous, values, {required undo}) {
-            for (final entry in values.entries) {
-              if (entry.key == 'swanstation_GPU_ResolutionScale' || entry.key == 'pcsx2_upscale_multiplier') {
-                onResolutionSelected(entry.value);
-              } else {
-                onGraphicsSelected(entry.key, entry.value);
-              }
-            }
-          },
-      persistAuto: onAutoOptimizeApplied,
-      changed: changed,
-    );
+    session._platform = disc.platform;
     session._watch = Timer.periodic(
       const Duration(milliseconds: 125),
       (_) => unawaited(session._poll(changed, onDiscPlayed)),
@@ -451,10 +410,6 @@ class EmbeddedRetroGame extends RunningGame {
           }
         }
       }
-      final telemetry = status['tuningTelemetry'];
-      if (telemetry is Map) {
-        await tuning.observe(telemetry, playing: _playing && _acceptsInput && progress == null && presented);
-      }
       if (updated) changed();
     } on PlatformException catch (failure) {
       error = failure.message ?? failure.code;
@@ -499,15 +454,11 @@ class EmbeddedRetroGame extends RunningGame {
     _awaitNeutral = true;
     if (!acceptsInput) {
       unawaited(_native.invokeMethod<void>('input', const [0, 0, 0, 0, 0]));
-      unawaited(tuning.interrupt());
     }
   }
 
   Future<bool> setOption(String key, String value) async {
-    if (isPs3Online || _netplay || _closing || tuning.updating) return false;
-    if (tuning.canCancel) await tuning.cancel();
-    if (_closing || tuning.updating) return false;
-    final changed = tuning.selectedValue(key) != value;
+    if (isPs3Online || _netplay || _closing) return false;
     final bool? accepted;
     try {
       accepted = await _native.invokeMethod<bool>('option', {'key': key, 'value': value});
@@ -518,10 +469,6 @@ class EmbeddedRetroGame extends RunningGame {
     }
     if (accepted == true && _usesGraphicsCheckpoint(key) && !await _waitForGraphics({key: value})) {
       return false;
-    }
-    if (accepted == true && changed) {
-      tuning.manualSelection(key);
-      _onManualOptionAccepted?.call();
     }
     if (accepted == true && (key == 'swanstation_GPU_ResolutionScale' || key == 'pcsx2_upscale_multiplier')) {
       _onResolutionSelected(value);
@@ -577,7 +524,8 @@ class EmbeddedRetroGame extends RunningGame {
         activeOptions['swanstation_CPU_ExecutionMode'] == Ps1NetplayExecution.ordinaryHandoff.cpu;
     bool handoffCore(String digest) => switch (media.execution) {
       Ps1NetplayExecution.ordinaryHandoff => digest == Ps1NetplayMedia.ordinaryHandoffCorePin,
-      Ps1NetplayExecution.mixedRollback => media.execution.verifiedCoreIdentity(EmbeddedCoreHost.current, digest) != null,
+      Ps1NetplayExecution.mixedRollback =>
+        media.execution.verifiedCoreIdentity(EmbeddedCoreHost.current, digest) != null,
       _ => false,
     };
     if (source == null || !p.equals(_sourcePaths.disc, media.disc) || !available()) {
@@ -626,7 +574,6 @@ class EmbeddedRetroGame extends RunningGame {
     if (_finished.isCompleted) return;
     _watch.cancel();
     _input.cancel();
-    tuning.endSession();
     if (!_ready.isCompleted) _ready.complete(false);
     if (!_netplayReady.isCompleted) _netplayReady.complete(false);
     if (!_initialProviderFailure.isCompleted) _initialProviderFailure.complete(null);
@@ -879,7 +826,7 @@ class EmbeddedRetroGame extends RunningGame {
   /// nobody sits at has no controller in it, so a game offers no second player before one joins.
   void _sendSeats(List<PadState> seats) {
     final ports = 1 + (seats.length < 3 ? seats.length : 3);
-    if (tuning.platform == RetroPlatform.ps1 && _connectedPorts != ports) {
+    if (_platform == RetroPlatform.ps1 && _connectedPorts != ports) {
       _connectedPorts = ports;
       unawaited(_connectPorts(ports));
     }

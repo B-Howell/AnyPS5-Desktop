@@ -12,13 +12,11 @@ import 'app_model.dart';
 import 'ps3_settings_model.dart';
 import 'retro_controller_settings.dart';
 import 'retro_graphics_settings.dart';
-import 'retro_quick_optimize.dart';
 
 class RetroSettingsModel {
-  RetroSettingsModel(this.app, {required void Function() refresh}) : _optimize = RetroQuickOptimize(app, refresh);
+  RetroSettingsModel(this.app);
 
   final AppModel app;
-  final RetroQuickOptimize _optimize;
   final Map<RetroPlatform, String> _newOptions = {};
   final Map<String, String> _drafts = {};
   int _biosRegion = 0;
@@ -129,18 +127,6 @@ class RetroSettingsModel {
       ),
       if (app.supportsManagedRetro(platform))
         PanelCategory(id: '$prefix-portable', title: 'Existing portable installation', rows: [portableProgram]),
-      if (settings != null && !inUse && !graphicsQueued)
-        _optimize.category(
-          platform,
-          settings,
-          save: (apply) {
-            if (app.preferences.pendingRetroGraphics[settings.file.path]?.isNotEmpty == true) {
-              app.show('Discard the queued graphics changes before using Quick Optimize.');
-              return;
-            }
-            _edit(platform, apply);
-          },
-        ),
       if (settings != null) graphicsCategory(platform),
       if (settings != null && !inUse)
         for (final section in sections.entries)
@@ -269,7 +255,6 @@ class RetroSettingsModel {
         } else {
           settings[key] = value;
         }
-        if (titleId != null) app.preferences.retroAutoOptimized.remove(game!.id);
         app.savePreferences();
       },
     );

@@ -48,7 +48,7 @@ ProxyResult LostReply(const std::string& method, const std::string& reason) {
   if (method == "stop" || method == "release" || method == "pause" || method == "input" ||
       method == "ps1CheckpointCancel" || method == "ps1CheckpointHold" || method == "ps2LanExchange")
     return ProxyResult::Success();
-  if (method == "changeDisc" || method == "option" || method == "tuningOptions" || method == "netplayStart" ||
+  if (method == "changeDisc" || method == "option" || method == "netplayStart" ||
       method == "ps1ResumeLocal" || method == "ps2LanReset" || method == "ps1CheckpointResult")
     return ProxyResult::Success(Value(false));
   if (method.rfind("ps1", 0) == 0) return ProxyResult::Error("checkpoint", reason);

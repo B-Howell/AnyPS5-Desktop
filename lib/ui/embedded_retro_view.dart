@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/gamepad/pad_navigation.dart';
-import 'components.dart';
 import 'embedded_retro_game.dart';
 
 final embeddedRetroKeys = Map<LogicalKeyboardKey, PadButton>.unmodifiable({
@@ -42,36 +41,6 @@ class EmbeddedRetroView extends StatelessWidget {
             : Center(
                 child: AspectRatio(aspectRatio: aspect, child: texture),
               ),
-      ),
-    );
-  }
-}
-
-class RetroTuningIndicator extends StatelessWidget {
-  const RetroTuningIndicator({super.key, required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final scale = LayoutScale.of(context);
-    return Positioned(
-      top: 24 * scale,
-      left: 24 * scale,
-      child: IgnorePointer(
-        child: Semantics(
-          liveRegion: true,
-          child: DecoratedBox(
-            decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(10 * scale)),
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16 * scale, vertical: 10 * scale),
-              child: Text(
-                message,
-                style: TextStyle(color: Colors.white, fontSize: 14 * scale),
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }

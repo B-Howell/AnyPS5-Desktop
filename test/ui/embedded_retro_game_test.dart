@@ -6,7 +6,6 @@ import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/online/ps2_lan_profile.dart';
-import 'package:anyps5_desktop/core/retro_optimizer.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/components.dart';
 import 'package:anyps5_desktop/ui/console_badge.dart';
@@ -52,7 +51,7 @@ void main() {
     const resolutions = ['1', '2', '3', '4'];
     const filters = ['Nearest', 'BilinearBinAlpha'];
     var scale = '1';
-    var filter = 'Nearest';
+    const filter = 'Nearest';
     messenger.setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
       switch (call.method) {
@@ -77,11 +76,6 @@ void main() {
         case 'option':
           final key = call.arguments['key'];
           if (key == resolution) scale = call.arguments['value'] as String;
-          return true;
-        case 'tuningOptions':
-          final values = call.arguments['values'] as Map;
-          scale = values[resolution] as String? ?? scale;
-          filter = values[filtering] as String? ?? filter;
           return true;
         case 'changeDisc':
           inserted = 0;
@@ -391,14 +385,7 @@ void main() {
     ) async {
       final env = <String, String>{};
       final pads = FakePads();
-      final fixture = makeFixture(
-        environment: env,
-        pads: () => pads,
-        retroHardware: () async => const RetroHardware(
-          displayHeight: 720,
-          adapters: [RetroAdapter(name: 'Test GPU', dedicatedBytes: 4 << 30)],
-        ),
-      );
+      final fixture = makeFixture(environment: env, pads: () => pads);
       final model = fixture.model;
       model.startPads();
       addTearDown(() {
@@ -461,9 +448,6 @@ void main() {
             graphicsPending = true;
             selected = 1;
             return true;
-          case 'tuningOptions':
-            selected = scales.indexOf(call.arguments['values'][resolution] as String);
-            return selected >= 0;
           case 'stop':
             ended = true;
         }
@@ -497,28 +481,11 @@ void main() {
       model.setActive(true);
       final graphics = model.panelCategories().single.rows.singleWhere((row) => row.id == 'retroGraphics');
       (graphics.kind as ActionRow).run();
-      expect(model.panelCategories().single.rows.map((row) => row.title), ['Auto Optimize', 'Advanced']);
+      expect(model.panelCategories().single.rows.map((row) => row.title), ['Advanced']);
       PanelRow row(String id) => model.panelCategories().single.rows.singleWhere((row) => row.id == id);
       void choose(String id) => (row(id).kind as ActionRow).run();
-      choose('emulator-auto-optimize');
-      await tester.pump();
-      expect(row('auto-setting-$resolution').kind, isA<InfoRow>());
-      expect(calls.where((call) => call.method == 'tuningOptions'), isEmpty);
       expect(model.preferences.retroInternalResolution, isEmpty);
-      model.handle(Command.back);
-      if (isPs1) {
-        choose('emulator-auto-optimize');
-        await tester.pump();
-        choose('tuning-preset-apply');
-        await tester.pump(const Duration(milliseconds: 150));
-        expect(model.preferences.retroInternalResolution[title.id], '3');
-        expect(Preferences.fromJson(model.preferences.toJson()).retroAutoOptimized, contains(title.id));
-        model.handle(Command.back);
-        expect(row('emulator-auto-optimize').title, 'Auto Optimize ✓');
-      }
       choose('embedded-graphics-advanced');
-      choose('emulator-tune-game');
-      model.handle(Command.back);
       expect(row('embedded-apply-advanced').kind, isA<InfoRow>());
       final filter = model.panelCategories().single.rows.first.kind as ChoiceRow;
       filter.set(1);
@@ -527,17 +494,16 @@ void main() {
       expect(internalResolution.title, 'Internal resolution');
       final choice = internalResolution.kind as ChoiceRow;
       expect(choice.options[1], '2x');
-      if (isPs1) expect(choice.selected, 2);
+      expect(choice.selected, 0);
       choice.set(1);
       choose('embedded-apply-advanced');
       await tester.pump();
-      expect(model.preferences.retroInternalResolution[title.id], isPs1 ? '3' : null);
+      expect(model.preferences.retroInternalResolution[title.id], isNull);
       graphicsPending = false;
       await tester.pump(const Duration(milliseconds: 150));
       expect(model.embeddedGame?.options[resolution]?.selected, 1);
       expect(model.embeddedGame?.filter, 1);
       expect(model.preferences.retroInternalResolution, {title.id: scales[1]});
-      expect(model.preferences.retroAutoOptimized, isNot(contains(title.id)));
       model.resumeGame();
       await tester.pump();
       expect(model.overlay, isNull);

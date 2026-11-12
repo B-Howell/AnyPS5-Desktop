@@ -139,10 +139,6 @@ void main() {
       expect(model.running, isNull);
       expect(model.overlay, isNull);
       expect(model.stateOf(game), isA<Installed>());
-      expect(
-        model.retroSettings.categories(platform).map((category) => category.id),
-        isNot(contains('retro-${platform.name}-optimize')),
-      );
       final nextProcess = FakeGameProcess();
       addTearDown(nextProcess.quit);
       model.startRetroGame = ({required installed, required program, required arguments, required logFile}) async {

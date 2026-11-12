@@ -27,7 +27,6 @@ import 'core/opened_files.dart';
 import 'core/launcher_health.dart';
 import 'core/libmpv.dart';
 import 'core/release_signing.dart';
-import 'core/retro_optimizer.dart';
 import 'core/steam/steam_launch.dart';
 import 'core/toolkit_download.dart';
 import 'ui/app_model.dart';
@@ -173,15 +172,6 @@ Future<void> main(List<String> arguments) async {
       // SDL2 (beside the launcher on Windows, the system's on Linux), else XInput and winmm or evdev.
       pads: () => PadReader.open(arguments: arguments),
       systemProbe: () => HostProbe(HostSystem.current),
-      retroHardware: () async {
-        final view = PlatformDispatcher.instance.implicitView;
-        if (!Platform.isWindows || view == null) return null;
-        return RetroHardware(
-          displayHeight: view.display.size.height.round(),
-          adapters: await window.retroAdapters(),
-          logicalProcessors: Platform.numberOfProcessors,
-        );
-      },
       displays: window.displays,
       moveToDisplay: window.moveToDisplay,
       gameWindowReady: Platform.isWindows ? window.gameWindowReady : null,
