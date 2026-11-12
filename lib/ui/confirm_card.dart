@@ -54,7 +54,8 @@ class ConfirmCard extends StatelessWidget {
           ),
           Center(
             child: SizedBox(
-              width: (deleting == null ? 500 : 580) * scale,
+              // A game to delete says more; a game to play instead names it in the question.
+              width: (deleting == null && model.overlay != Layer.switchGame ? 500 : 580) * scale,
               child: Glass(
                 radius: 26 * scale,
                 opacity: 0.55,

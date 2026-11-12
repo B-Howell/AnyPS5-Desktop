@@ -134,7 +134,10 @@ over Home; Back from them stays on Home.
 On Home the running game's tile is selected and its button reads
 **Resume** ([game action](../lib/ui/game_action.dart)). A card in the
 bottom-left corner of the [home screen](../lib/ui/home.dart) shows the
-game's icon, its name and *Paused*, and a click on it resumes. A short PS
+game's icon, its name and *Paused*, and a click on it resumes. The game's
+state is `Running(paused: true)` while it waits there, so the line under its
+tile, the Status card and the corner card all say *Paused* with the pause
+sign, and *Playing* again once it is back in front. A short PS
 press on Home opens the game's Quick Menu, as the PS5 opens its control
 centre there, with Resume first; a second press goes back to the game.
 Holding PS on Home opens the home menu as it does with no game.

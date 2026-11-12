@@ -270,7 +270,10 @@ class RunningGameCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scale = LayoutScale.of(context);
     final accent = model.accentChoice.color;
-    final paused = model.gameAtHome && model.embeddedGame != null;
+    final paused = switch (model.stateOf(game)) {
+      Running(:final paused) => paused,
+      _ => false,
+    };
     final icon = game.icon;
     return Pressable(
       key: const ValueKey('running-game-card'),
@@ -1300,6 +1303,7 @@ class StateLabel extends StatelessWidget {
       Installed(outdated: true) => (Icons.sync_rounded, T.text('updateAvailable'), Palette.warning),
       Installed() => (Icons.check_circle_rounded, T.text('ready'), dim),
       Starting(:final detail) => (Icons.hourglass_top_rounded, detail ?? T.text('starting'), accent),
+      Running(paused: true) => (Icons.pause_circle_rounded, T.text('homeGamePaused'), accent),
       Running() => (Icons.play_circle_rounded, T.text('running'), accent),
     };
     return Row(

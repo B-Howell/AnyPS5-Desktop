@@ -806,8 +806,11 @@ class Starting extends GameState {
 
 /// Its process, started by this launcher, runs.
 class Running extends GameState {
-  const Running(this.pid);
+  const Running(this.pid, {this.paused = false});
   final int pid;
+
+  /// An embedded game waiting paused behind the home screen ([AppModel.gameAtHome]).
+  final bool paused;
 }
 
 /// Asked to close (Stop): it has a moment to close as its window would, then it is ended.
@@ -3473,7 +3476,7 @@ class AppModel extends ChangeNotifier {
   GameState stateOf(Game game) {
     if (starting?.id == game.id && !stopping) return Starting(_retroSetupDetail);
     if (running case (final Game playing, final RunningGame run) when playing.id == game.id) {
-      return stopping ? Stopping(run.pid) : Running(run.pid);
+      return stopping ? Stopping(run.pid) : Running(run.pid, paused: gameAtHome && run is EmbeddedRetroGame);
     }
     if (together.family.ageLock(game) case final FamilyLocked lock) return lock;
     if (game.retro != null) return const Installed();

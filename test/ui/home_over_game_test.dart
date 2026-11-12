@@ -10,6 +10,7 @@ import 'package:anyps5_desktop/ui/embedded_retro_game.dart';
 import 'package:anyps5_desktop/ui/embedded_retro_view.dart';
 import 'package:anyps5_desktop/ui/game_action.dart';
 import 'package:anyps5_desktop/ui/home.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -220,12 +221,16 @@ void main() {
     expect(find.byType(EmbeddedRetroView), findsNothing, reason: 'the home screen in its place');
     expect(find.byType(HomeView), findsOneWidget);
     expect(find.byType(RunningGameCard), findsOneWidget);
-    expect(find.text('Paused'), findsOneWidget);
+    expect(model.stateOf(first), isA<Running>().having((state) => state.paused, 'paused', isTrue));
+    expect(find.text('Playing'), findsNothing, reason: 'every status of the game says it is paused');
+    expect(find.text('Paused'), findsWidgets);
+    expect(find.byIcon(Icons.play_circle_rounded), findsNothing);
     expect(find.text('First game'), findsWidgets);
 
     await tester.tap(find.byType(RunningGameCard));
     await settle(tester);
     expect(model.gameAtHome, isFalse);
+    expect(model.stateOf(first), isA<Running>().having((state) => state.paused, 'paused', isFalse));
     expect(paused(calls), isFalse);
     expect(find.byType(EmbeddedRetroView), findsOneWidget);
 
