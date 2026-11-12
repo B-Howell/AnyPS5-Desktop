@@ -10,6 +10,7 @@ import 'flv_video.dart';
 import 'game_sound.dart';
 import 'stream_packet.dart';
 import 'video_encoders.dart';
+import 'wayland_capture.dart';
 
 /// How a Remote Play start went, as the phone is told (RemoteStreaming's states).
 enum RemotePlayStart {
@@ -25,8 +26,10 @@ enum RemotePlayStart {
 /// works, x264's zero-latency mode otherwise) as FLV on a pipe, which says where each frame
 /// ends; the sound comes from [GameSound] as 5 ms of 16-bit stereo.
 ///
-/// ffmpeg cannot be asked for a key frame from outside, so one comes every second: a phone that
-/// lost part of a frame waits at most that long, where the Mac answers its ask at once.
+/// A phone that lost part of a frame asks for a key frame, as on the Mac. ffmpeg has no direct way
+/// to be told, so the ask goes through its standard input to a filter that marks the next frame
+/// ([KeyRequest]): the key frame follows within about a tenth of a second. A key frame comes
+/// every second anyway, which is all an older ffmpeg (or an encoder that refuses) gets.
 class RemotePlayStream {
   RemotePlayStream({
     required this.ffmpeg,
@@ -36,6 +39,8 @@ class RemotePlayStream {
     required this.soundOf,
     this.environment = const {},
     this.followEvery = const Duration(seconds: 2),
+    this.keyGap = const Duration(milliseconds: 200),
+    this.wayland,
     ProcessStarter? start,
     this.log,
   }) : _start = start ?? ((executable, arguments) => Process.start(executable, arguments));
@@ -47,6 +52,12 @@ class RemotePlayStream {
   final ScreenArea? Function(int pid) areaOf;
   final GameSound Function(int pid) soundOf;
   final Duration followEvery;
+
+  /// At most one key frame request to ffmpeg in this time; each takes it 100 ms or so to read.
+  final Duration keyGap;
+
+  /// Under Wayland, where the picture comes from; null on X11 and Windows.
+  final WaylandCapture? wayland;
   final ProcessStarter _start;
 
   /// A line for the game log.
@@ -65,6 +76,9 @@ class RemotePlayStream {
   int _frame = 0;
   var _chunker = SoundChunker();
   int _restarts = 0;
+  bool _keyRequests = false;
+  Timer? _keyTimer;
+  bool _keyAgain = false;
 
   int? get pid => _pid;
   bool get running => _video != null;
@@ -74,17 +88,32 @@ class RemotePlayStream {
   static int bitRateFor(int width, int height) => max(2000000, (width * height * framesPerSecond * 0.2).round());
 
   /// ffmpeg's arguments for the game in [area], made [width] by [height].
-  List<String> arguments(VideoEncoder encoder, ScreenArea area, int width, int height) => [
+  List<String> arguments(
+    VideoEncoder encoder,
+    ScreenArea area,
+    int width,
+    int height, {
+    WaylandFeed? feed,
+    bool keyRequests = false,
+  }) => [
     '-hide_banner',
     '-loglevel',
     'error',
-    '-nostdin',
+    // Key frame requests come in on the standard input (KeyRequest).
+    if (keyRequests) ...KeyRequest.globalArguments else '-nostdin',
     ...encoder.deviceArguments,
-    ...ScreenGrab.input(system: system, environment: environment, framesPerSecond: framesPerSecond, area: area),
+    ...ScreenGrab.input(
+      system: system,
+      environment: environment,
+      framesPerSecond: framesPerSecond,
+      area: area,
+      wayland: feed,
+    ),
     '-an',
     '-vf',
-    'scale=$width:$height:flags=bilinear,${encoder.filterTail}',
+    '${keyRequests ? '${KeyRequest.filter},' : ''}scale=$width:$height:flags=bilinear,${encoder.filterTail}',
     ...encoder.arguments(use: EncodeUse.live, bitRate: bitRateFor(width, height), keyEvery: framesPerSecond),
+    if (keyRequests) ...encoder.keyRequestArguments,
     '-flush_packets',
     '1',
     '-flvflags',
@@ -113,6 +142,7 @@ class RemotePlayStream {
       log?.call('remote play: no encoder works (${encoders.tried.join(', ')})');
       return RemotePlayStart.noGame;
     }
+    _keyRequests = await encoders.keyRequests;
     _pid = pid;
     _wanted = (width, height);
     _send = send;
@@ -132,7 +162,10 @@ class RemotePlayStream {
       final packets = _chunker.add(samples, _clock.elapsedMilliseconds);
       if (packets.isNotEmpty) _send?.call(packets);
     });
-    log?.call('remote play: ${encoder.codec}, $area made ${ScreenGrab.fit(area, width, height)}, sound ${sound.reach.name}');
+    log?.call(
+      'remote play: ${encoder.codec}, $area made ${ScreenGrab.fit(area, width, height)}, sound ${sound.reach.name}, '
+      'key frames ${_keyRequests ? 'on request and every second' : 'every second only'}',
+    );
     // The window moved or changed size (full screen and back): recorded again where it is now.
     _follow = Timer.periodic(followEvery, (_) {
       final now = areaOf(pid);
@@ -148,12 +181,26 @@ class RemotePlayStream {
     _video = null;
     old?.kill();
     final (width, height) = ScreenGrab.fit(area, wanted.$1, wanted.$2);
+    WaylandFeed? feed;
+    if (wayland case final capture?) {
+      feed = await capture.openFeed(maxWidth: wanted.$1, maxHeight: wanted.$2, framesPerSecond: framesPerSecond);
+      if (feed == null) {
+        log?.call('remote play: no picture from the desktop (${capture.problem?.name})');
+        return false;
+      }
+    }
     final Process process;
     try {
-      process = await _start(ffmpeg, arguments(encoder, area, width, height));
+      process = await _start(ffmpeg, arguments(encoder, area, width, height, feed: feed, keyRequests: _keyRequests));
     } on Object catch (error) {
       log?.call('remote play: ffmpeg did not start: $error');
+      await feed?.close();
       return false;
+    }
+    final picture = feed;
+    // GStreamer gone: ffmpeg would wait on the pipe for ever.
+    if (picture != null) {
+      unawaited(picture.ended.then((_) => process.kill()));
     }
     _video = process;
     _area = area;
@@ -171,12 +218,15 @@ class RemotePlayStream {
         process.kill();
       }
     }, onError: (_) {});
+    // A closed pipe (ffmpeg gone) is no error for whoever asked for a key frame.
+    if (_keyRequests) unawaited(process.stdin.done.catchError((Object _) {}));
     final errors = StringBuffer();
     process.stderr.listen((data) {
-      if (errors.length < 2000) errors.write(String.fromCharCodes(data));
+      if (errors.length < 2000) errors.write(KeyRequest.withoutEcho(String.fromCharCodes(data)));
     }, onError: (_) {});
     unawaited(
       process.exitCode.then((code) async {
+        await picture?.close();
         if (_video != process) return;
         _video = null;
         log?.call('remote play: ffmpeg ended ($code) ${errors.toString().trim()}');
@@ -191,12 +241,31 @@ class RemotePlayStream {
     return true;
   }
 
-  /// The phone lost part of the picture: the next key frame (at most a second away) mends it.
-  void wantKey() {}
+  /// The phone lost part of the picture: ffmpeg is asked for a key frame, and asked once more
+  /// after [keyGap] if the phone asks again meanwhile (that later ask is about later damage).
+  void wantKey() {
+    if (_keyTimer != null) {
+      _keyAgain = true;
+      return;
+    }
+    final video = _video;
+    if (video == null || !_keyRequests) return;
+    video.stdin.write(KeyRequest.command);
+    _keyTimer = Timer(keyGap, () {
+      _keyTimer = null;
+      if (_keyAgain) {
+        _keyAgain = false;
+        wantKey();
+      }
+    });
+  }
 
   Future<void> stop() async {
     _follow?.cancel();
     _follow = null;
+    _keyTimer?.cancel();
+    _keyTimer = null;
+    _keyAgain = false;
     _pid = null;
     _wanted = null;
     _area = null;

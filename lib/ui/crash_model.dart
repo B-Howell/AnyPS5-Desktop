@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -13,6 +14,7 @@ import '../core/game_settings.dart';
 import '../core/host.dart';
 import '../core/online/online_play.dart' show OnlineHost;
 import 'app_model.dart';
+import 'engine_model.dart';
 import 'strings.dart';
 import 'together_model.dart' show launcherVersion;
 
@@ -169,6 +171,8 @@ class CrashModel {
       privacy: privacy(),
       unlockedWith: app.records[game.id]?.toolkit,
       engineNow: app.toolkitVersion,
+      relinkerFlags: app.records[game.id]?.relinkerFlags ?? const [],
+      customRelinkerOptions: app.records[game.id]?.customRelinkerOptions ?? const [],
       exitCode: last?.exitCode,
       stoppedByUser: last?.stoppedByUser ?? false,
       traced: last?.traced,
@@ -272,7 +276,28 @@ class CrashModel {
         PanelRow(id: 'back', title: T.text('back'), kind: ActionRow(leaveSharing)),
       ];
     }
+    final installed = app.records.containsKey(game.id);
+    final playGo = installed && (state.report?.playGoChunksUnknown ?? false);
     return [
+      // The dump has no PlayGo chunk table: AnyPS5-ARM's engine (for a game not made with it), or
+      // this start only with the chunks it does not list counted as installed.
+      if (playGo && !EngineModel.isArm(app.records[game.id]?.toolkit))
+        PanelRow(
+          id: 'playGoArm',
+          title: T.text('reportPlayGoArm'),
+          detail: T.text('reportPlayGoArmDetail'),
+          kind: ActionRow(() => unawaited(switchToArmAndPlay(game))),
+        ),
+      if (playGo)
+        PanelRow(
+          id: 'playGoInstalled',
+          title: T.text('reportPlayGoInstalled'),
+          detail: T.text('reportPlayGoInstalledDetail'),
+          kind: ActionRow(() {
+            app.closeOverlay();
+            unawaited(app.play(game, once: playGoInstalled));
+          }),
+        ),
       saveRow,
       PanelRow(id: 'copy', title: T.text('reportCopy'), detail: T.text('reportCopyDetail'), kind: ActionRow(copy)),
       PanelRow(
@@ -296,6 +321,17 @@ class CrashModel {
     ];
   }
 
+  /// What "Play again with missing chunks counted as installed" starts the game with, once.
+  static const playGoInstalled = {'APS5_PLAYGO_UNLISTED_CHUNKS': 'installed'};
+
+  /// Switch to the AnyPS5-ARM Engine and Play Again: the engine downloaded when it is not on disk
+  /// and used, then the game unlocked again with it and started (Update and Play).
+  Future<void> switchToArmAndPlay(Game game) async {
+    app.closeOverlay();
+    if (!await app.engine.switchToArm()) return;
+    app.updateAndPlay(game);
+  }
+
   /// Back steps out of the shared text first; Options closes the panel.
   void command(Command command) {
     if (command == Command.back && current?.sharing == true) return leaveSharing();
@@ -316,7 +352,7 @@ class CrashModel {
     if (state == null) return;
     app.sounds.play(Cue.back);
     state.sharing = false;
-    app.panelRow = 2;
+    app.panelRow = math.max(0, rows().indexWhere((row) => row.id == 'issue'));
     app.refresh();
   }
 
@@ -366,6 +402,8 @@ class _ReportInput {
     required this.privacy,
     required this.unlockedWith,
     required this.engineNow,
+    this.relinkerFlags = const [],
+    this.customRelinkerOptions = const [],
     required this.exitCode,
     required this.stoppedByUser,
     required this.traced,
@@ -390,6 +428,8 @@ class _ReportInput {
   final ReportPrivacy privacy;
   final String? unlockedWith;
   final String? engineNow;
+  final List<String> relinkerFlags;
+  final List<String> customRelinkerOptions;
   final int? exitCode;
   final bool stoppedByUser;
   final bool? traced;
@@ -439,6 +479,8 @@ _Built _build(_ReportInput input) {
     privacy: input.privacy,
     unlockedWith: input.unlockedWith,
     engineNow: input.engineNow,
+    relinkerFlags: input.relinkerFlags,
+    customRelinkerOptions: input.customRelinkerOptions,
     exitCode: code,
     stoppedByUser: input.stoppedByUser,
     traced: input.traced ?? GameLog.tracedStart(session),

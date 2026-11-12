@@ -71,6 +71,29 @@ void main() {
     await phone.close();
   });
 
+  test('Settings › Phones says which paired phone is connected now, as on the Mac', () async {
+    List<PanelRow> rows() => model.panelCategories().firstWhere((category) => category.id == 'phone').rows;
+    PanelRow phoneRow(String id) => rows().firstWhere((row) => row.id == id);
+    String count() => (phoneRow('phones').kind as InfoRow).text;
+    model.open(Layer.settings);
+    expect(count(), T.text('phonesNone'));
+    final phone = await pairedPhone();
+    expect(count(), '1 connected');
+    // The name alone in the title, with the sign for its kind; connected now is said under it.
+    expect(phoneRow('device-phone-1').title, 'Pixel');
+    expect(phoneRow('device-phone-1').icon, PanelIcon.phone);
+    expect(phoneRow('device-phone-1').detail, 'Connected now, select to remove');
+    T.language = Language.byCode('tr');
+    expect(count(), '1 bağlı');
+    expect(phoneRow('device-phone-1').detail, 'Şu an bağlı, kaldırmak için seç');
+    T.language = Language.english;
+    await phone.close();
+    await until(() => model.remote!.connectedDevices.isEmpty);
+    expect(phoneRow('device-phone-1').title, 'Pixel', reason: 'still paired, not connected');
+    expect(phoneRow('device-phone-1').detail, T.text('phoneRemove'));
+    expect(count(), '');
+  });
+
   test('the top bar shows the phone controller only while one is connected or connecting', () async {
     expect(PhoneIndicator.shows(model), isFalse, reason: 'no phone: the bar stays clear');
     final connected = await FakePhone.connect(model.remote!.port!);

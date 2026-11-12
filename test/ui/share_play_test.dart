@@ -47,6 +47,7 @@ void main() {
   late AppModel model;
   late FakeEngine engine;
   late List<FakeSfuRoom> rooms;
+  late TitledDesktop desktop;
 
   Future<void> until(bool Function() condition) async {
     for (var tries = 0; tries < 500 && !condition(); tries++) {
@@ -74,9 +75,14 @@ void main() {
     server = await FakeTogether.start();
     server.friend('u-ana', 'ana', 'Ana', presence: {'state': 'online'});
     rooms = [];
+    desktop = TitledDesktop();
     fixture = makeFixture(
       together: server.base,
-      desktop: TitledDesktop(),
+      desktop: desktop,
+      renderNoticeCard: (title, detail, symbol, scale) async {
+        desktop.noticeCards.add((title, detail));
+        return RgbaImage(1, 1, Uint8List.fromList([1, 2, 3, 4]));
+      },
       sfuRoom: () {
         final room = FakeSfuRoom();
         rooms.add(room);
@@ -112,7 +118,8 @@ void main() {
       '"titleID":"PPSA01001","toolkit":"arm-5ca076a87"}',
     );
     model.rescan();
-    final playing = model.play(orbit());
+    // The copy as it is: these are about the engine it was made with, not about rebuilding it.
+    final playing = model.play(orbit(), asItIs: true);
     await until(() => model.running != null);
     return (done: playing);
   }
@@ -120,6 +127,11 @@ void main() {
   List<String> quickRows() {
     model.open(Layer.quickMenu);
     return model.panelCategories().single.rows.map((row) => row.id).toList();
+  }
+
+  PanelRow quickRow(String id) {
+    model.open(Layer.quickMenu);
+    return model.panelCategories().single.rows.firstWhere((row) => row.id == id);
   }
 
   void choose(String id) {
@@ -157,13 +169,66 @@ void main() {
     await until(() => quickRows().contains('share-stop-u-ana'));
     expect(model.toast, T.format('sharePlayNowPlays', ['Ana', 2]));
 
+    // As on the Mac: a guest with a pad helps player 1 instead of playing their own.
+    PanelRow assist() => quickRow('share-assist-u-ana');
+    expect(assist().title, 'Assist Player 1');
+    expect(assist().detail, 'Ana helps you play player 1 instead of playing their own.');
+    expect((assist().kind as ToggleRow).value, isFalse);
+    (assist().kind as ToggleRow).set(true);
+    expect((assist().kind as ToggleRow).value, isTrue);
+
+    // Stop and Remove ask first, in place, Cancel focused, as on the Mac: Back answers Cancel.
+    model.open(Layer.quickMenu);
+    List<String> rowsNow() => model.panelCategories().single.rows.map((row) => row.id).toList();
+    String focusedRow() => rowsNow()[model.panelRow];
+    choose('share-remove-u-ana');
+    expect(rowsNow(), containsAllInOrder(['share-remove-u-ana-ask', 'share-remove-u-ana-yes', 'share-remove-u-ana-cancel']));
+    expect(focusedRow(), 'share-remove-u-ana-cancel');
+    model.command(Command.back);
+    expect(model.overlay, Layer.quickMenu, reason: 'Back cancels the question, not the menu');
+    expect(rowsNow(), contains('share-remove-u-ana'));
+    expect(focusedRow(), 'share-remove-u-ana');
+
+    choose('share-stop');
+    expect(rowsNow(), containsAllInOrder(['share-stop-ask', 'share-stop-yes', 'share-stop-cancel']));
+    expect(model.sharePlay.active, isTrue, reason: 'nothing stops at the question');
+    expect(focusedRow(), 'share-stop-cancel');
+    choose('share-stop-cancel');
+    expect(rowsNow(), contains('share-stop'));
+
     server.answers['DELETE share-plays/sp-1'] = (204, null);
     choose('share-stop');
+    choose('share-stop-yes');
     await until(() => engine.stopped);
     expect(model.sharePlay.active, isFalse);
     expect(engine.links.single.closed, isTrue);
     expect(server.frames.where((frame) => frame['op'] == 'signal').last['kind'], 'bye');
     expect(quickRows(), contains('share-start'));
+    model.stopGame();
+    await playing;
+  }, skip: Platform.isWindows ? 'the stand-in game is a shell script' : false);
+
+  test('someone asking to watch, with the game in front, is the card over it as on the Mac', () async {
+    final playing = (await play()).done;
+    expect(quickRows(), contains('share-start'));
+    server.answers['POST share-plays'] = (201, {'sharePlay': sharePlay([]), 'iceServers': <Object>[], 'expiresAt': null});
+    choose('share-start');
+    await until(() => model.sharePlay.active);
+    desktop.focused = false;
+    server.push('share_play.request', {
+      'sharePlayId': 'sp-1',
+      'from': {'userId': 'u-gu', 'handle': 'gu', 'displayName': 'Gu'},
+      'via': 'list',
+    });
+    await until(() => desktop.noticeCards.contains((T.format('discoverAsksWatch', ['Gu']), T.text('friendsTitle'))));
+    expect(model.toast, T.format('discoverAsksWatch', ['Gu']));
+    expect(desktop.calls.where((call) => call.startsWith('notify')), isEmpty, reason: 'the card, no desktop notice as well');
+    desktop.focused = null;
+    server.answers['DELETE share-plays/sp-1'] = (204, null);
+    expect(quickRows(), contains('share-stop'));
+    choose('share-stop');
+    choose('share-stop-yes');
+    await until(() => engine.stopped);
     model.stopGame();
     await playing;
   }, skip: Platform.isWindows ? 'the stand-in game is a shell script' : false);
@@ -258,6 +323,7 @@ void main() {
 
     server.answers['DELETE share-plays/sp-1'] = (204, null);
     choose('share-stop');
+    choose('share-stop-yes');
     await until(() => engine.stopped);
     expect(engine.publisher!.closed, isTrue);
     model.stopGame();
@@ -275,6 +341,7 @@ void main() {
     expect(max.detail, T.text('sharePlayMaxViewersDetail'));
     server.answers['DELETE share-plays/sp-1'] = (204, null);
     choose('share-stop');
+    choose('share-stop-yes');
     await until(() => engine.stopped);
     model.stopGame();
     await playing;

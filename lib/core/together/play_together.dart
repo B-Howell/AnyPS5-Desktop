@@ -1,5 +1,6 @@
 import 'account.dart';
 import 'game_sessions.dart';
+import 'join_advice.dart';
 import 'people.dart';
 
 /// Play Together: in a party, the host picks a game and starts it for the party; the launcher
@@ -123,17 +124,25 @@ class PlayTogetherOffer {
     capacity: session.capacity,
   );
 
-  factory PlayTogetherOffer.fromParty(PartyTogether together, List<Person> members) => PlayTogetherOffer(
-    sessionId: together.sessionId,
-    hostId: together.hostId,
-    hostName: members.where((person) => person.id == together.hostId).firstOrNull?.displayName ?? '',
-    titleId: together.titleId,
-    gameVersion: together.gameVersion,
-    engineBuild: together.engineBuild,
-    versionRule: together.versionRule,
-    players: together.players.length,
-    capacity: together.capacity,
-  );
+  /// [name]: how a person is shown here (a friend's private name); their public name without it.
+  factory PlayTogetherOffer.fromParty(
+    PartyTogether together,
+    List<Person> members, {
+    String Function(Person person)? name,
+  }) {
+    final host = members.where((person) => person.id == together.hostId).firstOrNull;
+    return PlayTogetherOffer(
+      sessionId: together.sessionId,
+      hostId: together.hostId,
+      hostName: host == null ? '' : (name?.call(host) ?? host.displayName),
+      titleId: together.titleId,
+      gameVersion: together.gameVersion,
+      engineBuild: together.engineBuild,
+      versionRule: together.versionRule,
+      players: together.players.length,
+      capacity: together.capacity,
+    );
+  }
 
   final String sessionId;
   final String hostId;
@@ -325,8 +334,18 @@ class PlayTogetherCheck {
         fitting.where((copy) => copy.engineBuild == offer.engineBuild).firstOrNull ??
         fitting.where((copy) => copy.unlocked && copy.nextEngineBuild == offer.engineBuild).firstOrNull;
     if (copy == null) {
+      // Who is behind is read from the releases (a nightly before its release), never from a
+      // build's fingerprint.
       final have = fitting.first.engineBuild;
-      return OtherEngine(have: have, need: offer.engineBuild, youUpdate: compareVersions(have, offer.engineBuild) < 0);
+      return OtherEngine(
+        have: have,
+        need: offer.engineBuild,
+        youUpdate: EngineAdvice.of(
+          yours: have,
+          host: offer.engineBuild,
+          rebuildGives: fitting.first.nextEngineBuild,
+        ).youUpdate,
+      );
     }
     if (running != null) return CloseFirst(running);
     if (offer.players >= offer.capacity) return const SessionFull();

@@ -2,15 +2,47 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:math' show max;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
 import 'desktop.dart';
+import 'layer_overlay.dart';
 import 'window_backdrop.dart';
 
 /// Which kind of Linux desktop session this is.
 enum LinuxSession { x11, wayland, none }
+
+/// How a card goes over the game on a Linux desktop.
+enum LinuxCardWay {
+  /// X11: an override-redirect window of the launcher's own.
+  x11Window,
+
+  /// Wayland with wlr-layer-shell (KDE Plasma, Sway, Hyprland): a surface on the overlay layer.
+  layerShell,
+
+  /// Wayland without it (GNOME), or no display: the system notification.
+  notification,
+}
+
+/// X11 draws its own windows (once Xlib loads); Wayland needs the compositor's layer shell and
+/// gtk-layer-shell, which the runner looked for ([layerShellScale]).
+LinuxCardWay linuxCardWay({required LinuxSession session, required bool xlib, required bool layerShell}) =>
+    switch (session) {
+      LinuxSession.x11 when xlib => LinuxCardWay.x11Window,
+      LinuxSession.wayland when layerShell => LinuxCardWay.layerShell,
+      _ => LinuxCardWay.notification,
+    };
+
+/// How the LIVE badge stays out of the picture each way: on X11 out of a recording of the
+/// game's window by itself; under Wayland out of everything, since the portal shares the game's
+/// window alone and the badge is a surface of the launcher's own over it.
+BadgeReach linuxBadgeReach(LinuxCardWay way) => switch (way) {
+  LinuxCardWay.x11Window => BadgeReach.windowRecordingOnly,
+  LinuxCardWay.layerShell => BadgeReach.excluded,
+  LinuxCardWay.notification => BadgeReach.none,
+};
 
 LinuxSession linuxSession(Map<String, String> environment) {
   final type = (environment['XDG_SESSION_TYPE'] ?? '').toLowerCase();
@@ -169,7 +201,16 @@ final class _Xlib {
     flush = x11.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('XFlush');
     translateCoordinates = x11
         .lookupFunction<
-          Int32 Function(Pointer<Void>, UnsignedLong, UnsignedLong, Int32, Int32, Pointer<Int32>, Pointer<Int32>, Pointer<UnsignedLong>),
+          Int32 Function(
+            Pointer<Void>,
+            UnsignedLong,
+            UnsignedLong,
+            Int32,
+            Int32,
+            Pointer<Int32>,
+            Pointer<Int32>,
+            Pointer<UnsignedLong>,
+          ),
           int Function(Pointer<Void>, int, int, int, int, Pointer<Int32>, Pointer<Int32>, Pointer<UnsignedLong>)
         >('XTranslateCoordinates');
     getSelectionOwner = x11
@@ -253,13 +294,32 @@ final class _Xlib {
 
 /// The desktop on Linux. On X11: the game's window found by its _NET_WM_PID, its picture with
 /// XGetImage, the trophy card as an override-redirect window (above the game, out of the window
-/// manager's hands, its input shape empty so clicks go through). Windows are brought in front
+/// manager's hands, its input shape empty so clicks go through), the LIVE badge as another one
+/// while a compositing manager runs. Windows are brought in front
 /// with xdotool or wmctrl when one is installed. On Wayland, where no program may place a window
-/// over another's or read it, the card is a desktop notification and no picture is taken.
+/// over another's or read it, the card and the badge are layer-shell surfaces of the runner's
+/// ([overlay]) where the compositor has the protocol, the card a desktop notification elsewhere
+/// (GNOME); no picture is taken.
 class LinuxDesktop implements DesktopWindows, GameAreas {
-  LinuxDesktop({Map<String, String>? environment}) : session = linuxSession(environment ?? Platform.environment);
+  LinuxDesktop({Map<String, String>? environment, this.overlay, this.cardStay = const Duration(milliseconds: 4600)})
+    : _environment = environment ?? Platform.environment,
+      session = linuxSession(environment ?? Platform.environment);
 
+  final Map<String, String> _environment;
   final LinuxSession session;
+
+  /// The runner's layer-shell surfaces, used under Wayland when the runner found layer shell.
+  final LayerOverlay? overlay;
+
+  /// How long a card stays on screen.
+  final Duration cardStay;
+
+  /// How cards go over the game here.
+  LinuxCardWay get cardWay => linuxCardWay(
+    session: session,
+    xlib: session == LinuxSession.x11 && _x != null,
+    layerShell: overlay != null && layerShellScale(_environment) != null,
+  );
 
   _Xlib? _xlibCache;
   bool _xlibTried = false;
@@ -489,7 +549,7 @@ class LinuxDesktop implements DesktopWindows, GameAreas {
       final top = arena<Int32>();
       final child = arena<UnsignedLong>();
       if (x.translateCoordinates(display, window, root, 0, 0, left, top, child) == 0) return null;
-      return ScreenArea(left.value, top.value, width, height);
+      return ScreenArea(left.value, top.value, width, height, window: window);
     });
   });
 
@@ -547,17 +607,222 @@ class LinuxDesktop implements DesktopWindows, GameAreas {
     });
   });
 
+  /// GDK_SCALE where it is set; under Wayland the monitor's scale the runner found otherwise, so
+  /// a card is drawn sharp on a HiDPI screen.
   @override
   double cardScale(int? pid) {
-    final scale = double.tryParse(Platform.environment['GDK_SCALE'] ?? '');
-    return scale != null && scale > 0 ? scale : 1;
+    final scale = double.tryParse(_environment['GDK_SCALE'] ?? '');
+    if (scale != null && scale > 0) return scale;
+    if (session == LinuxSession.wayland) return (layerShellScale(_environment) ?? 1).toDouble();
+    return 1;
   }
 
   bool _showing = false;
 
+  /// Whether a compositing manager owns _NET_WM_CM_Sn: each window's picture is then its own
+  /// (redirected), with no other window over it in it.
+  bool _composited(_Xlib x, Pointer<Void> display) => using((arena) {
+    final screen = x.defaultScreen(display);
+    final selection = x.internAtom(display, '_NET_WM_CM_S$screen'.toNativeUtf8(allocator: arena), 0);
+    return selection != 0 && x.getSelectionOwner(display, selection) != 0;
+  });
+
+  /// The LIVE badge's window on X11, and the display connection it lives on while it shows.
+  Pointer<Void>? _badgeDisplay;
+  int _badgeWindow = 0;
+  int _badgeColormap = 0;
+  Pointer<Void> _badgeVisual = nullptr;
+  Pointer<Void> _badgeGc = nullptr;
+  int _badgeWidth = 0;
+  int _badgeHeight = 0;
+  Timer? _badgeWatch;
+
+  /// On X11 the badge stays out of a recording of the game's window by itself (the broadcast's,
+  /// x11grab's window_id) while a compositing manager keeps each window's picture apart; a
+  /// recording of the screen would take it.
+  @override
+  BadgeReach get badgeReach => linuxBadgeReach(cardWay);
+
+  /// On X11 an override-redirect 32-bit window at the top left of the game's window, its input
+  /// shape empty, drawn again at each change. Shown only while a compositing manager runs, and
+  /// taken away within a quarter of a second when it stops: without one, reading the game's
+  /// window gives what is on the screen there, this badge too.
+  @override
+  Future<bool> showBadge(RgbaImage? badge, {int? pid}) async {
+    if (cardWay == LinuxCardWay.layerShell) return _layerBadge(badge, pid);
+    final x = _x;
+    if (x == null) return false;
+    if (badge == null) {
+      _hideBadge();
+      return true;
+    }
+    final display = _badgeDisplay ??= x.openDisplay(nullptr);
+    if (display == nullptr) {
+      _badgeDisplay = null;
+      return false;
+    }
+    if (!_composited(x, display)) {
+      _hideBadge();
+      return false;
+    }
+    if (_badgeWindow != 0 && (_badgeWidth != badge.width || _badgeHeight != badge.height)) {
+      _destroyBadgeWindow(x, display);
+    }
+    final scale = cardScale(pid);
+    final area = pid == null ? null : gameArea(pid);
+    final left = (area?.x ?? 0) + (18 * scale).round();
+    final top = (area?.y ?? 0) + (14 * scale).round();
+    if (_badgeWindow == 0 && !_makeBadgeWindow(x, display, left, top, badge.width, badge.height)) {
+      _hideBadge();
+      return false;
+    }
+    x.moveWindow(display, _badgeWindow, left, top);
+    final pixels = calloc<Uint8>(badge.pixels.length);
+    pixels.asTypedList(badge.pixels.length).setAll(0, badge.premultipliedBgra());
+    // XCreateImage takes the pixels and frees them with the image.
+    final image = x.createImage(
+      display,
+      _badgeVisual,
+      32,
+      2 /* ZPixmap */,
+      0,
+      pixels,
+      badge.width,
+      badge.height,
+      32,
+      0,
+    );
+    if (image == nullptr) {
+      calloc.free(pixels);
+      return false;
+    }
+    try {
+      x.putImage(display, _badgeWindow, _badgeGc, image, 0, 0, 0, 0, badge.width, badge.height);
+    } finally {
+      x.destroyImage(image);
+    }
+    x.raiseWindow(display, _badgeWindow);
+    x.flush(display);
+    _badgeWatch ??= Timer.periodic(const Duration(milliseconds: 250), (_) => _watchBadge());
+    return true;
+  }
+
+  bool _makeBadgeWindow(_Xlib x, Pointer<Void> display, int left, int top, int width, int height) => using((arena) {
+    final screen = x.defaultScreen(display);
+    final root = x.rootWindow(display, screen);
+    if (_badgeVisual == nullptr) {
+      final info = arena<Uint8>(64); // XVisualInfo
+      if (x.matchVisualInfo(display, screen, 32, 4 /* TrueColor */, info) == 0) return false;
+      _badgeVisual = info.cast<Pointer<Void>>().value;
+      _badgeColormap = x.createColormap(display, root, _badgeVisual, 0);
+    }
+    final attributes = arena<Uint8>(112); // XSetWindowAttributes
+    (attributes + 8).cast<UnsignedLong>().value = 0; // background_pixel
+    (attributes + 24).cast<UnsignedLong>().value = 0; // border_pixel
+    (attributes + 88).cast<Int32>().value = 1; // override_redirect
+    (attributes + 96).cast<UnsignedLong>().value = _badgeColormap;
+    const mask = 1 << 1 | 1 << 3 | 1 << 9 | 1 << 13; // CWBackPixel | CWBorderPixel | CWOverrideRedirect | CWColormap
+    final window = x.createWindow(
+      display,
+      root,
+      left,
+      top,
+      width,
+      height,
+      0,
+      32,
+      1 /* InputOutput */,
+      _badgeVisual,
+      mask,
+      attributes,
+    );
+    if (window == 0) return false;
+    // An empty input shape: every click goes to the game below.
+    x.shapeCombineRectangles?.call(display, window, 2 /* ShapeInput */, 0, 0, nullptr, 0, 0 /* ShapeSet */, 0);
+    x.mapRaised(display, window);
+    _badgeGc = x.createGC(display, window, 0, nullptr);
+    _badgeWindow = window;
+    _badgeWidth = width;
+    _badgeHeight = height;
+    return true;
+  });
+
+  /// Kept in front of the game, and taken away as soon as nothing composites any more.
+  void _watchBadge() {
+    final x = _x;
+    final display = _badgeDisplay;
+    if (x == null || display == null || _badgeWindow == 0) return;
+    if (!_composited(x, display)) return _hideBadge();
+    x.raiseWindow(display, _badgeWindow);
+    x.flush(display);
+  }
+
+  void _destroyBadgeWindow(_Xlib x, Pointer<Void> display) {
+    if (_badgeGc != nullptr) x.freeGC(display, _badgeGc);
+    _badgeGc = nullptr;
+    if (_badgeWindow != 0) x.destroyWindow(display, _badgeWindow);
+    _badgeWindow = 0;
+    x.flush(display);
+  }
+
+  void _hideBadge() {
+    _badgeWatch?.cancel();
+    _badgeWatch = null;
+    final x = _x;
+    final display = _badgeDisplay;
+    _badgeDisplay = null;
+    if (x == null || display == null || display == nullptr) return;
+    _destroyBadgeWindow(x, display);
+    // The colormap and visual go with the connection.
+    _badgeVisual = nullptr;
+    _badgeColormap = 0;
+    x.closeDisplay(display);
+  }
+
+  /// Under Wayland, the badge as the runner's surface at the top left of the screen.
+  Future<bool> _layerBadge(RgbaImage? badge, int? pid) async {
+    final layers = overlay!;
+    if (badge == null) return layers.hide('badge');
+    return layers.show('badge', badge, anchor: LayerAnchor.topLeft, left: 18, top: 14, scale: cardScale(pid));
+  }
+
+  @override
+  bool get canShowCard => cardWay != LinuxCardWay.notification;
+
+  /// Under Wayland, the card as the runner's surface at the top of the screen, coming in and
+  /// going as on X11; positions are in the desktop's own units.
+  Future<bool> _layerCard(RgbaImage card, int? pid) async {
+    final layers = overlay!;
+    _showing = true;
+    try {
+      int top(double t) => max(
+        0,
+        cardPosition(screenLeft: 0, screenTop: 0, screenWidth: 0, cardWidth: 0, margin: 18, slide: 22, t: t).y,
+      );
+      final scale = cardScale(pid);
+      if (!await layers.show('card', card, anchor: LayerAnchor.top, top: top(0), scale: scale, opacity: 0)) {
+        return false;
+      }
+      final started = DateTime.now();
+      while (true) {
+        final phase = cardPhase(DateTime.now().difference(started), stay: cardStay);
+        if (phase.done) break;
+        await layers.update('card', opacity: phase.opacity, top: top(phase.t));
+        await Future<void>.delayed(const Duration(milliseconds: 33));
+      }
+      return true;
+    } on Object {
+      return false;
+    } finally {
+      await layers.hide('card');
+      _showing = false;
+    }
+  }
+
   @override
   Future<bool> showCard(RgbaImage card, {int? pid}) async {
     if (_showing) return false;
+    if (cardWay == LinuxCardWay.layerShell) return _layerCard(card, pid);
     final x = _x;
     if (x == null) return false;
     final display = x.openDisplay(nullptr);
@@ -619,7 +884,7 @@ class LinuxDesktop implements DesktopWindows, GameAreas {
         final started = DateTime.now();
         var lastOpacity = -1.0;
         while (true) {
-          final phase = cardPhase(DateTime.now().difference(started));
+          final phase = cardPhase(DateTime.now().difference(started), stay: cardStay);
           if (phase.done) break;
           final place = cardPosition(
             screenLeft: 0,
@@ -675,6 +940,7 @@ class LinuxDesktop implements DesktopWindows, GameAreas {
 
   @override
   void dispose() {
+    _hideBadge();
     final display = _focusDisplay;
     _focusDisplay = null;
     if (display != null && display != nullptr) _x?.closeDisplay(display);
@@ -701,8 +967,7 @@ class LinuxBackdrop implements WindowBackdrop {
       _desktop._withDisplay(
         (x, display) => using((arena) {
           final screen = x.defaultScreen(display);
-          final selection = x.internAtom(display, '_NET_WM_CM_S$screen'.toNativeUtf8(allocator: arena), 0);
-          compositor = selection != 0 && x.getSelectionOwner(display, selection) != 0;
+          compositor = _desktop._composited(x, display);
           final blur = x.internAtom(display, _blurAtom.toNativeUtf8(allocator: arena), 1);
           final supported = _desktop._property(x, display, arena, x.rootWindow(display, screen), '_NET_SUPPORTED');
           kwinBlur = blur != 0 && (supported?.contains(blur) ?? false);

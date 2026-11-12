@@ -7,6 +7,7 @@ import '../core/game_addons.dart';
 import '../core/game_library.dart';
 import '../core/update_notice.dart' show SelfApply;
 import '../core/controllers/troubleshooter.dart';
+import '../core/together/compat.dart' show CompatStatus, CompatSummary;
 import 'app_model.dart';
 import 'background.dart';
 import 'components.dart';
@@ -18,7 +19,7 @@ import 'glass.dart';
 import 'level_badge.dart';
 import 'padlock.dart';
 import 'panels.dart' show StatusDot;
-import 'profiles_view.dart' show ProfileTile;
+import 'profiles_view.dart' show ProfileSwitcherList, ProfileTile;
 import 'retro_folder_tile.dart';
 import 'console_badge.dart';
 import 'strings.dart';
@@ -148,63 +149,100 @@ class Backdrop extends StatelessWidget {
   }
 }
 
-class HomeView extends StatelessWidget {
+class HomeView extends StatefulWidget {
   const HomeView({super.key, required this.model, this.now});
 
   final AppModel model;
   final DateTime? now;
 
   @override
+  State<HomeView> createState() => _HomeViewState();
+}
+
+class _HomeViewState extends State<HomeView> {
+  /// Ties the profile list to the picture in the top bar it drops from.
+  final LayerLink _profileLink = LayerLink();
+
+  @override
   Widget build(BuildContext context) {
+    final model = widget.model;
+    final now = widget.now;
     final scale = LayoutScale.of(context);
     final game = model.homePreviewGame;
     // Glass's panes on the home screen never overlap: they share one blur of the background.
     return BackdropGroup(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
+        fit: StackFit.expand,
         children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(64 * scale, 34 * scale, 64 * scale, 0),
-            child: TopBar(model: model, now: now),
-          ),
-          if (model.games.isEmpty)
-            Expanded(child: EmptyLibrary(model: model))
-          else ...[
-            SizedBox(height: 34 * scale),
-            TileRow(model: model),
-            if (model.homeFolderPlatform != null) ...[
-              SizedBox(height: 24 * scale),
-              TileRow(key: const ValueKey('retro-folder-games'), model: model, folderContents: true),
-            ],
-            const Spacer(),
-            if (game != null)
-              AnimatedSwitcher(
-                layoutBuilder: uniqueSwitcherLayout(),
-                duration: Motion.layout,
-                switchInCurve: Motion.settle,
-                transitionBuilder: (child, animation) => FadeTransition(
-                  opacity: animation,
-                  child: SlideTransition(
-                    position: Tween(begin: const Offset(0, 0.04), end: Offset.zero).animate(animation),
-                    child: child,
-                  ),
-                ),
-                child: Padding(
-                  key: ValueKey(game.id),
-                  padding: EdgeInsets.symmetric(horizontal: 72 * scale),
-                  child: HeroInfo(model: model, game: game),
-                ),
-              ),
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: 64 * scale, vertical: 28 * scale),
-              child: Align(
-                alignment: AlignmentDirectional.centerEnd,
-                child: Legible(softness: 14, child: HintBar(options: model.selectedHomeFolder == null)),
+          _body(context, model, now, scale, game),
+          if (model.profileListOpen) ...[
+            // A click anywhere else closes the list, and still does what it was for.
+            Positioned.fill(
+              child: Listener(behavior: HitTestBehavior.translucent, onPointerDown: (_) => model.closeProfileList()),
+            ),
+            Positioned(
+              left: 0,
+              top: 0,
+              child: CompositedTransformFollower(
+                link: _profileLink,
+                showWhenUnlinked: false,
+                targetAnchor: Alignment.bottomCenter,
+                followerAnchor: Alignment.topCenter,
+                offset: Offset(0, 12 * scale),
+                child: ProfileSwitcherList(model: model),
               ),
             ),
           ],
         ],
       ),
+    );
+  }
+
+  Widget _body(BuildContext context, AppModel model, DateTime? now, double scale, Game? game) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(64 * scale, 34 * scale, 64 * scale, 0),
+          child: TopBar(model: model, now: now, profileLink: _profileLink),
+        ),
+        if (model.games.isEmpty)
+          Expanded(child: EmptyLibrary(model: model))
+        else ...[
+          SizedBox(height: 34 * scale),
+          TileRow(model: model),
+          if (model.homeFolderPlatform != null) ...[
+            SizedBox(height: 24 * scale),
+            TileRow(key: const ValueKey('retro-folder-games'), model: model, folderContents: true),
+          ],
+          const Spacer(),
+          if (game != null)
+            AnimatedSwitcher(
+              layoutBuilder: uniqueSwitcherLayout(),
+              duration: Motion.layout,
+              switchInCurve: Motion.settle,
+              transitionBuilder: (child, animation) => FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween(begin: const Offset(0, 0.04), end: Offset.zero).animate(animation),
+                  child: child,
+                ),
+              ),
+              child: Padding(
+                key: ValueKey(game.id),
+                padding: EdgeInsets.symmetric(horizontal: 72 * scale),
+                child: HeroInfo(model: model, game: game),
+              ),
+            ),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 64 * scale, vertical: 28 * scale),
+            child: Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: Legible(softness: 14, child: HintBar(options: model.selectedHomeFolder == null)),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -347,10 +385,13 @@ class EngineJobPill extends StatelessWidget {
 }
 
 class TopBar extends StatelessWidget {
-  const TopBar({super.key, required this.model, this.now});
+  const TopBar({super.key, required this.model, this.now, this.profileLink});
 
   final AppModel model;
   final DateTime? now;
+
+  /// What Home's profile list follows: the picture at the end of the bar.
+  final LayerLink? profileLink;
 
   @override
   Widget build(BuildContext context) {
@@ -362,7 +403,11 @@ class TopBar extends StatelessWidget {
     // The status the user chose, when it is not plain online: its dot and its word.
     final ownDot = together.signedIn ? TogetherModel.ownDot(together.myStatus) : null;
     final glass = LookScope.isGlass(context);
-    Widget iconButton(IconData icon, int index, VoidCallback action, {int badge = 0}) {
+    // The keys are on the profile picture (its list is open under it).
+    final pictureFocused = model.focus == const HomeFocus.switcher(0) && model.overlay == null;
+    Widget linked(Widget picture) =>
+        profileLink == null ? picture : CompositedTransformTarget(link: profileLink!, child: picture);
+    Widget iconButton(IconData icon, int index, VoidCallback action, {int badge = 0, bool dot = false}) {
       final focused = model.focus == HomeFocus.top(index) && model.overlay == null;
       return Pressable(
         onTap: action,
@@ -402,6 +447,22 @@ class TopBar extends StatelessWidget {
                     icon,
                     size: 20 * scale,
                     color: focused ? Colors.black : Colors.white.withValues(alpha: 0.9),
+                  ),
+                ),
+              // Something unread that is not worth a number (the party chat), as on the Mac.
+              if (dot && badge == 0)
+                PositionedDirectional(
+                  end: 0,
+                  top: 0,
+                  child: Container(
+                    key: ValueKey('home-dot-$index'),
+                    width: 12 * scale,
+                    height: 12 * scale,
+                    decoration: BoxDecoration(
+                      color: accent,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.black.withValues(alpha: 0.5), width: 1.5 * scale),
+                    ),
                   ),
                 ),
               if (badge > 0)
@@ -488,6 +549,7 @@ class TopBar extends StatelessWidget {
           4,
           () => model.open(Layer.party),
           badge: together.partyBadge,
+          dot: together.partyChatUnread > 0,
         ),
         SizedBox(width: 22 * scale),
         // AnyTogether's notifications, while signed in: the bell with the unread count.
@@ -508,25 +570,57 @@ class TopBar extends StatelessWidget {
         // The phone controller's pill only while a phone is connected or connecting: a launcher
         // used without one keeps the bar clear.
         if (PhoneIndicator.shows(model)) ...[PhoneIndicator(model: model), SizedBox(width: 22 * scale)],
-        Stack(
-          clipBehavior: Clip.none,
-          children: [
-            // The profile playing: its picture, or its initial on its own colour (Settings ›
-            // Profiles), so a change there shows here at once.
-            ProfileTile(
-              key: const ValueKey('home-avatar'),
-              profile: model.currentProfile,
-              picture: model.profiles.pictureOf(model.currentProfile),
-              size: 36 * scale,
-            ),
-            // Idle, do not disturb or invisible: the dot on the picture, as friends see it.
-            if (ownDot != null)
-              PositionedDirectional(
-                end: -2 * scale,
-                bottom: -2 * scale,
-                child: StatusDot(status: ownDot, size: 14 * scale, ring: Colors.black, ringWidth: 2.2 * scale),
+        // The picture opens the profile list under it: the pointer on it, a click, or the keys
+        // past the last button.
+        linked(
+          MouseRegion(
+            onEnter: (_) => model.showProfileList(),
+            onExit: (_) => model.leaveProfileList(),
+            child: Pressable(
+              onTap: model.showProfileList,
+              builder: (context, hovering) => AnimatedScale(
+                scale: pictureFocused ? 1.1 : (hovering ? 1.05 : 1),
+                duration: Motion.focus,
+                curve: Motion.settle,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    // The keys' focus only: a white ring a little off the picture.
+                    if (pictureFocused)
+                      Positioned(
+                        key: const ValueKey('home-avatar-ring'),
+                        left: -5 * scale,
+                        top: -5 * scale,
+                        right: -5 * scale,
+                        bottom: -5 * scale,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2.5 * scale),
+                            boxShadow: [BoxShadow(color: Colors.white.withValues(alpha: 0.35), blurRadius: 10 * scale)],
+                          ),
+                        ),
+                      ),
+                    // The profile playing: its picture, or its initial on its own colour (Settings ›
+                    // Profiles), so a change there shows here at once.
+                    ProfileTile(
+                      key: const ValueKey('home-avatar'),
+                      profile: model.currentProfile,
+                      picture: model.profiles.pictureOf(model.currentProfile),
+                      size: 36 * scale,
+                    ),
+                    // Idle, do not disturb or invisible: the dot on the picture, as friends see it.
+                    if (ownDot != null)
+                      PositionedDirectional(
+                        end: -2 * scale,
+                        bottom: -2 * scale,
+                        child: StatusDot(status: ownDot, size: 14 * scale, ring: Colors.black, ringWidth: 2.2 * scale),
+                      ),
+                  ],
+                ),
               ),
-          ],
+            ),
+          ),
         ),
         SizedBox(width: 10 * scale),
         // The name, the level and the clock share one plate.
@@ -1298,9 +1392,12 @@ class HeroInfo extends StatelessWidget {
                 icon: Icons.sell_rounded,
                 child: _VersionText(model: model, game: game),
               ),
+            // The community's verdict, once there is one.
+            if (model.together.screens.compat[game.titleId] case final summary?) _CommunityCard(summary: summary),
             if (game.addons.isNotEmpty) _AddonsCard(addons: game.addons),
           ],
         ),
+        _CompatWatch(model: model, titleId: game.titleId),
       ],
     );
   }
@@ -1393,6 +1490,104 @@ class _VersionText extends StatelessWidget {
       ],
     );
   }
+}
+
+/// The game's card for how the community says it runs on this platform, as on the Mac.
+class _CommunityCard extends StatelessWidget {
+  const _CommunityCard({required this.summary});
+
+  final CompatSummary summary;
+
+  static Color _dot(CompatStatus? status) => switch (status) {
+    CompatStatus.nothing => const Color.fromRGBO(255, 115, 115, 1),
+    CompatStatus.boots => const Color.fromRGBO(255, 158, 89, 1),
+    CompatStatus.menus => const Color.fromRGBO(255, 214, 102, 1),
+    CompatStatus.ingame => const Color.fromRGBO(122, 199, 255, 1),
+    CompatStatus.playable => const Color.fromRGBO(115, 230, 153, 1),
+    null => Colors.white.withValues(alpha: 0.6),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = LayoutScale.of(context);
+    final status = summary.status;
+    return InfoCard(
+      title: T.text('socialCompatCommunity'),
+      icon: Icons.groups_rounded,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 9 * scale,
+            height: 9 * scale,
+            decoration: BoxDecoration(color: _dot(status), shape: BoxShape.circle),
+          ),
+          SizedBox(width: 8 * scale),
+          Flexible(
+            child: Text(
+              status == null ? summary.statusName : TogetherSocial.compatName(status),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.display(16 * scale, weight: FontWeight.w600),
+            ),
+          ),
+          SizedBox(width: 8 * scale),
+          Flexible(
+            child: Text(
+              summary.version,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.display(13 * scale, weight: FontWeight.w500, color: Colors.white.withValues(alpha: 0.5)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Asks for the community's verdict once the selection rests on the game (as the Mac does), not
+/// for every game a held direction passes.
+class _CompatWatch extends StatefulWidget {
+  const _CompatWatch({required this.model, required this.titleId});
+
+  final AppModel model;
+  final String titleId;
+
+  @override
+  State<_CompatWatch> createState() => _CompatWatchState();
+}
+
+class _CompatWatchState extends State<_CompatWatch> {
+  static const _settle = Duration(milliseconds: 180);
+  Timer? _timer;
+
+  void _ask() {
+    _timer?.cancel();
+    if (!widget.model.together.signedIn) return;
+    _timer = Timer(_settle, () => unawaited(widget.model.together.loadCompat(widget.titleId)));
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _ask();
+  }
+
+  @override
+  void didUpdateWidget(_CompatWatch old) {
+    super.didUpdateWidget(old);
+    if (old.titleId != widget.titleId) _ask();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
 /// The add-ons dumped beside the game: the engine mounts each one the game asks for.

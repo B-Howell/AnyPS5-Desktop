@@ -496,7 +496,8 @@ void main() {
       // Refused: said so.
       server.answers['PUT me/avatar'] = FakeTogether.problem(413, 'payload_too_large', 'The file is too big');
       await model.uploadProfilePicture();
-      expect(model.toast, 'The picture could not be uploaded: The file is too big');
+      // The launcher's words for the code, not the server's English.
+      expect(model.toast, 'The picture could not be uploaded: That\'s too large.');
       // A picture that does not come: said so.
       model.together.account.updateUser(
         TogetherUser(id: 'u-me', handle: 'utku', displayName: 'Utku', avatar: '${server.base}/avatars/gone.png'),
@@ -514,6 +515,33 @@ void main() {
       await tester.runAsync(model.chooseProfilePicture);
       expect(model.profiles.pictureOf(model.currentProfile), isNull);
       expect(model.toast, T.text('profilePictureFailed'));
+    });
+  });
+
+  group('for a screen reader', () {
+    testWidgets('the picker, Add profile and the home menu are named', (tester) async {
+      final semantics = tester.ensureSemantics();
+      fixture = makeFixture();
+      final model = fixture.model;
+      model.profiles.add(name: 'Mira', mode: ProfileMode.offline);
+      model.openProfilePicker(atLaunch: true);
+      await pumpLauncher(tester, model);
+      expect(find.bySemanticsLabel('Mira'), findsOneWidget);
+      expect(find.bySemanticsLabel(T.text('profileAdd')), findsOneWidget);
+
+      model.openAddProfile();
+      await tester.pumpAndSettle();
+      expect(
+        find.bySemanticsLabel('${T.text('profileOfflineTitle')}. ${T.text('profileOfflineLead')}'),
+        findsOneWidget,
+      );
+
+      model.closeOverlay();
+      model.open(Layer.homeMenu);
+      await tester.pumpAndSettle();
+      final rows = model.panelCategories().single.rows;
+      expect(find.bySemanticsLabel(rows.first.title), findsOneWidget);
+      semantics.dispose();
     });
   });
 

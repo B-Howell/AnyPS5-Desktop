@@ -233,5 +233,7 @@ final class WebRtcProbeLink implements GameLink, RestartableGameLink {
   @override
   bool sendStream(Uint8List data) => _link.sendStream(data);
   @override
+  Future<List<GameLinkStat>> stats() => _link.stats();
+  @override
   Future<void> close() => _link.close();
 }

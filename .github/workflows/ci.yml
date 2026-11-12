@@ -13,12 +13,26 @@ on:
         description: Remake the golden files and upload them as an artifact
         type: boolean
         default: false
+  # Called by nightly.yml for a nightly: the same checks and packages, of that commit, named
+  # after that version.
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to build
+        type: string
+        required: true
+      version:
+        description: The version the build calls itself (packaging/set-version.sh)
+        type: string
+        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # A nightly is in a group of its own, so that it neither waits for main's pushes nor is
+  # replaced by the next one.
+  group: ci-${{ inputs.version || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -26,20 +40,56 @@ env:
   # libpulse-dev: flutter_webrtc's Linux loopback capture (share play's Opus track) builds only
   # with it; the bundle then needs libpulse0, which PulseAudio and PipeWire systems have.
   LINUX_PACKAGES: clang cmake ninja-build pkg-config libgtk-3-dev libegl1-mesa-dev libepoxy-dev liblzma-dev libstdc++-12-dev libsdl2-2.0-0 libpulse-dev file
-  # libmpv-dev: the in-app clip player (media_kit_video links libmpv); patchelf: the bundle carries
-  # that libmpv and what it needs in lib/ (packaging/linux/bundle-libmpv.sh).
+  # libmpv-dev: the in-app clip player's headers (media_kit_video's plugin links the launcher's
+  # libanyps5_mpv.so, which opens the system's libmpv: none is carried); patchelf: the packaging
+  # takes the build folders out of the plugin libraries' RUNPATHs (packaging/linux/runpaths.sh).
   CLIP_PLAYER_PACKAGES: libmpv-dev patchelf
 
 jobs:
-  test:
-    name: flutter analyze and test (Linux)
+  # Whether this run has to compare goldens. On a pull request: what the merge changes against its
+  # base. Anything else (main, a nightly, update_goldens or any run by hand) always does.
+  changes:
+    name: what the goldens depend on
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      goldens: ${{ steps.goldens.outputs.run }}
+    steps:
+      # The merge commit and its parents: its first parent is the base it is compared with.
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      # What can change a golden, or break the job on the macOS runner: the launcher and its tests,
+      # assets (the fonts are in assets/fonts and assets/system-fonts), the shader, the
+      # dependencies, the native hook macOS builds for flutter test, and this workflow. A rename
+      # counts for both its old and its new path (--no-renames).
+      - id: goldens
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          decide() { echo "run=$1" >> "$GITHUB_OUTPUT"; echo "### Goldens: $2" >> "$GITHUB_STEP_SUMMARY"; echo "goldens run: $1 ($2)"; }
+          if [ "$EVENT" != pull_request ]; then decide true "always on a $EVENT run"; exit 0; fi
+          if ! changed="$(git diff --no-renames --name-only HEAD^1 HEAD)"; then decide true "could not read the changes"; exit 0; fi
+          printf '%s\n' "$changed"
+          if grep -Eq '^(lib/|test/|assets/|shaders/|hook/|native/|pubspec\.(yaml|lock)$|\.github/workflows/ci\.yml$)' <<<"$changed"; then
+            decide true "something they depend on changed"
+          else
+            decide false "skipped, nothing they depend on changed"
+          fi
+
+  analyze:
+    name: flutter analyze and the language files (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
-      # The native hook builds the ATRAC9 decoder with the system compiler for flutter test too.
+      # The native hook builds the ATRAC9 decoder with the system compiler.
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
       - uses: subosito/flutter-action@v2
         with:
@@ -53,24 +103,47 @@ jobs:
       # language's code and no Turkish words outside the files.
       - name: Check the language files in assets/l10n and the texts in lib
         run: dart run tool/check_translations.dart
+      # One bullet per file in release-notes/next (packaging/release-notes.sh).
+      - name: Check the next release's notes
+        run: bash packaging/release-notes.sh > /dev/null
+
+  test:
+    name: flutter test (Linux, shard ${{ matrix.shard }} of 2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # One shard's failure stops nothing: the run shows all the failing tests at once.
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      # The native hook builds the ATRAC9 decoder with the system compiler for flutter test too.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
       # The goldens are made on macOS and compared in the goldens job (test/flutter_test_config.dart).
-      - run: flutter test
+      - run: flutter test --total-shards 2 --shard-index ${{ matrix.shard }}
         env:
           ANYPS5_SKIP_GOLDENS: 1
-      - uses: actions/upload-artifact@v7
-        if: failure()
-        with:
-          name: golden-failures-linux
-          path: test/**/failures/
-          if-no-files-found: ignore
 
   goldens:
     name: golden tests and the recursive watcher (macOS)
+    needs: changes
+    if: needs.changes.outputs.goldens == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - uses: subosito/flutter-action@v2
         with:
@@ -93,12 +166,30 @@ jobs:
           path: test/**/goldens/**
           if-no-files-found: error
           retention-days: 7
+      # The images the run made, beside what they were compared with: <name>_testImage.png is
+      # the new picture, also for a golden with no file yet (test/flutter_test_config.dart). To
+      # commit new goldens, the update_goldens run above still makes them all.
       - uses: actions/upload-artifact@v7
+        id: failed-goldens
         if: failure()
         with:
           name: golden-failures-macos
           path: test/**/failures/
           if-no-files-found: ignore
+          retention-days: 7
+      - name: Say where the failed goldens' images are
+        if: failure()
+        env:
+          ARTIFACT_URL: ${{ steps.failed-goldens.outputs.artifact-url }}
+        run: |
+          made=$(find test -path '*/failures/*_testImage.png' | sort)
+          if [ -z "$made" ]; then echo "No golden images from this run."; exit 0; fi
+          {
+            echo "### Goldens that did not match: $(echo "$made" | wc -l | tr -d ' ')"
+            echo "Images: ${ARTIFACT_URL:-the golden-failures-macos artifact}"
+            echo
+            echo "$made" | sed -E 's#.*/failures/(.*)_testImage\.png#- \1#'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
   linux:
     name: flutter build linux (Ubuntu 22.04)
@@ -108,6 +199,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES $CLIP_PLAYER_PACKAGES
       - uses: subosito/flutter-action@v2
@@ -115,10 +207,13 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
-      - run: flutter build linux --release
+      - name: Name the build after the nightly
+        if: ${{ inputs.version }}
+        shell: bash
         env:
-          # The bundle has to carry libmpv here: no patchelf or no libmpv fails the build.
-          ANYPS5_REQUIRE_LIBMPV: 1
+          VERSION: ${{ inputs.version }}
+        run: bash packaging/set-version.sh "$VERSION"
+      - run: flutter build linux --release
       - name: Test shared emulator worker and Linux channel
         run: |
           cmake -S native/retro/test -B build/retro-native -G Ninja -DANYPS5_RETRO_VULKAN=OFF -DCMAKE_BUILD_TYPE=Release
@@ -131,34 +226,85 @@ jobs:
           ctest --test-dir build/linux-channel --output-on-failure
           ANYPS5_TEST_ELF_CORE="$PWD/build/retro-native/lan/pcsx2_libretro.so" \
             flutter test --no-pub test/core/elf_core_library_test.dart
-      - name: Bundle size and the libraries carried for the clip player
+      # The system's libmpv, never a carried one: no libmpv in the bundle, nothing in it links one,
+      # and the clip player's plugin links libanyps5_mpv.so (packaging/linux/no-libmpv.sh).
+      - name: Check the bundle carries no libmpv
         run: |
           du -sh build/linux/x64/release/bundle build/linux/x64/release/bundle/lib
           ls build/linux/x64/release/bundle/lib | grep -c . | xargs echo "files in lib/:"
-          ls build/linux/x64/release/bundle/lib/libmpv.so.*
-      # Ubuntu 24.04 has libmpv.so.2, not the 22.04 build machine's libmpv.so.1: the clip player's
-      # plugin and the libmpv it carries have to find everything they link in lib/ or in what a
-      # GTK desktop has.
-      - name: Check the clip player's libraries resolve on Ubuntu 24.04 without libmpv
+          bash packaging/linux/no-libmpv.sh build/linux/x64/release/bundle
+          objdump -p build/linux/x64/release/bundle/lib/libmedia_kit_video_plugin.so | awk '/NEEDED/ {print "  plugin NEEDED " $2}'
+          objdump -T build/linux/x64/release/bundle/lib/libanyps5_mpv.so | awk '$NF ~ /^mpv_/ && $4 == ".text" {print "  libanyps5_mpv.so has " $NF}'
+      # What check-libmpv.sh runs against libanyps5_mpv.so, built here for the containers.
+      - name: Build the libanyps5_mpv.so check
         run: |
-          docker run --rm -v "$PWD/build/linux/x64/release/bundle:/bundle:ro" ubuntu:24.04 bash -euc '
-            apt-get update -qq
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-              libgtk-3-0t64 libegl1 libgl1 libgbm1 libdrm2 libasound2t64 libpipewire-0.3-0t64 libusb-1.0-0 \
-              libsm6 libice6 libgmp10 libgpg-error0 libpulse0 >/dev/null
-            if ldconfig -p | grep -q "libmpv\.so"; then echo "this image has a libmpv"; exit 1; fi
-            missing=$(for f in /bundle/lib/libmedia_kit_video_plugin.so /bundle/lib/libmpv.so.*; do ldd "$f" | grep "not found" || true; done | sort -u)
-            if [ -n "$missing" ]; then echo "$missing"; exit 1; fi
-            echo "every library resolves:"
-            ldd /bundle/lib/libmpv.so.* | grep -c "/bundle/lib/" | xargs echo "  from the bundle:"
-            ldd /bundle/lib/libmpv.so.* | grep -vc "/bundle/lib/" | xargs echo "  from the system:"
-          '
-      - name: Package the AppImage, the .deb and the .tar.gz
+          mkdir -p build/shim-check
+          cc -O1 -Wall -Wextra -Werror -o build/shim-check/mpv-shim-check packaging/linux/mpv-shim-check.c -ldl
+          # On the build machine, with its libmpv (Ubuntu 22.04's libmpv.so.1).
+          build/shim-check/mpv-shim-check build/linux/x64/release/bundle/lib/libanyps5_mpv.so with
+      # On pull requests too: a few seconds, and the check after it installs it.
+      - name: Package the .deb
+        run: SKIP_BUILD=1 bash packaging/linux/build-deb.sh
+      # Every ELF file the bundle and the .deb carry looks for libraries only in $ORIGIN-relative
+      # folders inside them, never in the build machine's /home/runner/... (namcap's insecure
+      # RUNPATH). Then the check itself: a library given a build folder, a folder above the
+      # bundle or a relative one has to fail it, and fix has to put it right.
+      - name: Check no RUNPATH in the bundle or the .deb leads out of it
+        run: |
+          rm -rf build/deb-contents && mkdir -p build/deb-contents
+          dpkg-deb -x build/packages/anyps5-desktop_*_amd64.deb build/deb-contents
+          bash packaging/linux/runpaths.sh check build/linux/x64/release/bundle build/deb-contents/opt/anyps5-desktop
+          probe="$(mktemp -d)"
+          mkdir "$probe/lib"
+          for bad in '/home/runner/work/build:$ORIGIN' '$ORIGIN/../..' '../lib'; do
+            cp build/linux/x64/release/bundle/lib/libmedia_kit_video_plugin.so "$probe/lib/"
+            patchelf --set-rpath "$bad" "$probe/lib/libmedia_kit_video_plugin.so"
+            if bash packaging/linux/runpaths.sh check "$probe" >/dev/null 2>&1; then
+              echo "::error::runpaths.sh check let the RUNPATH '$bad' through"
+              exit 1
+            fi
+            bash packaging/linux/runpaths.sh fix "$probe"
+            bash packaging/linux/runpaths.sh check "$probe" >/dev/null
+          done
+          rm -rf "$probe"
+      # The .deb on clean Ubuntu 22.04 and 24.04 with its Depends only: the launcher and every
+      # library it carries have to find all they link (packaging/linux/check-deb.sh). libmpv comes
+      # from apt (libmpv1 on 22.04, libmpv2 on 24.04).
+      - name: Check the .deb installs and every library resolves on Ubuntu 22.04 and 24.04
+        run: |
+          for image in ubuntu:22.04 ubuntu:24.04; do
+            echo "::group::$image"
+            docker run --rm -v "$PWD/build/packages:/packages:ro" -v "$PWD/packaging/linux:/scripts:ro" \
+              "$image" bash /scripts/check-deb.sh /packages
+            echo "::endgroup::"
+          done
+      # The launcher with apt's libmpv and then without any: it starts and keeps running both times,
+      # libanyps5_mpv.so reaches libmpv or fails cleanly, and without one the launcher says so
+      # (packaging/linux/check-libmpv.sh).
+      - name: Check the launcher starts with and without libmpv on Ubuntu 22.04 and 24.04
+        run: |
+          for image in ubuntu:22.04 ubuntu:24.04; do
+            echo "::group::$image"
+            docker run --rm -v "$PWD/build/packages:/packages:ro" -v "$PWD/packaging/linux:/scripts:ro" \
+              -v "$PWD/build/shim-check:/shim-check:ro" \
+              "$image" bash /scripts/check-libmpv.sh /packages /shim-check/mpv-shim-check
+            echo "::endgroup::"
+          done
+      - name: Package the AppImage and the .tar.gz
         if: github.event_name != 'pull_request'
         run: |
           SKIP_BUILD=1 bash packaging/linux/build-appimage.sh
-          SKIP_BUILD=1 bash packaging/linux/build-deb.sh
           tar -C build/linux/x64/release -czf build/packages/AnyPS5-Desktop-linux-x64.tar.gz --transform 's#^bundle#AnyPS5-Desktop#' bundle
+      - name: Check no RUNPATH in the AppImage or the .tar.gz leads out of it, and neither carries libmpv
+        if: github.event_name != 'pull_request'
+        run: |
+          rm -rf build/package-contents && mkdir -p build/package-contents
+          tar -C build/package-contents -xzf build/packages/AnyPS5-Desktop-linux-x64.tar.gz
+          appimage="$(ls "$PWD"/build/packages/AnyPS5-Desktop-*-x86_64.AppImage)"
+          (cd build/package-contents && "$appimage" --appimage-extract >/dev/null)
+          bash packaging/linux/runpaths.sh check build/package-contents/AnyPS5-Desktop build/package-contents/squashfs-root
+          bash packaging/linux/no-libmpv.sh build/package-contents/AnyPS5-Desktop
+          bash packaging/linux/no-libmpv.sh build/package-contents/squashfs-root/usr/lib/anyps5-desktop
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
         with:
@@ -171,16 +317,64 @@ jobs:
     name: flutter build windows
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      # What the Windows build downloads into its build folder from GitHub releases: libmpv and
+      # ANGLE (media_kit_libs_windows_video's CMake) and SDL2 (windows/CMakeLists.txt).
+      WINDOWS_ARCHIVES: |
+        build/windows/x64/mpv-dev-*.7z
+        build/windows/x64/ANGLE.7z
+        build/windows/x64/SDL2-*-win32-x64.zip
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Name the build after the nightly
+        if: ${{ inputs.version }}
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: bash packaging/set-version.sh "$VERSION"
+      # The versions that fix what those archives are. The scripts that use them still check each
+      # one against its own hash, and fetch it again if it does not match.
+      - name: Name the downloaded archives' cache
+        id: archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          media_kit=$(tr -d '\r' < pubspec.lock | awk '$1 == "media_kit_libs_windows_video:" { found = 1 } found && $1 == "version:" { gsub(/"/, "", $2); print $2; exit }')
+          sdl2=$(tr -d '\r' < windows/CMakeLists.txt | sed -n 's/^set(SDL2_VERSION "\(.*\)")$/\1/p')
+          [ -n "$media_kit" ] && [ -n "$sdl2" ] || { echo "::error::no version for the archives' cache"; exit 1; }
+          echo "key=windows-archives-media_kit-$media_kit-sdl2-$sdl2" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v5
+        id: archives-restore
+        with:
+          key: ${{ steps.archives.outputs.key }}
+          path: ${{ env.WINDOWS_ARCHIVES }}
       - run: flutter build windows --release
+      # A failed download stops the build before this step; this keeps the rule that the cache
+      # only holds archives that all arrived, since one without them would stay until the versions change.
+      - name: See whether every archive arrived
+        id: archives-whole
+        if: steps.archives-restore.outputs.cache-hit != 'true'
+        shell: bash
+        working-directory: build/windows/x64
+        run: |
+          if ls mpv-dev-*.7z ANGLE.7z SDL2-*-win32-x64.zip SDL2-*/SDL2.dll; then
+            echo "whole=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::An archive did not arrive: not caching them"
+          fi
+      - uses: actions/cache/save@v5
+        if: steps.archives-whole.outputs.whole == 'true'
+        with:
+          key: ${{ steps.archives.outputs.key }}
+          path: ${{ env.WINDOWS_ARCHIVES }}
       - name: Test shared emulator worker on Windows
         shell: pwsh
         run: |
@@ -190,14 +384,17 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ctest --test-dir build/retro-native -C Release --output-on-failure
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      # The clip player's libmpv and ANGLE (media_kit_libs_windows_video) beside the launcher: the
-      # installer and the .zip take the whole folder.
-      - name: Check the clip player's libraries are beside the launcher
+      # The clip player's libmpv and ANGLE (media_kit_libs_windows_video) and SDL2 beside the
+      # launcher: the installer and the .zip take the whole folder.
+      - name: Check SDL2 and the clip player's libraries are beside the launcher
         shell: pwsh
         run: |
           $release = "build\windows\x64\runner\Release"
-          foreach ($dll in "libmpv-2.dll", "libEGL.dll", "libGLESv2.dll", "media_kit_video_plugin.dll") {
+          foreach ($dll in "SDL2.dll", "libmpv-2.dll", "libEGL.dll", "libGLESv2.dll", "media_kit_video_plugin.dll") {
             if (-not (Test-Path (Join-Path $release $dll))) { Write-Error "no $dll in $release"; exit 1 }
+          }
+          foreach ($licence in "libmpv-LICENSE.txt", "ANGLE-LICENSE.txt") {
+            if (-not (Test-Path (Join-Path $release $licence))) { Write-Error "no $licence in $release"; exit 1 }
           }
           Get-ChildItem $release -Filter *.dll | Sort-Object Length -Descending | Select-Object -First 8 Name, @{n = "MiB"; e = { [math]::Round($_.Length / 1MB, 1) } } | Format-Table -AutoSize
       - name: Package the installer (Inno Setup 6)
@@ -209,6 +406,20 @@ jobs:
           powershell -ExecutionPolicy Bypass -File packaging\windows\build-installer.ps1 -SkipBuild
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath build\installer\AnyPS5-Desktop-windows-x64.zip
+      # The installer's contents can only be seen by installing it (7-Zip and innoextract do not read
+      # this Inno Setup): silently, into a temporary folder on the runner.
+      - name: Install the package into a folder and check what it put there
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          $setup = Get-Item build\installer\AnyPS5-Desktop-Setup-*.exe
+          $target = Join-Path $env:RUNNER_TEMP "anyps5-install"
+          $run = Start-Process -FilePath $setup.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$target" -Wait -PassThru
+          if ($run.ExitCode) { Write-Error "the installer ended with $($run.ExitCode)"; exit 1 }
+          foreach ($file in "anyps5_desktop.exe", "SDL2.dll", "SDL2-LICENSE.txt", "libmpv-2.dll", "libmpv-LICENSE.txt", "ANGLE-LICENSE.txt") {
+            if (-not (Test-Path (Join-Path $target $file))) { Write-Error "no $file installed"; exit 1 }
+          }
+          Get-ChildItem $target -Filter *LICENSE* | Select-Object Name, Length | Format-Table -AutoSize
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
         with:
@@ -217,16 +428,71 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # The Remote Play key frame request against the ffmpeg the launcher offers, on the real platforms:
+  # standard input pipes behave differently on Windows, and this ffmpeg is what users get.
+  key-frames:
+    name: key frame request with the pinned ffmpeg (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      # The native hook builds the ATRAC9 decoder with the system compiler for flutter test too.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Fetch the pinned ffmpeg
+        shell: bash
+        run: |
+          set -euo pipefail
+          tr -d '\r' < packaging/ffmpeg/pinned.env > pinned.env
+          . ./pinned.env
+          mkdir ffmpeg-pinned
+          if [ "$RUNNER_OS" = Windows ]; then
+            curl -fsSL --retry 5 -o ffmpeg.zip "https://github.com/BtbN/FFmpeg-Builds/releases/download/$BTBN_RELEASE/$WINDOWS_ASSET"
+            echo "$WINDOWS_SHA256  ffmpeg.zip" | sha256sum -c -
+            7z e -y -offmpeg-pinned ffmpeg.zip "${WINDOWS_ASSET%.zip}/bin/ffmpeg.exe" >/dev/null
+            echo "ANYPS5_TEST_FFMPEG=$(cygpath -m "$PWD")/ffmpeg-pinned/ffmpeg.exe" >> "$GITHUB_ENV"
+          else
+            curl -fsSL --retry 5 -o ffmpeg.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/$BTBN_RELEASE/$LINUX_ASSET"
+            echo "$LINUX_SHA256  ffmpeg.tar.xz" | sha256sum -c -
+            tar -xJf ffmpeg.tar.xz --strip-components=2 -C ffmpeg-pinned --wildcards '*/bin/ffmpeg'
+            echo "ANYPS5_TEST_FFMPEG=$PWD/ffmpeg-pinned/ffmpeg" >> "$GITHUB_ENV"
+          fi
+          ls -la ffmpeg-pinned
+      - run: flutter test test/core/capture/remote_play_test.dart --plain-name "a real ffmpeg"
+        env:
+          ANYPS5_SKIP_GOLDENS: 1
+
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [test, goldens, linux, windows]
+    needs: [changes, analyze, test, goldens, linux, windows, key-frames]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Every job has to have passed. The one exception is goldens, skipped only because the
+      # changes job ran and said nothing they depend on changed. test is both shards: it passes
+      # only if each did.
       - env:
           NEEDS: ${{ toJSON(needs) }}
+          GOLDENS: ${{ needs.changes.outputs.goldens }}
         run: |
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          bad=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key] | join(", ")')
+          bad=$(echo "$NEEDS" | jq -r --arg goldens "$GOLDENS" '[to_entries[]
+            | select(.value.result != "success")
+            | select(.key != "goldens" or .value.result != "skipped" or $goldens != "false")
+            | "\(.key) (\(.value.result))"] | join(", ")')
           if [ -n "$bad" ]; then echo "::error::Not passed: $bad"; exit 1; fi
+          echo "ci-ok (goldens: ${GOLDENS:-unknown})"

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../core/together/levels.dart';
+import '../core/together/posts.dart' show MediaItem;
 import '../core/together/profile_look.dart';
 import '../core/together/profiles.dart';
 import '../core/trophies.dart';
 import 'app_model.dart';
+import 'captures_view.dart' show CaptureViewer, RemotePicture;
 import 'components.dart';
 import 'feed_view.dart';
 import 'glass.dart';
@@ -199,6 +201,10 @@ class ProfileView extends StatelessWidget {
               ],
             ),
           ),
+          if (together.captures.viewing case final viewing?)
+            Positioned.fill(
+              child: CaptureViewer(model: model, media: viewing),
+            ),
         ],
       ),
     );
@@ -296,69 +302,76 @@ class _ThemeChip extends StatelessWidget {
     ];
     return KeepVisible(
       active: focused,
-      child: Pressable(
+      child: Semantics(
+        container: true,
+        button: true,
+        label: theme.name,
         onTap: onTap,
-        pressScale: 0.97,
-        builder: (context, hovering) {
-          final ink = focused ? Colors.black : Colors.white;
-          return AnimatedContainer(
-            duration: Motion.focus,
-            curve: Motion.settle,
-            padding: EdgeInsetsDirectional.fromSTEB(8 * scale, 6 * scale, 12 * scale, 6 * scale),
-            decoration: BoxDecoration(
-              color: focused ? Colors.white : Colors.white.withValues(alpha: hovering ? 0.16 : 0.09),
-              borderRadius: BorderRadius.circular(40 * scale),
-              border: Border.all(color: Colors.white.withValues(alpha: focused ? 0 : 0.12)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.white.withValues(alpha: focused ? 0.22 : 0),
-                  blurRadius: 16 * scale,
-                ),
-              ],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // The theme's palette: deep, middle, bright and accent, overlapping like swatches.
-                SizedBox(
-                  width: (14 + 9 * (colours.length - 1).clamp(0, 3)) * scale,
-                  height: 14 * scale,
-                  child: Stack(
-                    children: [
-                      for (var index = 0; index < colours.length; index++)
-                        PositionedDirectional(
-                          start: 9 * index * scale,
-                          child: Container(
-                            width: 14 * scale,
-                            height: 14 * scale,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: colours[index],
-                              border: Border.all(
-                                color: (focused ? Colors.white : Colors.black).withValues(alpha: 0.7),
-                                width: 1.5 * scale,
+        excludeSemantics: true,
+        child: Pressable(
+          onTap: onTap,
+          pressScale: 0.97,
+          builder: (context, hovering) {
+            final ink = focused ? Colors.black : Colors.white;
+            return AnimatedContainer(
+              duration: Motion.focus,
+              curve: Motion.settle,
+              padding: EdgeInsetsDirectional.fromSTEB(8 * scale, 6 * scale, 12 * scale, 6 * scale),
+              decoration: BoxDecoration(
+                color: focused ? Colors.white : Colors.white.withValues(alpha: hovering ? 0.16 : 0.09),
+                borderRadius: BorderRadius.circular(40 * scale),
+                border: Border.all(color: Colors.white.withValues(alpha: focused ? 0 : 0.12)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.white.withValues(alpha: focused ? 0.22 : 0),
+                    blurRadius: 16 * scale,
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // The theme's palette: deep, middle, bright and accent, overlapping like swatches.
+                  SizedBox(
+                    width: (14 + 9 * (colours.length - 1).clamp(0, 3)) * scale,
+                    height: 14 * scale,
+                    child: Stack(
+                      children: [
+                        for (var index = 0; index < colours.length; index++)
+                          PositionedDirectional(
+                            start: 9 * index * scale,
+                            child: Container(
+                              width: 14 * scale,
+                              height: 14 * scale,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: colours[index],
+                                border: Border.all(
+                                  color: (focused ? Colors.white : Colors.black).withValues(alpha: 0.7),
+                                  width: 1.5 * scale,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                if (colours.isNotEmpty) SizedBox(width: 8 * scale),
-                Flexible(
-                  child: Text(
-                    T.format('themeWorn', [theme.name]),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppText.display(13 * scale, weight: FontWeight.w600, color: ink),
+                  if (colours.isNotEmpty) SizedBox(width: 8 * scale),
+                  Flexible(
+                    child: Text(
+                      T.format('themeWorn', [theme.name]),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.display(13 * scale, weight: FontWeight.w600, color: ink),
+                    ),
                   ),
-                ),
-                SizedBox(width: 2 * scale),
-                Icon(Icons.chevron_right_rounded, size: 16 * scale, color: ink.withValues(alpha: 0.6)),
-              ],
-            ),
-          );
-        },
+                  SizedBox(width: 2 * scale),
+                  Icon(Icons.chevron_right_rounded, size: 16 * scale, color: ink.withValues(alpha: 0.6)),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -396,6 +409,8 @@ class _Sections extends StatelessWidget {
       child: Text(text, style: AppText.display(15 * scale, color: Colors.white.withValues(alpha: 0.55))),
     );
     final from = together.profileGamesFrom;
+    final gallery = together.profileGallery;
+    final galleryItems = gallery?.value;
     final showcase = page.showcase;
     // Six pins at most, trophies first, as the server shows them (one saved before the shared
     // limit may hold more).
@@ -459,6 +474,34 @@ class _Sections extends StatelessWidget {
             heading(T.text('showcaseTitle')),
             note(T.text('showcaseEmpty')),
           ],
+          // The pinned gallery, under the showcase, as the owner's setting shows it.
+          if (gallery is SectionPrivate<List<MediaItem>>) ...[
+            heading(T.text('cloudProfileGallery')),
+            note(T.text('cloudProfileGalleryPrivate')),
+          ] else if (galleryItems != null && galleryItems.isNotEmpty) ...[
+            heading(T.text('cloudProfileGallery')),
+            Wrap(
+              spacing: 12 * scale,
+              runSpacing: 12 * scale,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                for (final media in galleryItems.take(8)) _GalleryTile(model: model, media: media),
+                if (galleryItems.length > 8)
+                  Text(
+                    '+${galleryItems.length - 8}',
+                    style: AppText.display(
+                      17 * scale,
+                      weight: FontWeight.w600,
+                      color: Colors.white.withValues(alpha: 0.7),
+                    ),
+                  ),
+              ],
+            ),
+            SizedBox(height: 18 * scale),
+          ] else if (galleryItems != null && page.profile.isMe) ...[
+            heading(T.text('cloudProfileGallery')),
+            note(T.text('cloudProfileGalleryEmpty')),
+          ],
           heading(T.text('profileGamesTitle')),
           if (games.isEmpty) note(closed(page.library, T.text('profileNoGames'))),
           for (var index = 0; index < games.length; index++)
@@ -500,6 +543,51 @@ class _Sections extends StatelessWidget {
               ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// One pinned photo or clip; pressed, over the whole screen.
+class _GalleryTile extends StatelessWidget {
+  const _GalleryTile({required this.model, required this.media});
+
+  final AppModel model;
+  final MediaItem media;
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = LayoutScale.of(context);
+    return Semantics(
+      container: true,
+      button: true,
+      label: T.text(media.clip ? 'clip' : 'messagesPhoto'),
+      onTap: () => model.together.viewProfileMedia(media),
+      excludeSemantics: true,
+      child: Pressable(
+        onTap: () => model.together.viewProfileMedia(media),
+        builder: (context, hovering) => ClipRRect(
+          borderRadius: BorderRadius.circular(10 * scale),
+          child: SizedBox(
+            width: 150 * scale,
+            height: 84 * scale,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                RemotePicture(model: model, link: media.still),
+                if (media.clip)
+                  Center(
+                    child: Container(
+                      padding: EdgeInsets.all(8 * scale),
+                      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.5), shape: BoxShape.circle),
+                      child: Icon(Icons.play_arrow_rounded, size: 18 * scale, color: Colors.white),
+                    ),
+                  ),
+                if (hovering) ColoredBox(color: Colors.white.withValues(alpha: 0.08)),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -707,44 +795,51 @@ class _ProfileButton extends StatelessWidget {
     // The column scrolls on a short window: the keys bring the focused button into view.
     return KeepVisible(
       active: focused,
-      child: Pressable(
+      child: Semantics(
+        container: true,
+        button: true,
+        label: label,
         onTap: onTap,
-        pressScale: 0.98,
-        builder: (context, hovering) {
-          final ink = focused ? Colors.black : Colors.white;
-          return AnimatedContainer(
-            duration: Motion.focus,
-            curve: Motion.settle,
-            width: 368 * scale,
-            padding: EdgeInsets.symmetric(horizontal: 18 * scale, vertical: 14 * scale),
-            decoration: BoxDecoration(
-              color: focused ? Colors.white : Colors.white.withValues(alpha: hovering ? 0.12 : 0.06),
-              borderRadius: BorderRadius.circular(14 * scale),
-              border: Border.all(color: Colors.white.withValues(alpha: focused ? 0 : 0.08)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.white.withValues(alpha: focused ? 0.22 : 0),
-                  blurRadius: 16 * scale,
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Icon(icon, size: 22 * scale, color: ink),
-                SizedBox(width: 12 * scale),
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppText.display(16 * scale, weight: FontWeight.w600, color: ink),
+        excludeSemantics: true,
+        child: Pressable(
+          onTap: onTap,
+          pressScale: 0.98,
+          builder: (context, hovering) {
+            final ink = focused ? Colors.black : Colors.white;
+            return AnimatedContainer(
+              duration: Motion.focus,
+              curve: Motion.settle,
+              width: 368 * scale,
+              padding: EdgeInsets.symmetric(horizontal: 18 * scale, vertical: 14 * scale),
+              decoration: BoxDecoration(
+                color: focused ? Colors.white : Colors.white.withValues(alpha: hovering ? 0.12 : 0.06),
+                borderRadius: BorderRadius.circular(14 * scale),
+                border: Border.all(color: Colors.white.withValues(alpha: focused ? 0 : 0.08)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.white.withValues(alpha: focused ? 0.22 : 0),
+                    blurRadius: 16 * scale,
                   ),
-                ),
-                Icon(Icons.chevron_right_rounded, size: 22 * scale, color: ink.withValues(alpha: 0.6)),
-              ],
-            ),
-          );
-        },
+                ],
+              ),
+              child: Row(
+                children: [
+                  Icon(icon, size: 22 * scale, color: ink),
+                  SizedBox(width: 12 * scale),
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.display(16 * scale, weight: FontWeight.w600, color: ink),
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded, size: 22 * scale, color: ink.withValues(alpha: 0.6)),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }

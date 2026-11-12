@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
-import 'package:flutter/painting.dart' show Color;
+import 'package:flutter/material.dart' show Color, Icons;
 
 import '../core/audio/tones.dart';
 import '../core/game_library.dart';
@@ -37,6 +37,7 @@ import '../core/together/e2ee_client.dart';
 import '../core/together/family.dart';
 import '../core/together/friends.dart';
 import '../core/together/hub.dart';
+import '../core/together/join_advice.dart';
 import '../core/together/levels.dart';
 import '../core/together/people.dart';
 import '../core/together/self.dart';
@@ -66,19 +67,23 @@ import '../core/game_settings.dart';
 import 'app_model.dart';
 import 'clip_player.dart' show ViewedMedia, mediaAspect;
 import 'compare_view.dart';
+import 'countries.dart';
 import 'family_gate.dart';
 import 'livekit_room.dart';
+import 'now_playing_model.dart';
 import 'online_webrtc.dart';
 import 'ps1_netplay_runner.dart';
 import 'embedded_retro_game.dart';
 import 'sealed_photo.dart';
 import 'strings.dart';
+import 'voice_note_player.dart';
 import 'voice_webrtc.dart';
 
 part 'together_messages.dart';
 part 'together_ask.dart';
 part 'together_party.dart';
 part 'together_party_chat.dart';
+part 'together_join.dart';
 part 'together_play.dart';
 part 'together_ps1_netplay.dart';
 part 'together_ps2_lan.dart';
@@ -91,7 +96,7 @@ part 'together_captures.dart';
 part 'together_calls.dart';
 
 /// The launcher's version, as AnyTogether hears it.
-const launcherVersion = '0.1.20';
+const launcherVersion = '0.1.22';
 
 /// AnyTogether in the launcher: the account and how it signs in (an email code, a code approved
 /// on the website, or the paired phone), the server it uses, and the rows the settings show for
@@ -129,14 +134,25 @@ class TogetherModel {
       bridgeFile: GameSessions.defaultBridgeFile(app.paths.config),
     );
     hub.games.onInvite = (invite) {
-      _noticeSound();
-      app.vibrate(HapticCue.ring);
-      if (app.running != null) app.inviteMenuFocus = invite.sessionId;
+      disturbingSound();
+      inviteRing();
+      final playing = app.running != null;
+      if (playing) app.inviteMenuFocus = invite.sessionId;
+      final names = [invite.from?.displayName ?? '', gameName(invite.titleId)];
       app.show(
-        T.format(app.running != null ? 'gameInvitedYouPs' : 'gameInvitedYou', [invite.from?.displayName ?? '', gameName(invite.titleId)]),
-        psButton: app.running != null,
-        onTap: app.running != null ? () => unawaited(app.openQuickMenu()) : null,
+        T.format(playing ? 'gameInvitedYouPs' : 'gameInvitedYou', names),
+        psButton: playing,
+        onTap: playing ? () => unawaited(app.openQuickMenu()) : null,
       );
+      if (!doNotDisturb) {
+        unawaited(
+          app.noticeOverGame(
+            T.format('gameInvitedYou', names),
+            detail: T.text('friendsTitle'),
+            symbol: Icons.sports_esports_rounded,
+          ),
+        );
+      }
     };
     hub.games.onEnded = (host) => app.show(
       T.format(hub.games.ended?.together == true ? 'togetherEnded' : 'sessionEnded', [host?.displayName ?? '']),
@@ -145,12 +161,16 @@ class TogetherModel {
     hub.games.onAnyEnded = togetherEnded;
     hub.games.onPlayersChanged = () => unawaited(hub.parties.refresh().catchError((Object _) {}));
     app.onUnlocked = togetherUnlockDone;
+    // Someone asks to join the party led here: the Mac's words, and over a game its card (Do
+    // Not Disturb or not, as on the Mac). The party's row says whether they asked with the code.
     hub.parties.onRequest = (person, via) {
       _noticeSound();
-      app.show(
-        via == 'code' ? T.format('partyAsksCode', [person.displayName]) : T.format('partyAsks', [person.displayName]),
-      );
+      final text = T.format('discoverAsksParty', [person.displayName]);
+      app.show(text);
+      unawaited(app.noticeOverGame(text, detail: T.text('partyTitle'), symbol: Icons.back_hand_rounded));
     };
+    // Handed the lead, as the Mac says it.
+    hub.parties.onBecameLeader = () => app.show(T.text('partyYouLead'));
     hub.parties.onRequestAnswered = (accepted) {
       // A yes is an invite, which says so itself.
       if (!accepted) app.show(T.text('partyRequestDeclined'));
@@ -162,14 +182,27 @@ class TogetherModel {
     hub.social
       ..onNotice = noticeArrived
       ..onActivity = profileActivityChanged
+      ..holdFeedFocus = keepFeedFocus
       ..onFamilyNotice = (_) => unawaited(family.refresh());
     // The friends-only names and pictures the friends list brought, for every card shown.
     identities = hub.friends.identities;
+    // A friend request: over a game the card with the handle, unless the user asked not to be
+    // disturbed, as on the Mac.
     hub.friends.onRequest = (person) {
-      _noticeSound();
-      app.show(T.format('friendsAsked', [person.displayName]));
+      disturbingSound();
+      final text = T.format('friendsAsked', [person.displayName]);
+      app.show(text);
+      if (!doNotDisturb) {
+        unawaited(app.noticeOverGame(text, detail: '@${person.handle}', symbol: Icons.person_add_alt_1_rounded));
+      }
     };
     hub.friends.onAccepted = (person) => app.show(T.format('friendsNowFriends', [person.displayName]));
+    // A friend went up a trophy level: only while the launcher is in front and no game runs, as
+    // on the Mac.
+    hub.friends.onLevelUp = (friend, level) {
+      if (!app.active || app.running != null) return;
+      app.show(T.format('friendLevelUp', [TogetherModel.shown(friend.person).name, level.level]));
+    };
     // A trophy level reached: the trophy's sound (heard over a game too) and the toast with the
     // badge.
     hub.self.onLevelUp = (level) {
@@ -204,6 +237,7 @@ class TogetherModel {
       ..onSendFailed = partySendFailed;
     hub.voice
       ..pushToTalk = app.preferences.pushToTalk
+      ..noiseSuppression = app.preferences.noiseSuppression
       ..onMoved = (client) {
         app.show(T.text(client == 'phone' ? 'voiceMovedPhone' : 'voiceMovedAway'));
       }
@@ -237,6 +271,21 @@ class TogetherModel {
 
   /// Family limits: the kept status, play time, age ratings, asking a parent.
   late final FamilyGate family = FamilyGate(this);
+
+  /// Files are being dragged over the open conversation: it says what letting go does.
+  bool chatDropping = false;
+
+  /// The voice notes in chats.
+  late final VoiceNotes voiceNotes = VoiceNotes(
+    create: app.services.voicePlayback,
+    onSystemPlayer: _voiceInSystemPlayer,
+    onFailed: (_) => app.show(T.text('messagesAttachmentFailed')),
+    onMissing: (missing) => app.show(
+      missing.commands.length == 1
+          ? T.format('libmpvMissingVoice', [missing.commands.single])
+          : T.text('libmpvMissingVoicePlain'),
+    ),
+  );
   late final StreamSubscription<TogetherEvent> _ready;
   Timer? _flush;
 
@@ -261,11 +310,15 @@ class TogetherModel {
   /// Party: whether a party started now is open to friends.
   bool partyStartsOpen = false;
 
-  /// Party: a join code being typed, what the code looked up opens, and the Discord link being
-  /// typed (null while it is not).
-  String joinCodeDraft = '';
-  JoinPreview? codePreview;
+  /// Party: Join with a code as it stands, and the Discord link being typed (null while it is
+  /// not).
+  JoinEntry joinEntry = JoinEntry();
+  Timer? _joinLookup;
   String? discordDraft;
+
+  /// The open profile's pinned gallery; null until read or where the server keeps no files.
+  Section<List<MediaItem>>? profileGallery;
+  int _profileGallerySeq = 0;
 
   /// Party: its chat's keys and field (together_party_chat.dart).
   final PartyChatKeys partyChatKeys = PartyChatKeys();
@@ -363,6 +416,11 @@ class TogetherModel {
   Set<String> togetherTryAnyway = {};
   Set<String> togetherVersionRefused = {};
 
+  /// What holds a join back, for the panel that says it whole, and the game being started while
+  /// someone the user knows plays it (together_join.dart).
+  JoinBlock? joinBlock;
+  JoinChoice? joinChoice;
+
   /// The row whose social step is asking first (together_ask.dart): it shows the question instead.
   String? askingRow;
 
@@ -453,8 +511,8 @@ class TogetherModel {
       friendHandle = '';
       chosen = null;
       draft = '';
-      joinCodeDraft = '';
-      codePreview = null;
+      _joinLookup?.cancel();
+      joinEntry = JoinEntry();
       discordDraft = null;
       messagesIndex = 0;
       messagesSelectedKey = null;
@@ -490,6 +548,7 @@ class TogetherModel {
         Layer.profile,
         Layer.showcaseEdit,
         Layer.profileTheme,
+        Layer.countryPicker,
         Layer.compare,
         Layer.feed,
         Layer.captures,
@@ -622,6 +681,13 @@ class TogetherModel {
   /// What this user chose to show friends.
   PresenceStatus get myStatus => hub.self.status;
 
+  /// The user's own Do Not Disturb: no word over a game for what comes in.
+  bool get doNotDisturb => myStatus == PresenceStatus.dnd;
+
+  /// How each other player in the Play Together session is reached ([TogetherPlay.linkText]).
+  Map<String, PeerPath> togetherLinks = const {};
+  Timer? _linkPoll;
+
   /// The dot for a status this user chose; null for online, which needs none on their own rows.
   static PersonStatus? ownDot(PresenceStatus status) => switch (status) {
     PresenceStatus.online => null,
@@ -662,6 +728,20 @@ class TogetherModel {
 
   /// Read receipts on or off: shown at once, turned back with a word when the server cannot; the
   /// others' receipts change with it, so the conversations are read again.
+  Future<void> setPublicProfile(bool on) async {
+    if (on == hub.self.publicProfile) return;
+    try {
+      await hub.self.setPublicProfile(on);
+    } on Object catch (error) {
+      app.show(
+        error is TogetherProblem && error.code == 'restricted_by_family'
+            ? T.text('publicProfileFamily')
+            : message(error),
+      );
+    }
+    app.refresh();
+  }
+
   Future<void> setReadReceipts(bool on) async {
     if (on == hub.self.readReceipts) return;
     try {
@@ -739,6 +819,20 @@ class TogetherModel {
   /// (the Mac shows it over the other window with the same sound).
   void _noticeSound() {
     if (!app.active) app.sounds.play(Cue.unlocked);
+  }
+
+  /// [_noticeSound] for a request, an invite or a message: none on Do Not Disturb, as the Mac
+  /// keeps its notice over the other window, and so its sound, off then.
+  void disturbingSound() {
+    if (!doNotDisturb) _noticeSound();
+  }
+
+  /// A game invite, a party invite or a Play Together offer: the ring on the controller, none on
+  /// Do Not Disturb, as on the Mac. Asked whether or not the launcher is in front: the pulse
+  /// itself stays still behind a game or another window, and with Controller Vibration off
+  /// (the haptics' own gate), as every pulse does. A call rings on its own, as before.
+  void inviteRing() {
+    if (!doNotDisturb) app.vibrate(HapticCue.ring);
   }
 
   void _welcome(TogetherUser user) {
@@ -903,15 +997,18 @@ class TogetherModel {
       PresenceState.away => T.text('friendsAway'),
       _ => T.text('friendsOnline'),
     };
+    // What they listen to, when they chose to show it: "Online · Listening to Title, Artist".
+    final listening = presence.listening;
+    final heard = listening == null ? '' : ' · ${NowPlayingModel.listeningText(listening)}';
     // Playing together with their party: "Playing Minecraft together (2/8)".
     final game = presence.game;
     if (game != null && game.together) {
-      return T.format('togetherPresence', [gameName(game.titleId), game.players, game.capacity]);
+      return T.format('togetherPresence', [gameName(game.titleId), game.players, game.capacity]) + heard;
     }
     if (presence.game?.joinable == true) text += ' · ${T.text('gameJoinable')}';
     final party = presence.party;
     if (party != null) text += ' · ${T.format('friendsInParty', [party.size, party.max])}';
-    return text;
+    return text + heard;
   }
 
   /// A friend's dot: do not disturb and idle as they chose them, else what they do (a server
@@ -1059,7 +1156,7 @@ class TogetherModel {
         PanelRow(
           id: 'friend-game',
           title: T.format('gameJoin', [friend.person.displayName, gameName(game.titleId)]),
-          detail: T.format('gamePlayers', [game.players, game.capacity]),
+          detail: T.format(game.capacity == 1 ? 'gamePlayersOne' : 'gamePlayers', [game.players, game.capacity]),
           kind: ActionRow(
             () => unawaited(joinFriendGame(game.sessionId, titleId: game.titleId, host: friend.person.displayName)),
           ),
@@ -1242,6 +1339,15 @@ class TogetherModel {
         ),
         ...profileEditRows(),
         ...privateIdentityRows(),
+        if (hub.self.loaded)
+          PanelRow(
+            id: 'together-public-profile',
+            title: T.text('publicProfile'),
+            detail: hub.self.publicProfile
+                ? T.text('publicProfileHint')
+                : '${T.text('publicProfileHint')} ${T.text('publicProfileOffNote')}',
+            kind: ToggleRow(hub.self.publicProfile, (value) => unawaited(setPublicProfile(value))),
+          ),
         ...privacyRows(),
         ...discoveryRows(),
         PanelRow(
@@ -1436,11 +1542,23 @@ class TogetherModel {
         'handle_reserved' => T.text('togetherHandleReserved'),
         'handle_cooldown' => switch (DateTime.tryParse(error.extra['handleChangeAt'] as String? ?? '')) {
           final DateTime at => T.format('togetherHandleAgain', [CompareView.day(at)]),
-          null => error.title,
+          null => T.format('togetherErrorOther', [error.code]),
         },
         'links_not_allowed' => T.text('togetherNoLinks'),
         'media_server_off' => T.format('togetherMediaServerOff', [(error.extra['max'] as num?)?.toInt() ?? 4]),
-        _ => error.title.isEmpty ? T.text('togetherUnreachable') : error.title,
+        // The server's own words are English: every code gets the launcher's.
+        'bad_request' => T.text('togetherErrorBadRequest'),
+        'unauthorized' || 'session_revoked' || 'refresh_reused' => T.text('togetherErrorSignedOut'),
+        'forbidden' => T.text('togetherErrorForbidden'),
+        'not_found' => T.text('togetherErrorNotFound'),
+        'conflict' => T.text('togetherErrorConflict'),
+        'full' => T.text('togetherErrorFull'),
+        'payload_too_large' => T.text('togetherErrorTooLarge'),
+        'internal' => T.text('togetherErrorInternal'),
+        // A code the launcher has no words for yet: the server's sentence in English (which is
+        // English), the launcher's own with the code in every other language, as on the Mac.
+        _ when T.language.code == 'en' && error.title.isNotEmpty => error.title, // not a text
+        final code => code.isEmpty ? T.text('togetherUnreachable') : T.format('togetherErrorOther', [code]),
       };
     }
     return T.text('togetherUnreachable');
@@ -1471,11 +1589,16 @@ class TogetherModel {
         _messageArrived(data);
       case 'party.invite':
         final from = data['from'];
-        _noticeSound();
-        app.vibrate(HapticCue.ring);
-        app.show(
-          T.format('partyInvitedYou', [from is Map<String, dynamic> ? (from['displayName'] as String?) ?? '' : '']),
-        );
+        disturbingSound();
+        inviteRing();
+        final text = T.format('partyInvitedYou', [
+          from is Map<String, dynamic> ? (from['displayName'] as String?) ?? '' : '',
+        ]);
+        app.show(text);
+        // Over a game the card, unless the user asked not to be disturbed, as on the Mac.
+        if (!doNotDisturb) {
+          unawaited(app.noticeOverGame(text, detail: T.text('partyTitle'), symbol: Icons.groups_rounded));
+        }
       case 'party.member_joined' when data['partyId'] == hub.parties.party?.id:
         final member = data['member'];
         if (member is Map<String, dynamic> && member['userId'] != user?.id) {
@@ -1532,12 +1655,9 @@ class TogetherModel {
       PanelRow(
         id: 'together-country',
         title: T.text('togetherCountry'),
-        detail: T.text('togetherCountryDetail'),
-        kind: TextRow(
-          countryDraft ?? self.country ?? '',
-          (text) => countryDraft = text,
-          submit: () => unawaited(saveProfile()),
-        ),
+        // The country by its name, chosen from the list: never a code to know and type.
+        detail: Countries.name(countryDraft ?? self.country) ?? T.text('togetherCountryChoose'),
+        kind: ActionRow(openCountryPicker),
       ),
       PanelRow(
         id: 'together-save',
@@ -1557,6 +1677,83 @@ class TogetherModel {
         title: T.text('togetherChangeHandle'),
         kind: ActionRow(() => unawaited(changeHandle())),
       ),
+    ];
+  }
+
+  // The country: a list to search, by name in the launcher's language (Layer.countryPicker).
+
+  /// The search field's row, and the rows of no country and of each one.
+  static const countrySearchRow = 'country-search';
+  static const countryNoneRow = 'country-none';
+  static String countryRowId(String code) => 'country-$code';
+
+  /// What is typed in the picker's search, and where Back from the picker goes.
+  String countryQuery = '';
+  PanelSpot? countryReturn;
+
+  /// The country the profile would get on Save: the one picked, else the profile's own.
+  String get countryChosen => (countryDraft ?? hub.self.country ?? '').trim().toUpperCase();
+
+  /// Opens the list over Settings, on the row of the country chosen now.
+  void openCountryPicker() {
+    countryReturn = app.spot;
+    countryQuery = '';
+    app.open(Layer.countryPicker);
+    final chosen = countryChosen;
+    final row = countryRows().indexWhere((row) => row.id == (chosen.isEmpty ? countryNoneRow : countryRowId(chosen)));
+    if (row > 0) app.panelRow = row;
+    app.refresh();
+  }
+
+  /// Back to the row the picker was opened from, nothing chosen.
+  void backFromCountry() {
+    app.stopEditing();
+    app.returnTo(countryReturn);
+    countryReturn = null;
+  }
+
+  /// [code] is the profile's country from now on (null: none): the list closes and the profile
+  /// is saved at once, as on the Mac.
+  void chooseCountry(String? code) {
+    countryDraft = code ?? '';
+    backFromCountry();
+    unawaited(saveProfile());
+  }
+
+  /// The search field, None (while nothing is searched for) and the countries the search finds.
+  List<PanelRow> countryRows() {
+    final found = Countries.search(countryQuery);
+    final searching = countryQuery.trim().isNotEmpty;
+    return [
+      PanelRow(
+        id: countrySearchRow,
+        title: T.text('togetherCountrySearch'),
+        kind: TextRow(
+          countryQuery,
+          (text) {
+            countryQuery = text;
+            // The rows under the field change: the focus stays on the field.
+            app.panelRow = 0;
+            app.refresh();
+          },
+          // Enter: on to the first country found.
+          submit: () {
+            if (Countries.search(countryQuery).isEmpty) return;
+            app.panelRow = 1;
+            app.refresh();
+          },
+        ),
+      ),
+      if (!searching)
+        PanelRow(id: countryNoneRow, title: T.text('togetherCountryNone'), kind: ActionRow(() => chooseCountry(null))),
+      for (final (code, name) in found)
+        PanelRow(id: countryRowId(code), title: name, kind: ActionRow(() => chooseCountry(code))),
+      if (found.isEmpty)
+        PanelRow(
+          id: 'country-no-match',
+          title: T.format('togetherCountryNoMatch', [countryQuery.trim()]),
+          kind: const InfoRow(''),
+        ),
     ];
   }
 
@@ -1733,9 +1930,13 @@ class TogetherModel {
       attempt.disposed = true;
       attempt.cancel();
     }
+    _linkPoll?.cancel();
+    _linkPoll = null;
     stopRinging();
     calls.noAnswer?.cancel();
+    unawaited(voiceNotes.dispose());
     unawaited(online.stop());
+    _joinLookup?.cancel();
     family.dispose();
     talkWatch?.stop();
     talkWatch?.reader.close();

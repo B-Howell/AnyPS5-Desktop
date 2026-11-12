@@ -40,6 +40,7 @@ extension TogetherProfiles on TogetherModel {
     profileFailed = false;
     app.open(Layer.profile);
     profileIndex = 0;
+    unawaited(_loadProfileGallery(handle));
     try {
       final page = await hub.profiles.page(handle, card: card);
       if (app.overlay != Layer.profile) return;
@@ -57,6 +58,7 @@ extension TogetherProfiles on TogetherModel {
   void closeProfile() {
     final back = profileReturn;
     profile = null;
+    profileGallery = null;
     showcasePins = null;
     themeChoices = null;
     app.returnTo(back);
@@ -132,7 +134,30 @@ extension TogetherProfiles on TogetherModel {
     }
   }
 
+  /// The profile's pinned gallery, as on the Mac: read beside the page, where the server keeps
+  /// files.
+  Future<void> _loadProfileGallery(String handle) async {
+    final seq = ++_profileGallerySeq;
+    profileGallery = null;
+    if (!capturesOffered) return;
+    final gallery = await mediaFiles.gallery(handle);
+    if (seq != _profileGallerySeq || app.overlay != Layer.profile) return;
+    profileGallery = gallery;
+    app.refresh();
+  }
+
+  /// A pinned photo or clip over the whole screen.
+  void viewProfileMedia(MediaItem media) {
+    captures.viewing = media;
+    app.sounds.play(Cue.select);
+    app.refresh();
+  }
+
   void profileCommand(Command command) {
+    if (captures.viewing != null) {
+      if (command == Command.back || command == Command.select || command == Command.options) closeViewer();
+      return;
+    }
     switch (command) {
       case Command.up || Command.down:
         final next = (profileIndex + (command == Command.down ? 1 : -1)).clamp(
@@ -492,7 +517,8 @@ extension TogetherProfiles on TogetherModel {
 
   // Playing together.
 
-  /// The engine a game was unlocked with: only the same build is relied on to talk to itself.
+  /// The engine a game was unlocked with (its install record's, never the launcher's own version
+  /// while a copy stands): only the same build is relied on to talk to itself.
   String engineBuild(Game game) =>
       GameSession.cleanEngineBuild(app.records[game.id]?.toolkit ?? app.toolkit?.version ?? launcherVersion);
 
@@ -507,7 +533,7 @@ extension TogetherProfiles on TogetherModel {
     if (running != null) {
       if (!app.preferences.friendsJoin || games.session != null || openingSession) return;
       final game = running.$1;
-      if (game.retro != null || !SyncTitle.valid(game.titleId)) return;
+      if (game.retro != null) return;
       openingSession = true;
       unawaited(() async {
         try {
@@ -548,8 +574,16 @@ extension TogetherProfiles on TogetherModel {
     }
   }
 
-  /// A friend's game, from their presence or an invite: the same game here, checked first.
-  Future<void> joinFriendGame(String sessionId, {required String titleId, required String host}) async {
+  /// A friend's game, from their presence or an invite: the same game here, checked first as
+  /// Play Together checks it. A copy made by an older engine than the one at hand, when that one
+  /// is the host's, is rebuilt and the join goes on ([rebuilt]: it just was); a different game
+  /// version or engine build is said whole in its panel.
+  Future<void> joinFriendGame(
+    String sessionId, {
+    required String titleId,
+    required String host,
+    bool rebuilt = false,
+  }) async {
     if (!signedIn) return;
     if (_ps1Match != null) return app.show(T.text('retroOnlineBusy'));
     final game = app.games.where((game) => game.titleId == titleId).firstOrNull;
@@ -558,33 +592,60 @@ extension TogetherProfiles on TogetherModel {
     final running = app.running;
     if (running != null) return app.show(T.format('gameCloseFirst', [running.$1.name]));
     if (app.stateOf(game) is! Installed) return app.show(T.format('gameUnlockFirst', [game.name]));
-    final version = gameVersion(game);
-    final engine = engineBuild(game);
+    void again() => unawaited(joinFriendGame(sessionId, titleId: titleId, host: host, rebuilt: true));
     try {
       final session = await hub.games.get(sessionId);
-      switch (session.mismatch(gameVersion: version, engineBuild: engine)) {
-        case SessionMismatch.gameVersion:
-          return app.show(T.format('gameVersionMismatch', [host, session.gameVersion, version]));
-        case SessionMismatch.engineBuild:
-          return app.show(
-            T.format('gameEngineMismatch', [
-              host,
-              GameSession.release(session.engineBuild),
-              GameSession.release(engine),
-            ]),
+      final seen = PlayTogetherOffer.fromSession(session);
+      final hostName = host.isNotEmpty ? host : seen.hostName;
+      final verdict = PlayTogetherCheck.verdict(
+        seen,
+        signedIn: true,
+        copies: togetherCopies(),
+        running: app.running?.$1.name,
+      );
+      final Game copy;
+      switch (verdict) {
+        case JoinWith(:final gameId):
+          final found = app.games.where((game) => game.id == gameId).firstOrNull;
+          if (found == null) return;
+          copy = found;
+        case UpdateAndPlay(:final gameId):
+          final stale = app.games.where((game) => game.id == gameId).firstOrNull;
+          if (rebuilt || stale == null) return app.show(T.text('togetherStartFailed'));
+          return app.rebuildFirst(stale, again);
+        case UnlockAndPlay():
+          return app.show(T.format('gameUnlockFirst', [game.name]));
+        case OtherGameVersion(:final have, :final need, :final youUpdate):
+          return tell(
+            JoinBlock.gameVersion(
+              youUpdate: youUpdate,
+              hostName: hostName,
+              gameName: game.name,
+              host: need,
+              yours: have,
+            ),
           );
-        case null:
-          break;
+        case OtherEngine(:final have, :final need):
+          return tell(engineBlock(hostName: hostName, titleId: titleId, host: need, yours: have, rebuild: again));
+        case CloseFirst(running: final name):
+          return app.show(T.format('gameCloseFirst', [name]));
+        case SessionFull():
+          return app.show(T.text('gameSessionFull'));
+        case MissingGame() || SignInFirst():
+          return app.show(T.format('gameNotHere', [titleId]));
       }
-      await hub.games.join(sessionId, gameVersion: version, engineBuild: engine);
-      app.show(T.format('gameJoined', [host, game.name]));
+      await hub.games.join(sessionId, gameVersion: gameVersion(copy), engineBuild: engineBuild(copy));
+      app.show(T.format('gameJoined', [hostName, copy.name]));
       if (app.overlay != null) app.closeOverlay();
-      app.select(app.games.indexOf(game));
-      unawaited(app.play(game));
+      app.select(app.games.indexOf(copy));
+      // The copy's engine is the host's: it starts as it is.
+      unawaited(app.play(copy, asItIs: true));
     } on TogetherProblem catch (problem) {
+      if (JoinRefusal.of(problem) case final JoinRefusal refusal) {
+        return tell(refusalBlock(refusal, hostName: host, titleId: titleId));
+      }
       app.show(switch (problem.code) {
         'full' => T.text('gameSessionFull'),
-        'version_mismatch' => problem.title,
         _ => message(problem),
       });
     } on Object catch (error) {
@@ -687,7 +748,7 @@ extension TogetherProfiles on TogetherModel {
           PanelRow(
             id: 'game-join-${game.sessionId}',
             title: T.format('gameJoin', [friend.person.displayName, gameName(game.titleId)]),
-            detail: T.format('gamePlayers', [game.players, game.capacity]),
+            detail: T.format(game.capacity == 1 ? 'gamePlayersOne' : 'gamePlayers', [game.players, game.capacity]),
             person: TogetherModel.card(friend.person, status: PersonStatus.playing),
             kind: ActionRow(
               () => unawaited(joinFriendGame(game.sessionId, titleId: game.titleId, host: friend.person.displayName)),
@@ -704,7 +765,12 @@ extension TogetherProfiles on TogetherModel {
           PanelRow(
             id: 'game-invite-title',
             title: T.format('gameInviteTitle', [gameName(session.titleId)]),
-            kind: InfoRow(T.format('gamePlayers', [session.players.length, session.capacity])),
+            kind: InfoRow(
+              T.format(session.capacity == 1 ? 'gamePlayersOne' : 'gamePlayers', [
+                session.players.length,
+                session.capacity,
+              ]),
+            ),
           ),
         );
         for (final friend in invitable) {
@@ -722,9 +788,4 @@ extension TogetherProfiles on TogetherModel {
     }
     return rows;
   }
-}
-
-/// The title IDs AnyTogether takes.
-abstract final class SyncTitle {
-  static bool valid(String titleId) => TogetherSync.titleIdPattern.hasMatch(titleId);
 }

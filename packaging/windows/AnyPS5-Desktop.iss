@@ -1,13 +1,17 @@
 ; AnyPS5 Desktop installer (Inno Setup 6).
 ;
 ; Built by build-installer.ps1, which passes the version and the Flutter release folder:
-;     ISCC.exe /DAppVersion=0.1.20 /DSourceDir=..\..\build\windows\x64\runner\Release AnyPS5-Desktop.iss
+;     ISCC.exe /DAppVersion=0.1.22 /DSourceDir=..\..\build\windows\x64\runner\Release AnyPS5-Desktop.iss
 ;
 ; Installs for the current user by default (%LOCALAPPDATA%\Programs\AnyPS5 Desktop, no
 ; administrator rights); the first page offers an install for all users instead.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
+#endif
+; The file's version property: numbers only, so a nightly's passes its numbers alone.
+#ifndef FileVersion
+  #define FileVersion AppVersion
 #endif
 #ifndef SourceDir
   #define SourceDir "..\..\build\windows\x64\runner\Release"
@@ -29,7 +33,7 @@ AppPublisher=Utku Halis
 AppPublisherURL=https://github.com/AnyTogether/AnyPS5-Desktop
 AppSupportURL=https://github.com/AnyTogether/AnyPS5-Desktop/issues
 AppUpdatesURL=https://github.com/AnyTogether/AnyPS5-Desktop/releases
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#FileVersion}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes

@@ -14,9 +14,10 @@ import 'together_model.dart';
 
 /// The sign of what counts: a star for trophy points, a cup for trophies, a clock for play time.
 IconData _metricIcon(ChallengeMetric metric) => switch (metric) {
+  ChallengeMetric.points => Icons.star_rounded,
   ChallengeMetric.trophies => Icons.emoji_events_rounded,
   ChallengeMetric.time => Icons.schedule_rounded,
-  _ => Icons.star_rounded,
+  ChallengeMetric.other => Icons.flag_rounded,
 };
 
 /// The state's colour: running green, coming the accent, over and called off grey.
@@ -85,7 +86,11 @@ class ChallengeStrip extends StatelessWidget {
             SizedBox(width: 6 * scale),
             Text(
               T.upper(T.text('challengeTitle')),
-              style: AppText.display(12 * scale, weight: FontWeight.w700, color: accent).copyWith(letterSpacing: 1.4 * scale),
+              style: AppText.display(
+                12 * scale,
+                weight: FontWeight.w700,
+                color: accent,
+              ).copyWith(letterSpacing: 1.4 * scale),
             ),
             SizedBox(width: 8 * scale),
             Text(
@@ -145,117 +150,141 @@ class _ChallengeCard extends StatelessWidget {
     final leader = challenge.leader;
     final place = challenge.joined ? challenge.myStanding : null;
     final dot = _stateColor(challenge, accent);
-    return Pressable(
+    final leaderLine = leader == null
+        ? T.text(challenge.state == ChallengeState.upcoming ? 'challengeNotStarted' : 'challengeNoLeader')
+        : '${T.text(challenge.state == ChallengeState.ended ? 'challengeWinner' : 'challengeLeading')}: '
+              '${TogetherChallenges.standingName(leader)} · '
+              '${TogetherChallenges.value(leader.value, challenge.metric)}';
+    return Semantics(
+      container: true,
+      button: true,
+      selected: focused,
+      label: [
+        challenge.title,
+        together.challengeGame(challenge.game),
+        TogetherChallenges.metricName(challenge.metric),
+        TogetherChallenges.when(challenge),
+        leaderLine,
+        if (place != null) '${T.text('challengeYourPlace')} ${place.rank}',
+      ].join(', '),
       onTap: onTap,
-      pressScale: 0.98,
-      builder: (context, hovering) => AnimatedContainer(
-        duration: Motion.focus,
-        curve: Motion.settle,
-        width: ChallengeStrip.cardWidth * scale,
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: focused ? Colors.white : Colors.white.withValues(alpha: hovering ? 0.11 : 0.06),
-          borderRadius: BorderRadius.circular(18 * scale),
-          border: Border.all(
-            color: challenge.joined && !focused ? accent.withValues(alpha: 0.45) : Colors.transparent,
+      excludeSemantics: true,
+      child: Pressable(
+        onTap: onTap,
+        pressScale: 0.98,
+        builder: (context, hovering) => AnimatedContainer(
+          duration: Motion.focus,
+          curve: Motion.settle,
+          width: ChallengeStrip.cardWidth * scale,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: focused ? Colors.white : Colors.white.withValues(alpha: hovering ? 0.11 : 0.06),
+            borderRadius: BorderRadius.circular(18 * scale),
+            border: Border.all(
+              color: challenge.joined && !focused ? accent.withValues(alpha: 0.45) : Colors.transparent,
+            ),
           ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: EdgeInsets.fromLTRB(16 * scale, 13 * scale, 16 * scale, 11 * scale),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(_metricIcon(challenge.metric), size: 17 * scale, color: accent),
-                      SizedBox(width: 8 * scale),
-                      Expanded(
-                        child: Text(
-                          challenge.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppText.display(17 * scale, weight: FontWeight.w600, color: ink),
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: 3 * scale),
-                  Text(
-                    '${together.challengeGame(challenge.game)} · ${TogetherChallenges.metricName(challenge.metric)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppText.display(13 * scale, color: ink.withValues(alpha: 0.6)),
-                  ),
-                  SizedBox(height: 9 * scale),
-                  Row(
-                    children: [
-                      Container(
-                        width: 7 * scale,
-                        height: 7 * scale,
-                        decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
-                      ),
-                      SizedBox(width: 7 * scale),
-                      Flexible(
-                        child: Text(
-                          TogetherChallenges.when(challenge),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppText.display(13 * scale, weight: FontWeight.w600, color: ink.withValues(alpha: 0.85)),
-                        ),
-                      ),
-                      SizedBox(width: 10 * scale),
-                      Icon(Icons.group_rounded, size: 14 * scale, color: ink.withValues(alpha: 0.5)),
-                      SizedBox(width: 4 * scale),
-                      Text(
-                        T.number(challenge.entrants),
-                        style: AppText.display(13 * scale, weight: FontWeight.w600, color: ink.withValues(alpha: 0.6)),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: 6 * scale),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          leader == null
-                              ? T.text(challenge.state == ChallengeState.upcoming ? 'challengeNotStarted' : 'challengeNoLeader')
-                              : '${T.text(challenge.state == ChallengeState.ended ? 'challengeWinner' : 'challengeLeading')}: '
-                                    '${TogetherChallenges.standingName(leader)} · '
-                                    '${TogetherChallenges.value(leader.value, challenge.metric)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppText.display(13 * scale, color: ink.withValues(alpha: 0.7)),
-                        ),
-                      ),
-                      if (place != null) ...[
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(16 * scale, 13 * scale, 16 * scale, 11 * scale),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(_metricIcon(challenge.metric), size: 17 * scale, color: accent),
                         SizedBox(width: 8 * scale),
-                        Container(
-                          padding: EdgeInsets.symmetric(horizontal: 8 * scale, vertical: 2 * scale),
-                          decoration: BoxDecoration(
-                            color: accent.withValues(alpha: focused ? 0.2 : 0.3),
-                            borderRadius: BorderRadius.circular(8 * scale),
-                          ),
+                        Expanded(
                           child: Text(
-                            '${T.text('challengeYourPlace')} #${place.rank}',
-                            style: AppText.display(11 * scale, weight: FontWeight.w700, color: ink),
+                            challenge.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppText.display(17 * scale, weight: FontWeight.w600, color: ink),
                           ),
                         ),
                       ],
-                    ],
-                  ),
-                ],
+                    ),
+                    SizedBox(height: 3 * scale),
+                    Text(
+                      '${together.challengeGame(challenge.game)} · ${TogetherChallenges.metricName(challenge.metric)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.display(13 * scale, color: ink.withValues(alpha: 0.6)),
+                    ),
+                    SizedBox(height: 9 * scale),
+                    Row(
+                      children: [
+                        Container(
+                          width: 7 * scale,
+                          height: 7 * scale,
+                          decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+                        ),
+                        SizedBox(width: 7 * scale),
+                        Flexible(
+                          child: Text(
+                            TogetherChallenges.when(challenge),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppText.display(
+                              13 * scale,
+                              weight: FontWeight.w600,
+                              color: ink.withValues(alpha: 0.85),
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: 10 * scale),
+                        Icon(Icons.group_rounded, size: 14 * scale, color: ink.withValues(alpha: 0.5)),
+                        SizedBox(width: 4 * scale),
+                        Text(
+                          T.number(challenge.entrants),
+                          style: AppText.display(
+                            13 * scale,
+                            weight: FontWeight.w600,
+                            color: ink.withValues(alpha: 0.6),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 6 * scale),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            leaderLine,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppText.display(13 * scale, color: ink.withValues(alpha: 0.7)),
+                          ),
+                        ),
+                        if (place != null) ...[
+                          SizedBox(width: 8 * scale),
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 8 * scale, vertical: 2 * scale),
+                            decoration: BoxDecoration(
+                              color: accent.withValues(alpha: focused ? 0.2 : 0.3),
+                              borderRadius: BorderRadius.circular(8 * scale),
+                            ),
+                            child: Text(
+                              '${T.text('challengeYourPlace')} #${place.rank}',
+                              style: AppText.display(11 * scale, weight: FontWeight.w700, color: ink),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-            _WindowTrack(
-              challenge: challenge,
-              color: dot,
-              height: 3 * scale,
-              back: (focused ? Colors.black : Colors.white).withValues(alpha: 0.08),
-            ),
-          ],
+              _WindowTrack(
+                challenge: challenge,
+                color: dot,
+                height: 3 * scale,
+                back: (focused ? Colors.black : Colors.white).withValues(alpha: 0.08),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -389,7 +418,9 @@ class ChallengeDetailView extends StatelessWidget {
                                 keys: 'O',
                                 glyph: PadGlyph.triangle,
                                 label: T.text(
-                                  together.challengeActions.first == ChallengeAction.leave ? 'challengeLeave' : 'challengeJoin',
+                                  together.challengeActions.first == ChallengeAction.leave
+                                      ? 'challengeLeave'
+                                      : 'challengeJoin',
                                 ),
                                 action: HintAction.options,
                               ),
@@ -430,7 +461,13 @@ class _Standings extends StatelessWidget {
     final challenge = detail?.challenge;
     final lines = together.challengeLines;
     final note = detail == null
-        ? T.text(screens.challengeFailed ? 'challengeFailed' : 'challengeLoading')
+        ? T.text(
+            screens.challengeGone
+                ? 'challengeGone'
+                : screens.challengeFailed
+                ? 'challengeFailed'
+                : 'challengeLoading',
+          )
         : lines.isEmpty
         ? T.text(challenge!.state == ChallengeState.upcoming ? 'challengeNotStarted' : 'challengeNoLeader')
         : null;
@@ -453,7 +490,10 @@ class _Standings extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 if (note != null)
-                  Text(note, style: AppText.display(17 * scale, color: Colors.white.withValues(alpha: 0.6), height: 1.4)),
+                  Text(
+                    note,
+                    style: AppText.display(17 * scale, color: Colors.white.withValues(alpha: 0.6), height: 1.4),
+                  ),
                 for (var index = 0; index < lines.length; index++)
                   KeepVisible(
                     active: screens.challengeIndex == index && !screens.challengeOnActions,
@@ -517,92 +557,102 @@ class _StandingRow extends StatelessWidget {
     final accent = model.accentChoice.color;
     final medal = LeaderboardView.medal(standing.rank);
     final user = standing.user;
-    return Pressable(
+    return Semantics(
+      container: true,
+      button: true,
+      selected: focused,
+      label: [
+        '${standing.rank}',
+        TogetherChallenges.standingName(standing),
+        if (standing.me) T.text('socialBoardYou'),
+        TogetherChallenges.value(standing.value, metric),
+      ].join(', '),
       onTap: onTap,
-      pressScale: 0.99,
-      builder: (context, hovering) => AnimatedContainer(
-        duration: Motion.focus,
-        curve: Motion.settle,
-        margin: EdgeInsets.only(bottom: 6 * scale),
-        padding: EdgeInsets.symmetric(horizontal: 14 * scale, vertical: 10 * scale),
-        decoration: BoxDecoration(
-          color: focused
-              ? Colors.white
-              : standing.me
-              ? accent.withValues(alpha: hovering ? 0.3 : 0.2)
-              : Colors.white.withValues(alpha: hovering ? 0.1 : 0.05),
-          borderRadius: BorderRadius.circular(14 * scale),
-        ),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 58 * scale,
-              child: Text(
-                '${standing.rank}',
-                style: AppText.display(
-                  22 * scale,
-                  weight: FontWeight.w700,
-                  color: medal == null || focused ? ink.withValues(alpha: medal == null ? 0.55 : 1) : medal,
-                ),
-              ),
-            ),
-            if (user == null)
-              Container(
-                width: 40 * scale,
-                height: 40 * scale,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: ink.withValues(alpha: 0.1),
-                ),
-                child: Icon(Icons.visibility_off_rounded, size: 18 * scale, color: ink.withValues(alpha: 0.5)),
-              )
-            else
-              PersonAvatar(person: TogetherModel.card(user), size: 40 * scale),
-            SizedBox(width: 14 * scale),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          TogetherChallenges.standingName(standing),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppText.display(
-                            17 * scale,
-                            weight: FontWeight.w600,
-                            color: user == null ? ink.withValues(alpha: 0.6) : ink,
-                          ),
-                        ),
-                      ),
-                      if (standing.me) ...[
-                        SizedBox(width: 8 * scale),
-                        Container(
-                          padding: EdgeInsets.symmetric(horizontal: 7 * scale, vertical: 2 * scale),
-                          decoration: BoxDecoration(
-                            color: focused ? accent.withValues(alpha: 0.25) : Colors.white.withValues(alpha: 0.18),
-                            borderRadius: BorderRadius.circular(6 * scale),
-                          ),
-                          child: Text(
-                            T.upper(T.text('socialBoardYou')),
-                            style: AppText.display(10 * scale, weight: FontWeight.w700, color: ink),
-                          ),
-                        ),
-                      ],
-                    ],
+      excludeSemantics: true,
+      child: Pressable(
+        onTap: onTap,
+        pressScale: 0.99,
+        builder: (context, hovering) => AnimatedContainer(
+          duration: Motion.focus,
+          curve: Motion.settle,
+          margin: EdgeInsets.only(bottom: 6 * scale),
+          padding: EdgeInsets.symmetric(horizontal: 14 * scale, vertical: 10 * scale),
+          decoration: BoxDecoration(
+            color: focused
+                ? Colors.white
+                : standing.me
+                ? accent.withValues(alpha: hovering ? 0.3 : 0.2)
+                : Colors.white.withValues(alpha: hovering ? 0.1 : 0.05),
+            borderRadius: BorderRadius.circular(14 * scale),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 58 * scale,
+                child: Text(
+                  '${standing.rank}',
+                  style: AppText.display(
+                    22 * scale,
+                    weight: FontWeight.w700,
+                    color: medal == null || focused ? ink.withValues(alpha: medal == null ? 0.55 : 1) : medal,
                   ),
-                  if (user != null)
-                    Text('@${user.handle}', style: AppText.display(13 * scale, color: ink.withValues(alpha: 0.55))),
-                ],
+                ),
               ),
-            ),
-            Text(
-              TogetherChallenges.value(standing.value, metric),
-              style: AppText.display(17 * scale, weight: FontWeight.w600, color: ink),
-            ),
-          ],
+              if (user == null)
+                Container(
+                  width: 40 * scale,
+                  height: 40 * scale,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: ink.withValues(alpha: 0.1)),
+                  child: Icon(Icons.visibility_off_rounded, size: 18 * scale, color: ink.withValues(alpha: 0.5)),
+                )
+              else
+                PersonAvatar(person: TogetherModel.card(user), size: 40 * scale),
+              SizedBox(width: 14 * scale),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            TogetherChallenges.standingName(standing),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppText.display(
+                              17 * scale,
+                              weight: FontWeight.w600,
+                              color: user == null ? ink.withValues(alpha: 0.6) : ink,
+                            ),
+                          ),
+                        ),
+                        if (standing.me) ...[
+                          SizedBox(width: 8 * scale),
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 7 * scale, vertical: 2 * scale),
+                            decoration: BoxDecoration(
+                              color: focused ? accent.withValues(alpha: 0.25) : Colors.white.withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(6 * scale),
+                            ),
+                            child: Text(
+                              T.upper(T.text('socialBoardYou')),
+                              style: AppText.display(10 * scale, weight: FontWeight.w700, color: ink),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (user != null)
+                      Text('@${user.handle}', style: AppText.display(13 * scale, color: ink.withValues(alpha: 0.55))),
+                  ],
+                ),
+              ),
+              Text(
+                TogetherChallenges.value(standing.value, metric),
+                style: AppText.display(17 * scale, weight: FontWeight.w600, color: ink),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -623,7 +673,10 @@ class _WindowCard extends StatelessWidget {
     final accent = model.accentChoice.color;
     final color = _stateColor(challenge, accent);
     final place = challenge.joined ? challenge.myStanding : null;
-    final winner = challenge.state == ChallengeState.ended && challenge.isFinal ? challenge.leader : null;
+    // Who is ahead while it runs, the winner once over and final.
+    final decided = challenge.state == ChallengeState.ended && challenge.isFinal;
+    final leader = challenge.leader;
+    final leaderColor = decided ? LeaderboardView.medal(1) : null;
     final label = AppText.display(
       12 * scale,
       weight: FontWeight.w700,
@@ -660,7 +713,11 @@ class _WindowCard extends StatelessWidget {
               SizedBox(width: 5 * scale),
               Text(
                 T.format('challengeEntrants', [T.number(challenge.entrants)]),
-                style: AppText.display(13 * scale, weight: FontWeight.w600, color: Colors.white.withValues(alpha: 0.75)),
+                style: AppText.display(
+                  13 * scale,
+                  weight: FontWeight.w600,
+                  color: Colors.white.withValues(alpha: 0.75),
+                ),
               ),
             ],
           ),
@@ -690,32 +747,39 @@ class _WindowCard extends StatelessWidget {
               ),
             ],
           ),
-          if (winner != null) ...[
-            SizedBox(height: 18 * scale),
-            Text(T.upper(T.text('challengeWinner')), style: label.copyWith(color: LeaderboardView.medal(1))),
-            SizedBox(height: 8 * scale),
+          SizedBox(height: 18 * scale),
+          Text(
+            T.upper(T.text(decided ? 'challengeWinner' : 'challengeLeading')),
+            style: leaderColor == null ? label : label.copyWith(color: leaderColor),
+          ),
+          SizedBox(height: 8 * scale),
+          if (leader == null)
+            Text(
+              T.text('challengeNoLeader'),
+              style: AppText.display(14 * scale, color: Colors.white.withValues(alpha: 0.6)),
+            )
+          else
             Row(
               children: [
-                if (winner.user case final user?)
+                if (leader.user case final user?)
                   PersonAvatar(person: TogetherModel.card(user), size: 34 * scale)
                 else
                   Icon(Icons.emoji_events_rounded, size: 30 * scale, color: LeaderboardView.medal(1)),
                 SizedBox(width: 10 * scale),
                 Expanded(
                   child: Text(
-                    TogetherChallenges.standingName(winner),
+                    TogetherChallenges.standingName(leader),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: AppText.display(18 * scale, weight: FontWeight.w600),
                   ),
                 ),
                 Text(
-                  TogetherChallenges.value(winner.value, challenge.metric),
-                  style: AppText.display(16 * scale, weight: FontWeight.w600, color: LeaderboardView.medal(1)),
+                  TogetherChallenges.value(leader.value, challenge.metric),
+                  style: AppText.display(16 * scale, weight: FontWeight.w600, color: leaderColor ?? Colors.white),
                 ),
               ],
             ),
-          ],
           if (place != null) ...[
             SizedBox(height: 18 * scale),
             Text(T.upper(T.text('challengeYourPlace')), style: label),
@@ -819,39 +883,51 @@ class _ActionButton extends StatelessWidget {
       ChallengeAction.leave => (T.text('challengeLeave'), Icons.logout_rounded),
       ChallengeAction.website => (T.text('challengeMakeOnWeb'), Icons.open_in_new_rounded),
     };
-    return Pressable(
+    return Semantics(
+      container: true,
+      button: true,
+      enabled: !busy,
+      label: text,
       onTap: busy ? null : onTap,
-      builder: (context, hovering) => AnimatedContainer(
-        duration: Motion.focus,
-        curve: Motion.settle,
-        padding: EdgeInsets.symmetric(horizontal: 18 * scale, vertical: website ? 10 * scale : 13 * scale),
-        decoration: BoxDecoration(
-          color: focused
-              ? Colors.white
-              : primary
-              ? accent.withValues(alpha: hovering ? 1 : 0.9)
-              : Colors.white.withValues(alpha: website ? (hovering ? 0.08 : 0) : (hovering ? 0.16 : 0.1)),
-          borderRadius: BorderRadius.circular(24 * scale),
-          border: Border.all(color: website && !focused ? Colors.white.withValues(alpha: 0.18) : Colors.transparent),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: (website ? 16 : 19) * scale, color: ink.withValues(alpha: busy ? 0.4 : 1)),
-            SizedBox(width: 8 * scale),
-            Flexible(
-              child: Text(
-                text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppText.display(
-                  (website ? 14 : 16) * scale,
-                  weight: FontWeight.w600,
-                  color: ink.withValues(alpha: busy ? 0.4 : 1),
+      excludeSemantics: true,
+      child: Pressable(
+        onTap: busy ? null : onTap,
+        builder: (context, hovering) => AnimatedContainer(
+          duration: Motion.focus,
+          curve: Motion.settle,
+          padding: EdgeInsets.symmetric(horizontal: 18 * scale, vertical: website ? 10 * scale : 13 * scale),
+          decoration: BoxDecoration(
+            color: focused
+                ? Colors.white
+                : primary
+                ? accent.withValues(alpha: hovering ? 1 : 0.9)
+                : Colors.white.withValues(alpha: website ? (hovering ? 0.08 : 0) : (hovering ? 0.16 : 0.1)),
+            borderRadius: BorderRadius.circular(24 * scale),
+            border: Border.all(color: website && !focused ? Colors.white.withValues(alpha: 0.18) : Colors.transparent),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: (website ? 16 : 19) * scale,
+                color: ink.withValues(alpha: busy ? 0.4 : 1),
+              ),
+              SizedBox(width: 8 * scale),
+              Flexible(
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.display(
+                    (website ? 14 : 16) * scale,
+                    weight: FontWeight.w600,
+                    color: ink.withValues(alpha: busy ? 0.4 : 1),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

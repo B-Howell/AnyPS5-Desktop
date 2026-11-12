@@ -15,7 +15,8 @@ extension TogetherPlay on TogetherModel {
       () {
         final unlocked = app.records[game.id] != null;
         final current = engineBuild(game);
-        final kit = app.toolkit?.version;
+        // The engine this game is unlocked with now: its own when it has one.
+        final kit = app.engineVersionFor(game);
         final next = kit == null ? null : GameSession.cleanEngineBuild(kit);
         return TogetherCopy(
           id: game.id,
@@ -31,6 +32,8 @@ extension TogetherPlay on TogetherModel {
   // Hosting.
 
   /// The host's Play Together: a LAN session in the party, then the game with online play on.
+  /// A copy made by another engine than the one at hand is rebuilt first, so the session carries
+  /// the build the party's up-to-date launchers have.
   Future<void> startPlayTogether(Game game) async {
     if (!signedIn || hub.parties.party == null) return;
     if (_ps1Match != null) return app.show(T.text('retroOnlineBusy'));
@@ -38,6 +41,11 @@ extension TogetherPlay on TogetherModel {
     final running = app.running;
     if (running != null) return app.show(T.format('togetherCloseFirst', [running.$1.name]));
     if (app.stateOf(game) is! Installed) return app.show(T.format('gameUnlockFirst', [game.name]));
+    app.rebuildFirst(game, () => unawaited(_hostPlayTogether(game)));
+  }
+
+  Future<void> _hostPlayTogether(Game game) async {
+    if (!signedIn || hub.parties.party == null || app.running != null) return;
     app.show(T.format('togetherStarting', [game.name]));
     try {
       final session = await hub.games.startTogether(
@@ -64,11 +72,13 @@ extension TogetherPlay on TogetherModel {
   /// a session still held ends.
   void _enterTogether(GameSession session, Game game) {
     togetherSession = session.id;
+    pollTogetherLinks();
     togetherOffers = togetherOffers.where((offer) => offer.sessionId != session.id).toList();
     if (app.overlay != null) app.closeOverlay();
     app.select(app.games.indexOf(game));
     unawaited(
-      app.play(game).whenComplete(() {
+      // The session carries this copy's engine build: it starts as it is.
+      app.play(game, asItIs: true).whenComplete(() {
         if (hub.games.session?.id == session.id && app.running == null) {
           unawaited(hub.games.close(gameExited: true));
         }
@@ -99,6 +109,19 @@ extension TogetherPlay on TogetherModel {
         togetherAfterUnlock = (gameId, offer);
         app.show(T.format(verdict is UnlockAndPlay ? 'togetherUnlockingFirst' : 'togetherUpdatingFirst', [game.name]));
         app.unlock(game);
+      case OtherGameVersion(:final have, :final need, :final youUpdate):
+        tell(
+          JoinBlock.gameVersion(
+            youUpdate: youUpdate,
+            hostName: offer.hostName,
+            gameName: gameName(offer.titleId),
+            host: need,
+            yours: have,
+            tryAnyway: canTryAnyway(offer) ? () => unawaited(tryAnywayPlayTogether(offer)) : null,
+          ),
+        );
+      case OtherEngine(:final have, :final need):
+        tell(engineBlock(hostName: offer.hostName, titleId: offer.titleId, host: need, yours: have));
       default:
         app.show(verdictText(verdict, offer) ?? '');
     }
@@ -165,10 +188,16 @@ extension TogetherPlay on TogetherModel {
       if (refusal != null) {
         // The party panel offers Try Anyway for a version the server would let by on request.
         if (refusal.overridable && !anyway) togetherVersionRefused.add(offer.sessionId);
-        final verdict = refusal.engine
-            ? OtherEngine(have: refusal.actual, need: refusal.expected, youUpdate: refusal.youUpdate)
-            : OtherGameVersion(have: refusal.actual, need: refusal.expected, youUpdate: refusal.youUpdate);
-        app.show(verdictText(verdict, offer) ?? problem.title);
+        // The host's build changed since the check here: this copy rebuilt may fit it now.
+        tell(
+          refusalBlock(
+            refusal,
+            hostName: offer.hostName,
+            titleId: offer.titleId,
+            rebuild: () => app.rebuildFirst(game, () => unawaited(joinPlayTogether(offer, afterUnlock: true))),
+            tryAnyway: anyway ? null : () => unawaited(tryAnywayPlayTogether(offer)),
+          ),
+        );
       } else {
         app.show(problem.code == 'full' ? T.text('togetherFull') : message(problem));
       }
@@ -177,7 +206,8 @@ extension TogetherPlay on TogetherModel {
     }
   }
 
-  /// What blocks a join, in words; null for a way in.
+  /// What blocks a join, in words; null for a way in. A different engine build says what differs
+  /// and what gets past it; Join opens the panel with both builds whole.
   String? verdictText(PlayTogetherVerdict verdict, PlayTogetherOffer offer) {
     final name = gameName(offer.titleId);
     return switch (verdict) {
@@ -188,10 +218,10 @@ extension TogetherPlay on TogetherModel {
         youUpdate
             ? T.format('togetherVersionYou', [name, need, have])
             : T.format('togetherVersionHost', [offer.hostName, need, have]),
-      OtherEngine(:final have, :final need, :final youUpdate) => T.format(
-        youUpdate ? 'togetherEngineYou' : 'togetherEngineHost',
-        [offer.hostName, GameSession.release(need), GameSession.release(have)],
-      ),
+      OtherEngine(:final have, :final need) => () {
+        final texts = engineBlock(hostName: offer.hostName, titleId: offer.titleId, host: need, yours: have).texts;
+        return '${texts.title}\n${texts.advice}';
+      }(),
       CloseFirst(:final running) => T.format('togetherCloseFirst', [running]),
       SessionFull() => T.text('togetherFull'),
     };
@@ -222,16 +252,47 @@ extension TogetherPlay on TogetherModel {
 
   // Peers.
 
-  /// How another player is reached: the mesh's connection to them. (The PC's mesh does not hand
-  /// out WebRTC statistics, so no direct/relay route or round trip here, unlike the Mac.)
+  /// How each other player is reached, every few seconds while the user plays together.
+  void pollTogetherLinks() {
+    _linkPoll?.cancel();
+    _linkPoll = Timer.periodic(const Duration(seconds: 3), (_) => unawaited(_readTogetherLinks()));
+    unawaited(_readTogetherLinks());
+  }
+
+  Future<void> _readTogetherLinks() async {
+    if (hub.games.session?.together != true) {
+      _linkPoll?.cancel();
+      _linkPoll = null;
+      togetherLinks = const {};
+      return;
+    }
+    final transport = online.running?.transport;
+    if (transport is! OnlinePeerMesh) return;
+    final links = await transport.paths();
+    if (_linkPoll == null) return;
+    togetherLinks = links;
+    if (app.overlay == Layer.party) app.refresh();
+  }
+
+  /// "Direct · 23 ms", "Relay · 80 ms", "Connecting…": how another player is reached. Where the
+  /// statistics do not say how (see [PeerPath.of]), "Connected" and no number.
   String linkText(String userId) {
     final transport = online.running?.transport;
     final state = transport is OnlinePeerMesh ? transport.states[userId] : null;
-    return switch (state) {
-      PeerState.connected => T.text('playTogetherConnected'),
-      PeerState.failed || PeerState.closed => T.text('playTogetherUnreachable'),
-      _ => T.text('playTogetherConnecting'),
+    if (state == null || state == PeerState.connecting) return T.text('playTogetherConnecting');
+    if (state != PeerState.connected) return T.text('playTogetherUnreachable');
+    return linkWords(togetherLinks[userId]);
+  }
+
+  /// A connected player's route in words; only what the statistics said.
+  static String linkWords(PeerPath? path) {
+    final route = switch (path?.route) {
+      PeerRoute.direct => T.text('playTogetherDirect'),
+      PeerRoute.relay => T.text('playTogetherRelay'),
+      _ => T.text('playTogetherConnected'),
     };
+    final millis = path?.rttMs;
+    return millis == null ? route : '$route · ${T.format('playTogetherMs', [millis])}';
   }
 
   // Rows.
@@ -241,14 +302,27 @@ extension TogetherPlay on TogetherModel {
   /// game selected on Home.
   List<PanelRow> togetherRows(Party party, String me) {
     final together = party.together;
+    // A party is not a game session: said once, over whatever Play Together shows.
+    final about = PanelRow(
+      id: 'together-about',
+      title: T.text('togetherPick'),
+      kind: InfoRow(T.text('togetherAbout')),
+      wraps: true,
+    );
     if (together == null) {
       final game = app.selectedGame;
       if (game == null || app.running != null) {
         return [
-          PanelRow(id: 'together-pick', title: T.text('togetherPick'), kind: InfoRow(T.text('togetherPickDetail'))),
+          PanelRow(
+            id: 'together-pick',
+            title: T.text('togetherPick'),
+            kind: InfoRow('${T.text('togetherAbout')}\n${T.text('togetherPickDetail')}'),
+            wraps: true,
+          ),
         ];
       }
       return [
+        about,
         PanelRow(
           id: 'together-start',
           title: T.format('togetherStart', [game.name]),
@@ -257,11 +331,16 @@ extension TogetherPlay on TogetherModel {
         ),
       ];
     }
-    final offer = PlayTogetherOffer.fromParty(together, party.members);
+    final offer = PlayTogetherOffer.fromParty(
+      together,
+      party.members,
+      name: (person) => TogetherModel.shown(person).name,
+    );
     final mine = hub.games.session?.id == together.sessionId;
     final hosting = together.hostId == me;
     final people = {for (final person in party.members) person.id: person};
     final rows = <PanelRow>[
+      about,
       PanelRow(
         id: 'together-title',
         title: T.format('togetherTitle', [gameName(together.titleId), together.players.length, together.capacity]),
@@ -300,6 +379,7 @@ extension TogetherPlay on TogetherModel {
           },
           detail: verdictText(verdict, offer) ?? T.text('togetherJoinDetail'),
           kind: ActionRow(() => unawaited(joinPlayTogether(offer))),
+          wraps: true,
         ),
       );
       if (tryAnywayRow(offer, 'together-try-anyway') case final PanelRow anyway) rows.add(anyway);
@@ -348,9 +428,14 @@ extension TogetherPlay on TogetherModel {
   void togetherStarted(GameSession session) {
     final offer = PlayTogetherOffer.fromSession(session);
     togetherOffers = [...togetherOffers.where((known) => known.sessionId != offer.sessionId), offer];
-    _noticeSound();
-    app.vibrate(HapticCue.ring);
-    app.show(T.format('togetherOffer', [offer.hostName, gameName(offer.titleId)]));
+    disturbingSound();
+    inviteRing();
+    final text = T.format('togetherOffer', [offer.hostName, gameName(offer.titleId)]);
+    app.show(text);
+    // A game in front hears of it over the game, unless the user asked not to be disturbed.
+    if (!doNotDisturb) {
+      unawaited(app.noticeOverGame(text, detail: T.text('togetherOfferDetail'), symbol: Icons.group_rounded));
+    }
     unawaited(hub.parties.refresh().catchError((Object _) {}));
   }
 

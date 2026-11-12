@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart' show kPrimaryMouseButton;
 import 'package:flutter/material.dart';
@@ -182,6 +183,9 @@ class PanelView extends StatelessWidget {
       Layer.confirmUninstall,
       Layer.updateChoice,
       Layer.updateRequired,
+      Layer.joinBlocked,
+      Layer.joinOrHost,
+      Layer.phoneEngine,
       Layer.friendOptions,
       Layer.copyWarning,
       Layer.gameFiles,
@@ -210,7 +214,8 @@ class PanelView extends StatelessWidget {
     // ConfirmCard, with the icon too).
     final gameIcon = model.overlay == Layer.quickMenu ? model.running?.$1.icon : null;
     // The copy warning explains itself before its four choices.
-    final tall = model.overlay == Layer.copyWarning;
+    // A join held back says both builds whole and what to do.
+    final tall = model.overlay == Layer.copyWarning || model.overlay == Layer.joinBlocked;
     // The party with its chat beside the rows: wider.
     final partyChat = model.overlay == Layer.party && model.together.partyChatShown;
     final retroControls = model.overlay == Layer.controls && model.selectedGame?.retro != null;
@@ -232,6 +237,7 @@ class PanelView extends StatelessWidget {
       // The user's own profile: the count pinned, and the Hub the themes come from, beside it.
       Layer.showcaseEdit => T.text('showcaseEdit'),
       Layer.profileTheme => T.text('profileTheme'),
+      Layer.countryPicker => T.text('togetherCountry'),
       _ => category.title,
     };
     final gameMenu = model.overlay == Layer.quickMenu || model.overlay == Layer.closeGame
@@ -257,7 +263,9 @@ class PanelView extends StatelessWidget {
                                   _ => 62,
                                 } *
                                 category.rows.length +
-                            (model.overlay == Layer.coopLobby ? 200 : 0)
+                            (model.overlay == Layer.coopLobby ? 200 : 0) +
+                            // Now playing's card is taller than a row: its cover and three lines.
+                            (category.rows.any((row) => row.kind is MediaRow) ? 40 : 0)
                       : compact
                       ? (tall ? 560 : 420)
                       : 720) *
@@ -661,6 +669,21 @@ class _GameCoverPreview extends StatelessWidget {
 }
 
 class _RowView extends StatelessWidget {
+  // The menus over the game, Home and the screens of rows that go with people (Party, Play Together,
+  // Find Players, a friend's options), read by their rows' names and details, as on the Mac.
+  static const _labelledMenus = {
+    Layer.quickMenu,
+    Layer.homeMenu,
+    Layer.launcherReport,
+    Layer.profileMenu,
+    Layer.party,
+    Layer.friends,
+    Layer.friendOptions,
+    Layer.findPlayers,
+    Layer.lfgPost,
+    Layer.gameHub,
+  };
+
   const _RowView({
     super.key,
     required this.model,
@@ -873,6 +896,9 @@ class _RowView extends StatelessWidget {
           return Icon(Icons.chevron_right_rounded, size: 22 * scale, color: detailColor);
         case InfoRow():
           return const SizedBox.shrink();
+        // Drawn whole by NowPlayingCard below, its buttons included.
+        case MediaRow():
+          return const SizedBox.shrink();
         case TextRow():
           return SizedBox(
             width: 420 * scale,
@@ -882,78 +908,117 @@ class _RowView extends StatelessWidget {
     }
 
     final info = kind is InfoRow && kind.text.isNotEmpty ? kind.text : null;
-    Widget content() => Row(
-      children: [
-        if (row.person != null) ...[
-          PersonAvatar(person: row.person!, size: 44 * scale, focused: focused),
-          SizedBox(width: 16 * scale),
-        ] else if (row.icon != null) ...[
-          Container(
-            width: 44 * scale,
-            height: 44 * scale,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: model.accentChoice.color.withValues(alpha: focused ? 0.16 : 0.22),
-            ),
-            child: Icon(
-              switch (row.icon!) {
-                PanelIcon.flag => Icons.flag_rounded,
-                PanelIcon.trophy => Icons.emoji_events_rounded,
-              },
-              size: 22 * scale,
-              color: focused ? model.accentChoice.color : Colors.white,
-            ),
-          ),
-          SizedBox(width: 16 * scale),
-        ],
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    Widget content() => kind is MediaRow
+        ? NowPlayingCard(
+            row: row,
+            kind: kind,
+            ink: titleColor,
+            soft: detailColor,
+            accent: accent,
+            focused: focused,
+            // The buttons do what the keys do, the focus going to the card: ← → and Enter.
+            onPrevious: () => onStep(-1),
+            onPlayPause: onTap,
+            onNext: () => onStep(1),
+          )
+        : Row(
             children: [
-              Row(
-                children: [
-                  Text(
-                    row.title,
-                    style: AppText.display(17 * scale, weight: FontWeight.w500, color: titleColor),
+              if (row.picture != null) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8 * scale),
+                  child: Image.memory(
+                    row.picture!,
+                    width: 44 * scale,
+                    height: 44 * scale,
+                    fit: BoxFit.cover,
+                    cacheWidth: 132,
+                    errorBuilder: (_, _, _) => SizedBox(width: 44 * scale, height: 44 * scale),
                   ),
-                  if (row.glyph != null) ...[
-                    SizedBox(width: 8 * scale),
-                    PadGlyphIcon(row.glyph!, size: 15 * scale, color: titleColor),
-                  ],
-                  if (row.level != null) ...[
-                    SizedBox(width: 10 * scale),
-                    LevelBadgeView(level: row.level!, size: 24 * scale),
-                  ],
-                ],
-              ),
-              if (row.detail != null || info != null) ...[
-                SizedBox(height: 4 * scale),
-                Text(
-                  info ?? row.detail!,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.display(13 * scale, color: detailColor),
                 ),
+                SizedBox(width: 16 * scale),
+              ] else if (row.person != null) ...[
+                PersonAvatar(person: row.person!, size: 44 * scale, focused: focused),
+                SizedBox(width: 16 * scale),
+              ] else if (row.icon != null) ...[
+                Container(
+                  width: 44 * scale,
+                  height: 44 * scale,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: model.accentChoice.color.withValues(alpha: focused ? 0.16 : 0.22),
+                  ),
+                  child: Icon(
+                    switch (row.icon!) {
+                      PanelIcon.flag => Icons.flag_rounded,
+                      PanelIcon.trophy => Icons.emoji_events_rounded,
+                      // Material Icons, which Flutter ships (Apache 2.0): no logo files of ours.
+                      PanelIcon.android => Icons.android_rounded,
+                      PanelIcon.iphone => Icons.phone_iphone_rounded,
+                      PanelIcon.browser => Icons.language_rounded,
+                      PanelIcon.phone => Icons.smartphone_rounded,
+                    },
+                    size: 22 * scale,
+                    color: focused ? model.accentChoice.color : Colors.white,
+                  ),
+                ),
+                SizedBox(width: 16 * scale),
               ],
-              if (row.previewGames.isNotEmpty) ...[
-                SizedBox(height: 12 * scale),
-                _GameCoverPreview(model: model, games: row.previewGames),
-              ],
-              if (row.playerSlots.isNotEmpty) ...[
-                SizedBox(height: 4 * scale),
-                PlayerSlotsStrip(slots: row.playerSlots, accent: model.accentChoice.color),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        // A title longer than the row (every missing tool by name) goes on to a
+                        // second line; one that fits is drawn as before.
+                        Flexible(
+                          child: Text(
+                            row.title,
+                            style: AppText.display(17 * scale, weight: FontWeight.w500, color: titleColor),
+                          ),
+                        ),
+                        if (row.glyph != null) ...[
+                          SizedBox(width: 8 * scale),
+                          PadGlyphIcon(row.glyph!, size: 15 * scale, color: titleColor),
+                        ],
+                        if (row.level != null) ...[
+                          SizedBox(width: 10 * scale),
+                          LevelBadgeView(level: row.level!, size: 24 * scale),
+                        ],
+                      ],
+                    ),
+                    if (row.detail != null || info != null) ...[
+                      SizedBox(height: 4 * scale),
+                      Text(
+                        info ?? row.detail!,
+                        maxLines: row.wraps ? null : 3,
+                        overflow: row.wraps ? TextOverflow.clip : TextOverflow.ellipsis,
+                        style: AppText.display(13 * scale, color: detailColor),
+                      ),
+                    ],
+                    if (row.meter case final PanelMeter meter) ...[
+                      SizedBox(height: 10 * scale),
+                      _MeterBar(meter: meter, color: model.accentChoice.color, scale: scale),
+                    ],
+                    if (row.previewGames.isNotEmpty) ...[
+                      SizedBox(height: 12 * scale),
+                      _GameCoverPreview(model: model, games: row.previewGames),
+                    ],
+                    if (row.playerSlots.isNotEmpty) ...[
+                      SizedBox(height: 4 * scale),
+                      PlayerSlotsStrip(slots: row.playerSlots, accent: model.accentChoice.color),
+                    ],
+                  ],
+                ),
+              ),
+              if (row.playerSlots.isEmpty) ...[
+                SizedBox(width: 18 * scale),
+                value(),
               ],
             ],
-          ),
-        ),
-        if (row.playerSlots.isEmpty) ...[
-          SizedBox(width: 18 * scale),
-          value(),
-        ],
-      ],
-    );
+          );
 
-    return Pressable(
+    final view = Pressable(
       onTap: row.focusable && kind is! InfoRow ? onTap : null,
       onHover: row.focusable ? onHover : null,
       pressScale: 0.99,
@@ -1001,6 +1066,304 @@ class _RowView extends StatelessWidget {
             child: content(),
           );
         },
+      ),
+    );
+    // The menus over the game and Home are read by their rows' names, as on the Mac.
+    if (!_labelledMenus.contains(model.overlay) || !(kind is ActionRow || kind is ToggleRow || kind is InfoRow)) {
+      return view;
+    }
+    return Semantics(
+      button: kind is ActionRow,
+      toggled: kind is ToggleRow ? kind.value : null,
+      enabled: row.focusable,
+      label: row.title,
+      hint: row.detail,
+      excludeSemantics: true,
+      onTap: row.focusable ? onTap : null,
+      child: view,
+    );
+  }
+}
+
+/// The quick menu's Now playing card: the cover, "Now playing in Rhythmbox" over the title and
+/// the artist, and previous, play or pause and next. Drawn inside the row's own focus fill, in
+/// the row's colours ([ink] for the words, [soft] for the lesser ones).
+class NowPlayingCard extends StatelessWidget {
+  const NowPlayingCard({
+    super.key,
+    required this.row,
+    required this.kind,
+    required this.ink,
+    required this.soft,
+    required this.accent,
+    required this.focused,
+    required this.onPrevious,
+    required this.onPlayPause,
+    required this.onNext,
+  });
+
+  final PanelRow row;
+  final MediaRow kind;
+  final Color ink;
+  final Color soft;
+  final Color accent;
+  final bool focused;
+  final VoidCallback onPrevious;
+  final VoidCallback onPlayPause;
+  final VoidCallback onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = LayoutScale.of(context);
+    final side = 64 * scale;
+    // No cover from the player: a note on the accent colour, the size a cover would be.
+    Widget noCover() => Container(
+      width: side,
+      height: side,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [accent.withValues(alpha: 0.85), accent.withValues(alpha: 0.35)],
+        ),
+      ),
+      child: Icon(Icons.music_note_rounded, size: 30 * scale, color: Colors.white),
+    );
+    final artist = row.detail;
+    return Semantics(
+      container: true,
+      label: [kind.label, row.title, ?artist].join(', '),
+      child: Row(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10 * scale),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.3),
+                  blurRadius: 10 * scale,
+                  offset: Offset(0, 4 * scale),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10 * scale),
+              child: row.picture == null
+                  ? noCover()
+                  : Image.memory(
+                      row.picture!,
+                      key: const ValueKey('nowPlaying-cover'),
+                      width: side,
+                      height: side,
+                      fit: BoxFit.cover,
+                      cacheWidth: 192,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, _, _) => noCover(),
+                    ),
+            ),
+          ),
+          SizedBox(width: 16 * scale),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _Equaliser(playing: kind.playing, color: focused ? ink : accent),
+                    SizedBox(width: 8 * scale),
+                    Flexible(
+                      child: Text(
+                        T.upper(kind.label),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppText.display(
+                          11.5 * scale,
+                          weight: FontWeight.w700,
+                          color: soft,
+                        ).copyWith(letterSpacing: 1.2 * scale),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 5 * scale),
+                Text(
+                  row.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.display(
+                    19 * scale,
+                    weight: FontWeight.w700,
+                    color: ink,
+                    height: 1.15,
+                  ).copyWith(letterSpacing: -0.2 * scale),
+                ),
+                if (artist != null) ...[
+                  SizedBox(height: 2 * scale),
+                  Text(
+                    artist,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.display(14 * scale, color: soft),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          SizedBox(width: 16 * scale),
+          _TransportButton(
+            key: const ValueKey('nowPlaying-previous'),
+            icon: Icons.skip_previous_rounded,
+            label: T.text('nowPlayingPrevious'),
+            ink: ink,
+            onTap: onPrevious,
+          ),
+          SizedBox(width: 8 * scale),
+          _TransportButton(
+            key: const ValueKey('nowPlaying-playPause'),
+            icon: kind.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            label: T.text('nowPlayingPlayPause'),
+            ink: ink,
+            filled: true,
+            onTap: onPlayPause,
+          ),
+          SizedBox(width: 8 * scale),
+          _TransportButton(
+            key: const ValueKey('nowPlaying-next'),
+            icon: Icons.skip_next_rounded,
+            label: T.text('nowPlayingNext'),
+            ink: ink,
+            onTap: onNext,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One of the card's three round buttons; play or pause is the filled, larger one.
+class _TransportButton extends StatelessWidget {
+  const _TransportButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.ink,
+    required this.onTap,
+    this.filled = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color ink;
+  final VoidCallback onTap;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = LayoutScale.of(context);
+    final size = (filled ? 46 : 38) * scale;
+    // On the filled button the sign is cut out of it: dark on light ink, light on dark.
+    final cut = ink.computeLuminance() > 0.5 ? const Color(0xFF111318) : Colors.white;
+    return Semantics(
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      onTap: onTap,
+      child: Pressable(
+        onTap: onTap,
+        pressScale: 0.9,
+        builder: (context, hovering) => AnimatedContainer(
+          duration: Motion.focus,
+          curve: Motion.settle,
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: filled ? ink.withValues(alpha: hovering ? 1 : 0.92) : ink.withValues(alpha: hovering ? 0.2 : 0.1),
+          ),
+          child: Icon(icon, size: (filled ? 26 : 22) * scale, color: filled ? cut : ink),
+        ),
+      ),
+    );
+  }
+}
+
+/// Four small bars beside the card's label: they move while something plays, lie low while
+/// paused, and stand still where motion is reduced.
+class _Equaliser extends StatefulWidget {
+  const _Equaliser({required this.playing, required this.color});
+
+  final bool playing;
+  final Color color;
+
+  @override
+  State<_Equaliser> createState() => _EqualiserState();
+}
+
+class _EqualiserState extends State<_Equaliser> with SingleTickerProviderStateMixin {
+  late final AnimationController _beat = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400));
+
+  /// How many times each bar rises in one turn, and where in its rise it starts.
+  static const _turns = [2, 3, 1, 2];
+  static const _starts = [0.0, 0.35, 0.6, 0.15];
+  static const _still = [0.55, 1.0, 0.7, 0.4];
+
+  bool get _moving => widget.playing && !Motion.reduced;
+
+  @override
+  void initState() {
+    super.initState();
+    _follow();
+  }
+
+  @override
+  void didUpdateWidget(_Equaliser old) {
+    super.didUpdateWidget(old);
+    _follow();
+  }
+
+  void _follow() {
+    if (_moving) {
+      if (!_beat.isAnimating) _beat.repeat();
+    } else {
+      _beat.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _beat.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = LayoutScale.of(context);
+    final tall = 12 * scale;
+    final still = !_moving || MediaQuery.disableAnimationsOf(context);
+    return SizedBox(
+      height: tall,
+      child: AnimatedBuilder(
+        animation: _beat,
+        builder: (context, _) => Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            for (var bar = 0; bar < 4; bar++)
+              Container(
+                width: 3 * scale,
+                height:
+                    tall *
+                    (!widget.playing
+                        ? 0.25
+                        : still
+                        ? _still[bar]
+                        : 0.3 + 0.7 * (0.5 + 0.5 * math.sin(2 * math.pi * (_beat.value * _turns[bar] + _starts[bar])))),
+                margin: EdgeInsetsDirectional.only(end: bar == 3 ? 0 : 2 * scale),
+                decoration: BoxDecoration(color: widget.color, borderRadius: BorderRadius.circular(1.5 * scale)),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -1421,7 +1784,7 @@ class PairingCard extends StatelessWidget {
                 SizedBox(height: 16 * scale),
                 Text(T.text('phonePairingTitle'), style: AppText.display(28 * scale, weight: FontWeight.w300)),
                 SizedBox(height: 10 * scale),
-                Text(request.deviceName, style: AppText.display(18 * scale, weight: FontWeight.w600)),
+                Text(PhoneLabel.title(request.deviceName), style: AppText.display(18 * scale, weight: FontWeight.w600)),
                 SizedBox(height: 6 * scale),
                 Text(
                   T.text('phonePairingText'),
@@ -1589,6 +1952,16 @@ class TrophyView extends StatelessWidget {
                         action: HintAction.options,
                       ),
                     ],
+                    // The game's leaderboard from here, as on the Mac: click it, or Enter where the
+                    // focused trophy has no picture.
+                    if (model.together.signedIn) ...[
+                      SizedBox(height: 22 * scale),
+                      _BoardChip(
+                        key: const ValueKey('trophy-leaderboard'),
+                        keys: model.trophyShots[model.focusedTrophy?.id] == null,
+                        onTap: () => model.together.openLeaderboard(model.selectedGame),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1724,6 +2097,45 @@ class TrophyView extends StatelessWidget {
   }
 }
 
+/// The game's leaderboard, from its trophies: for the pointer, and with the key when Enter
+/// reaches it too.
+class _BoardChip extends StatelessWidget {
+  const _BoardChip({super.key, required this.keys, required this.onTap});
+
+  final bool keys;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = LayoutScale.of(context);
+    return Pressable(
+      onTap: onTap,
+      pressScale: 0.96,
+      builder: (context, hovering) => AnimatedContainer(
+        duration: Motion.focus,
+        curve: Motion.settle,
+        padding: EdgeInsets.symmetric(horizontal: 14 * scale, vertical: 8 * scale),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: hovering ? 0.14 : 0.08),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.leaderboard_rounded, size: 17 * scale, color: Colors.white),
+            SizedBox(width: 8 * scale),
+            if (keys)
+              Hint(keys: 'Enter', glyph: PadGlyph.cross, label: T.text('socialBoardTitle'))
+            else
+              Text(T.text('socialBoardTitle'), style: AppText.display(15 * scale, weight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// A hidden trophy's Show (or, once shown, Hide), for the pointer: the same as △ on it.
 class _RevealChip extends StatelessWidget {
   const _RevealChip({super.key, required this.shown, required this.focused, required this.onTap});
@@ -1781,26 +2193,30 @@ class SettingsSearchField extends StatelessWidget {
     final row = model.settingsSearchField;
     final typing = model.editingRow == SettingsSearch.searchRow;
     final color = Colors.white.withValues(alpha: typing || model.searchingSettings ? 0.9 : 0.55);
-    return FocusRing(
-      key: const ValueKey('settings-search'),
-      focused: model.settingsSearchFocused && !typing,
-      radius: 12 * scale,
-      child: RowTextField(
-        model: model,
-        row: row,
-        kind: row.kind as TextRow,
-        focused: false,
-        leading: Icon(Icons.search_rounded, size: 20 * scale, color: color),
-        trailing: model.searchingSettings
-            ? MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: GestureDetector(
-                  key: const ValueKey('settings-search-clear'),
-                  onTap: model.clearSettingsSearch,
-                  child: Icon(Icons.close_rounded, size: 18 * scale, color: color),
-                ),
-              )
-            : null,
+    return Semantics(
+      container: true,
+      label: T.text('settingsSearchPrompt'),
+      child: FocusRing(
+        key: const ValueKey('settings-search'),
+        focused: model.settingsSearchFocused && !typing,
+        radius: 12 * scale,
+        child: RowTextField(
+          model: model,
+          row: row,
+          kind: row.kind as TextRow,
+          focused: false,
+          leading: Icon(Icons.search_rounded, size: 20 * scale, color: color),
+          trailing: model.searchingSettings
+              ? MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    key: const ValueKey('settings-search-clear'),
+                    onTap: model.clearSettingsSearch,
+                    child: Icon(Icons.close_rounded, size: 18 * scale, color: color),
+                  ),
+                )
+              : null,
+        ),
       ),
     );
   }
@@ -2352,6 +2768,40 @@ class _ClipTile extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The thin bar a row can carry: two parts of the width, the second fainter, over a dim track.
+class _MeterBar extends StatelessWidget {
+  const _MeterBar({required this.meter, required this.color, required this.scale});
+
+  final PanelMeter meter;
+  final Color color;
+  final double scale;
+
+  @override
+  Widget build(BuildContext context) {
+    final height = 6 * scale;
+    final radius = BorderRadius.circular(height);
+    return ClipRRect(
+      borderRadius: radius,
+      child: SizedBox(
+        height: height,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            Widget part(double fraction, Color tint) => SizedBox(
+              width: (fraction.clamp(0.0, 1.0)) * width,
+              child: ColoredBox(color: tint),
+            );
+            return ColoredBox(
+              color: Colors.white.withValues(alpha: 0.1),
+              child: Row(children: [part(meter.first, color), part(meter.second, color.withValues(alpha: 0.45))]),
+            );
+          },
+        ),
+      ),
     );
   }
 }

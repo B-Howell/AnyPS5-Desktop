@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/material.dart' show Icons;
 import 'package:flutter/services.dart';
 
 import '../core/audio/tones.dart';
@@ -9,10 +10,13 @@ import '../core/capture/broadcast.dart';
 import '../core/capture/game_sound.dart';
 import '../core/capture/remote_play.dart';
 import '../core/capture/video_encoders.dart';
+import '../core/capture/wayland_capture.dart';
 import '../core/desktop/desktop.dart';
+import '../core/host.dart';
 import '../core/remote/remote_protocol.dart';
-import '../core/replay_buffer.dart' show ProcessStarter;
+import '../core/replay_buffer.dart' show ProcessRunner, ProcessStarter;
 import 'app_model.dart';
+import 'live_badge.dart';
 import 'strings.dart';
 
 /// What sends the game's picture and sound somewhere: Remote Play to the phones that ask, and
@@ -34,9 +38,18 @@ class MediaModel {
   ScreenArea? Function(int pid)? areaOverride;
   GameSound Function(int pid)? soundOverride;
   ProcessStarter? startOverride;
+  ProcessRunner? runOverride;
 
-  /// Whether this desktop can be recorded at all (Windows, X11).
-  bool get screenRecordable => ScreenGrab.supported(app.system, _environment) || areaOverride != null;
+  /// Tests: whether the LIVE badge shows, whatever the desktop: true as where it is left out of
+  /// every picture (Windows), false as where there is none.
+  bool? badgeOverride;
+
+  /// Under Wayland, what records through the desktop's portal; null elsewhere.
+  WaylandCapture? get wayland => app.waylandCapture;
+
+  /// Whether this desktop can be recorded at all (Windows, X11, Wayland through its portal).
+  bool get screenRecordable =>
+      ScreenGrab.supported(app.system, _environment) || wayland != null || areaOverride != null;
 
   /// Why nothing can be recorded here, or null when it can.
   String? get unavailable {
@@ -49,11 +62,20 @@ class MediaModel {
     if (encodersOverride != null) return encodersOverride;
     final tool = ffmpeg;
     if (tool == null) return null;
-    return _encoders ??= EncoderChoice(ffmpeg: tool, system: app.system, run: (executable, arguments) => Process.run(executable, arguments));
+    // Asked again for another ffmpeg: one just downloaded works where the old one did not.
+    if (_encoders?.ffmpeg != tool) _encoders = null;
+    return _encoders ??= EncoderChoice(
+      ffmpeg: tool,
+      system: app.system,
+      run: (executable, arguments) => Process.run(executable, arguments),
+      onNone: () => app.ffmpegTool.noteNoEncoder(tool),
+    );
   }
 
   ScreenArea? areaOf(int pid) {
     if (areaOverride != null) return areaOverride!(pid);
+    // Wayland reveals no window's position: the shared window's size is what there is.
+    if (wayland case final capture?) return capture.area;
     final desktop = app.desktop;
     return desktop is GameAreas ? (desktop as GameAreas).gameArea(pid) : null;
   }
@@ -96,13 +118,26 @@ class MediaModel {
       // A game plays but nothing can record it: said once, so the empty phone has a reason.
       if (playing != null && !_toldNoTool) {
         _toldNoTool = true;
-        app.show(T.text(screenRecordable ? 'remotePlayNoFfmpeg' : 'remotePlayNoScreen'));
+        if (screenRecordable && app.ffmpegTool.offered) {
+          app.show(T.text('remotePlayGetFfmpeg'), onTap: () => app.openSettingsCategory('captures'));
+        } else {
+          app.show(T.text(screenRecordable ? 'remotePlayNoFfmpeg' : 'remotePlayNoScreen'));
+        }
       }
       return;
+    }
+    if (wayland case final capture?) {
+      if (await choice.encoder == null) return _refuseRemotePlay(tell, T.text('waylandNoEncoder'));
+      // The desktop's dialog, when it has not been answered for this game.
+      if (await capture.share() == null) {
+        return _refuseRemotePlay(tell, T.text((capture.problem ?? WaylandProblem.failed).textKey));
+      }
     }
     // The phone's long side across: the size it asked for, no more than 1280 x 720.
     final height = min(720, wishes.map((wish) => min(wish.$2, wish.$3)).reduce(max));
     final width = min(1280, wishes.map((wish) => max(wish.$2, wish.$3)).reduce(max));
+    // On X11 Remote Play records the screen: the LIVE badge goes first.
+    await _updateBadge();
     final stream = _remotePlay ??= RemotePlayStream(
       ffmpeg: tool,
       system: app.system,
@@ -110,6 +145,7 @@ class MediaModel {
       encoders: choice,
       areaOf: areaOf,
       soundOf: soundOf,
+      wayland: wayland,
       start: startOverride,
       log: _log,
     );
@@ -119,6 +155,14 @@ class MediaModel {
     if (result == RemotePlayStart.noGame && app.running != null) {
       _remoteRetry = Timer(const Duration(seconds: 2), () => unawaited(updateRemotePlay()));
     }
+  }
+
+  Future<void> _refuseRemotePlay(void Function(String state) tell, String reason) async {
+    await _stopRemotePlay();
+    tell('noGame');
+    if (_toldNoTool) return;
+    _toldNoTool = true;
+    app.show(reason);
   }
 
   /// The phone lost part of the picture.
@@ -140,7 +184,8 @@ class MediaModel {
 
   String get key => keys.keyFor(settings.service);
 
-  String get serviceName => settings.service == BroadcastService.custom ? T.text('broadcastServiceCustom') : settings.service.brand;
+  String get serviceName =>
+      settings.service == BroadcastService.custom ? T.text('broadcastServiceCustom') : settings.service.brand;
 
   void _saveSettings() {
     settings.save(Broadcaster.settingsFile(app.paths.config));
@@ -180,8 +225,19 @@ class MediaModel {
       encoders: choice,
       areaOf: areaOf,
       soundOf: soundOf,
+      wayland: wayland,
       changed: _broadcastChanged,
       start: startOverride,
+      run: runOverride,
+      microphoneLevel: () => settings.microphone ? settings.microphoneLevel : 0,
+      microphoneDevice: () => settings.microphoneDevice,
+      noMicrophone: () => unawaited(
+        app.notice(
+          T.text('broadcastMicrophone'),
+          detail: T.text('broadcastNoMicrophone'),
+          symbol: Icons.mic_off_rounded,
+        ),
+      ),
       log: _log,
     );
   }
@@ -193,10 +249,18 @@ class MediaModel {
     final playing = app.running;
     if (playing == null) return app.show(T.text('broadcastGoLiveNoGame'));
     final reason = unavailable;
-    if (reason != null) return app.show(reason);
+    if (reason != null) {
+      return app.show(reason, onTap: app.ffmpegTool.offered ? () => app.openSettingsCategory('broadcast') : null);
+    }
     final (target, problem) = endpoint();
     if (target == null) {
-      unawaited(app.notice(T.text('broadcastSetUpFirst'), detail: problem == null ? null : problemText(problem)));
+      unawaited(
+        app.notice(
+          T.text('broadcastSetUpFirst'),
+          detail: problem == null ? null : problemText(problem),
+          symbol: Icons.podcasts_rounded,
+        ),
+      );
       return;
     }
     final made = _broadcaster ??= _makeBroadcaster();
@@ -207,6 +271,8 @@ class MediaModel {
 
   /// The game ended: so does its broadcast.
   void gameEnded() {
+    // Under Wayland each game is asked for its own window, so each may have its own reason.
+    if (wayland != null) _toldNoTool = false;
     _broadcaster?.stop();
     unawaited(updateRemotePlay());
   }
@@ -218,23 +284,100 @@ class MediaModel {
       _toldPhase = now;
       switch (now) {
         case BroadcastLive() when before is! BroadcastLive:
-          unawaited(app.notice(T.format('broadcastStartedNotice', [serviceName])));
+          unawaited(app.notice(T.format('broadcastStartedNotice', [serviceName]), symbol: Icons.podcasts_rounded));
         case BroadcastReconnecting():
-          unawaited(app.notice(T.text('broadcastReconnectingNotice')));
+          unawaited(app.notice(T.text('broadcastReconnectingNotice'), symbol: Icons.podcasts_rounded));
         case BroadcastFailed(:final reason):
-          unawaited(app.notice(T.format('broadcastFailedNotice', [failureText(reason)])));
+          unawaited(
+            app.notice(T.format('broadcastFailedNotice', [failureText(reason)]), symbol: Icons.podcasts_rounded),
+          );
         case BroadcastOff() when before.active:
-          unawaited(app.notice(T.text('broadcastEndedNotice')));
+          unawaited(app.notice(T.text('broadcastEndedNotice'), symbol: Icons.podcasts_rounded));
         default:
           break;
       }
       if (now.active != before.active) app.remote?.publish(RemoteBroadcast(now.active));
     }
+    unawaited(_updateBadge());
     app.refresh();
   }
 
-  static String failureText(String reason) =>
-      reason == Broadcaster.noEncoder ? T.text('broadcastNoEncoder') : reason;
+  // The LIVE badge over the game, kept out of what viewers see: Windows leaves its window out of
+  // every capture, as the Mac does, and under Wayland the portal shares the game's window alone
+  // (the badge is a layer-shell surface over it). On X11 the broadcast records the game's window by itself, which
+  // leaves it out under a compositing manager (LinuxDesktop shows it only then); a recording of the
+  // screen would take it, so it stays hidden while the replay buffer or Remote Play records.
+
+  BadgeReach get _badgeReach => switch (badgeOverride) {
+    null => app.desktop.badgeReach,
+    true => BadgeReach.excluded,
+    false => BadgeReach.none,
+  };
+
+  /// Whether the LIVE badge can be over the game now without being in anything recorded.
+  static bool badgeKeptOut(BadgeReach reach, {required bool windowOnly, required bool screenRecorded}) =>
+      switch (reach) {
+        BadgeReach.none => false,
+        BadgeReach.excluded => true,
+        BadgeReach.windowRecordingOnly => windowOnly && !screenRecorded,
+      };
+
+  /// Whether something records the whole screen, or is about to: the replay buffer, Remote Play.
+  bool get _screenRecorded =>
+      app.replayStarted || remotePlaying || ((app.remote?.streamWishes.isNotEmpty ?? false) && app.running != null);
+
+  bool get _badgeShown =>
+      settings.liveBadge &&
+      (phase is BroadcastLive || phase is BroadcastReconnecting) &&
+      badgeKeptOut(_badgeReach, windowOnly: _broadcaster?.recordsWindowOnly ?? false, screenRecorded: _screenRecorded);
+
+  /// The badge as things are now, before something starts recording the screen.
+  Future<void> badgeCheck() => _updateBadge();
+
+  String? _badgeState;
+  Future<void>? _badgeRun;
+  bool _badgeAgain = false;
+
+  /// Keeps the badge's window as the broadcast now is, one drawing at a time; completes once it
+  /// is.
+  Future<void> _updateBadge() {
+    _badgeAgain = true;
+    return _badgeRun ??= () async {
+      try {
+        while (_badgeAgain) {
+          _badgeAgain = false;
+          await _drawBadge();
+        }
+      } finally {
+        _badgeRun = null;
+      }
+    }();
+  }
+
+  Future<void> _drawBadge() async {
+    final running = _broadcaster?.pid;
+    if (!_badgeShown || running == null) {
+      if (_badgeState != null) {
+        _badgeState = null;
+        await app.desktop.showBadge(null);
+      }
+      return;
+    }
+    final live = phase is BroadcastLive;
+    final time = clock(_broadcaster?.stats.duration ?? Duration.zero);
+    final state = '$live $time';
+    if (state == _badgeState) return;
+    final render = app.services.renderLiveBadge ?? LiveBadge.render;
+    final image = await render(live, time, app.desktop.cardScale(running));
+    if (!_badgeShown) return _drawBadge();
+    _badgeState = state;
+    await app.desktop.showBadge(image, pid: running);
+  }
+
+  static String failureText(String reason) {
+    if (reason == Broadcaster.noEncoder) return T.text('broadcastNoEncoder');
+    return WaylandProblem.values.any((problem) => problem.textKey == reason) ? T.text(reason) : reason;
+  }
 
   /// The phone's Go Live and End Broadcast: what it asks for, then what the launcher does now,
   /// in case it showed the wrong one.
@@ -307,7 +450,9 @@ class MediaModel {
         }
         return rows;
       case BroadcastStarting():
-        rows.add(PanelRow(id: 'broadcast-state', title: T.format('broadcastStarting', [serviceName]), kind: const InfoRow('')));
+        rows.add(
+          PanelRow(id: 'broadcast-state', title: T.format('broadcastStarting', [serviceName]), kind: const InfoRow('')),
+        );
       case BroadcastReconnecting(:final delay):
         rows.add(
           PanelRow(
@@ -339,8 +484,75 @@ class MediaModel {
         ),
       );
     }
-    rows.add(PanelRow(id: 'broadcast-stop', title: T.text('broadcastStop'), kind: ActionRow(toggleBroadcast, destructive: true)));
+    rows.add(
+      PanelRow(
+        id: 'broadcast-live-mic',
+        title: T.text('broadcastMicrophone'),
+        detail: T.text('broadcastMicrophoneDetail'),
+        kind: ToggleRow(settings.microphone, _setMicrophone),
+      ),
+    );
+    rows.add(
+      PanelRow(
+        id: 'broadcast-stop',
+        title: T.text('broadcastStop'),
+        kind: ActionRow(toggleBroadcast, destructive: true),
+      ),
+    );
     return rows;
+  }
+
+  /// Tests: the devices the picker lists, standing in for asking ffmpeg.
+  List<String>? micDevicesOverride;
+
+  /// What ffmpeg lists once it has been asked this session (Windows); null until then.
+  List<String>? _micDevices;
+  bool _askingMicDevices = false;
+
+  /// Which DirectShow device is the microphone (Windows): Automatic, or one ffmpeg lists. The
+  /// Mac always takes macOS's default input, and Linux PulseAudio's, which has no such row.
+  PanelRow? _micDeviceRow() {
+    final tool = ffmpeg;
+    final devices = micDevicesOverride ?? _micDevices;
+    if (devices == null) {
+      if (tool != null && !_askingMicDevices) {
+        _askingMicDevices = true;
+        unawaited(
+          BroadcastMicrophone.devices(
+            ffmpeg: tool,
+            run: runOverride ?? ((executable, arguments) => Process.run(executable, arguments)),
+          ).then((found) {
+            _micDevices = found;
+            _askingMicDevices = false;
+            app.refresh();
+          }),
+        );
+      }
+      return null;
+    }
+    if (devices.isEmpty) return null;
+    final picked = settings.microphoneDevice;
+    return PanelRow(
+      id: 'broadcast-mic-device',
+      title: T.text('broadcastMicrophoneDevice'),
+      kind: ChoiceRow(
+        [T.text('broadcastMicrophoneAuto'), ...devices],
+        picked == null ? 0 : devices.indexOf(picked) + 1,
+        (index) {
+          settings.microphoneDevice = index == 0 ? null : devices[index - 1];
+          _saveSettings();
+          _broadcaster?.microphoneDeviceChanged();
+          app.refresh();
+        },
+      ),
+    );
+  }
+
+  void _setMicrophone(bool on) {
+    settings.microphone = on;
+    _saveSettings();
+    _broadcaster?.microphoneChanged();
+    app.refresh();
   }
 
   /// Settings › Broadcasting.
@@ -352,12 +564,17 @@ class MediaModel {
       if (unavailable case final reason?)
         PanelRow(id: 'broadcast-unavailable', title: T.text('broadcastTitle'), kind: InfoRow(reason))
       else
-        ...gameRows(),
+        // The microphone has its own row below.
+        ...gameRows().where((row) => row.id != 'broadcast-live-mic'),
+      ...app.ffmpegTool.rows(),
       PanelRow(
         id: 'broadcast-service',
         title: T.text('broadcastService'),
         kind: ChoiceRow(
-          [for (final service in services) service == BroadcastService.custom ? T.text('broadcastServiceCustom') : service.brand],
+          [
+            for (final service in services)
+              service == BroadcastService.custom ? T.text('broadcastServiceCustom') : service.brand,
+          ],
           services.indexOf(settings.service),
           (index) {
             settings.service = services[index];
@@ -379,7 +596,12 @@ class MediaModel {
         id: 'broadcast-key',
         title: T.text('broadcastKey'),
         detail: T.text('broadcastKeyDetail'),
-        kind: TextRow('', setKey, hint: current.isEmpty ? T.text('broadcastKeyNone') : BroadcastKeys.masked(current), obscure: true),
+        kind: TextRow(
+          '',
+          setKey,
+          hint: current.isEmpty ? T.text('broadcastKeyNone') : BroadcastKeys.masked(current),
+          obscure: true,
+        ),
       ),
       PanelRow(id: 'broadcast-paste', title: T.text('broadcastKeyPaste'), kind: ActionRow(() => unawaited(pasteKey()))),
       if (settings.service.keyPage case final page?)
@@ -399,6 +621,51 @@ class MediaModel {
         }),
       ),
       PanelRow(
+        id: 'broadcast-mic',
+        title: T.text('broadcastMicrophone'),
+        detail: T.text('broadcastMicrophoneDetail'),
+        kind: ToggleRow(settings.microphone, _setMicrophone),
+      ),
+      if (settings.microphone)
+        PanelRow(
+          id: 'broadcast-mic-level',
+          title: T.text('broadcastMicrophoneLevel'),
+          kind: StepperRow(
+            value: settings.microphoneLevel,
+            min: 10,
+            max: 100,
+            step: 10,
+            format: T.percent,
+            set: (value) {
+              settings.microphoneLevel = value;
+              _saveSettings();
+              _broadcaster?.microphoneChanged();
+              app.refresh();
+            },
+          ),
+        ),
+      if (settings.microphone && (micDevicesOverride != null || app.system == HostSystem.windows)) ?_micDeviceRow(),
+      if (_badgeReach != BadgeReach.none)
+        PanelRow(
+          id: 'broadcast-badge',
+          title: T.text('broadcastBadge'),
+          detail: T.text(
+            _badgeReach == BadgeReach.windowRecordingOnly ? 'broadcastBadgeDetailX11' : 'broadcastBadgeDetail',
+          ),
+          kind: ToggleRow(settings.liveBadge, (on) {
+            settings.liveBadge = on;
+            _saveSettings();
+            unawaited(_updateBadge());
+            app.refresh();
+          }),
+        )
+      else
+        PanelRow(
+          id: 'broadcast-badge',
+          title: T.text('broadcastBadge'),
+          kind: InfoRow(T.text('broadcastBadgeNoOverlay')),
+        ),
+      PanelRow(
         id: 'broadcast-link',
         title: T.text('broadcastViewerLink'),
         detail: T.text('broadcastViewerLinkDetail'),
@@ -407,7 +674,11 @@ class MediaModel {
           _saveSettings();
         }, hint: 'twitch.tv/…'),
       ),
-      PanelRow(id: 'broadcast-private', title: T.text('broadcastKeysTitle'), kind: InfoRow(T.text('broadcastKeptPrivately'))),
+      PanelRow(
+        id: 'broadcast-private',
+        title: T.text('broadcastKeysTitle'),
+        kind: InfoRow(T.text('broadcastKeptPrivately')),
+      ),
     ];
   }
 

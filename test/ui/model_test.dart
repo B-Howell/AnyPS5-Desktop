@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:anyps5_desktop/core/file_links.dart';
 import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/installer.dart';
+import 'package:anyps5_desktop/core/relinker_flags.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/strings.dart';
+import 'package:anyps5_desktop/core/save_backup.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -54,6 +57,17 @@ void main() {
     expect(model.records[game.id]!.toolkit, 'toolkit-1');
   });
 
+  test('a relinker option chosen for a game reaches its rebuild and its record', () async {
+    makeFakeToolkit(fixture.toolkit, traceImports: true);
+    final game = model.games[indexOf('PPSA02002')];
+    File(p.join(game.folder, 'eboot.bin')).writeAsBytesSync(typicalSelf());
+    model.saveSettings(game, model.currentSettings(game).withRelinkerFlag(RelinkerFlag.traceImports, true));
+    model.primaryAction(game);
+    await until(() => model.stateOf(game) is Installed);
+    expect(fakeRelinkerRuns(fixture.toolkit).single, startsWith('--trace-imports'));
+    expect(model.records[game.id]!.relinkerFlags, ['--trace-imports']);
+  });
+
   test('a second game waits its turn and can leave the queue', () async {
     makeFakeToolkit(fixture.toolkit, mode: 'slow');
     final first = model.games[indexOf('PPSA02002')];
@@ -73,14 +87,54 @@ void main() {
     expect(model.failures, isEmpty, reason: 'a cancel is not a failure');
   });
 
-  test('a game made with an older toolkit is offered an update', () {
+  test('a game made with an older toolkit is rebuilt before it starts, not started as it is', () async {
     final orbit = model.games[indexOf('PPSA01001')];
+    File(p.join(orbit.folder, 'eboot.bin')).writeAsBytesSync(typicalSelf());
     expect(model.stateOf(orbit), isA<Installed>().having((state) => state.outdated, 'outdated', isFalse));
+    expect(model.needsRebuild(orbit), isFalse);
     makeFakeToolkit(fixture.toolkit, version: 'toolkit-2');
     // The toolkit is read again with the library (or when the launcher comes back in front), not
     // on every frame.
     model.rescan();
     expect(model.stateOf(orbit), isA<Installed>().having((state) => state.outdated, 'outdated', isTrue));
+    expect(model.needsRebuild(orbit), isTrue);
+    expect(model.records[orbit.id]!.toolkit, 'toolkit-1');
+    model.primaryAction(orbit);
+    expect(model.overlay, isNull, reason: 'no question: the stale copy is rebuilt');
+    expect(model.toast, 'Orbit Runner was made with another engine. Rebuilding it first');
+    expect(model.starting, isNull, reason: 'the stale copy did not start');
+    expect(model.afterRebuild?.$1, orbit.id, reason: 'the start waits on the rebuild');
+    expect(model.queue.contains(orbit.id) || model.progress.containsKey(orbit.id), isTrue);
+    // What waits goes on once the copy is the new engine's (the start itself is the next test's).
+    var went = false;
+    model.afterRebuild = (orbit.id, () => went = true);
+    await until(() => went);
+    expect(model.records[orbit.id]!.toolkit, 'toolkit-2');
+    expect(model.needsRebuild(orbit), isFalse);
+    expect(model.afterRebuild, isNull);
+  });
+
+  test('a rebuild that is cancelled or fails starts nothing, and the copy can still be played as it is', () async {
+    final orbit = model.games[indexOf('PPSA01001')];
+    File(p.join(orbit.folder, 'eboot.bin')).writeAsBytesSync(typicalSelf());
+    makeFakeToolkit(fixture.toolkit, mode: 'slow', version: 'toolkit-2');
+    model.rescan();
+    var went = false;
+    model.rebuildFirst(orbit, () => went = true);
+    expect(model.afterRebuild?.$1, orbit.id);
+    model.cancelUnlock(orbit);
+    expect(model.afterRebuild, isNull);
+    await until(() => model.stateOf(orbit) is Installed);
+    expect(went, isFalse);
+
+    makeFakeToolkit(fixture.toolkit, mode: 'fail', version: 'toolkit-3');
+    model.rescan();
+    model.rebuildFirst(orbit, () => went = true);
+    await until(() => model.stateOf(orbit) is Failed);
+    expect(went, isFalse);
+    expect(model.afterRebuild, isNull);
+    // The copy is still there: Play offers to try again or to play it as it is.
+    model.select(indexOf('PPSA01001'));
     model.primaryAction(orbit);
     expect(model.overlay, Layer.updateChoice);
     expect(model.panelCategories().single.rows.map((row) => row.id), ['update', 'play']);
@@ -123,6 +177,37 @@ void main() {
     (restore.kind as ActionRow).run();
     expect(File(p.join(installed, '_sd', 'save.dat')).readAsStringSync(), 'one');
     expect(model.toast, T.text('savesRestored'));
+  });
+
+  test('Restore saves… takes the backup the user picks, with the current saves backed up first', () async {
+    String? picked;
+    final own = makeFixture(pickFile: (label, extensions) async => picked);
+    addTearDown(own.dispose);
+    addTearDown(own.model.dispose);
+    final launcher = own.model;
+    final orbit = launcher.games.firstWhere((game) => game.titleId == 'PPSA01001');
+    final installed = Installer.installedFolder(orbit, launcher.root!);
+    File(p.join(installed, '_sd', 'save.dat'))
+      ..createSync(recursive: true)
+      ..writeAsStringSync('one');
+    launcher.select(launcher.games.indexOf(orbit));
+    launcher.open(Layer.gameSettings);
+    (launcher.panelCategories().single.rows.firstWhere((row) => row.id == 'backup').kind as ActionRow).run();
+    final backups = SaveBackup.backups(launcher.backupFolder(orbit));
+    expect(backups, hasLength(1));
+    final older = backups.single;
+    File(p.join(installed, '_sd', 'save.dat')).writeAsStringSync('two');
+    // Nothing picked: nothing happens.
+    PanelRow restore() => launcher.panelCategories().single.rows.firstWhere((row) => row.id == 'restoreChoose');
+    (restore().kind as ActionRow).run();
+    await Future<void>.delayed(Duration.zero);
+    expect(File(p.join(installed, '_sd', 'save.dat')).readAsStringSync(), 'two');
+    expect(restore().title, T.text('restoreSaves'));
+    picked = older;
+    await launcher.restoreChosenSaves(orbit);
+    expect(File(p.join(installed, '_sd', 'save.dat')).readAsStringSync(), 'one');
+    expect(launcher.toast, T.text('savesRestored'));
+    expect(SaveBackup.backups(launcher.backupFolder(orbit)), hasLength(2), reason: 'the current saves were kept first');
   });
 
   test('a dump copied into the games folder shows up on its own', () async {
@@ -293,11 +378,51 @@ void main() {
     expect(File(model.paths.logFile(orbit.titleId)).existsSync(), isFalse, reason: 'nothing started');
   });
 
-  test('uninstalling removes the installed game and keeps the dump', () {
+  test('uninstalling removes the installed game and keeps the dump', () async {
     final orbit = model.games[indexOf('PPSA01001')];
-    model.uninstall(orbit);
+    await model.uninstall(orbit);
     expect(model.stateOf(orbit), isA<Locked>());
     expect(Directory(Installer.installedFolder(orbit, model.root!)).existsSync(), isFalse);
     expect(File(p.join(orbit.folder, 'eboot.bin')).existsSync(), isTrue);
+  });
+
+  // Issue 55: pressed again and again while a big game went, the launcher stopped answering.
+  test('Uninstall is done at once while the files go after; a second one or an unlock waits for them', () async {
+    final orbit = model.games[indexOf('PPSA01001')];
+    File(p.join(orbit.folder, 'eboot.bin')).writeAsBytesSync(typicalSelf());
+    final installed = Installer.installedFolder(orbit, model.root!);
+    final removeAside = Installer.removeAside;
+    addTearDown(() => Installer.removeAside = removeAside);
+    final removing = <String>[];
+    final slow = Completer<void>();
+    Installer.removeAside = (path) async {
+      removing.add(path);
+      await slow.future;
+      await removeAside(path);
+    };
+    final first = model.uninstall(orbit);
+    expect(model.stateOf(orbit), isA<Locked>());
+    expect(model.toast, T.text('uninstallDone'));
+    expect(Directory(installed).existsSync(), isFalse);
+    expect(removing, isNotEmpty);
+    for (final path in removing) {
+      expect(Directory(path).existsSync(), isTrue, reason: 'set aside, not deleted on the screen\'s thread');
+    }
+    final asked = List.of(removing);
+    await model.uninstall(orbit);
+    expect(removing, asked, reason: 'a second Uninstall starts nothing');
+    model.rescan();
+    expect(model.stateOf(orbit), isA<Locked>());
+    model.unlock(orbit);
+    expect(model.stateOf(orbit), isA<Installing>());
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(model.stateOf(orbit), isA<Installing>(), reason: 'the unlock waits for the old files');
+    expect(Directory(installed).existsSync(), isFalse);
+    slow.complete();
+    await first;
+    for (final path in removing) {
+      expect(Directory(path).existsSync(), isFalse);
+    }
+    await until(() => model.stateOf(orbit) is Installed);
   });
 }

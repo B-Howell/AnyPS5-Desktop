@@ -479,6 +479,9 @@ extension ReportSettings on GameSettings {
       'Controls ${(controls ?? const {}).isEmpty ? 'default' : '${controls!.length} changed'}',
       if (tuning != null) 'Stick and mouse tuning changed',
       'Detailed logging ${trace == true ? 'on' : 'off'}',
+      if (chosenRelinkerFlags.isNotEmpty) 'Relinker flags ${chosenRelinkerFlags.map((flag) => flag.option).join(' ')}',
+      if (customRelinkerOptions case final String text) 'Custom relinker options $text',
+      if (launchOptions case final String text) 'Launch options $text',
     ].join(' · ');
   }
 }
@@ -499,6 +502,8 @@ class SessionReport {
     DateTime? created,
     this.unlockedWith,
     this.engineNow,
+    this.relinkerFlags = const [],
+    this.customRelinkerOptions = const [],
     this.exitCode,
     this.stoppedByUser = false,
     this.traced = false,
@@ -529,6 +534,12 @@ class SessionReport {
   final String? unlockedWith;
   final String? engineNow;
 
+  /// The relinker options the game was unlocked with ([RelinkerFlag]).
+  final List<String> relinkerFlags;
+
+  /// The Custom relinker options the game was unlocked with, word by word.
+  final List<String> customRelinkerOptions;
+
   /// The game's exit code; null when the launcher no longer knows it.
   final int? exitCode;
 
@@ -545,6 +556,18 @@ class SessionReport {
 
   /// The controllers connected and the last connects and disconnects (PadLog.report).
   final List<String> controllers;
+
+  /// The engine stopped because the dump has no PlayGo chunk table to check a chunk ID against
+  /// (no sce_sys/playgo-chunk.dat, and no playgo-scenario.json or one that lists no chunks):
+  /// upstream's "playgo-chunk.dat and playgo-scenario.json are missing, so chunk ID 1 cannot be
+  /// checked", and the same for an ID outside a scenario's list. APS5_PLAYGO_UNLISTED_CHUNKS
+  /// answers it, and AnyPS5-ARM's engine takes a dump without any playgo file as installed.
+  bool get playGoChunksUnknown => !stoppedByUser && playGoChunksUnknownIn(session);
+
+  static final _playGoUnknown = RegExp(r'scePlayGo: [^\n]*playgo-chunk\.dat[^\n]*cannot be checked');
+
+  /// Whether [log] says so (any title: the rule is the engine's message).
+  static bool playGoChunksUnknownIn(String log) => _playGoUnknown.hasMatch(log);
 
   /// The last lines of the game's online observation log, when online play wrote one during this
   /// start (what the game asked of the platform's online libraries just before it stopped).
@@ -639,6 +662,9 @@ class SessionReport {
       'Launcher: AnyPS5 Desktop $launcherLine',
       'Engine the game was unlocked with: ${unlockedWith ?? 'unknown'}',
       'Engine chosen for it now: ${engineNow ?? 'unknown'}',
+      if (relinkerFlags.isNotEmpty) 'Relinker flags the game was unlocked with: ${relinkerFlags.join(' ')}',
+      if (customRelinkerOptions.isNotEmpty)
+        'Custom relinker options the game was unlocked with: ${customRelinkerOptions.join(' ')}',
       '',
       'Settings: ${settings.reportSummary}',
       if (traced) 'Detailed logging: ${TraceMode.environment.entries.map((e) => '${e.key}=${e.value}').join(' ')}',

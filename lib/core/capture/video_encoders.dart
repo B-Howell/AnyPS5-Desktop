@@ -3,6 +3,7 @@ import 'dart:async';
 import '../desktop/desktop.dart';
 import '../host.dart';
 import '../replay_buffer.dart' show ProcessRunner;
+import 'wayland_capture.dart' show WaylandFeed;
 
 /// What the picture is encoded for: each wants its own trade between delay and quality.
 enum EncodeUse {
@@ -14,6 +15,30 @@ enum EncodeUse {
 
   /// The replay buffer: as little of the computer as possible while a game plays.
   replay,
+}
+
+/// Asking a running ffmpeg for a key frame, which is what the Mac's encoder does when a phone
+/// lost part of the picture.
+///
+/// ffmpeg has no control channel for its encoders: the one way in from outside is the command
+/// line it reads on its standard input ("c" sends a command to a filter). So a filter marks the
+/// frame: [filter] is ffmpeg's `metadata` filter, off until asked, adding the mark that
+/// `-force_key_frames scd_metadata` turns into a key frame. [command] switches it on for exactly
+/// one frame. ffmpeg looks at its standard input every 100 ms at best, and [globalArguments]
+/// keeps its main loop from waiting longer than that.
+abstract final class KeyRequest {
+  /// Goes first in the filter chain. Named `metadata` so that [command] finds it.
+  static const filter = 'metadata=mode=add:key=lavfi.scd.time:value=1:enable=0';
+
+  /// The line to write to ffmpeg's standard input. The filter evaluates `enable` twice for each
+  /// frame, so a plain "once" would be used up before the frame is marked: this expression
+  /// remembers the first frame it sees (t + 1, as variables start at 0) and is true only for it.
+  static const command = 'cmetadata -1 enable eq(if(ld(0),ld(0),st(0,t+1)),t+1)\n';
+
+  static const globalArguments = ['-stats_period', '0.05'];
+
+  /// What ffmpeg writes on its standard error for each [command], nothing to keep in the log.
+  static String withoutEcho(String text) => text.replaceAll(RegExp(r'(Enter command:|Command reply)[^\n]*\n?'), '');
 }
 
 /// The H.264 encoders the launcher tries, hardware first. All go through ffmpeg, which the
@@ -65,6 +90,19 @@ enum VideoEncoder {
     _ => 'format=nv12',
   };
 
+  /// The output arguments that make a [KeyRequest] produce a key frame. NVENC, Quick Sync and
+  /// AMF make a plain intra frame of a forced one unless told it must be an IDR frame, which is
+  /// the only kind a decoder that lost its reference frames can start from.
+  List<String> get keyRequestArguments => [
+    '-force_key_frames',
+    'scd_metadata',
+    ...switch (this) {
+      nvenc => const ['-forced-idr', '1'],
+      qsv || amf => const ['-forced_idr', '1'],
+      _ => const <String>[],
+    },
+  ];
+
   /// The encoder's arguments: [bitRate] in bit/s, a key frame every [keyEvery] frames.
   List<String> arguments({required EncodeUse use, required int bitRate, required int keyEvery}) {
     final live = use == EncodeUse.live;
@@ -90,7 +128,16 @@ enum VideoEncoder {
         '0',
         ...rate,
       ],
-      qsv => ['-c:v', codec, '-preset', 'veryfast', '-bf', '0', if (live) ...['-async_depth', '1'], ...rate],
+      qsv => [
+        '-c:v',
+        codec,
+        '-preset',
+        'veryfast',
+        '-bf',
+        '0',
+        if (live) ...['-async_depth', '1'],
+        ...rate,
+      ],
       amf => [
         '-c:v',
         codec,
@@ -131,11 +178,15 @@ enum VideoEncoder {
 
   /// A tiny encode that tells whether this encoder works here: ffmpeg lists NVENC and Quick
   /// Sync in builds for every computer, and they fail at once where the card is missing.
-  List<String> probeArguments() => [
+  ///
+  /// With [keyRequests], whether this ffmpeg takes the [KeyRequest] arguments too: an older one
+  /// that does not know `scd_metadata` stops at once.
+  List<String> probeArguments({bool keyRequests = false}) => [
     '-hide_banner',
     '-loglevel',
     'error',
     '-nostdin',
+    if (keyRequests) ...KeyRequest.globalArguments,
     ...deviceArguments,
     '-f',
     'lavfi',
@@ -145,8 +196,9 @@ enum VideoEncoder {
     '3',
     '-an',
     '-vf',
-    filterTail,
+    keyRequests ? '${KeyRequest.filter},$filterTail' : filterTail,
     ...arguments(use: EncodeUse.live, bitRate: 1000000, keyEvery: 30),
+    if (keyRequests) ...keyRequestArguments,
     '-f',
     'null',
     '-',
@@ -155,17 +207,37 @@ enum VideoEncoder {
 
 /// The first encoder that works with this ffmpeg on this computer, asked once and kept.
 class EncoderChoice {
-  EncoderChoice({required this.ffmpeg, required this.system, required this.run});
+  EncoderChoice({required this.ffmpeg, required this.system, required this.run, this.onNone});
 
   final String ffmpeg;
   final HostSystem system;
   final ProcessRunner run;
+
+  /// Called once when no encoder at all works with this ffmpeg.
+  final void Function()? onNone;
   Future<VideoEncoder?>? _chosen;
 
   /// What was tried and how it went, for the game log.
   final tried = <String>[];
 
   Future<VideoEncoder?> get encoder => _chosen ??= _choose();
+
+  /// Whether the encoder and this ffmpeg can make a key frame on request ([KeyRequest]).
+  Future<bool> get keyRequests => _keyRequests ??= _probeKeyRequests();
+  Future<bool>? _keyRequests;
+
+  Future<bool> _probeKeyRequests() async {
+    final chosen = await encoder;
+    if (chosen == null) return false;
+    try {
+      final result = await run(ffmpeg, chosen.probeArguments(keyRequests: true)).timeout(const Duration(seconds: 10));
+      tried.add('key frames on request: ${result.exitCode == 0 ? 'works' : 'exit ${result.exitCode}'}');
+      return result.exitCode == 0;
+    } on Object catch (error) {
+      tried.add('key frames on request: $error');
+      return false;
+    }
+  }
 
   Future<VideoEncoder?> _choose() async {
     for (final candidate in VideoEncoder.candidates(system)) {
@@ -177,13 +249,14 @@ class EncoderChoice {
         tried.add('${candidate.codec}: $error');
       }
     }
+    onNone?.call();
     return null;
   }
 }
 
 /// ffmpeg's screen input for the game's picture: gdigrab on Windows (the desktop's pixels in the
-/// game's area, the composited picture whatever draws it), x11grab on X11. Wayland lets no
-/// program read the screen without asking each time: not offered there.
+/// game's area, the composited picture whatever draws it), x11grab on X11. Wayland has no such
+/// input: its picture comes through [WaylandCapture] as a [WaylandFeed].
 abstract final class ScreenGrab {
   static bool supported(HostSystem system, Map<String, String> environment) {
     if (system == HostSystem.windows) return true;
@@ -193,13 +266,36 @@ abstract final class ScreenGrab {
     return (environment['DISPLAY'] ?? '').isNotEmpty;
   }
 
+  /// What asks ffmpeg for x11grab's options.
+  static const windowGrabProbe = ['-hide_banner', '-h', 'demuxer=x11grab'];
+
+  /// Whether [ffmpeg]'s x11grab can record one window by itself: its window_id option, in
+  /// FFmpeg 4.4 and later (the launcher's download is 8.1), not in an older one on the PATH or
+  /// a build without x11grab.
+  static Future<bool> windowGrab(String ffmpeg, ProcessRunner run) async {
+    try {
+      final result = await run(ffmpeg, windowGrabProbe).timeout(const Duration(seconds: 10));
+      // ffmpeg's help goes to its standard output; either is read, in case a build differs.
+      return result.exitCode == 0 && '${result.stdout}${result.stderr}'.contains('-window_id');
+    } on Object {
+      return false;
+    }
+  }
+
   /// The input arguments for [area] (the whole screen when null) at [framesPerSecond].
+  ///
+  /// With [windowOnly] on X11, the window [area] is the picture of by itself (x11grab's
+  /// window_id): under a compositing manager the window's own picture, without the windows over
+  /// it (the LIVE badge, the launcher's cards).
   static List<String> input({
     required HostSystem system,
     required Map<String, String> environment,
     required int framesPerSecond,
     ScreenArea? area,
+    WaylandFeed? wayland,
+    bool windowOnly = false,
   }) {
+    if (wayland != null) return wayland.input;
     // Even sizes: the encoders take nothing else, and the filter keeps them so after scaling.
     final width = area == null ? null : area.width & ~1;
     final height = area == null ? null : area.height & ~1;
@@ -213,19 +309,31 @@ abstract final class ScreenGrab {
         '$framesPerSecond',
         '-draw_mouse',
         '0',
-        if (area != null) ...[
-          '-offset_x',
-          '${area.x}',
-          '-offset_y',
-          '${area.y}',
-          '-video_size',
-          '${width}x$height',
-        ],
+        if (area != null) ...['-offset_x', '${area.x}', '-offset_y', '${area.y}', '-video_size', '${width}x$height'],
         '-i',
         'desktop',
       ];
     }
     final display = environment['DISPLAY'] ?? ':0';
+    final window = area?.window;
+    if (windowOnly && window != null) {
+      return [
+        '-thread_queue_size',
+        '64',
+        '-f',
+        'x11grab',
+        '-framerate',
+        '$framesPerSecond',
+        '-draw_mouse',
+        '0',
+        '-window_id',
+        '$window',
+        '-video_size',
+        '${width}x$height',
+        '-i',
+        display,
+      ];
+    }
     return [
       '-thread_queue_size',
       '64',

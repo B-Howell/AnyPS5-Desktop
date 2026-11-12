@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 
+#include "now_playing.h"
 #include "win32_window.h"
 #include "retro_core_host.h"
 
@@ -56,6 +57,17 @@ class FlutterWindow : public Win32Window {
   bool MoveToDisplay(const std::wstring& id, std::optional<DWORD> pid);
   bool SetRetroMenuRegion(const flutter::EncodableValue* arguments);
   bool retro_menu_clipped_ = false;
+  // "anyps5/now_playing": what a media player on this computer plays, for the quick menu's
+  // card (now_playing.h). The launcher turns the watching on and off, asks for the track and
+  // sends previous, play or pause and next; it hears "changed" with the track each time
+  // Windows says it changed.
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      now_playing_channel_;
+  NowPlaying* now_playing_ = nullptr;
+
+  // The track as the channel carries it: null with no session, else a map of title, artist,
+  // player, playing and (when the player gave a cover) artwork.
+  flutter::EncodableValue NowPlayingValue();
 
   std::wstring run_marker_;
 
