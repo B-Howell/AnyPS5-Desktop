@@ -926,7 +926,7 @@ The probe used core SHA-256
 
 The same 11-package chain also succeeded in one RPCS3 initialization,
 calling `retro_load_game` and `retro_unload_game` for each package. The
-[Windows host](../windows/runner/retro_core_host.cpp) now exposes a separate
+[Windows host](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) now exposes a separate
 `installPs3Packages` operation on its existing emulator channel. Before
 calling it, the dashboard must verify the DLL digest and copy the reviewed
 packages to its own staging directory. The method takes the verified core
@@ -938,9 +938,9 @@ before core initialization and reserves the embedded emulator until release.
 The operation registers no texture and calls no gameplay frame function.
 `ps3PackageStatus` reports how many packages finished. Stop takes effect
 between packages, and a rejected package leaves the count at the preceding
-successful package. The [batch test](../windows/runner/tests/ps3_package_batch_test.cpp)
+successful package. The [batch test](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/ps3_package_batch_test.cpp)
 checks order, failure and cancellation through the
-[batch loop](../windows/runner/ps3_package_batch.h).
+[batch loop](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/ps3_package_batch.h).
 The production batch loop also installed all 11 packages through the pinned
 Linux core with zero video and audio callbacks and the expected final
 executable digest.
@@ -1021,7 +1021,7 @@ the later Windows v2 boot tests.
 
 ## 2. Make the embedded profile honor the selected settings
 
-**Existing seam:** [PS3 settings model](../lib/ui/ps3_settings_model.dart), [embedded launch contract](../lib/ui/embedded_retro_game.dart), [native core option handling](../windows/runner/retro_core_host.cpp) and [frontend patch](../tool/patches/rpcs3-libretro-frontend.patch). The frontend supplies saved values for recognized boot and graphics options. Upstream network options being listed does not prove an effective network profile on launch.
+**Existing seam:** [PS3 settings model](../lib/ui/ps3_settings_model.dart), [embedded launch contract](../lib/ui/embedded_retro_game.dart), [native core option handling](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) and [frontend patch](../tool/patches/rpcs3-libretro-frontend.patch). The frontend supplies saved values for recognized boot and graphics options. Upstream network options being listed does not prove an effective network profile on launch.
 
 1. Trace effective precedence across launcher preferences, core variables, RPCS3 config, per-title overrides and patch state. Verify how the selected core reads `rpcn.yml` and resolves its system directory. Test that a profile with missing credentials, firmware, patch or game update refuses online without changing offline files. An offline launch must still leave RPCN disabled and keep the offline P2P socket on loopback.
 2. Define the narrow boot-time contract for a verified native-online profile. Apply only reviewed fields, including network enabled, PSN mode, and the title's required simulation options. Keep network configuration explicit for this launch. Validate effective XFloat settings on both sides, which the [provider FAQ](https://docs.lbpbonsai.com/faq.html) identifies as a divergence risk. Disable tuning trials and changes that affect network or emulation timing during the session. Changes already proven presentation-only can be qualified separately.
@@ -1053,7 +1053,7 @@ bridge revalidates the profile before sending its arguments to the host.
 
 [The launch bridge](../lib/ui/embedded_retro_game.dart) passes the verified
 profile separately from graphics preferences. The
-[Windows core host](../windows/runner/retro_core_host.cpp) rejects an online
+[Windows core host](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) rejects an online
 launch before core initialization if the DLL lacks the versioned policy
 export. Online play requires the version 3 export and a reviewed
 provider certificate pin. The host never falls back to an older online
@@ -1183,7 +1183,7 @@ the game.
 The [provider status patch](../tool/patches/rpcs3-libretro-provider-status.patch)
 records the initial connection outcome at RPCS3's NP initialization
 boundary. A versioned read-only export carries a numeric state and no
-account data. The [Windows host](../windows/runner/retro_core_host.cpp)
+account data. The [Windows host](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp)
 samples it on the core worker. [The embedded session](../lib/ui/embedded_retro_game.dart)
 interprets it independently of frame readiness and the
 [Quick Menu](../lib/ui/app_model.dart) shows it only for PS3 online play.

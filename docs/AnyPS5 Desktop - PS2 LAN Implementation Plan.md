@@ -446,7 +446,7 @@ resumes.
 
 ## 1. Pin a title and inventory the actual core
 
-**Read:** [ManagedRetro](../lib/core/managed_retro.dart), [native runner](../windows/runner/retro_core_host.cpp), and the [Gran Turismo 4 LAN manual](https://www.gran-turismo.com/local/jp/data1/pdf/gt4_lan.pdf).
+**Read:** [ManagedRetro](../lib/core/managed_retro.dart), [native runner](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp), and the [Gran Turismo 4 LAN manual](https://www.gran-turismo.com/local/jp/data1/pdf/gt4_lan.pdf).
 
 1. Confirm an available GT4 disc revision with LAN mode. Record title ID, region, revision and disc content hash. Pin the core DLL hash and source revision, BIOS, title options and memory-card policy. Start with matching content and core builds to remove variables. Broaden compatibility only with evidence.
 2. Determine whether the pinned core can enable DEV9 Ethernet, select the transport, and assign a distinct guest network identity per process. Capture the effective configuration and backend initialization. A legacy setting in [the PCSX2 template](../assets/retro/pcsx2.ini) is not evidence that the embedded DLL uses it.
@@ -466,14 +466,14 @@ adds a versioned binding for frontend-owned Ethernet queues. It uses frames
 without a frame check sequence and leaves the original adapter selection in
 place when no frontend transport is bound.
 
-The [shared native queue](../native/retro/ps2_virtual_lan.h) copies frames
-into fixed 64-frame buffers in each direction. The [embedded runner](../windows/runner/retro_core_host.cpp)
+The [shared native queue](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/ps2_virtual_lan.h) copies frames
+into fixed 64-frame buffers in each direction. The [embedded runner](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp)
 requires the DEV9 binding for an explicitly configured PS2 LAN launch,
 enables the core's Ethernet option for that session, and detaches after
 unloading the game. It refuses a core without the binding before boot.
 The [Dart bridge](../lib/ui/embedded_retro_game.dart) exchanges batches
 of at most 16 frames and accepts caller-supplied LAN system and save
-paths for isolation. The [native queue test](../native/retro/test/ps2_virtual_lan_test.cpp)
+paths for isolation. The [native queue test](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/ps2_virtual_lan_test.cpp)
 exercises the callback ABI, frame copying, bounded queues, routing checks,
 and teardown. The LAN launch preserves its network state by rejecting
 graphics changes that reopen the core.
@@ -515,8 +515,8 @@ to a new room from the same host or guest seat. The launcher reuses the
 same verified disc, account, running worker and save lease. Changing
 seats requires a fresh launch because the network address is fixed at
 boot. Before connecting a new bridge, the
-[Windows host](../windows/runner/retro_core_host.cpp) clears both queues
-in the [virtual adapter](../native/retro/ps2_virtual_lan.h). When
+[Windows host](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) clears both queues
+in the [virtual adapter](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/ps2_virtual_lan.h). When
 the connection is ready, Friends returns the player to the running game.
 The game still owns its LAN lobby, so players regroup in its multiplayer menu.
 After the old room finishes closing, a retained host can choose
@@ -691,7 +691,7 @@ is active.
 
 The [LAN invite test](../test/ui/ps2_lan_invite_test.dart) joins two rooms
 in sequence with the same guest worker and checks the queue reset.
-The [virtual adapter test](../native/retro/test/ps2_virtual_lan_test.cpp)
+The [virtual adapter test](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/ps2_virtual_lan_test.cpp)
 checks that resetting discards both queued directions and keeps the adapter usable.
 The [library test](../test/core/retro_library_test.dart) verifies serial
 and revision extraction with a conflicting manifest. The
@@ -826,7 +826,7 @@ The reads targeted uncommitted memory. This identifies the crash site.
 The texture bounds or lifetime defect that led to it remains open.
 
 The D3D11 control used a windowless feature-level 11.0 device and the same
-Libretro v1 interface as the [embedded runner](../windows/runner/retro_core_host.cpp).
+Libretro v1 interface as the [embedded runner](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp).
 Both consoles acquired leases, joined the same Vietnam Deathmatch, loaded
 into first-person gameplay, and reached the results screen after the
 timed round. The host scoreboard listed both players at 0–0. The guest
@@ -891,7 +891,7 @@ a reset exception ends the room through the connection-failure path
 and preserves the game. An in-flight reset is still awaited before the
 worker can be reused.
 This uses the existing
-[native queue reset](../native/retro/ps2_virtual_lan.h), wired through
+[native queue reset](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/ps2_virtual_lan.h), wired through
 the [PS2 launcher](../lib/ui/together_ps2_lan.dart). The bridge retains
 its local DHCP replies. Native queued DHCP packets can be dropped by
 the reset and follow the console's usual retransmission path.
@@ -899,7 +899,7 @@ the reset and follow the console's usual retransmission path.
 The Windows regression reproduced zero native resets before the fix.
 Afterward the full focused suite passed 38 tests, and a follow-up
 22-test core run included the new reset-readiness timeout. The native
-[NIC test](../native/retro/test/ps2_virtual_lan_test.cpp) passed
+[NIC test](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/ps2_virtual_lan_test.cpp) passed
 after rebuilding with assertions enabled. The relay-only probe verified
 that each seat's reset counter advanced across ICE restart and traffic
 resumed. That probe uses simulated console interfaces. The launcher
@@ -941,7 +941,7 @@ frames with their local Dart adapters. Traffic between the two Dart room
 peers used the real WebRTC data channels.
 
 The first run reached a shared lobby, then the [headless test runner's
-65-second watchdog](../windows/runner/tests/ps1_webrtc_loopback.cpp) closed
+65-second watchdog](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/ps1_webrtc_loopback.cpp) closed
 both links. With a 600-second watchdog in the scratch build, the rerun paced
 network setup and gameplay at up to 60 guest ticks per second. Both consoles
 got one DHCP lease, joined the same lobby, entered Vietnam Deathmatch with
@@ -1446,7 +1446,7 @@ and LRPS2 DEV9 core
 (`801af1211407964a4851839c3f4e90607f18353671dd1e427f56e12201d712a4`).
 The isolated worker now accepts signed left-stick X samples in its
 input script. This uses the same libretro axis as the launcher's
-[embedded worker](../windows/runner/retro_core_host.cpp). The private
+[embedded worker](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp). The private
 D: receipt `gt4-analog-race-e762e09` preserves the worker, calibration
 script, paired captures and packet logs.
 

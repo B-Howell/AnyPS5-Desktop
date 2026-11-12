@@ -41,47 +41,47 @@ and source imports are intermediate gates. Do not advertise unsupported flows.
 
 ## Shared native foundation
 
-The [core build](../native/retro/CMakeLists.txt) compiles the common runtime.
-[The library loader](../native/retro/retro_library.cpp) and its
-[interface](../native/retro/retro_library.h) load host libraries and resolve
-the [Libretro ABI](../native/retro/libretro_abi.h). The
-[session implementation](../native/retro/retro_session.cpp) and
-[session interface](../native/retro/retro_session.h) own the emulation worker,
+The [core build](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/CMakeLists.txt) compiles the common runtime.
+[The library loader](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/retro_library.cpp) and its
+[interface](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/retro_library.h) load host libraries and resolve
+the [Libretro ABI](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/libretro_abi.h). The
+[session implementation](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/retro_session.cpp) and
+[session interface](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/retro_session.h) own the emulation worker,
 input, lifecycle, graphics transitions and disc state. Immutable frame
-conversion lives in [retro_frame.cpp](../native/retro/retro_frame.cpp) and
-[retro_frame.h](../native/retro/retro_frame.h). The
-[Vulkan implementation](../native/retro/retro_vulkan_video.cpp) and
-[interface](../native/retro/retro_vulkan_video.h) provide the PS3 render path.
+conversion lives in [retro_frame.cpp](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/retro_frame.cpp) and
+[retro_frame.h](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/retro_frame.h). The
+[Vulkan implementation](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/retro_vulkan_video.cpp) and
+[interface](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/retro_vulkan_video.h) provide the PS3 render path.
 
-The [input timeline](../native/retro/ps1_netplay_timeline.h) and
-[virtual NIC](../native/retro/ps2_virtual_lan.h) are shared production code.
+The [input timeline](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/ps1_netplay_timeline.h) and
+[virtual NIC](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/ps2_virtual_lan.h) are shared production code.
 The Windows host includes those same headers. The
-[native test build](../native/retro/test/CMakeLists.txt) runs the
-[core fixture](../native/retro/test/fake_core.cpp),
-[lifecycle/frame/disc checks](../native/retro/test/retro_native_test.cpp),
-[timeline checks](../native/retro/test/ps1_netplay_timeline_test.cpp) and
-[NIC checks](../native/retro/test/ps2_virtual_lan_test.cpp). The latter two
+[native test build](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/CMakeLists.txt) runs the
+[core fixture](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/fake_core.cpp),
+[lifecycle/frame/disc checks](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/retro_native_test.cpp),
+[timeline checks](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/ps1_netplay_timeline_test.cpp) and
+[NIC checks](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/ps2_virtual_lan_test.cpp). The latter two
 explicitly retain assertions in Release builds and refuse to compile with
 `NDEBUG`, so an optimized test cannot silently remove its checks.
 
-The [session LAN checks](../native/retro/test/retro_lan_test.cpp) use a separate
+The [session LAN checks](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/retro_lan_test.cpp) use a separate
 core fixture with the private DEV9 ABI. The test verifies binding before game
 load, continuing execution while the launcher menu is open, typed Ethernet
 exchange, whole-batch rejection, queue reset, and worker-owned teardown. A core
 without the required private export fails before boot; the host never falls
 back to a stock core's system networking. Shared fake video/audio and bounded
-waits live in [test support](../native/retro/test/retro_test_support.h).
+waits live in [test support](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/retro_test_support.h).
 
 ## Linux integration
 
 The [Linux runner build](../linux/runner/CMakeLists.txt) links the common
 runtime. [Application registration](../linux/runner/my_application.cc)
-creates the [method-channel host](../linux/runner/retro_core_host_linux.cc),
-whose [interface](../linux/runner/retro_core_host_linux.h) handles shutdown
+creates the [method-channel host](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/linux/linux_backend.cc),
+whose [interface](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/host_server.h) handles shutdown
 before Flutter's view and renderer are disposed. The
-[platform interface](../linux/runner/retro_linux_platform.h),
-[EGL renderer](../linux/runner/retro_linux_video.cc) and
-[PulseAudio output](../linux/runner/retro_linux_audio.cc) supply Linux devices.
+[platform interface](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/linux/retro_linux_platform.h),
+[EGL renderer](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/linux/retro_linux_video.cc) and
+[PulseAudio output](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/linux/retro_linux_audio.cc) supply Linux devices.
 [Layer overlay implementation](../linux/runner/layer_overlay.cc) and
 [interface](../linux/runner/layer_overlay.h) preserve the reviewed compositor
 integration; they are not replaced with a Windows window-control workaround.
@@ -98,12 +98,12 @@ closed game cannot reach a later game that reuses the same texture. The
 [embedded ownership tests](../test/ui/embedded_retro_ownership_test.dart) cover
 both handle formats and consecutive runs with the same texture.
 
-The [Linux channel value adapter](../linux/runner/retro_linux_channel.h) validates
+The [Linux channel value adapter](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/linux/retro_linux_channel.h) validates
 ownership and bounded Ethernet batches using Flutter's actual `FlValue` API.
 It explicitly rejects PS1/PS3 online start flags until their complete workers
 are ported, avoiding a misleading offline boot. The
-[Linux adapter tests](../linux/runner/test/retro_linux_channel_test.cpp) and
-[test build](../linux/runner/test/CMakeLists.txt) exercise those values without a
+[Linux adapter tests](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/retro_linux_channel_test.cpp) and
+[test build](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/CMakeLists.txt) exercise those values without a
 display server and compile the actual host, EGL and PulseAudio implementations.
 
 ## Current evidence
@@ -210,9 +210,9 @@ not resolve the separate macOS golden differences.
 
 ## PS1 checkpoint worker port
 
-The shared [checkpoint component](../native/retro/ps1_checkpoint.h) owns bounded
+The shared [checkpoint component](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/ps1_checkpoint.h) owns bounded
 public exports, private ordinary-game recovery and a single-request mailbox.
-The [Windows host](../windows/runner/retro_core_host.cpp) now uses its capture routine too. Public handoff exports use
+The [Windows host](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) now uses its capture routine too. Public handoff exports use
 the core's blank-card exporter; private recovery stays in local memory and is
 never included in the public snapshot. Failed private backup cannot park the
 game. Failed restore retains recovery for retry. Cancellation during a core
@@ -228,9 +228,9 @@ Linux channel exposes ordinary export/park/resume and result/cancel methods,
 with the same owned-session guard as other commands and strict source, texture
 and 32-byte digest parsing.
 
-The [checkpoint unit test](../native/retro/test/ps1_checkpoint_test.cpp) covers
+The [checkpoint unit test](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/ps1_checkpoint_test.cpp) covers
 backup/restore failure, bounded frames, cancellation, concurrent export teardown
-and retry. The [native session test](../native/retro/test/retro_ps1_checkpoint_test.cpp)
+and retry. The [native session test](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/retro_ps1_checkpoint_test.cpp)
 parks a multi-disc fake PS1 game, checks that it stops stepping, rejects queued
 configuration/disc changes, resumes without reopening and verifies its saved
 private memory card. Fixture callbacks also detect calls outside the core worker.
@@ -273,11 +273,11 @@ each frame, applies both seats at the core callback, and publishes the main
 RAM fingerprint every 120 confirmed frames.
 
 The Windows and Linux workers share the deterministic options, RAM fingerprint
-algorithm and isolated match storage through [the PS1 match header](../native/retro/ps1_match.h).
+algorithm and isolated match storage through [the PS1 match header](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/ps1_match.h).
 The match ignores ordinary per-game overrides. On Linux the temporary
 directory must enforce owner-only access before the BIOS copy is written.
 
-The [native match fixture](../native/retro/test/retro_ps1_match_test.cpp)
+The [native match fixture](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/retro_ps1_match_test.cpp)
 runs each seat through the same 120-frame trace. It checks the missing-input
 stall, conflicting-packet rejection, both controller ports and analog axes,
 the expected frame 119 RAM fingerprint, and the ordinary save directory.
@@ -301,7 +301,7 @@ and video while retaining the recorded controller inputs.
 
 ## Linux native rollback
 
-The [native session](../native/retro/retro_session.cpp) checkpoints before
+The [native session](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/retro_session.cpp) checkpoints before
 predicting remote input. It restores a same-instance state and replays
 corrected input on the core worker. It suppresses replay video, replaces
 speculative PCM and releases audio and RAM fingerprints only after
@@ -311,12 +311,12 @@ still export and hold before starting the match. Once rollback starts,
 the worker rejects live export and hold because the core may be ahead of
 the confirmed frame.
 
-The [Linux headless probe](../native/retro/test/ps1_match_probe.cpp) uses
+The [Linux headless probe](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/ps1_match_probe.cpp) uses
 that production worker with in-memory video and audio sinks. Build it with
 the shared native suite:
 
 ```sh
-cmake -S native/retro/test -B build/linux-retro -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake -S src/core/test -B build/linux-retro -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/linux-retro --target ps1_match_probe --parallel 3
 ```
 
@@ -331,14 +331,14 @@ for `git apply`. The resulting local Linux candidate SHA-256 was
 The Windows cached-interpreter test DLL SHA-256 was
 '9e72d4ded35ed5308916e16448edc1c3c39651969c2f6fde68b4e3293eea6347'.
 
-Run the [paced driver](../windows/runner/tests/run_ps1_netplay_probe.py)
+Run the [paced driver](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/run_ps1_netplay_probe.py)
 from Windows with the native Windows probe and both locally built libraries.
 The five WSL arguments must be accessible through the Ubuntu distribution's
 drive mounts. Keep Windows TEMP and TMP on the scratch drive. The Ubuntu
 probe uses private temporary storage under `/dev/shm`.
 
 ```powershell
-python -B windows/runner/tests/run_ps1_netplay_probe.py --probe "$winProbe" --core "$winCore" `
+python -B tests/run_ps1_netplay_probe.py --probe "$winProbe" --core "$winCore" `
   --linux-probe "$linuxProbe" --linux-core "$linuxCore" --disc "$cue" --bios "$bios" `
   --rollback --network-profile 120ms-loss --trace tool/ps1_netplay/fixtures/ctr_usa_coco_park_versus.json
 ```
@@ -467,7 +467,7 @@ AnyTogether's hosted account, gateway and room APIs and the production
 WebRTC match transport. It runs one native rollback core per machine and
 plays the pinned digital two-player CTR trace. A Windows Flutter engine
 can run without a view through the
-[headless probe runner](../windows/runner/tests/ps1_webrtc_loopback.cpp).
+[headless probe runner](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/ps1_webrtc_loopback.cpp).
 The Linux test bundle runs on a private virtual X display. Neither arm
 requires access to the user's physical desktop.
 
@@ -511,7 +511,7 @@ Xvfb display. The Windows kernel blob SHA-256 was
 The laptop probe bundle libapp.so SHA-256 was
 3312c8d9edb53915d72e8028fe74ccd3cab3d9deb55b2cdfc49cecde3dcb59f4.
 
-The [paced native driver](../windows/runner/tests/run_ps1_netplay_probe.py)
+The [paced native driver](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/run_ps1_netplay_probe.py)
 also ran with its Linux worker command pipes forwarded to the physical
 laptop over SSH, using the same 120 ms round-trip jitter/loss profile and
 the laptop's own CUE, BIOS and pinned Linux core. The full 13,706-frame CTR
@@ -524,9 +524,9 @@ WebRTC traversal and the frame budget remain open acceptance gates.
 
 ### Windows rollback work timing
 
-The Windows [native worker](../windows/runner/retro_core_host.cpp) records
+The Windows [native worker](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) records
 stage elapsed times only when an input trace is supplied. The
-[probe command](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and
+[probe command](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/ps1_netplay_runner_probe.cpp) and
 paced driver's --work-breakdown option report the worst iteration and count
 the largest stage in each overrun. The "other" bucket includes lock and
 pacing work outside named stages. Clock time within a stage can include
@@ -614,11 +614,11 @@ The production adapter requires a frame sourced from the session's
 assigned MAC. LAN discovery and a second player are still unverified.
 
 LRPS2 polls the libretro packed joypad mask in ordinary gameplay. The
-[shared native session](../native/retro/retro_session.cpp) now advertises
+[shared native session](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/retro_session.cpp) now advertises
 packed input on the capability query, including a null payload, and returns
 the full 16-bit mask for player one. The ordinary single-button, analog,
 pause and port checks remain in place. The
-[native regression](../native/retro/test/retro_native_test.cpp) failed
+[native regression](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/retro_native_test.cpp) failed
 before the fix and passed afterward along with all seven Linux native
 suites. This verifies the callback contract needed to drive the real
 game's Network menu. It does not verify a real LAN session.
@@ -835,16 +835,16 @@ separately from the pending hosted gameplay test.
 
 ### Shared PS3 network policy
 
-The [native policy adapter](../native/retro/ps3_network_policy.h)
+The [native policy adapter](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/ps3_network_policy.h)
 carries the same RPCS3 offline and attested-online ABI calls on both
-hosts. The [Windows runner](../windows/runner/retro_core_host.cpp)
+hosts. The [Windows runner](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp)
 still requires the v3 export and passes the provider identity and
 patch requirements before online boot. The
-[shared session](../native/retro/retro_session.cpp) now explicitly
+[shared session](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/retro_session.cpp) now explicitly
 selects offline mode on PS3 cores that expose the v1 policy hook.
 Legacy offline cores may omit it. A core rejection aborts launch.
 
-The [native test](../native/retro/test/retro_native_test.cpp) verifies
+The [native test](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/retro_native_test.cpp) verifies
 offline arguments and the complete attestation arguments, and rejects
 missing exports, rejected policies, and mismatched patch entries. Linux
 PS3 online still needs the native channel parser, provider-status
@@ -859,18 +859,18 @@ on the preceding invite-test head in
 
 ### Linux PS3 native launch contract
 
-The [Linux channel decoder](../linux/runner/retro_linux_channel.h)
+The [Linux channel decoder](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/linux/retro_linux_channel.h)
 accepts the PS3 provider identity and patch protection only for a PS3
-session. The [native worker](../native/retro/retro_session.cpp) requires
+session. The [native worker](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/retro_session.cpp) requires
 both the provider-status export and the verified v3 policy export
 before initialization, and aborts if the core rejects the policy.
-The [runner](../linux/runner/retro_core_host_linux.cc) returns the
+The [runner](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/linux/linux_backend.cc) returns the
 provider status using the same field and codes as Windows. An online
 PS3 session cannot switch discs or apply live graphics changes.
 If an attested boot fails, Linux preserves the core's protection error
 and does not retry with a different graphics setting.
 
-The [channel test](../linux/runner/test/retro_linux_channel_test.cpp)
+The [channel test](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/retro_linux_channel_test.cpp)
 covers a valid policy, missing or malformed policy, a non-PS3 core,
 and out-of-range patch write counts. The native suite passed seven
 tests, and the Linux channel test passed after compiling the actual

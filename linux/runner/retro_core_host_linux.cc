@@ -1,26 +1,23 @@
 #include "retro_core_host_linux.h"
 
-#include "retro_linux_platform.h"
-#include "retro_linux_channel.h"
-#include "retro_vulkan_video.h"
+#include "retro_host_proxy.h"
 
-#include <algorithm>
-#include <array>
-#include <cstdint>
-#include <limits>
+#include <atomic>
+#include <functional>
+#include <map>
 #include <mutex>
 #include <optional>
-#include <stdexcept>
-#include <string_view>
-#include <utility>
 
 namespace {
-using namespace anyps5::retro;
+namespace ipc = anyps5::retro_ipc;
+using ipc::ProxyFrame;
+using ipc::ProxyResult;
+using ipc::RetroHostProxy;
 
 struct TextureState {
   std::mutex mutex;
-  Session* session = nullptr;
-  std::shared_ptr<const Frame> lease;
+  std::function<std::optional<ProxyFrame>()> acquire;
+  std::optional<ProxyFrame> lease;
 };
 
 struct RetroTexture {
@@ -34,11 +31,11 @@ struct RetroTextureClass {
 
 G_DEFINE_TYPE(RetroTexture, retro_texture, fl_pixel_buffer_texture_get_type())
 
-static gboolean CopyPixels(FlPixelBufferTexture* texture, const uint8_t** pixels,
-                           uint32_t* width, uint32_t* height, GError**) {
+static gboolean CopyPixels(FlPixelBufferTexture* texture, const uint8_t** pixels, uint32_t* width,
+                           uint32_t* height, GError**) {
   auto* state = reinterpret_cast<RetroTexture*>(texture)->state;
   std::lock_guard<std::mutex> lock(state->mutex);
-  state->lease = state->session ? state->session->AcquireFrame() : nullptr;
+  state->lease = state->acquire ? state->acquire() : std::nullopt;
   if (!state->lease) {
     // Flutter may paint the texture before the first frame or after release.
     static constexpr uint8_t black[] = {0, 0, 0, 255};
@@ -46,7 +43,7 @@ static gboolean CopyPixels(FlPixelBufferTexture* texture, const uint8_t** pixels
     *width = *height = 1;
     return TRUE;
   }
-  *pixels = state->lease->pixels.data();
+  *pixels = state->lease->pixels;
   *width = static_cast<uint32_t>(state->lease->width);
   *height = static_cast<uint32_t>(state->lease->height);
   return TRUE;
@@ -62,177 +59,83 @@ static void retro_texture_class_init(RetroTextureClass* klass) {
   G_OBJECT_CLASS(klass)->finalize = FinalizeTexture;
 }
 
-static void retro_texture_init(RetroTexture* texture) {
-  texture->state = new TextureState();
-}
+static void retro_texture_init(RetroTexture* texture) { texture->state = new TextureState(); }
 
-const char* StringField(FlValue* fields, const char* key) {
-  if (!fields || fl_value_get_type(fields) != FL_VALUE_TYPE_MAP) return nullptr;
-  auto* value = fl_value_lookup_string(fields, key);
-  return value && fl_value_get_type(value) == FL_VALUE_TYPE_STRING ? fl_value_get_string(value) : nullptr;
-}
-
-FlValue* ReadField(FlValue* fields, const char* key) {
-  return fields && fl_value_get_type(fields) == FL_VALUE_TYPE_MAP ? fl_value_lookup_string(fields, key) : nullptr;
-}
-
-std::optional<Options> ReadOptions(FlValue* values) {
-  if (!values || fl_value_get_type(values) != FL_VALUE_TYPE_MAP) return std::nullopt;
-  Options options;
-  for (size_t i = 0; i < fl_value_get_length(values); ++i) {
-    auto* key = fl_value_get_map_key(values, i);
-    auto* value = fl_value_get_map_value(values, i);
-    if (fl_value_get_type(key) != FL_VALUE_TYPE_STRING || fl_value_get_type(value) != FL_VALUE_TYPE_STRING)
-      return std::nullopt;
-    options.emplace(fl_value_get_string(key), fl_value_get_string(value));
-  }
-  return options;
-}
-
-FlValue* Strings(const std::vector<std::string>& values) {
-  auto* result = fl_value_new_list();
-  for (const auto& value : values) fl_value_append_take(result, fl_value_new_string(value.c_str()));
-  return result;
-}
-
-FlValue* EncodeStatus(const SessionStatus& status) {
-  auto* result = fl_value_new_map();
-  fl_value_set_string_take(result, "ready", fl_value_new_bool(status.ready));
-  fl_value_set_string_take(result, "presented", fl_value_new_bool(status.presented));
-  fl_value_set_string_take(result, "ended", fl_value_new_bool(status.ended));
-  fl_value_set_string_take(result, "netplayReady", fl_value_new_bool(status.netplay_ready));
-  fl_value_set_string_take(result, "portableCheckpoint", fl_value_new_bool(status.portable_checkpoint));
-  fl_value_set_string_take(result, "error", fl_value_new_string(status.error.c_str()));
-  fl_value_set_string_take(result, "aspect", fl_value_new_float(status.aspect));
-  fl_value_set_string_take(result, "hardware", fl_value_new_bool(status.hardware));
-  fl_value_set_string_take(result, "frameWidth", fl_value_new_int(status.frame_width));
-  fl_value_set_string_take(result, "frameHeight", fl_value_new_int(status.frame_height));
-  fl_value_set_string_take(result, "resolutionError", fl_value_new_string(status.resolution_error.c_str()));
-  fl_value_set_string_take(result, "graphicsPending", fl_value_new_bool(status.graphics_pending));
-  if (status.ps3_provider_status >= 0)
-    fl_value_set_string_take(result, "ps3ProviderStatus", fl_value_new_int(status.ps3_provider_status));
-  if (status.checkpoint_source > 0)
-    fl_value_set_string_take(result, "localBlankCardCheckpoint", fl_value_new_int(status.checkpoint_source));
-  fl_value_set_string_take(result, "ordinaryCheckpointParked", fl_value_new_bool(status.checkpoint_parked));
-  if (status.recovered_source > 0)
-    fl_value_set_string_take(result, "ps1RecoveredSource", fl_value_new_int(status.recovered_source));
-  fl_value_set_string_take(result, "progressLabel",
-                           status.progress_label ? fl_value_new_string(status.progress_label->c_str())
-                                                 : fl_value_new_null());
-  fl_value_set_string_take(result, "progressPercent",
-                           status.progress_percent ? fl_value_new_int(*status.progress_percent)
-                                                   : fl_value_new_null());
-
-  if (const auto& discs = status.discs) {
-    auto* item = fl_value_new_map();
-    fl_value_set_string_take(item, "labels", Strings(discs->labels));
-    fl_value_set_string_take(item, "inserted", discs->inserted ? fl_value_new_int(*discs->inserted) : fl_value_new_null());
-    fl_value_set_string_take(item, "playedDiscPath", fl_value_new_string(discs->played ? discs->inserted_path.c_str() : ""));
-    fl_value_set_string_take(item, "busy", fl_value_new_bool(discs->busy));
-    fl_value_set_string_take(item, "failed", fl_value_new_bool(discs->failed));
-    fl_value_set_string_take(result, "discs", item);
-  }
-
-  auto* options = fl_value_new_map();
-  for (const auto& [key, option] : status.options) {
-    auto* item = fl_value_new_map();
-    fl_value_set_string_take(item, "values", Strings(option.values));
-    fl_value_set_string_take(item, "labels", Strings(option.labels));
-    fl_value_set_string_take(item, "title", fl_value_new_string(option.title.c_str()));
-    fl_value_set_string_take(item, "restart", fl_value_new_bool(option.restart));
-    fl_value_set_string_take(item, "selected", fl_value_new_int(option.selected));
-    fl_value_set_string_take(item, "activeValue", fl_value_new_string(option.active_value.c_str()));
-    fl_value_set_string_take(options, key.c_str(), item);
-  }
-  fl_value_set_string_take(result, "options", options);
-
-  const auto& telemetry = status.telemetry;
-  auto* tuning = fl_value_new_map();
-  fl_value_set_string_take(tuning, "clockMs", fl_value_new_int(telemetry.clock_ms));
-  fl_value_set_string_take(tuning, "frames", fl_value_new_int(telemetry.frames));
-  fl_value_set_string_take(tuning, "steps", fl_value_new_int(telemetry.steps));
-  fl_value_set_string_take(tuning, "audioFrames", fl_value_new_int(telemetry.audio_frames));
-  fl_value_set_string_take(tuning, "droppedAudioFrames", fl_value_new_int(telemetry.dropped_audio_frames));
-  auto* intervals = fl_value_new_list();
-  for (const auto count : telemetry.frame_intervals) fl_value_append_take(intervals, fl_value_new_int(count));
-  fl_value_set_string_take(tuning, "frameIntervals", intervals);
-  fl_value_set_string_take(tuning, "targetFps", fl_value_new_float(telemetry.target_fps));
-  fl_value_set_string_take(tuning, "audioRate", fl_value_new_float(telemetry.audio_rate));
-  fl_value_set_string_take(result, "tuningTelemetry", tuning);
-  return result;
-}
-
-FlValue* EncodeMatchTick(const Ps1MatchTick& tick) {
-  auto* result = fl_value_new_map();
-  auto* local = fl_value_new_list();
-  for (const auto& sample : tick.local) {
-    auto* row = fl_value_new_list();
-    fl_value_append_take(row, fl_value_new_int(sample.frame));
-    fl_value_append_take(row, fl_value_new_int(sample.input.buttons));
-    for (const auto axis : sample.input.axes) fl_value_append_take(row, fl_value_new_int(axis));
-    fl_value_append_take(local, row);
-  }
-  auto* fingerprints = fl_value_new_list();
-  for (const auto& [frame, hash] : tick.fingerprints) {
-    auto* row = fl_value_new_list();
-    fl_value_append_take(row, fl_value_new_int(frame));
-    fl_value_append_take(row, fl_value_new_string(hash.c_str()));
-    fl_value_append_take(fingerprints, row);
-  }
-  fl_value_set_string_take(result, "local", local);
-  fl_value_set_string_take(result, "fingerprints", fingerprints);
-  fl_value_set_string_take(result, "frame", fl_value_new_int(tick.frame));
-  fl_value_set_string_take(result, "confirmedFrame", tick.confirmed ? fl_value_new_int(*tick.confirmed) : fl_value_new_null());
-  fl_value_set_string_take(result, "receivedFrame", tick.received ? fl_value_new_int(*tick.received) : fl_value_new_null());
-  fl_value_set_string_take(result, "waiting", fl_value_new_bool(tick.waiting));
-  return result;
-}
-
-FlValue* EncodeMatchHistory(const Ps1MatchHistory& history) {
-  auto* result = fl_value_new_map();
-  auto* frames = fl_value_new_list();
-  for (const auto& frame : history.frames) {
-    auto* ports = fl_value_new_list();
-    for (const auto& pad : frame) {
-      auto* row = fl_value_new_list();
-      fl_value_append_take(row, fl_value_new_int(pad.buttons));
-      for (const auto axis : pad.axes) fl_value_append_take(row, fl_value_new_int(axis));
-      fl_value_append_take(ports, row);
+ipc::Value ToHost(FlValue* value) {
+  if (!value) return ipc::Value();
+  switch (fl_value_get_type(value)) {
+    case FL_VALUE_TYPE_NULL: return ipc::Value();
+    case FL_VALUE_TYPE_BOOL: return ipc::Value(static_cast<bool>(fl_value_get_bool(value)));
+    case FL_VALUE_TYPE_INT: {
+      const int64_t number = fl_value_get_int(value);
+      if (number >= INT32_MIN && number <= INT32_MAX) return ipc::Value(static_cast<int32_t>(number));
+      return ipc::Value(number);
     }
-    fl_value_append_take(frames, ports);
+    case FL_VALUE_TYPE_FLOAT: return ipc::Value(fl_value_get_float(value));
+    case FL_VALUE_TYPE_STRING: return ipc::Value(std::string(fl_value_get_string(value)));
+    case FL_VALUE_TYPE_UINT8_LIST: {
+      const auto* data = fl_value_get_uint8_list(value);
+      return ipc::Value(ipc::Bytes(data, data + fl_value_get_length(value)));
+    }
+    case FL_VALUE_TYPE_INT32_LIST: {
+      const auto* data = fl_value_get_int32_list(value);
+      return ipc::Value(std::vector<int32_t>(data, data + fl_value_get_length(value)));
+    }
+    case FL_VALUE_TYPE_INT64_LIST: {
+      const auto* data = fl_value_get_int64_list(value);
+      return ipc::Value(std::vector<int64_t>(data, data + fl_value_get_length(value)));
+    }
+    case FL_VALUE_TYPE_FLOAT32_LIST: {
+      const auto* data = fl_value_get_float32_list(value);
+      return ipc::Value(std::vector<float>(data, data + fl_value_get_length(value)));
+    }
+    case FL_VALUE_TYPE_FLOAT_LIST: {
+      const auto* data = fl_value_get_float_list(value);
+      return ipc::Value(std::vector<double>(data, data + fl_value_get_length(value)));
+    }
+    case FL_VALUE_TYPE_LIST: {
+      ipc::List out;
+      for (size_t i = 0; i < fl_value_get_length(value); ++i) out.push_back(ToHost(fl_value_get_list_value(value, i)));
+      return ipc::Value(std::move(out));
+    }
+    case FL_VALUE_TYPE_MAP: {
+      ipc::Map out;
+      for (size_t i = 0; i < fl_value_get_length(value); ++i)
+        out.emplace(ToHost(fl_value_get_map_key(value, i)), ToHost(fl_value_get_map_value(value, i)));
+      return ipc::Value(std::move(out));
+    }
+    default: return ipc::Value();
   }
-  fl_value_set_string_take(result, "frames", frames);
-  fl_value_set_string_take(result, "nextFrame", fl_value_new_int(history.next_frame));
-  return result;
 }
 
-void Success(FlMethodCall* call, FlValue* result = nullptr) {
-  g_autoptr(FlValue) owned_result = result;
-  fl_method_call_respond_success(call, owned_result, nullptr);
+FlValue* ToFlutter(const ipc::Value& value) {
+  if (value.IsNull()) return fl_value_new_null();
+  if (const auto* flag = std::get_if<bool>(&value)) return fl_value_new_bool(*flag);
+  if (std::holds_alternative<int32_t>(value) || std::holds_alternative<int64_t>(value))
+    return fl_value_new_int(value.LongValue());
+  if (const auto* number = std::get_if<double>(&value)) return fl_value_new_float(*number);
+  if (const auto* text = std::get_if<std::string>(&value)) return fl_value_new_string_sized(text->data(), text->size());
+  if (const auto* bytes = std::get_if<ipc::Bytes>(&value)) return fl_value_new_uint8_list(bytes->data(), bytes->size());
+  if (const auto* ints = std::get_if<std::vector<int32_t>>(&value)) return fl_value_new_int32_list(ints->data(), ints->size());
+  if (const auto* longs = std::get_if<std::vector<int64_t>>(&value)) return fl_value_new_int64_list(longs->data(), longs->size());
+  if (const auto* floats = std::get_if<std::vector<float>>(&value)) return fl_value_new_float32_list(floats->data(), floats->size());
+  if (const auto* doubles = std::get_if<std::vector<double>>(&value)) return fl_value_new_float_list(doubles->data(), doubles->size());
+  if (const auto* list = std::get_if<ipc::List>(&value)) {
+    auto* out = fl_value_new_list();
+    for (const auto& item : *list) fl_value_append_take(out, ToFlutter(item));
+    return out;
+  }
+  auto* out = fl_value_new_map();
+  for (const auto& [key, item] : std::get<ipc::Map>(value)) fl_value_set_take(out, ToFlutter(key), ToFlutter(item));
+  return out;
 }
 
-void SetInput(Session& session, FlValue* input) {
-  if (!input || fl_value_get_type(input) != FL_VALUE_TYPE_LIST) return;
-  const auto length = fl_value_get_length(input);
-  if (length != 5 && length != 6) return;
-  const size_t first = length - 5;
-  int64_t port = 0;
-  if (first) {
-    auto* value = fl_value_get_list_value(input, 0);
-    if (fl_value_get_type(value) != FL_VALUE_TYPE_INT) return;
-    port = fl_value_get_int(value);
-    if (port < 0 || port > 3) return;
-  }
-  auto* mask = fl_value_get_list_value(input, first);
-  if (fl_value_get_type(mask) != FL_VALUE_TYPE_INT) return;
-  std::array<int16_t, 4> axes{};
-  for (size_t i = 0; i < axes.size(); ++i) {
-    auto* axis = fl_value_get_list_value(input, first + i + 1);
-    if (fl_value_get_type(axis) == FL_VALUE_TYPE_INT)
-      axes[i] = static_cast<int16_t>(std::clamp<int64_t>(fl_value_get_int(axis), -32768, 32767));
-  }
-  session.SetInput(static_cast<unsigned>(port), static_cast<uint16_t>(fl_value_get_int(mask)), axes);
+gboolean RunTask(gpointer data) {
+  (*static_cast<std::function<void()>*>(data))();
+  return G_SOURCE_REMOVE;
 }
+
+void DeleteTask(gpointer data) { delete static_cast<std::function<void()>*>(data); }
 }  // namespace
 
 class RetroCoreHostLinux::Impl {
@@ -240,6 +143,14 @@ class RetroCoreHostLinux::Impl {
   explicit Impl(FlPluginRegistrar* registrar)
       : registrar_(FL_TEXTURE_REGISTRAR(g_object_ref(fl_plugin_registrar_get_texture_registrar(registrar)))),
         platform_context_(g_main_context_ref_thread_default()) {
+    ipc::ProxyOptions options;
+    options.host = RetroHostProxy::DefaultHostPath();
+    options.texture_per_session = false;
+    proxy_ = std::make_unique<RetroHostProxy>(
+        std::move(options),
+        ipc::ProxyPlatform{[this] { return Register(); }, [this](int64_t texture) { Unregister(texture); },
+                           [this](int64_t) { ScheduleFrame(); },
+                           [this](std::function<void()> task) { Post(std::move(task)); }});
     g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
     channel_ = fl_method_channel_new(fl_plugin_registrar_get_messenger(registrar), "anyps5/retro_core",
                                      FL_METHOD_CODEC(codec));
@@ -248,8 +159,7 @@ class RetroCoreHostLinux::Impl {
 
   ~Impl() {
     Shutdown();
-    if (registered_) fl_texture_registrar_unregister_texture(registrar_, FL_TEXTURE(texture_));
-    g_clear_object(&texture_);
+    *alive_ = false;
     g_clear_object(&channel_);
     g_clear_object(&registrar_);
     g_main_context_unref(platform_context_);
@@ -259,302 +169,86 @@ class RetroCoreHostLinux::Impl {
     if (shutting_down_) return;
     shutting_down_ = true;
     fl_method_channel_set_method_call_handler(channel_, nullptr, nullptr, nullptr);
-    if (session_) session_->Stop();
-    Release();
+    proxy_->Shutdown();
   }
 
  private:
   static void OnCall(FlMethodChannel*, FlMethodCall* call, gpointer context) {
     auto* self = static_cast<Impl*>(context);
-    try {
-      self->Handle(call);
-    } catch (const std::exception& error) {
-      fl_method_call_respond_error(call, "retroCore", error.what(), nullptr, nullptr);
-    }
+    g_object_ref(call);
+    self->proxy_->Handle(fl_method_call_get_name(call), ToHost(fl_method_call_get_args(call)),
+                         [call](ProxyResult answer) {
+                           switch (answer.kind) {
+                             case ProxyResult::Kind::kSuccess: {
+                               g_autoptr(FlValue) result = ToFlutter(answer.value);
+                               fl_method_call_respond_success(call, result, nullptr);
+                               break;
+                             }
+                             case ProxyResult::Kind::kError:
+                               fl_method_call_respond_error(call, answer.code.c_str(), answer.message.c_str(), nullptr,
+                                                            nullptr);
+                               break;
+                             case ProxyResult::Kind::kNotImplemented:
+                               fl_method_call_respond_not_implemented(call, nullptr);
+                               break;
+                           }
+                           g_object_unref(call);
+                         });
   }
 
-  void Handle(FlMethodCall* call) {
-    const std::string_view method(fl_method_call_get_name(call));
-    auto* args = fl_method_call_get_args(call);
-    if (method == "start") {
-      Start(call, args);
-      return;
-    }
-    if (method == "ps1LocalCheckpointReopen" || method == "ps1LocalCheckpointDiscard") {
-      const auto source = args && fl_value_get_type(args) == FL_VALUE_TYPE_INT ? fl_value_get_int(args) : 0;
-      if (!ordinary_recovery_ || source != ordinary_recovery_->recovery->source)
-        throw std::runtime_error("The private PS1 recovery checkpoint is unavailable.");
-      if (session_ && session_->ended()) Release();
-      if (session_) throw std::runtime_error("An embedded game is already running.");
-      if (method == "ps1LocalCheckpointDiscard") {
-        ordinary_recovery_.reset();
-        Success(call, fl_value_new_bool(true));
-      } else {
-        StartSession(call, *ordinary_recovery_, Console::kPs1);
-      }
-      return;
-    }
-    // The registered texture survives individual games. Commands must carry
-    // the run owner as well, so a delayed callback cannot mutate a later game.
-    const auto owned = linux_channel::OwnedArguments(args, active_session_);
-    if (!owned) {
-      Success(call);
-      return;
-    }
-    args = *owned;
-    if (!session_) {
-      Success(call);
-    } else if (method == "status") {
-      Success(call, EncodeStatus(session_->Status()));
-    } else if (method == "stop") {
-      session_->Stop();
-      Success(call);
-    } else if (method == "release") {
-      if (session_->ended()) Release();
-      Success(call);
-    } else if (method == "pause") {
-      if (args && fl_value_get_type(args) == FL_VALUE_TYPE_BOOL) session_->Pause(fl_value_get_bool(args));
-      Success(call);
-    } else if (method == "changeDisc") {
-      const auto index = args && fl_value_get_type(args) == FL_VALUE_TYPE_INT ? fl_value_get_int(args) : -1;
-      Success(call, fl_value_new_bool(index >= 0 && index <= INT32_MAX &&
-                                     session_->ChangeDisc(static_cast<unsigned>(index))));
-    } else if (method == "input") {
-      SetInput(*session_, args);
-      Success(call);
-    } else if (method == "netplayStart") {
-      Success(call, fl_value_new_bool(session_->StartNetplay()));
-    } else if (method == "ps1CheckpointHold") {
-      const auto frame = session_->HoldNetplay();
-      Success(call, frame ? fl_value_new_int(*frame) : nullptr);
-    } else if (method == "ps1ResumeLocal") {
-      Success(call, fl_value_new_bool(session_->ResumeLocalNetplay()));
-    } else if (method == "ps1CheckpointHistory") {
-      const auto history = session_->MatchHistory(linux_channel::ReadMatchFrame(args));
-      if (!history) throw std::runtime_error("The requested input history is unavailable.");
-      Success(call, EncodeMatchHistory(*history));
-    } else if (method == "ps1CheckpointReplay") {
-      const auto first = linux_channel::ReadMatchFrame(linux_channel::Field(args, "frame"));
-      const auto ticket = session_->RequestMatchReplay(first, linux_channel::ReadMatchReplay(args));
-      if (!ticket) throw std::runtime_error("The guest cannot replay from that frame.");
-      Success(call, fl_value_new_int(*ticket));
-    } else if (method == "netplaySync") {
-      const auto exchange = linux_channel::ReadMatchExchange(args);
-      const auto tick = session_->SyncNetplay(exchange.remote, exchange.acknowledged);
-      if (!tick) throw std::runtime_error("The PS1 netplay input exchange was rejected.");
-      Success(call, EncodeMatchTick(*tick));
-    } else if (method == "ps1LocalCheckpointDetach" || method == "ps1LocalCheckpointAccept") {
-      const auto source = linux_channel::ReadCheckpointSource(args, fl_texture_get_id(FL_TEXTURE(texture_)));
-      if (!source) throw std::runtime_error("The PS1 recovery session changed.");
-      if (method == "ps1LocalCheckpointDetach") {
-        if (ordinary_recovery_) throw std::runtime_error("PS1 recovery is already pending.");
-        auto recovery = session_->DetachOrdinaryRecovery(*source);
-        if (!recovery) throw std::runtime_error("The original PS1 game is not parked.");
-        ordinary_recovery_ = std::move(recovery);
-        Release();
-        Success(call, fl_value_new_int(*source));
-      } else {
-        if (!ordinary_recovery_ || *source != ordinary_recovery_->recovery->source ||
-            !session_->AcceptOrdinaryRecovery(*source))
-          throw std::runtime_error("The original PS1 game is not ready to resume.");
-        ordinary_recovery_.reset();
-        Success(call, fl_value_new_bool(true));
-      }
-    } else if (method == "ps1LocalCheckpointExport" || method == "ps1LocalCheckpointPark" ||
-               method == "ps1LocalCheckpointResume") {
-      const auto source = linux_channel::ReadCheckpointSource(args, fl_texture_get_id(FL_TEXTURE(texture_)));
-      if (!source) { Success(call); return; }
-      const auto ticket = method == "ps1LocalCheckpointResume" ? session_->RequestOrdinaryResume(*source) :
-          session_->RequestOrdinaryCheckpoint(*source, linux_channel::ReadCheckpointDigest(args),
-                                              method == "ps1LocalCheckpointPark");
-      Success(call, ticket ? fl_value_new_int(*ticket) : nullptr);
-    } else if (method == "ps1CheckpointExport" || method == "ps1CheckpointImport") {
-      const auto digest = linux_channel::ReadCheckpointDigest(args);
-      std::optional<int64_t> ticket;
-      if (method == "ps1CheckpointImport") {
-        auto snapshot = linux_channel::ReadMatchCheckpoint(args);
-        ticket = session_->RequestMatchImport(digest, snapshot.frame, std::move(snapshot.state));
-      } else {
-        ticket = session_->RequestMatchExport(digest);
-      }
-      if (!ticket) throw std::runtime_error("This core cannot run that checkpoint operation now.");
-      Success(call, fl_value_new_int(*ticket));
-    } else if (method == "ps1CheckpointResult" || method == "ps1CheckpointCancel") {
-      const auto ticket = args && fl_value_get_type(args) == FL_VALUE_TYPE_INT ? fl_value_get_int(args) : 0;
-      if (method == "ps1CheckpointCancel") { session_->CancelCheckpoint(ticket); Success(call); return; }
-      auto reply = session_->TakeCheckpoint(ticket);
-      if (const auto* completed = std::get_if<bool>(&reply)) {
-        Success(call, fl_value_new_bool(*completed));
-      } else if (auto* snapshot = std::get_if<ps1_checkpoint::Snapshot>(&reply)) {
-        auto* result = fl_value_new_map();
-        fl_value_set_string_take(result, "frame", fl_value_new_int(snapshot->frame));
-        fl_value_set_string_take(result, "state", fl_value_new_uint8_list(snapshot->state.data(), snapshot->state.size()));
-        Success(call, result);
-      } else {
-        Success(call);
-      }
-    } else if (method == "ps2LanReset") {
-      const bool texture_matches = args && fl_value_get_type(args) == FL_VALUE_TYPE_INT &&
-          fl_value_get_int(args) == fl_texture_get_id(FL_TEXTURE(texture_));
-      Success(call, fl_value_new_bool(texture_matches && session_->ClearLanFrames()));
-    } else if (method == "ps2LanExchange") {
-      const auto input = linux_channel::ReadLanFrames(args, fl_texture_get_id(FL_TEXTURE(texture_)));
-      if (!input) { Success(call); return; }
-      const auto output = session_->ExchangeLan(*input);
-      if (!output) { Success(call); return; }
-      auto* result = fl_value_new_list();
-      for (const auto& frame : *output)
-        fl_value_append_take(result, fl_value_new_uint8_list(frame.data(), frame.size()));
-      Success(call, result);
-    } else if (method == "option") {
-      const auto* key = StringField(args, "key");
-      const auto* value = StringField(args, "value");
-      Success(call, fl_value_new_bool(key && value && session_->SetOption(key, value)));
-    } else if (method == "tuningOptions") {
-      const auto expected = ReadOptions(ReadField(args, "expected"));
-      const auto values = ReadOptions(ReadField(args, "values"));
-      Success(call, fl_value_new_bool(expected && values && session_->SetTuningOptions(*expected, *values)));
-    } else {
-      fl_method_call_respond_not_implemented(call, nullptr);
-    }
-  }
-
-  static gboolean NotifyFrame(gpointer context) {
-    auto* self = static_cast<Impl*>(context);
-    {
-      std::lock_guard<std::mutex> lock(self->notification_mutex_);
-      if (auto* dispatched = std::exchange(self->notification_, nullptr)) g_source_unref(dispatched);
-    }
-    fl_texture_registrar_mark_texture_frame_available(self->registrar_, FL_TEXTURE(self->texture_));
-    return G_SOURCE_REMOVE;
+  void Post(std::function<void()> task) {
+    // Attaching a source, unlike invoke, cannot run the task inline on the
+    // calling thread.
+    GSource* source = g_idle_source_new();
+    auto guarded = [alive = alive_, task = std::move(task)] {
+      if (*alive) task();
+    };
+    g_source_set_callback(source, RunTask, new std::function<void()>(std::move(guarded)), DeleteTask);
+    g_source_attach(source, platform_context_);
+    g_source_unref(source);
   }
 
   void ScheduleFrame() {
-    std::lock_guard<std::mutex> lock(notification_mutex_);
-    if (!notifications_enabled_ || notification_) return;
-    // Flutter marks external textures on the platform thread. Attaching a
-    // source, unlike invoke, cannot execute this callback inline on the worker.
-    notification_ = g_idle_source_new();
-    g_source_set_callback(notification_, NotifyFrame, this, nullptr);
-    g_source_attach(notification_, platform_context_);
-  }
-  void Start(FlMethodCall* call, FlValue* args) {
-    if (session_ && session_->ended()) Release();
-    if (session_) {
-      fl_method_call_respond_error(call, "busy", "An embedded game is already running", nullptr, nullptr);
-      return;
-    }
-    const auto* core = StringField(args, "core");
-    const auto* disc = StringField(args, "disc");
-    const auto* system = StringField(args, "system");
-    const auto* saves = StringField(args, "saves");
-    const auto* resolution = StringField(args, "internalResolution");
-    if (!core || !disc || !system || !saves) {
-      fl_method_call_respond_error(call, "argument", "The core, disc and storage paths are required", nullptr, nullptr);
-      return;
-    }
-    const auto console = ConsoleForCore(core);
-    if (console == Console::kUnknown) {
-      fl_method_call_respond_error(call, "unsupportedCore", "This emulator core is unavailable on Linux", nullptr, nullptr);
-      return;
-    }
-    try {
-      auto match = linux_channel::ReadPs1Match(args);
-      std::optional<std::array<uint8_t, 6>> lan_mac;
-      if (auto* mac = ReadField(args, "ps2LanMac")) {
-        if (console != Console::kPs2 || fl_value_get_type(mac) != FL_VALUE_TYPE_UINT8_LIST ||
-            fl_value_get_length(mac) != 6)
-          throw std::runtime_error("Expected a PS2 game and six-byte private network address");
-        lan_mac.emplace();
-        std::copy_n(fl_value_get_uint8_list(mac), 6, lan_mac->begin());
-      }
-      std::optional<InitialDisc> initial_disc;
-      auto* initial_index = ReadField(args, "initialDiscIndex");
-      const auto* initial_path = StringField(args, "initialDiscPath");
-      if (initial_index || ReadField(args, "initialDiscPath")) {
-        if (!initial_index || fl_value_get_type(initial_index) != FL_VALUE_TYPE_INT || !initial_path || !*initial_path)
-          throw std::runtime_error("Invalid initial disc");
-        const auto index = fl_value_get_int(initial_index);
-        if (index < 0 || index >= 128) throw std::runtime_error("Invalid initial disc");
-        initial_disc = InitialDisc{static_cast<unsigned>(index), initial_path};
-      }
-      SessionConfig config{core, disc, system, saves, resolution ? resolution : "",
-                           ReadOptions(ReadField(args, "graphics")).value_or(Options{}), std::move(initial_disc), lan_mac};
-      config.ps1_match = std::move(match);
-      config.ps3_online = linux_channel::ReadPs3Online(args, console);
-      StartSession(call, std::move(config), console);
-    } catch (const std::exception& error) {
-      fl_method_call_respond_error(call, "start", error.what(), nullptr, nullptr);
-    }
+    if (frame_pending_.exchange(true)) return;
+    Post([this] {
+      frame_pending_ = false;
+      if (texture_) fl_texture_registrar_mark_texture_frame_available(registrar_, FL_TEXTURE(texture_));
+    });
   }
 
-  void StartSession(FlMethodCall* call, SessionConfig config, Console console) {
-    try {
-      if (session_serial_ == std::numeric_limits<int64_t>::max())
-        throw std::runtime_error("The native session counter is exhausted");
-      // Keep one registration for this view. A raster callback can still hold
-      // the previous frame while a session releases or the next one starts.
-      if (!texture_) texture_ = static_cast<RetroTexture*>(g_object_new(retro_texture_get_type(), nullptr));
-      if (!registered_) registered_ = fl_texture_registrar_register_texture(registrar_, FL_TEXTURE(texture_));
-      if (!registered_) throw std::runtime_error("Could not register the game surface");
-      session_ = std::make_unique<Session>(
-          std::move(config),
-          console == Console::kPs3 ? CreateVulkanVideo() : CreateLinuxVideo(), CreateLinuxAudio(),
-          [this] { ScheduleFrame(); });
-      {
-        std::lock_guard<std::mutex> lock(texture_->state->mutex);
-        texture_->state->session = session_.get();
-      }
-      {
-        std::lock_guard<std::mutex> lock(notification_mutex_);
-        notifications_enabled_ = true;
-      }
-      session_->Start();
-      active_session_ = ++session_serial_;
-      auto* handle = fl_value_new_map();
-      fl_value_set_string_take(handle, "texture", fl_value_new_int(fl_texture_get_id(FL_TEXTURE(texture_))));
-      fl_value_set_string_take(handle, "session", fl_value_new_int(active_session_));
-      Success(call, handle);
-    } catch (...) {
-      if (session_) session_->Stop();
-      Release();
-      throw;
+  int64_t Register() {
+    if (!texture_) texture_ = static_cast<RetroTexture*>(g_object_new(retro_texture_get_type(), nullptr));
+    if (!fl_texture_registrar_register_texture(registrar_, FL_TEXTURE(texture_))) {
+      g_clear_object(&texture_);
+      return -1;
     }
+    const auto id = fl_texture_get_id(FL_TEXTURE(texture_));
+    std::lock_guard<std::mutex> lock(texture_->state->mutex);
+    texture_->state->acquire = [this, id] { return proxy_->Acquire(id); };
+    return id;
   }
 
-  void Release() {
+  void Unregister(int64_t) {
+    if (!texture_) return;
     {
-      std::lock_guard<std::mutex> lock(notification_mutex_);
-      notifications_enabled_ = false;
-      if (auto* pending = std::exchange(notification_, nullptr)) {
-        g_source_destroy(pending);
-        g_source_unref(pending);
-      }
-    }
-    if (session_) session_->Join();
-    if (texture_) {
       std::lock_guard<std::mutex> lock(texture_->state->mutex);
-      texture_->state->session = nullptr;
+      texture_->state->acquire = nullptr;
+      texture_->state->lease.reset();
     }
-    session_.reset();
-    active_session_ = 0;
+    fl_texture_registrar_unregister_texture(registrar_, FL_TEXTURE(texture_));
+    g_clear_object(&texture_);
   }
 
   FlTextureRegistrar* registrar_;
   GMainContext* platform_context_;
-  FlMethodChannel* channel_;
-  std::unique_ptr<Session> session_;
-  std::optional<SessionConfig> ordinary_recovery_;
+  FlMethodChannel* channel_ = nullptr;
+  std::unique_ptr<RetroHostProxy> proxy_;
   RetroTexture* texture_ = nullptr;
-  std::mutex notification_mutex_;
-  GSource* notification_ = nullptr;
-  bool notifications_enabled_ = false;
-  bool registered_ = false;
+  std::atomic<bool> frame_pending_{false};
+  std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
   bool shutting_down_ = false;
-  int64_t session_serial_ = 0, active_session_ = 0;
 };
 
-RetroCoreHostLinux::RetroCoreHostLinux(FlPluginRegistrar* registrar)
-    : impl_(std::make_unique<Impl>(registrar)) {}
+RetroCoreHostLinux::RetroCoreHostLinux(FlPluginRegistrar* registrar) : impl_(std::make_unique<Impl>(registrar)) {}
 RetroCoreHostLinux::~RetroCoreHostLinux() = default;
 void RetroCoreHostLinux::Shutdown() { impl_->Shutdown(); }

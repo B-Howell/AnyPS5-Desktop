@@ -147,6 +147,15 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/libmpv/LICENSE.txt" DE
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/angle/LICENSE.txt" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   RENAME "ANGLE-LICENSE.txt" COMPONENT Runtime)
 
+# The emulator host (github.com/B-Howell/anyps5-retro-host, GPL-3.0) is a separate
+# program. Point ANYPS5_RETRO_HOST_DIR at a release of it to ship it beside the
+# launcher with its licence; without it, embedded emulation is unavailable.
+if(DEFINED ENV{ANYPS5_RETRO_HOST_DIR} AND EXISTS "$ENV{ANYPS5_RETRO_HOST_DIR}/anyps5-retro-host.exe")
+  install(PROGRAMS "$ENV{ANYPS5_RETRO_HOST_DIR}/anyps5-retro-host.exe" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
+  install(FILES "$ENV{ANYPS5_RETRO_HOST_DIR}/LICENSE" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    RENAME "anyps5-retro-host-LICENSE.txt" COMPONENT Runtime)
+endif()
+
 # The MSVC runtime (msvcp140.dll, vcruntime140.dll, vcruntime140_1.dll) beside the executable,
 # so the launcher starts on a PC without the Visual C++ Redistributable. The UCRT is part of
 # Windows 10 and later and stays out.

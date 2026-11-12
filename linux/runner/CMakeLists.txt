@@ -11,8 +11,6 @@ add_executable(${BINARY_NAME}
   "my_application.cc"
   "layer_overlay.cc"
   "retro_core_host_linux.cc"
-  "retro_linux_audio.cc"
-  "retro_linux_video.cc"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
 )
 
@@ -25,11 +23,10 @@ add_definitions(-DAPPLICATION_ID="${APPLICATION_ID}")
 
 # Add dependency libraries. Add any application-specific dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter)
-pkg_check_modules(RETRO_RENDER REQUIRED IMPORTED_TARGET egl epoxy)
-pkg_check_modules(RETRO_AUDIO REQUIRED IMPORTED_TARGET libpulse)
-set(ANYPS5_RETRO_VULKAN ON)
-add_subdirectory("${CMAKE_SOURCE_DIR}/../native/retro" "${CMAKE_CURRENT_BINARY_DIR}/retro")
-target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK PkgConfig::RETRO_RENDER PkgConfig::RETRO_AUDIO anyps5_retro_vulkan)
+# The retro host protocol client. Emulator cores run in the separate
+# anyps5-retro-host program; nothing that loads a core is built here.
+add_subdirectory("${CMAKE_SOURCE_DIR}/../native/retro_ipc" "${CMAKE_CURRENT_BINARY_DIR}/retro_ipc")
+target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK anyps5_retro_ipc)
 # dlopen for gtk-layer-shell (layer_overlay.cc), which is loaded at run time, never linked.
 target_link_libraries(${BINARY_NAME} PRIVATE ${CMAKE_DL_LIBS})
 

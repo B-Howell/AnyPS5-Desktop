@@ -10,8 +10,12 @@ import 'host.dart';
 class RunningGame {
   /// [exitCode] completes once the game ended and its output is in its log (a stand-in process
   /// in tests).
-  RunningGame(Process process, this.exitCode, this.started) : _process = process;
-  RunningGame.embedded(this.exitCode, this.started) : _process = null;
+  RunningGame(Process process, this.exitCode, this.started) : _process = process, _embeddedPid = 0;
+
+  /// A game the launcher draws itself; [pid] is the emulator host process that runs it.
+  RunningGame.embedded(this.exitCode, this.started, {int pid = 0}) : _process = null, _embeddedPid = pid;
+
+  final int _embeddedPid;
 
   final Process? _process;
   Process get process => _process!;
@@ -20,7 +24,7 @@ class RunningGame {
   final Future<int> exitCode;
   final DateTime started;
 
-  int get pid => _process?.pid ?? 0;
+  int get pid => _process?.pid ?? _embeddedPid;
 
   /// Asks the game to end (SIGTERM on Linux, TerminateProcess on Windows).
   bool stop() => process.kill();

@@ -214,18 +214,10 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: bash packaging/set-version.sh "$VERSION"
       - run: flutter build linux --release
-      - name: Test shared emulator worker and Linux channel
+      - name: Build the retro host protocol client
         run: |
-          cmake -S native/retro/test -B build/retro-native -G Ninja -DANYPS5_RETRO_VULKAN=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/retro-native --parallel 3
-          ctest --test-dir build/retro-native --output-on-failure
-          flutter_root="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
-          cmake -S linux/runner/test -B build/linux-channel -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DFLUTTER_ENGINE_DIR="$flutter_root/bin/cache/artifacts/engine/linux-x64"
-          cmake --build build/linux-channel --parallel 3
-          ctest --test-dir build/linux-channel --output-on-failure
-          ANYPS5_TEST_ELF_CORE="$PWD/build/retro-native/lan/pcsx2_libretro.so" \
-            flutter test --no-pub test/core/elf_core_library_test.dart
+          cmake -S native/retro_ipc -B build/retro-ipc -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/retro-ipc --parallel 3
       # The system's libmpv, never a carried one: no libmpv in the bundle, nothing in it links one,
       # and the clip player's plugin links libanyps5_mpv.so (packaging/linux/no-libmpv.sh).
       - name: Check the bundle carries no libmpv
@@ -375,14 +367,12 @@ jobs:
         with:
           key: ${{ steps.archives.outputs.key }}
           path: ${{ env.WINDOWS_ARCHIVES }}
-      - name: Test shared emulator worker on Windows
+      - name: Build the retro host protocol client
         shell: pwsh
         run: |
-          cmake -S native/retro/test -B build/retro-native -DANYPS5_RETRO_VULKAN=OFF
+          cmake -S native/retro_ipc -B build/retro-ipc
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cmake --build build/retro-native --config Release --parallel 3
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          ctest --test-dir build/retro-native -C Release --output-on-failure
+          cmake --build build/retro-ipc --config Release --parallel 3
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       # The clip player's libmpv and ANGLE (media_kit_libs_windows_video) and SDL2 beside the
       # launcher: the installer and the .zip take the whole folder.

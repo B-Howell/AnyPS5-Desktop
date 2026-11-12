@@ -98,7 +98,7 @@ opens each disc separately and switches the active image.
 The local library scan found one Metal Gear Solid entry with discs 1–2
 and one Final Fantasy VII entry with discs 1–3. The FFVII playlist uses
 the exact former Disc 1 filename stem with the `.m3u` extension.
-The existing [Windows core host](../windows/runner/retro_core_host.cpp)
+The existing [Windows core host](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp)
 derives its PS1 card filename from the launch path's stem, so this
 preserves the card filename without changing any saves.
 
@@ -118,7 +118,7 @@ installations remain available as an advanced path.
 
 The existing launch card keeps the title, cover, and single progress bar
 visible during embedded PS1 and PS2 startup, including while the core
-outputs blank frames. The [Windows host](../windows/runner/retro_core_host.cpp)
+outputs blank frames. The [Windows host](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp)
 reports when Flutter first reads a visible game frame. The
 [embedded session](../lib/ui/embedded_retro_game.dart) latches that signal
 for the [launch card and startup timeout](../lib/ui/app_model.dart).
@@ -131,7 +131,7 @@ compile and shader progress.
 | LRPS2 | Internal resolution, anisotropic filtering and trilinear filtering |
 | RPCS3 | Internal resolution and anisotropic filtering |
 
-The [Windows host](../windows/runner/retro_core_host.cpp) retains the last
+The [Windows host](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) retains the last
 frame when applying settings that require an in-memory checkpoint.
 SwanStation restores the checkpoint after changing its active renderer.
 LRPS2 reopens its core for a resolution change and restores the checkpoint
@@ -524,7 +524,7 @@ and patch, where to publish the package and its corresponding source and
 notices, and how to pin and update the downloadable ZIP and DLL. The reviewer
 workflow uses a local build and explicit hashes. It needs no published binary.
 
-The [Vulkan bridge](../windows/runner/retro_vulkan_video.cpp) presents the
+The [Vulkan bridge](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/retro_vulkan_video.cpp) presents the
 RPCS3 frame to Flutter and rejects synchronization it cannot support.
 The [trophy reader](../lib/core/ps3_trophies.dart) reads PS3 definitions and
 the local RPCS3 profile. LittleBigPlanet GOTY definitions and a controlled

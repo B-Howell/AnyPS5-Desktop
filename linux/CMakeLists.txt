@@ -157,6 +157,15 @@ if(SDL2_RUNTIME)
     RENAME "SDL2-LICENSE.txt" COMPONENT Runtime)
 endif()
 
+# The emulator host (github.com/B-Howell/anyps5-retro-host, GPL-3.0) is a separate
+# program. Point ANYPS5_RETRO_HOST_DIR at a release of it to ship it beside the
+# launcher with its licence; without it, embedded emulation is unavailable.
+if(DEFINED ENV{ANYPS5_RETRO_HOST_DIR} AND EXISTS "$ENV{ANYPS5_RETRO_HOST_DIR}/anyps5-retro-host")
+  install(PROGRAMS "$ENV{ANYPS5_RETRO_HOST_DIR}/anyps5-retro-host" DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
+  install(FILES "$ENV{ANYPS5_RETRO_HOST_DIR}/LICENSE" DESTINATION "${CMAKE_INSTALL_PREFIX}"
+    RENAME "anyps5-retro-host-LICENSE.txt" COMPONENT Runtime)
+endif()
+
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.
 set(FLUTTER_ASSET_DIR_NAME "flutter_assets")
