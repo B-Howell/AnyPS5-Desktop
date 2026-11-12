@@ -7662,7 +7662,7 @@ class AppModel extends ChangeNotifier {
         ];
       case Layer.otherOnlineGame when together.otherOnlineGame != null:
         final other = together.otherOnlineGame!.game;
-        final name = games.where((game) => game.titleId == other.titleId).firstOrNull?.name ?? other.titleId;
+        final name = together.gameName(other.titleId);
         final since = other.since;
         return [
           PanelCategory(

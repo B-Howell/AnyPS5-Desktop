@@ -336,8 +336,13 @@ cover this:
     404 or 410. Any other refusal, or no answer, keeps it for next time.
     A PS3 room the service ended is removed when its attempt finishes.
   - Unanswered ends: until the request for a room is answered, joining
-    that room is refused. This stops a late "leave" from undoing a new
-    join.
+    that room is refused, and no second request is sent for it. Join
+    checks this both before admission and again just before it sends
+    `join`, after its own sweep, so a late "leave" cannot undo a new join.
+  - Locks during a sweep: while a sweep holds a gone run's lock, its own
+    checks treat that run as live and never reopen the lock file. On
+    Linux, closing any handle to the file would release the process's
+    lock. The sweep also deletes that run's leftover `.json.tmp`.
 - A session this device joined earlier in the same run is ended when
   every membership of this account in it is on this socket's device and
   this launcher no longer uses it. The socket's device changes with each
@@ -348,9 +353,12 @@ cover this:
   launcher recorded, `RetroOnlineRooms` throws `RetroRoomOccupied` with
   the session's details. The PS1 invite then asks over the game
   ([Layer.otherOnlineGame](../lib/ui/app_model.dart)): "End your other
-  online game?", naming the game and when it started. Yes ends the
-  session (or leaves it, when this account was a guest) and sends the
-  invite again; No returns to Couch Co-op. PS2 and PS3 still show the
+  online game?", naming the game (through `TogetherModel.gameFor`, which
+  maps a disc serial to the library's game and its artwork) and when it
+  started. Yes ends the session (or leaves it, when this account was a
+  guest) and sends the invite again. No returns to where the invite was
+  sent from: Couch Co-op over a game, or Friends. If the game has closed
+  meanwhile, it goes to Home. PS2 and PS3 still show the
   "leave your current game" message.
 - Tests: the [ledger tests](../test/core/online/retro_room_ledger_test.dart)
   cover earlier runs, a live second launcher holding its lock (a real

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:anyps5_desktop/core/online/retro_room_ledger.dart';
 import 'package:anyps5_desktop/core/together/account.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -153,6 +154,50 @@ void main(List<String> args) {
     answer.complete({});
     await sweeping;
     expect(next.unresolved(_joined), isFalse);
+  });
+
+  test('a join waits out its own cleanup that was not answered in time', () {
+    fakeAsync((clock) {
+      earlierRun([(_joined, _me, false)]);
+      final next = RetroRoomLedger(folder);
+      final calls = <String>[];
+      final rooms = RetroOnlineRooms(
+        spec: _spec,
+        me: _me,
+        ledger: next,
+        call: (method, path, [body]) async {
+          calls.add('$method $path');
+          if (path.endsWith('/leave')) return Completer<Map<String, dynamic>>().future;
+          if (path == 'me/game-session') return {'session': null};
+          return {
+            'id': _joined,
+            'host': {'userId': _friend},
+            'kind': 'online',
+            'titleId': 'SCUS94426',
+            'gameVersion': '1',
+            'engineBuild': RetroOnlineMode.synchronized.protocol,
+            'capacity': 2,
+            'joinable': false,
+            'endedAt': null,
+            'properties': {'protocol': RetroOnlineMode.synchronized.protocol},
+          };
+        },
+        signal: (_, _, _, _, _) {},
+      );
+      Object? failure;
+      rooms
+          .join(_joined)
+          .then(
+            (_) {},
+            onError: (Object error) {
+              failure = error;
+            },
+          );
+      clock.elapse(const Duration(seconds: 13));
+      expect(failure, isA<RetroRoomOccupied>());
+      expect(calls, ['POST game-sessions/$_joined/leave', 'GET me/game-session', 'GET game-sessions/$_joined']);
+      expect(next.unresolved(_joined), isTrue);
+    });
   });
 
   test('reads when a room was created from its ID', () {

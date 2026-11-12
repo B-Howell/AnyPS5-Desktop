@@ -32,8 +32,12 @@ final class RetroRoomLedger {
   Future<void> _sweeping = Future.value();
   final _records = <RetroRoomRecord>[];
 
-  /// Rooms an end or leave was sent for and not yet answered: not taken up again until it is.
+  /// Rooms with an end or leave sent and not yet answered: not joined, nor sent another, until
+  /// it is.
   final _unresolved = <String>{};
+
+  /// The runs that are gone whose locks this run holds while ending their rooms.
+  final _sweepLocks = <String>{};
 
   static final _uuid = RegExp(r'^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$', caseSensitive: false);
   static final _runName = RegExp(r'^[0-9a-f]{16}$');
@@ -107,6 +111,7 @@ final class RetroRoomLedger {
     for (final other in _otherRuns()) {
       final lock = _take(other);
       if (lock == null) continue;
+      _sweepLocks.add(other);
       try {
         final records = _read(other);
         final kept = <RetroRoomRecord>[];
@@ -115,8 +120,11 @@ final class RetroRoomLedger {
         }
         _save(other, kept);
       } finally {
+        _sweepLocks.remove(other);
         try {
           lock.closeSync();
+          final temp = File('${_recordsOf(other).path}.tmp');
+          if (temp.existsSync()) temp.deleteSync();
           if (!_recordsOf(other).existsSync()) _lockOf(other).deleteSync();
         } on FileSystemException {
           // Tried again next time.
@@ -131,6 +139,10 @@ final class RetroRoomLedger {
     OnlineCall call,
     void Function(String event, Map<String, Object?> fields)? trace,
   ) async {
+    if (unresolved(record.id)) {
+      trace?.call('room.recorded', {'room': record.id, 'hosted': record.hosted, 'result': 'still-waiting'});
+      return false;
+    }
     final path = 'game-sessions/${record.id}';
     _unresolved.add(record.id);
     final request = call(record.hosted ? 'DELETE' : 'POST', record.hosted ? path : '$path/leave');
@@ -199,6 +211,7 @@ final class RetroRoomLedger {
   }
 
   bool _gone(String other) {
+    if (_sweepLocks.contains(other)) return false;
     final lock = _take(other);
     lock?.closeSync();
     return lock != null;

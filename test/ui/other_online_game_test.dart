@@ -1,3 +1,4 @@
+import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/strings.dart';
@@ -37,18 +38,32 @@ void main() {
           call: together.account.call,
           signal: (_, _, _, _, _) {},
         );
-        model.open(Layer.coopLobby);
+        model.games = [
+          Game(
+            folder: fixture.temp.path,
+            titleId: 'PS1-ctr',
+            name: 'Crash Team Racing',
+            names: const {},
+            defaultLanguage: 'en',
+            version: '',
+            executable: ExecutableKind.disc,
+            retro: (platform: RetroPlatform.ps1, path: '${fixture.temp.path}/ctr.cue'),
+            retroSerial: 'SCUS94426',
+          ),
+        ];
+        model.open(Layer.friends);
         together.otherOnlineGame = (
           game: (id: _room, hosted: true, titleId: 'SCUS94426', since: DateTime.now(), others: 0),
           rooms: rooms,
           retry: () async => retried++,
-          back: Layer.coopLobby,
+          back: Layer.friends,
         );
         model.open(Layer.otherOnlineGame);
         final rows = model.panelCategories().single.rows;
         expect(model.twoChoice, isTrue);
         expect(rows.map((row) => row.id), ['cancel', 'endOtherOnlineGame']);
         expect(model.panelCategories().single.title, T.text('otherOnlineGameTitle'));
+        expect(rows[1].detail, contains('Crash Team Racing'));
         model.activateRow(ends ? 1 : 0);
         if (ends) {
           expect(await eventually(() => retried == 1), isTrue);
@@ -56,6 +71,7 @@ void main() {
         } else {
           await Future<void>.delayed(const Duration(milliseconds: 50));
           expect(retried, 0);
+          expect(model.overlay, Layer.friends);
           expect(server.callsTo('game-sessions/$_room', method: 'DELETE'), isEmpty);
         }
         expect(together.otherOnlineGame, isNull);

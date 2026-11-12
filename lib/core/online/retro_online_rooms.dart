@@ -160,6 +160,7 @@ final class RetroOnlineRooms {
     final room = _room(await _admissionRead(() => _readRoomView(path), cancelBeforeAdmission), id: id);
     _checkInviteHost(room, expectedHost);
     _checkAdmission(cancelBeforeAdmission);
+    if (ledger?.unresolved(id) ?? false) throw const RetroRoomOccupied();
     await call('POST', '$path/join', {'gameVersion': spec.gameVersion, 'engineBuild': protocol});
     ledger?.add(room.id, user: me, hosted: false);
     return _publish(room);

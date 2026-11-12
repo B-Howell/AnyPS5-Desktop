@@ -135,10 +135,11 @@ class TogetherModel {
   void keepOtherOnlineGame() {
     final back = otherOnlineGame?.back;
     otherOnlineGame = null;
-    if (back != null && app.running != null) {
-      app.open(back, cue: Cue.back);
-    } else {
+    const overGame = {Layer.coopLobby, Layer.quickMenu, Layer.retroOnlineFriends};
+    if (back == null || back == Layer.otherOnlineGame || (overGame.contains(back) && app.running == null)) {
       app.closeOverlay();
+    } else {
+      app.open(back, cue: Cue.back);
     }
   }
 
@@ -1098,11 +1099,14 @@ class TogetherModel {
   }
 
   /// A game's name in this library, else its title ID.
-  String gameName(String titleId) =>
-      app.games.where((game) => game.titleId == titleId).firstOrNull?.nameFor([T.language.code]) ??
-      app.games.where((game) => game.retroSerial == titleId).firstOrNull?.nameFor([T.language.code]) ??
-      app.games.where((game) => game.titleId == 'PS3-$titleId').firstOrNull?.nameFor([T.language.code]) ??
-      titleId;
+  String gameName(String titleId) => gameFor(titleId)?.nameFor([T.language.code]) ?? titleId;
+
+  /// The library's game for a title ID as AnyTogether gives it: a PS5 title ID, a PS1 or PS2
+  /// disc serial, or a PS3 title ID.
+  Game? gameFor(String titleId) =>
+      app.games.where((game) => game.titleId == titleId).firstOrNull ??
+      app.games.where((game) => game.retroSerial == titleId).firstOrNull ??
+      app.games.where((game) => game.titleId == 'PS3-$titleId').firstOrNull;
 
   /// "Playing Neon Alley · 25 min", "Online", "Idle", "Do Not Disturb", "Offline", with the
   /// party they are in.
