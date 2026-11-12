@@ -46,6 +46,7 @@ import '../core/together/server.dart';
 import '../core/together/social.dart';
 import '../core/together/socket.dart';
 import '../core/together/game_sessions.dart';
+import '../core/together/invite_log.dart';
 import '../core/together/messages.dart';
 import '../core/together/private_identity.dart';
 import '../core/together/profile_look.dart';
@@ -110,6 +111,9 @@ class TogetherModel {
   _Ps2LanWorker? _ps2LanWorker;
   _Ps3PartyAttempt? _ps3Party;
 
+  /// Each step of a game invite sent or received, in the logs folder.
+  late final InviteLog inviteLog = InviteLog.inFolder(app.paths.logs);
+
   TogetherModel(this.app) : environment = app.services.environment ?? Platform.environment {
     // The session of the profile playing; another profile's goes in when it plays.
     sessions = ProfileTokenStore(app.tokenStoreFor(app.sessionProfileId));
@@ -133,25 +137,29 @@ class TogetherModel {
       sfuRoom: app.services.sfuRoom ?? LiveKitRoom.new,
       bridgeFile: GameSessions.defaultBridgeFile(app.paths.config),
     );
+    app.onToast = (message) {
+      if (_verifyingPs1 || _ps1Match != null) inviteLog.write('toast', {'text': message});
+    };
+    hub.games.onSessionEvent = (type, data) {
+      final from = data['from'];
+      inviteLog.write('event', {
+        'type': type,
+        'session': data['sessionId'] ?? data['id'],
+        'from': InviteLog.hash(from is Map ? from['userId'] as String? ?? from['id'] as String? : from as String?),
+        if (type == 'game_session.invite') ...{
+          'name': from is Map ? from['displayName'] : null,
+          'title': data['titleId'],
+          'mode': data['gameVersion'],
+          'protocol': data['engineBuild'],
+        },
+      });
+    };
     hub.games.onInvite = (invite) {
-      disturbingSound();
-      inviteRing();
-      final playing = app.running != null;
-      if (playing) app.inviteMenuFocus = invite.sessionId;
-      final names = [invite.from?.displayName ?? '', gameName(invite.titleId)];
-      app.show(
-        T.format(playing ? 'gameInvitedYouPs' : 'gameInvitedYou', names),
-        psButton: playing,
-        onTap: playing ? () => unawaited(app.openQuickMenu()) : null,
-      );
-      if (!doNotDisturb) {
-        unawaited(
-          app.noticeOverGame(
-            T.format('gameInvitedYou', names),
-            detail: T.text('friendsTitle'),
-            symbol: Icons.sports_esports_rounded,
-          ),
-        );
+      try {
+        inviteArrived(invite);
+      } on Object catch (error) {
+        inviteLog.write('invite.failed', {'session': invite.sessionId, ...InviteLog.error(error)});
+        rethrow;
       }
     };
     hub.games.onEnded = (host) => app.show(
@@ -683,6 +691,44 @@ class TogetherModel {
 
   /// The user's own Do Not Disturb: no word over a game for what comes in.
   bool get doNotDisturb => myStatus == PresenceStatus.dnd;
+
+  /// A game invite arrived: the sound and the ring, the toast (with the PS button over a game,
+  /// whose next menu opens on the Join row) and over a game the card; each step in the invite log.
+  void inviteArrived(GameInvite invite) {
+    disturbingSound();
+    inviteRing();
+    final playing = app.running != null;
+    if (playing) app.inviteMenuFocus = invite.sessionId;
+    final names = [invite.from?.displayName ?? '', gameName(invite.titleId)];
+    final toast = playing ? 'gameInvitedYouPs' : 'gameInvitedYou';
+    app.show(T.format(toast, names), psButton: playing, onTap: playing ? () => unawaited(app.openQuickMenu()) : null);
+    final unavailable = playing ? _runningInviteUnavailable(invite) : null;
+    inviteLog.write('invite.shown', {
+      'session': invite.sessionId,
+      'toast': toast,
+      'text': T.format(toast, names),
+      'row': !playing
+          ? 'friends'
+          : unavailable == null
+          ? 'quick-menu'
+          : 'none',
+      'why': unavailable,
+      'notice': doNotDisturb
+          ? 'do-not-disturb'
+          : app.launcherInFront
+          ? 'launcher-in-front'
+          : 'over-game',
+    });
+    if (!doNotDisturb) {
+      unawaited(
+        app.noticeOverGame(
+          T.format('gameInvitedYou', names),
+          detail: T.text('friendsTitle'),
+          symbol: Icons.sports_esports_rounded,
+        ),
+      );
+    }
+  }
 
   /// How each other player in the Play Together session is reached ([TogetherPlay.linkText]).
   Map<String, PeerPath> togetherLinks = const {};
@@ -1216,7 +1262,14 @@ class TogetherModel {
               detail: detail,
               unavailable: unavailable,
               invite: (friend) {
-                if (app.overlay == Layer.emulatorMenu && app.spot?.category == category && canInvite()) invite(friend);
+                if (app.overlay == Layer.emulatorMenu && app.spot?.category == category && canInvite()) {
+                  return invite(friend);
+                }
+                inviteLog.write('send.stopped', {
+                  'reason': 'selection-changed',
+                  'to': InviteLog.hash(friend.person.id),
+                });
+                app.show(T.text(unavailable));
               },
             ),
           ),

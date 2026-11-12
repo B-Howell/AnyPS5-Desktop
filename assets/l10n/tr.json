@@ -294,6 +294,7 @@
   "ps1OnlinePreparing": "İki oyuncunun oyunu hazırlanıyor",
   "ps1OnlineEnding": "Çevrimiçi oyun sonlandırılıyor",
   "ps1OnlineUnavailable": "Çevrimiçi PS1 oyunları için bu özelliğin etkin olduğu bir x64 sürümü ve AnyTogether bağlantısı gerekiyor.",
+  "ps1OnlineStopped": "Davet gönderilmedi: hazırlanırken oyun veya AnyTogether hesabı değişti.",
   "ps1OnlineDisc": "Bu oyunun desteklenen CUE ve parça dosyalarını PS1 kitaplığına ekle.",
   "ps1OnlineBios": "Çevrimiçi PS1 oyunu için eşleşen bir SCPH-1001 BIOS dökümü gerekir. Doğru dosyayla tekrar dene.",
   "ps1OnlineBiosPicker": "Çevrimiçi PS1 oyunu için SCPH-1001 BIOS dökümünü seç",

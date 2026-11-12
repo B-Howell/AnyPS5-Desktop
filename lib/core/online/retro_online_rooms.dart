@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../together/invite_log.dart';
 import 'online_peer.dart';
 
 typedef RetroRoomMember = ({String userId, String device});
@@ -48,6 +49,9 @@ enum RetroOnlineMode {
 
 typedef RetroRoomSpec = ({String titleId, String gameVersion, RetroOnlineMode mode, int capacity});
 
+/// A step of a room's admission for the invite log: what was asked and how it ended.
+typedef RetroRoomTrace = void Function(String event, Map<String, Object?> fields);
+
 /// Private invitation and device binding shared by the retro gameplay modes.
 /// The gameplay adapter decides how to handle an authenticated signal.
 final class RetroOnlineRooms {
@@ -59,6 +63,7 @@ final class RetroOnlineRooms {
     this.discDigest,
     this.coreDigest,
     this.profileDigest,
+    this.trace,
   });
 
   String get protocol => spec.mode.protocol;
@@ -72,8 +77,23 @@ final class RetroOnlineRooms {
   final String? discDigest;
   final String? coreDigest;
   final String? profileDigest;
+  final RetroRoomTrace? trace;
 
-  Future<RetroRoom> host({Completer<void>? cancelBeforeAdmission}) async {
+  Future<T> _traced<T>(String event, Map<String, Object?> fields, Future<T> Function() step) async {
+    try {
+      final result = await step();
+      trace?.call(event, {...fields, 'result': 'ok', if (result is RetroRoom) 'room': result.id});
+      return result;
+    } on Object catch (error) {
+      trace?.call(event, {...fields, 'result': 'failed', ...InviteLog.error(error)});
+      rethrow;
+    }
+  }
+
+  Future<RetroRoom> host({Completer<void>? cancelBeforeAdmission}) =>
+      _traced('room.create', {'title': spec.titleId, 'mode': spec.gameVersion}, () => _host(cancelBeforeAdmission));
+
+  Future<RetroRoom> _host(Completer<void>? cancelBeforeAdmission) async {
     await _admissionRead(_requireIdle, cancelBeforeAdmission);
     _checkAdmission(cancelBeforeAdmission);
     final json = await call('POST', 'game-sessions', {
@@ -138,7 +158,10 @@ final class RetroOnlineRooms {
     }
   }
 
-  Future<void> invite(RetroRoom room, String userId) async {
+  Future<void> invite(RetroRoom room, String userId) =>
+      _traced('invite.send', {'room': room.id, 'to': InviteLog.hash(userId)}, () => _invite(room, userId));
+
+  Future<void> _invite(RetroRoom room, String userId) async {
     if (room.hostId != me || userId == me || !_uuid.hasMatch(userId)) {
       throw ArgumentError('A retro invite needs a friend and the host account.');
     }

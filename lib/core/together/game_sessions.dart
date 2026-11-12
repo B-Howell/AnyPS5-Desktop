@@ -153,6 +153,9 @@ class GameSessions with Notifier {
   void Function(Person? host)? onEnded;
   void Function(GameInvite invite)? onInvite;
 
+  /// Each game_session event as it arrives, before it is acted on (the invite log).
+  void Function(String type, Map<String, dynamic> data)? onSessionEvent;
+
   /// Someone in the party started Play Together (the session as the party sees it).
   void Function(GameSession session)? onStarted;
 
@@ -328,6 +331,7 @@ class GameSessions with Notifier {
 
   void _event(TogetherEvent event) {
     final data = event.json;
+    if (event.type.startsWith('game_session.')) onSessionEvent?.call(event.type, data);
     switch (event.type) {
       case 'live.ready':
         unawaited(refresh().catchError((Object _) {}));

@@ -5762,7 +5762,11 @@ class AppModel extends ChangeNotifier {
 
   // Messages.
 
+  /// Each toast as it is shown (the invite log keeps those of an invite being sent).
+  void Function(String message)? onToast;
+
   void show(String message, {LevelBadge? level, String? icon, void Function()? onTap, bool psButton = false}) {
+    onToast?.call(message);
     toast = message;
     toastPsButton = psButton;
     toastLevel = level;
@@ -6422,6 +6426,7 @@ class AppModel extends ChangeNotifier {
     inviteMenuFocus = null;
     final row = _currentRows.indexWhere((row) => row.id == 'game-accept-$session');
     if (row >= 0) panelRow = row;
+    together.inviteLog.write('invite.menu', {'session': session, 'row': row >= 0 ? 'focused' : 'missing'});
   }
 
   Future<void> openQuickMenu() async {
