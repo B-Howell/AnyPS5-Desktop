@@ -871,8 +871,18 @@ class EmbeddedRetroGame extends RunningGame {
   static bool _same(List<int> a, List<int> b) =>
       a.length == b.length && List.generate(a.length, (i) => a[i] == b[i]).every((e) => e);
 
-  /// Players 2 to 4 on this computer: each seated controller drives its own port.
+  /// The PS1 controller ports the core has a controller in, from port 1: Player 1's and one for
+  /// each seated player. Null until the host is first told.
+  int? _connectedPorts;
+
+  /// Players 2 to 4 on this computer: each seated controller drives its own port, and a port
+  /// nobody sits at has no controller in it, so a game offers no second player before one joins.
   void _sendSeats(List<PadState> seats) {
+    final ports = 1 + (seats.length < 3 ? seats.length : 3);
+    if (tuning.platform == RetroPlatform.ps1 && _connectedPorts != ports) {
+      _connectedPorts = ports;
+      unawaited(_connectPorts(ports));
+    }
     const neutral = [0, 0, 0, 0, 0];
     for (var index = 0; index < 3; index++) {
       final pad = index < seats.length ? seats[index] : null;
@@ -886,6 +896,17 @@ class EmbeddedRetroGame extends RunningGame {
       }
       _seatInputs[index] = input;
       unawaited(_native.invokeMethod<void>('input', [index + 1, ...input]));
+    }
+  }
+
+  /// An older host does not know `connectedPorts` and keeps port 2 connected, as it always did.
+  Future<void> _connectPorts(int ports) async {
+    try {
+      await _native.invokeMethod<bool>('connectedPorts', ports);
+    } on MissingPluginException {
+      return;
+    } on PlatformException {
+      return;
     }
   }
 

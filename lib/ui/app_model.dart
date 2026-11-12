@@ -2708,6 +2708,10 @@ class AppModel extends ChangeNotifier {
   }
 
   List<Game> games = [];
+
+  /// Every game the last scan found, those of consoles with no emulator included: what the
+  /// emulator setup looks at, while [games] holds only what can be played.
+  List<Game> _surveyed = [];
   int selected = 0;
   RetroPlatform? _homeRetroFolder;
   int libraryIndex = 0;
@@ -3260,6 +3264,7 @@ class AppModel extends ChangeNotifier {
     final folders = preferences.gamesFolders;
     if (folders.isEmpty) {
       games = [];
+      _surveyed = [];
       folderCounts = {};
       _changed();
       return;
@@ -3301,7 +3306,11 @@ class AppModel extends ChangeNotifier {
     final key = folders.join('\n');
     final counted = !mapEquals(folderCounts, survey.folders);
     folderCounts = survey.folders;
-    if (key != _scannedFolders || !GameLibrary.sameListing(games, deletion.visible(survey.games))) {
+    final visible = deletion.visible(survey.games);
+    // An emulator that came or went changes what can be played even when no file moved.
+    if (key != _scannedFolders ||
+        !GameLibrary.sameListing(_surveyed, visible) ||
+        !GameLibrary.sameListing(games, _playableGames(visible))) {
       if (key != _scannedFolders) {
         _tracker.reset();
         _connected.clear();
@@ -3329,7 +3338,8 @@ class AppModel extends ChangeNotifier {
     final focusedInLibrary = libraryIndex >= 0 && libraryIndex < games.length ? games[libraryIndex].id : null;
     _forgetDiskFacts();
     // A game being deleted stays out of the library until its files are gone or came back.
-    games = deletion.visible(found);
+    _surveyed = deletion.visible(found);
+    games = _playableGames(_surveyed);
     records.clear();
     trophies.clear();
     for (final game in games) {
@@ -3349,7 +3359,7 @@ class AppModel extends ChangeNotifier {
     libraryIndex = libraryAt >= 0 ? libraryAt : libraryIndex.clamp(0, games.isEmpty ? 0 : games.length - 1);
     final added = [
       for (final game in _tracker.update(found))
-        if (!quiet.any((folder) => p.isWithin(folder, game.folder))) game,
+        if (!quiet.any((folder) => p.isWithin(folder, game.folder)) && games.contains(game)) game,
     ];
     if (added.isNotEmpty) _announceNewGames(added);
     _changed();
@@ -3624,7 +3634,7 @@ class AppModel extends ChangeNotifier {
   }
 
   List<Game> retroGamesInFolder(RetroPlatform platform, String folder) => [
-    for (final game in games)
+    for (final game in _surveyed)
       if (game.retro?.platform == platform && (p.equals(folder, game.folder) || p.isWithin(folder, game.folder))) game,
   ];
 
@@ -4588,6 +4598,7 @@ class AppModel extends ChangeNotifier {
     final label = ManagedRetro.platformName(platform);
     final managed = _managedRetro;
     final origin = spot;
+    final wasPlayable = retroPlayable(platform);
     managedSetupConsole = platform;
     try {
       final installed = managed.isInstalled(platform);
@@ -4608,6 +4619,8 @@ class AppModel extends ChangeNotifier {
     } finally {
       managedSetupConsole = null;
       _setRetroSetup(null);
+      // The console's games join the library once its core is in, even if setup stopped after.
+      if (!_disposed && retroPlayable(platform) != wasPlayable) rescan();
       if (origin?.layer == Layer.emulatorMenu && spot == origin) {
         _skipToFocusable();
         _changed();
@@ -5982,7 +5995,10 @@ class AppModel extends ChangeNotifier {
       editingValue = null;
       panelRow = 0;
       _skipToFocusable();
-      if (selectedGame?.retro != null) _focusRetroLabel(retroLabelFocus);
+      if (selectedGame case final Game game? when game.retro != null) {
+        retroControlsPlayer = retroControlsPlayer.clamp(1, retroControlsPlayers(game));
+        _focusRetroLabel(retroLabelFocus);
+      }
     }
     measureSelected();
     _changed();

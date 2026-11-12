@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:anyps5_desktop/core/binary.dart';
+import 'package:anyps5_desktop/core/embedded_core_host.dart';
+import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:path/path.dart' as p;
 
 /// Minimal x64 PE export table for the PS2 LAN installer. It is never loaded.
@@ -41,6 +43,13 @@ Uint8List ps2LanFixtureDll({bool dev9 = true}) {
   if (dev9) bytes.setAll(raw + 52, 'retro_anyps5_dev9_bind_v1'.codeUnits);
   return bytes;
 }
+
+/// [platform]'s core for [host] in [folder], a library the launcher accepts as installed (it is
+/// never loaded): the library shows that console's games only once its emulator is there.
+File installFixtureCore(String folder, EmbeddedCoreHost host, RetroPlatform platform) =>
+    File(p.join(folder, host.libraryName(platform)))
+      ..parent.createSync(recursive: true)
+      ..writeAsBytesSync(host == EmbeddedCoreHost.windowsX64 ? ps2LanFixtureDll(dev9: false) : ps2LanFixtureSo());
 
 /// Minimal Linux x64 ELF export table for the PS2 LAN installer. It is never loaded.
 Uint8List ps2LanFixtureSo() {

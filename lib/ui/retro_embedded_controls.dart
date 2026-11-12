@@ -64,12 +64,19 @@ extension RetroEmbeddedControls on AppModel {
     return index < localSeatPads.length ? localSeatPads[index] : null;
   }
 
+  /// The players [game]'s Controls page sets up: the running game's seats, else two for PS1 and
+  /// PS2 and one for PS3. The page never shows a player past them.
+  int retroControlsPlayers(Game game) =>
+      running?.$1.id == game.id ? coopSeats : (game.retro?.platform == RetroPlatform.ps3 ? 1 : 2);
+
   String _retroScope(Game game) => RetroControlProfiles.scope(game.id, retroControlsPlayer);
 
+  /// What Player 1 plays [game] with, as the PS menu's Controls row says it. Always Player 1's:
+  /// the player the Controls page showed last is not the one this summary is about.
   String _retroControlsSummary(Game game) {
     if (game.retro == null) return T.text('retroControlsStandard');
     final controls = preferences.retroControls;
-    final scope = _retroScope(game);
+    final scope = RetroControlProfiles.scope(game.id, 1);
     return controls.profileOf(scope) ??
         switch (controls.layoutOf(scope).preset) {
           RetroControlPreset.standard => T.text('retroControlsStandard'),
@@ -327,7 +334,7 @@ extension RetroEmbeddedControls on AppModel {
     final names = controls.names;
     final custom = controls.layouts[scope]?.preset == RetroControlPreset.custom;
     final unsaved = profile == null && custom;
-    final players = running?.$1.id == game.id ? coopSeats : (platform == RetroPlatform.ps3 ? 1 : 2);
+    final players = retroControlsPlayers(game);
     return [
       if (players > 1)
         PanelRow(

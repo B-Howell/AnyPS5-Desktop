@@ -3,14 +3,27 @@ part of 'app_model.dart';
 typedef HomeTile = ({int gameIndex, RetroPlatform? folder});
 
 extension RetroHomeFolders on AppModel {
-  bool _groupsHomePlatform(RetroPlatform platform) {
-    if (!preferences.showRetroFolders) return false;
+  /// Whether [platform]'s games can be played here: its emulator is installed or chosen. The
+  /// library leaves out the games of a console with neither.
+  bool retroPlayable(RetroPlatform platform) {
     final override = retroCoreOverride;
     if (platform != RetroPlatform.ps3 && override != null) {
       return ManagedRetro(override, host: embeddedCoreHost).isInstalled(platform);
     }
     if (retroSettings.program(platform) case final program? when File(program).existsSync()) return true;
     return supportsManagedRetro(platform) && _managedRetro.isInstalled(platform);
+  }
+
+  bool _groupsHomePlatform(RetroPlatform platform) => preferences.showRetroFolders && retroPlayable(platform);
+
+  /// [found] without the games of the consoles [retroPlayable] says no to.
+  List<Game> _playableGames(List<Game> found) {
+    final playable = <RetroPlatform, bool>{};
+    return [
+      for (final game in found)
+        if (game.retro == null || playable.putIfAbsent(game.retro!.platform, () => retroPlayable(game.retro!.platform)))
+          game,
+    ];
   }
 
   RetroPlatform? get activeHomeRetroFolder {

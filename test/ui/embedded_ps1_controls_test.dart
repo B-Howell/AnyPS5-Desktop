@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
+import '../support/fixtures.dart';
 import '../support/ui_support.dart';
 
 void main() {
@@ -97,7 +98,7 @@ void main() {
     final fixture = makeFixture(environment: env);
     final model = fixture.model;
     env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
-    File(p.join(fixture.temp.path, model.embeddedCoreHost.libraryName(RetroPlatform.ps1))).createSync();
+    installFixtureCore(fixture.temp.path, model.embeddedCoreHost, RetroPlatform.ps1);
     for (final name in ['First', 'Second']) {
       final folder = Directory(p.join(model.root!, name))..createSync();
       File(p.join(folder.path, 'one.cue')).createSync();
@@ -178,6 +179,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 150));
     expect(presetForCurrent().selected, 1);
     expect(model.embeddedGame!.buttonMap, RetroButtonMap.swapCrossCircle);
+    final player =
+        model.panelCategories().single.rows.singleWhere((row) => row.id == 'retroControlsPlayer').kind as ChoiceRow;
+    player.set(1);
+    expect(model.retroControlsPlayer, 2);
+    model.open(Layer.quickMenu);
+    expect(
+      model.panelCategories().single.rows.singleWhere((row) => row.id == 'retroControls').detail,
+      'Swap Cross and Circle',
+      reason: 'the PS menu says what Player 1 plays with, whichever player Controls showed last',
+    );
     ended = true;
     await tester.pump(const Duration(seconds: 5));
     await replay;
@@ -187,7 +198,7 @@ void main() {
     final fixture = makeFixture(environment: env);
     final model = fixture.model;
     env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
-    File(p.join(fixture.temp.path, model.embeddedCoreHost.libraryName(RetroPlatform.ps1))).createSync();
+    installFixtureCore(fixture.temp.path, model.embeddedCoreHost, RetroPlatform.ps1);
     final folder = Directory(p.join(model.root!, 'Racing'))..createSync();
     File(p.join(folder.path, 'one.cue')).createSync();
     File(p.join(folder.path, 'retro.json')).writeAsStringSync(
@@ -199,11 +210,16 @@ void main() {
     model.controllers.preview([one, two], playerOne: one.id, states: states);
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     final inputs = <List<dynamic>>[];
+    final ports = <Object?>[];
     var ended = false;
     messenger.setMockMethodCallHandler(channel, (call) async {
       if (call.method == 'start') return 123;
       if (call.method == 'status') return {'presented': true, 'ended': ended};
       if (call.method == 'input') inputs.add(call.arguments as List<dynamic>);
+      if (call.method == 'connectedPorts') {
+        ports.add(call.arguments);
+        return true;
+      }
       return null;
     });
     addTearDown(() {
@@ -216,6 +232,7 @@ void main() {
     final play = model.play(game);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 150));
+    expect(ports, [1], reason: 'port 2 has no controller before a second player joins');
     await model.openQuickMenu();
     final quick = model.panelCategories().single.rows;
     expect(quick.map((row) => row.title), contains('Couch Co-op'));
@@ -233,9 +250,13 @@ void main() {
     model.controllers.preview([one, two], playerOne: one.id, states: states);
     await tester.pump(const Duration(milliseconds: 48));
     expect(inputs.where((input) => input.length == 6 && input.first == 1).last, [1, 1 << 9, 0, 0, 0, 0]);
+    expect(ports, [1, 2], reason: 'the seated player plugs a controller into port 2');
     model.open(Layer.coopLobby);
     expect(model.coopPadEvent(const PadButtonEvent('sdl1', PadButton.east, down: true)), isTrue);
     expect(model.localSeatPads, isEmpty);
+    model.resumeGame();
+    await tester.pump(const Duration(milliseconds: 48));
+    expect(ports, [1, 2, 1], reason: 'leaving the seat unplugs port 2 again');
     ended = true;
     await tester.pump(const Duration(seconds: 5));
     await play;

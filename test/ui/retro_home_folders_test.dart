@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
@@ -16,6 +17,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
+import '../support/fixtures.dart' show installFixtureCore;
 import '../support/ui_support.dart';
 
 Game _game(String name, {RetroPlatform? platform, String? background}) => Game(
@@ -198,4 +200,48 @@ void main() {
     expect(model.overlay, isNull);
     expect(model.selectedHomeFolder, RetroPlatform.ps3);
   }, skip: !supportsManagedCores);
+
+  test("a console's games stay out of the library until its emulator is there, then join its folder", () {
+    final environment = <String, String>{};
+    final fixture = makeFixture(environment: environment);
+    final model = fixture.model;
+    addTearDown(() {
+      model.dispose();
+      fixture.dispose();
+    });
+    final cores = Directory(p.join(fixture.temp.path, 'cores'))..createSync();
+    environment['ANYPS5_LIBRETRO_HOME'] = cores.path;
+    model.setShowRetroFolders(true);
+    final folder = Directory(p.join(model.root!, 'Racing'))..createSync();
+    File(p.join(folder.path, 'game.iso')).createSync();
+    File(p.join(folder.path, 'retro.json')).writeAsStringSync(
+      jsonEncode({'platform': 'ps2', 'titleId': 'TEST13579', 'name': 'Racing', 'disc': 'game.iso'}),
+    );
+
+    List<String> racing() => [
+      for (final game in model.games)
+        if (game.retro != null) game.name,
+    ];
+    model.rescan();
+    final library = model.games.length;
+    expect(racing(), isEmpty, reason: 'a PS2 game without a PS2 emulator is not offered');
+    expect(model.homeTiles.map((tile) => tile.folder), everyElement(isNull));
+    expect(model.homeTiles, hasLength(library));
+    expect(model.retroGamesInFolder(RetroPlatform.ps2, model.root!).map((game) => game.name), [
+      'Racing',
+    ], reason: 'emulator setup still finds the games it would bring in');
+    expect(model.retroSetupFolder(RetroPlatform.ps2), model.root);
+
+    final core = installFixtureCore(cores.path, model.embeddedCoreHost, RetroPlatform.ps2);
+    model.rescan();
+    expect(racing(), ['Racing']);
+    expect(model.homeTiles.map((tile) => tile.folder).last, RetroPlatform.ps2);
+    model.selected = model.games.indexWhere((game) => game.name == 'Racing');
+
+    core.deleteSync();
+    model.rescan();
+    expect(racing(), isEmpty, reason: 'the games go with their emulator');
+    expect(model.homeTiles, hasLength(library));
+    expect(model.selectedGame?.retro, isNull, reason: 'the selection never rests on a game that is not shown');
+  });
 }

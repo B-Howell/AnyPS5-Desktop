@@ -76,9 +76,20 @@ game row selects the game's usual music.
 
 **Settings → Emulators → Show as folders** puts each installed console
 after the regular games on Home. Highlight a console to preview its
-titles, then press Down to enter the row or Up to return. Before a core is
-installed, its games remain individual tiles so First Play can offer
-setup. Each highlighted console uses its bundled wallpaper and
+titles, then press Down to enter the row or Up to return. A console's
+games appear nowhere in the library (Home, its folder, the Library panel or
+a new-game notice) until its emulator is there: its managed core installed,
+or its own emulator program chosen (`retroPlayable` in the
+[folder projection](../lib/ui/retro_home_folders.dart)). The
+[library scan](../lib/ui/app_model.dart) keeps every game it found for
+emulator setup, which still lists and previews that console's games, and
+shows only the playable ones; setup finishing, the program being chosen, or a
+watcher scan that sees an emulator come or go brings them in or takes them
+out, and the selection moves to a game still shown. Games seen while hidden
+are not announced as new when their emulator arrives. The
+[folder tests](../test/ui/retro_home_folders_test.dart) and the
+[setup tests](../test/ui/retro_settings_setup_test.dart) cover both ways in.
+Each highlighted console uses its bundled wallpaper and
 [console logo](../lib/ui/console_badge.dart). Moving down changes the
 [backdrop](../lib/ui/home.dart) to the selected game's artwork. The
 [folder projection](../lib/ui/retro_home_folders.dart) uses real
@@ -329,7 +340,9 @@ The three preference keys are `retroButtonMaps` (a scope's own layout),
 `retroControlProfiles` and `retroProfileChoice`; all three travel with a
 launcher profile. Layouts saved before profiles existed used the same per-game
 scopes and are read as they were. A change reaches the running game at once,
-for every seat. Swap sticks and Reset stay on the page; the controller test is
+for every seat. The PS menu's Controls row always summarises Player 1's
+layout, whichever player the page showed last, so it names what the
+launcher's own controller plays with. Swap sticks and Reset stay on the page; the controller test is
 not offered here (it is in Settings › Controllers).
 
 The [screen test](../test/ui/retro_controls_screen_test.dart) reads the real

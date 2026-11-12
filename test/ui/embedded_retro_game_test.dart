@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
+import '../support/fixtures.dart';
 import '../support/ui_support.dart';
 import 'desktop_features_test.dart' show FakePads;
 
@@ -33,7 +34,7 @@ void main() {
       fixture.dispose();
     });
     env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
-    File(p.join(fixture.temp.path, model.embeddedCoreHost.libraryName(RetroPlatform.ps1))).createSync();
+    installFixtureCore(fixture.temp.path, model.embeddedCoreHost, RetroPlatform.ps1);
     final folder = Directory(p.join(model.root!, 'Multi'))..createSync();
     final playlist = File(p.join(folder.path, 'multi.m3u'))..writeAsStringSync('One.cue\nTwo.cue\n');
     for (final name in ['One.cue', 'Two.cue']) {
@@ -406,7 +407,7 @@ void main() {
       });
       env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
       final core = model.embeddedCoreHost.libraryName(platform);
-      File(p.join(fixture.temp.path, core)).createSync();
+      installFixtureCore(fixture.temp.path, model.embeddedCoreHost, platform);
       final folder = Directory(p.join(model.root!, 'Embedded'))..createSync();
       final disc = platform == RetroPlatform.ps1 ? 'game.cue' : 'game.iso';
       File(p.join(folder.path, disc)).createSync();

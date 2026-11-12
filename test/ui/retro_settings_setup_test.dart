@@ -424,17 +424,32 @@ void main() {
   for (final platform in RetroPlatform.ps1AndPs2) {
     testWidgets('${platform.name} configures a fresh emulator and exposes its settings inside the app', (tester) async {
       late String selected;
-      final fixture = makeFixture(pickFile: (_, _) async => selected);
+      // A computer with no managed core for this console, where its own emulator is chosen.
+      final fixture = makeFixture(
+        pickFile: (_, _) async => selected,
+        system: Abi.current() == Abi.windowsX64 ? HostSystem.linux : HostSystem.windows,
+      );
       final model = fixture.model;
       addTearDown(() {
         model.dispose();
         fixture.dispose();
       });
+      final game = Directory(p.join(model.root!, 'Library game'))..createSync();
+      final disc = platform == RetroPlatform.ps1 ? 'game.cue' : 'game.iso';
+      File(p.join(game.path, disc)).createSync();
+      File(p.join(game.path, 'retro.json')).writeAsStringSync(
+        jsonEncode({'platform': platform.name, 'titleId': 'TEST24680', 'name': 'Library game', 'disc': disc}),
+      );
+      bool listed() => model.games.any((game) => game.name == 'Library game');
+      model.rescan();
+      expect(listed(), isFalse, reason: 'no emulator is chosen yet');
+      expect(model.retroGamesInFolder(platform, model.root!), hasLength(1));
       final program = File(p.join(fixture.temp.path, platform.name, 'emulator.exe'));
       program.parent.createSync();
       program.createSync();
       selected = program.path;
       final row = model.retroSettings.categories(platform).first.rows.first;
+      expect(row.id, 'retro-${platform.name}-program');
       (row.kind as ActionRow).run();
       final config = RetroSettings.configFile(program.path, platform);
       await tester.runAsync(() async {
@@ -443,6 +458,8 @@ void main() {
         }
       });
       expect(model.preferences.retroEmulators[platform.name], program.path);
+      expect(listed(), isTrue, reason: 'the chosen emulator brings its games in');
+      game.deleteSync(recursive: true);
       expect(File(p.join(program.parent.path, 'portable.txt')).existsSync(), isTrue);
       expect(RetroSettings.read(config).options.length, greaterThan(300));
 

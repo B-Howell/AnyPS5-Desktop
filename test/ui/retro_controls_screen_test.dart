@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
+import '../support/fixtures.dart';
 import '../support/ui_support.dart';
 
 /// Writes what a test draws into ANYPS5_SCREENSHOT_DIR, for looking at a screen while working on
@@ -54,7 +55,10 @@ void main() {
   const hold = Duration(milliseconds: 600);
 
   Fixture withGames() {
-    final fixture = makeFixture();
+    final environment = <String, String>{};
+    final fixture = makeFixture(environment: environment);
+    environment['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
+    installFixtureCore(fixture.temp.path, fixture.model.embeddedCoreHost, RetroPlatform.ps1);
     for (final (name, title) in [('First', 'TEST12345'), ('Second', 'TEST67890')]) {
       final folder = Directory(p.join(fixture.model.root!, name))..createSync();
       File(p.join(folder.path, 'one.cue')).createSync();

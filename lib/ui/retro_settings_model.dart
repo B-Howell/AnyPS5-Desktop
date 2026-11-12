@@ -407,6 +407,7 @@ class RetroSettingsModel {
       if (!marker.existsSync()) marker.writeAsStringSync('', flush: true);
       app.preferences.retroEmulators[platform.name] = selected;
       app.savePreferences();
+      app.rescan();
     } on Object catch (error) {
       app.show('Could not configure ${platform.emulator}: $error');
     }
