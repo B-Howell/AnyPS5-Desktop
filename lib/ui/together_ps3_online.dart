@@ -291,9 +291,7 @@ extension TogetherPs3Online on TogetherModel {
         capacity: 2,
       ),
       profileDigest: release.partyFingerprint,
-      device: hub.socket.session,
-      holds: _holdsGameSession,
-      ledger: roomLedger,
+      holds: (id) => hub.games.session?.id == id,
     );
     final owner = app.currentProfile?.id;
     final attempt = _ps3Party = _Ps3PartyAttempt(runningWorker)..roomId = invite?.sessionId;
@@ -375,7 +373,6 @@ extension TogetherPs3Online on TogetherModel {
     } finally {
       final pendingBoot = app.isStartingPs3Party(attempt) ? launch : null;
       if (pendingBoot != null && app.running != null) unawaited(app.stopRunningGame());
-      if (room != null && attempt.roomEnded) roomLedger.remove(room.id);
       if (room != null && !attempt.roomEnded && account.user?.id == me) {
         try {
           await rooms.leave(room);

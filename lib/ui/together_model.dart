@@ -20,7 +20,6 @@ import '../core/online/ps1_netplay_session.dart';
 import '../core/online/ps2_lan_profile.dart';
 import '../core/online/retro_lan_match.dart';
 import '../core/online/retro_online_rooms.dart';
-import '../core/online/retro_room_ledger.dart';
 import '../core/ps3_online_profile.dart';
 import '../core/profiles/profiles.dart' show ProfileAccount, ProfileMode;
 import '../core/remote/remote_protocol.dart';
@@ -114,56 +113,6 @@ class TogetherModel {
 
   /// Each step of a game invite sent or received, in the logs folder.
   late final InviteLog inviteLog = InviteLog.inFolder(app.paths.logs);
-
-  /// The PS1, PS2 and PS3 rooms this launcher is in, kept so the next run ends what a crash or a
-  /// forced close left open.
-  late final RetroRoomLedger roomLedger = RetroRoomLedger(
-    Directory(p.join(app.paths.config, 'Together', 'retro-rooms')),
-  );
-
-  /// A game this account is still in that is in the way of an invite, asked about over the
-  /// game ([Layer.otherOnlineGame]): ended at the player's word, then the invite is tried again.
-  ({OtherOnlineGame game, RetroOnlineRooms rooms, Future<void> Function() retry, Layer? back})? otherOnlineGame;
-
-  void _askOtherOnlineGame(OtherOnlineGame game, RetroOnlineRooms rooms, Future<void> Function() retry) {
-    final back = app.overlay;
-    otherOnlineGame = (game: game, rooms: rooms, retry: retry, back: back);
-    app.open(Layer.otherOnlineGame);
-  }
-
-  /// No to [otherOnlineGame]: back to where the invite was sent from.
-  void keepOtherOnlineGame() {
-    final back = otherOnlineGame?.back;
-    otherOnlineGame = null;
-    const overGame = {Layer.coopLobby, Layer.quickMenu, Layer.retroOnlineFriends};
-    if (back == null || back == Layer.otherOnlineGame || (overGame.contains(back) && app.running == null)) {
-      app.closeOverlay();
-    } else {
-      app.open(back, cue: Cue.back);
-    }
-  }
-
-  /// Yes to [otherOnlineGame]: it is ended, then the invite goes out again.
-  Future<void> endOtherOnlineGame() async {
-    final asked = otherOnlineGame;
-    if (asked == null) return;
-    keepOtherOnlineGame();
-    try {
-      await asked.rooms.endOther(asked.game);
-    } on Object catch (error) {
-      inviteLog.write('room.end-failed', {'room': asked.game.id, ...InviteLog.error(error)});
-      app.show(T.text('otherOnlineGameEndFailed'));
-      return;
-    }
-    await asked.retry();
-  }
-
-  /// The accounts whose rooms from an earlier run were ended in this run.
-  final _endedEarlierRooms = <String>{};
-
-  /// Whether this launcher still uses that game session. A PS1, PS2 or PS3 room is asked for
-  /// only while no other one runs here, so the session games of the library are all it can hold.
-  bool _holdsGameSession(String sessionId) => hub.games.session?.id == sessionId;
 
   TogetherModel(this.app) : environment = app.services.environment ?? Platform.environment {
     // The session of the profile playing; another profile's goes in when it plays.
@@ -951,12 +900,15 @@ class TogetherModel {
     }
   }
 
-  /// Before the launcher closes: every online room it is in is left, and the service has heard
-  /// so (a few seconds at most), so friends never see it in a game that has gone.
+  /// Whether a PS1, PS2 or PS3 online game is open here (being set up, waiting or playing).
+  bool get inOnlineGame => _ps1Match != null || _ps2Lan != null || _ps3Party != null;
+
+  /// Before the launcher closes: every PS1, PS2 and PS3 online game it is in is ended on
+  /// AnyTogether, and this waits for that (a few seconds at most) so the launcher never exits
+  /// before the service has heard.
   Future<void> leaveOnlineGamesAndWait() async {
-    const wait = Duration(seconds: 4);
     _cancelPs1InviteVerification();
-    final waits = <Future<void>>[
+    await Future.wait([
       if (_ps1Match case final match?) match.leave(),
       if (_ps2Lan case final attempt?)
         () async {
@@ -964,21 +916,7 @@ class TogetherModel {
           await attempt.match?.roomCleanupDone;
         }(),
       cancelPs3PartyAndWait(),
-    ];
-    await Future.wait(waits).timeout(wait, onTimeout: () => const []).catchError((Object _) => const <void>[]);
-  }
-
-  void _endEarlierRooms() {
-    final me = account.user?.id;
-    if (me == null || !_endedEarlierRooms.add(me)) return;
-    unawaited(
-      roomLedger
-          .endEarlier(me, (method, path, [body]) {
-            if (account.user?.id != me) throw StateError('The AnyTogether account changed.');
-            return account.call(method, path, body);
-          }, trace: inviteLog.write)
-          .catchError((Object _) => _endedEarlierRooms.remove(me)),
-    );
+    ]).timeout(const Duration(seconds: 5), onTimeout: () => const []);
   }
 
   /// A phone's side of a hand-off: it asks to be signed in as us, or answers ours.
@@ -1099,14 +1037,11 @@ class TogetherModel {
   }
 
   /// A game's name in this library, else its title ID.
-  String gameName(String titleId) => gameFor(titleId)?.nameFor([T.language.code]) ?? titleId;
-
-  /// The library's game for a title ID as AnyTogether gives it: a PS5 title ID, a PS1 or PS2
-  /// disc serial, or a PS3 title ID.
-  Game? gameFor(String titleId) =>
-      app.games.where((game) => game.titleId == titleId).firstOrNull ??
-      app.games.where((game) => game.retroSerial == titleId).firstOrNull ??
-      app.games.where((game) => game.titleId == 'PS3-$titleId').firstOrNull;
+  String gameName(String titleId) =>
+      app.games.where((game) => game.titleId == titleId).firstOrNull?.nameFor([T.language.code]) ??
+      app.games.where((game) => game.retroSerial == titleId).firstOrNull?.nameFor([T.language.code]) ??
+      app.games.where((game) => game.titleId == 'PS3-$titleId').firstOrNull?.nameFor([T.language.code]) ??
+      titleId;
 
   /// "Playing Neon Alley · 25 min", "Online", "Idle", "Do Not Disturb", "Offline", with the
   /// party they are in.
@@ -1716,9 +1651,8 @@ class TogetherModel {
     final data = event.json;
     switch (event.type) {
       case 'live.ready':
-        // Back online: whatever waited goes up, and rooms an earlier run left open end.
+        // Back online: whatever waited goes up.
         flushSoon();
-        _endEarlierRooms();
       case 'family.updated':
         // A parent changed the limits or gave extra time.
         unawaited(family.refresh());

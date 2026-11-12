@@ -589,7 +589,6 @@ class _LauncherShellState extends State<LauncherShell> with WidgetsBindingObserv
                                                 Layer.confirmQuit ||
                                                 Layer.closeGame ||
                                                 Layer.switchGame ||
-                                                Layer.otherOnlineGame ||
                                                 Layer.confirmDeleteGame => ConfirmCard(model: model),
                                                 Layer.challenge => WithBackPill(
                                                   onBack: () => model.handle(Command.back),

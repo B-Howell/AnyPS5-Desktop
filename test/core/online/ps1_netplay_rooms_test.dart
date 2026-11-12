@@ -310,115 +310,6 @@ void main() {
     expect(requests, ['GET', 'GET', 'GET']);
   });
 
-  group('a session this account is already in', () {
-    const leftover = '00000000-0000-0000-0000-000000000009';
-    const otherDevice = '00000000-0000-0000-0000-00000000000a';
-
-    Map<String, dynamic> session({required String device, String host = _host}) => {
-      'id': leftover,
-      'host': {'userId': host},
-      'members': [
-        {'userId': _host, 'device': device},
-      ],
-    };
-
-    ({RetroOnlineRooms rooms, List<String> calls, List<String> traced}) setUp({
-      required Map<String, dynamic> current,
-      bool held = false,
-      String? device = _device,
-    }) {
-      var occupied = true;
-      final calls = <String>[];
-      final traced = <String>[];
-      final rooms = RetroOnlineRooms(
-        spec: _spec,
-        me: _host,
-        device: device,
-        holds: (id) => held && id == leftover,
-        trace: (event, fields) => traced.add('$event ${fields['result'] ?? fields['myDevices']}'),
-        call: (method, path, [body]) async {
-          calls.add('$method $path');
-          if (path == 'me/game-session') return {'session': occupied ? current : null};
-          if (path == 'game-sessions/$leftover' && method == 'DELETE') {
-            occupied = false;
-            return <String, dynamic>{};
-          }
-          if (path == 'game-sessions/$leftover/leave') {
-            occupied = false;
-            return <String, dynamic>{};
-          }
-          throw StateError('stop after admission');
-        },
-        signal: (_, _, _, _, _) {},
-      );
-      return (rooms: rooms, calls: calls, traced: traced);
-    }
-
-    test('is ended when an earlier run on this device left it', () async {
-      final run = setUp(current: session(device: _device));
-      await expectLater(run.rooms.host(), throwsStateError);
-      expect(run.calls.take(4), [
-        'GET me/game-session',
-        'DELETE game-sessions/$leftover',
-        'GET me/game-session',
-        'POST game-sessions',
-      ]);
-      expect(run.traced, contains('room.leftover ok'));
-    });
-
-    test('is left, not ended, when this device joined someone else\'s', () async {
-      final run = setUp(
-        current: session(device: _device, host: _guest),
-      );
-      await expectLater(run.rooms.host(), throwsStateError);
-      expect(run.calls.take(3), ['GET me/game-session', 'POST game-sessions/$leftover/leave', 'GET me/game-session']);
-    });
-
-    test('is kept when it is on another device', () async {
-      final run = setUp(current: session(device: otherDevice));
-      await expectLater(run.rooms.host(), throwsA(isA<RetroRoomOccupied>()));
-      expect(run.calls, ['GET me/game-session']);
-      expect(run.traced, ['room.occupied other', 'room.create failed']);
-    });
-
-    test('is kept while this launcher still uses it', () async {
-      final run = setUp(current: session(device: _device), held: true);
-      await expectLater(run.rooms.host(), throwsA(isA<RetroRoomOccupied>()));
-      expect(run.calls, ['GET me/game-session']);
-    });
-
-    test('a cancelled check never ends the room a retry opened', () async {
-      final late = Completer<Map<String, dynamic>>();
-      final calls = <String>[];
-      final rooms = RetroOnlineRooms(
-        spec: _spec,
-        me: _host,
-        device: _device,
-        holds: (_) => false,
-        call: (method, path, [body]) async {
-          calls.add('$method $path');
-          if (path == 'me/game-session') return calls.length == 1 ? late.future : {'session': null};
-          throw StateError('stop after admission');
-        },
-        signal: (_, _, _, _, _) {},
-      );
-      final cancel = Completer<void>();
-      final first = expectLater(rooms.host(cancelBeforeAdmission: cancel), throwsStateError);
-      cancel.complete();
-      await first;
-      await expectLater(rooms.host(), throwsStateError);
-      late.complete({'session': session(device: _device)});
-      await Future<void>.delayed(Duration.zero);
-      expect(calls, ['GET me/game-session', 'GET me/game-session', 'POST game-sessions']);
-    });
-
-    test('is kept when this device is not known', () async {
-      final run = setUp(current: session(device: _device), device: null);
-      await expectLater(run.rooms.host(), throwsA(isA<RetroRoomOccupied>()));
-      expect(run.calls, ['GET me/game-session']);
-    });
-  });
-
   test('reads the invited disc fingerprint and rejects a change before joining', () async {
     final digest = 'b' * 64;
     var advertised = digest;
@@ -716,6 +607,122 @@ void main() {
     await Future.wait([match.leave(), opening]).timeout(const Duration(seconds: 1));
     expect(link.closed, isTrue);
     expect(removed, isTrue);
+  });
+
+  test('leaving ends the room on AnyTogether even while the connection is slow to close', () async {
+    var removed = false;
+    final link = _OpeningLink()..holdClose = true;
+    final rooms = RetroOnlineRooms(
+      spec: _spec,
+      me: _host,
+      call: (method, path, [body]) async {
+        if (method == 'DELETE') removed = true;
+        return {
+          ..._view(),
+          'iceServers': <Object>[],
+          'members': [
+            {'userId': _host},
+            {
+              'userId': _guest,
+              'device': _device,
+              'properties': {'protocol': RetroOnlineMode.synchronized.protocol},
+            },
+          ],
+        };
+      },
+      signal: (_, _, _, _, _) {},
+    );
+    final match = Ps1NetplayMatch(rooms: rooms, links: link, identity: _identity(), runner: _UnusedRunner());
+    final opening = match.host(_guest);
+    await link.opening.future;
+    final leaving = match.leave();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(link.closed, isTrue);
+    expect(removed, isTrue, reason: 'the room ends without waiting for the connection');
+    link.closeGate.complete();
+    await Future.wait([leaving, opening]).timeout(const Duration(seconds: 1));
+  });
+
+  group('an old session of this account', () {
+    const old = '00000000-0000-0000-0000-000000000009';
+
+    Future<(List<String>, Object?)> host({required bool hosted, bool held = false}) async {
+      var current = <String, dynamic>{
+        'id': old,
+        'host': {'userId': hosted ? _host : _guest},
+      };
+      final calls = <String>[];
+      final rooms = RetroOnlineRooms(
+        spec: _spec,
+        me: _host,
+        holds: (id) => held && id == old,
+        call: (method, path, [body]) async {
+          calls.add('$method $path');
+          if (path == 'me/game-session') return {'session': current.isEmpty ? null : current};
+          if (path == 'game-sessions/$old' || path == 'game-sessions/$old/leave') {
+            current = {};
+            return {};
+          }
+          throw StateError('stop after admission');
+        },
+        signal: (_, _, _, _, _) {},
+      );
+      Object? failure;
+      try {
+        await rooms.host();
+      } on Object catch (error) {
+        failure = error;
+      }
+      return (calls, failure);
+    }
+
+    test('is ended when a new game is hosted', () async {
+      final (calls, _) = await host(hosted: true);
+      expect(calls.take(4), [
+        'GET me/game-session',
+        'DELETE game-sessions/$old',
+        'GET me/game-session',
+        'POST game-sessions',
+      ]);
+    });
+
+    test('is left when this account was a guest in it', () async {
+      final (calls, _) = await host(hosted: false);
+      expect(calls.take(3), ['GET me/game-session', 'POST game-sessions/$old/leave', 'GET me/game-session']);
+    });
+
+    test('is kept while this launcher still uses it', () async {
+      final (calls, failure) = await host(hosted: true, held: true);
+      expect(calls, ['GET me/game-session']);
+      expect(failure, isA<RetroRoomOccupied>());
+    });
+
+    test('is never ended by an invite cancelled while checking', () async {
+      final late = Completer<Map<String, dynamic>>();
+      final calls = <String>[];
+      final rooms = RetroOnlineRooms(
+        spec: _spec,
+        me: _host,
+        holds: (_) => false,
+        call: (method, path, [body]) {
+          calls.add('$method $path');
+          return late.future;
+        },
+        signal: (_, _, _, _, _) {},
+      );
+      final cancel = Completer<void>();
+      final opening = expectLater(rooms.host(cancelBeforeAdmission: cancel), throwsStateError);
+      cancel.complete();
+      await opening;
+      late.complete({
+        'session': {
+          'id': old,
+          'host': {'userId': _host},
+        },
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(calls, ['GET me/game-session']);
+    });
   });
 
   test('late plugin rejection keeps the startup timeout while the link closes', () {

@@ -160,28 +160,29 @@ final class Ps1NetplayMatch {
     _path?.close();
     _closing.complete();
     _signals.clear();
+    // The room ends at once, beside the connection's shutdown: a peer that is slow to close
+    // never keeps the room open on AnyTogether.
+    final peer = _peer;
+    if (peer == null) onStatusChanged?.call();
+    try {
+      await Future.wait([_releaseRoom(), if (peer != null) peer.leave().catchError((Object _) {})]);
+    } finally {
+      _done.complete();
+    }
+  }
+
+  Future<void> _releaseRoom() async {
     try {
       // Wait for any in-flight creation so it cannot leave a room behind.
-      final peer = _peer;
-      if (peer == null) {
-        onStatusChanged?.call();
-        try {
-          await _entering;
-        } on Object {
-          // The caller that opened the room receives the connection failure.
-        }
-      } else {
-        await peer.leave();
-      }
-    } finally {
-      try {
-        final room = _room;
-        if (room != null) await rooms.leave(room);
-      } on Object {
-        // The other player or the gateway may have ended the room first.
-      } finally {
-        _done.complete();
-      }
+      await _entering;
+    } on Object {
+      // The caller that opened the room receives the connection failure.
+    }
+    try {
+      final room = _room;
+      if (room != null) await rooms.leave(room);
+    } on Object {
+      // The other player or the gateway may have ended the room first.
     }
   }
 }

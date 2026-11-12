@@ -1,9 +1,7 @@
 import 'dart:async';
 
-import '../together/account.dart';
 import '../together/invite_log.dart';
 import 'online_peer.dart';
-import 'retro_room_ledger.dart';
 
 typedef RetroRoomMember = ({String userId, String device});
 typedef RetroRoom = ({String id, String hostId});
@@ -25,15 +23,8 @@ final class RetroRoomStatusTimeout extends TimeoutException {
   RetroRoomStatusTimeout(Duration duration) : super('The current online session check timed out.', duration);
 }
 
-/// A game session this account is already in, that this launcher does not use and no launcher
-/// still running here recorded: the player may choose to end it ([RetroOnlineRooms.endOther]).
-typedef OtherOnlineGame = ({String id, bool hosted, String titleId, DateTime? since, int others});
-
 final class RetroRoomOccupied implements Exception {
-  const RetroRoomOccupied([this.other]);
-
-  /// The session in the way, when the player may end it from here.
-  final OtherOnlineGame? other;
+  const RetroRoomOccupied();
 }
 
 /// A deadline while preparing the connection, before the game can start.
@@ -73,9 +64,7 @@ final class RetroOnlineRooms {
     this.coreDigest,
     this.profileDigest,
     this.trace,
-    this.device,
     this.holds,
-    this.ledger,
   });
 
   String get protocol => spec.mode.protocol;
@@ -91,15 +80,10 @@ final class RetroOnlineRooms {
   final String? profileDigest;
   final RetroRoomTrace? trace;
 
-  /// This launcher's device as the service names it (the realtime socket's session).
-  final String? device;
-
-  /// Whether this launcher still uses the game session with that ID.
+  /// Whether this launcher uses the game session with that ID. Any other session this account
+  /// is still in is an old one (left by a launcher that crashed or was forced to close) and a
+  /// new room replaces it, as a new game replaces the last on a console.
   final bool Function(String sessionId)? holds;
-
-  /// Where the rooms this launcher is in are recorded, so a run closed by force is cleaned up by
-  /// the next one.
-  final RetroRoomLedger? ledger;
 
   Future<T> _traced<T>(String event, Map<String, Object?> fields, Future<T> Function() step) async {
     try {
@@ -149,20 +133,16 @@ final class RetroOnlineRooms {
       rethrow;
     }
     if (room.hostId != me) throw StateError('This launcher did not create the retro room.');
-    ledger?.add(room.id, user: me, hosted: true);
     return _publish(room);
   }
 
   Future<RetroRoom> join(String id, {String? expectedHost, Completer<void>? cancelBeforeAdmission}) async {
     final path = _path(id);
-    if (ledger?.blocksJoin(id) ?? false) throw const RetroRoomOccupied();
     await _requireIdle(cancelBeforeAdmission);
     final room = _room(await _admissionRead(() => _readRoomView(path), cancelBeforeAdmission), id: id);
     _checkInviteHost(room, expectedHost);
     _checkAdmission(cancelBeforeAdmission);
-    if (ledger?.blocksJoin(id) ?? false) throw const RetroRoomOccupied();
     await call('POST', '$path/join', {'gameVersion': spec.gameVersion, 'engineBuild': protocol});
-    ledger?.add(room.id, user: me, hosted: false);
     return _publish(room);
   }
 
@@ -276,64 +256,32 @@ final class RetroOnlineRooms {
 
   Future<void> leave(RetroRoom room) async {
     final path = _path(room.id);
-    try {
-      if (room.hostId == me) {
-        await call('DELETE', path);
-      } else {
-        await call('POST', '$path/leave');
-      }
-    } on TogetherProblem catch (problem) {
-      if (RetroRoomLedger.isGone(problem)) {
-        ledger?.remove(room.id);
-      } else {
-        ledger?.leaveFailed(room.id);
-      }
-      rethrow;
-    } on Object {
-      ledger?.leaveFailed(room.id);
-      rethrow;
+    if (room.hostId == me) {
+      await call('DELETE', path);
+    } else {
+      await call('POST', '$path/leave');
     }
-    ledger?.remove(room.id);
   }
 
-  /// No session for this account, after ending the ones an earlier run left behind. The reads
-  /// stop waiting when [cancellation] completes; the cleanup is sent only by an attempt that is
-  /// still wanted, and is always waited for.
+  /// No session for this account: an old one this launcher does not use is replaced. The reads
+  /// stop waiting when [cancellation] completes; the replacing is sent only by an attempt still
+  /// wanted, and is waited for.
   Future<void> _requireIdle(Completer<void>? cancellation) async {
-    _checkAdmission(cancellation);
-    if (ledger case final kept?) {
-      await kept.endEarlier(me, call, trace: trace).timeout(const Duration(seconds: 12), onTimeout: () {});
-      _checkAdmission(cancellation);
-    }
     final session = await _admissionRead(_currentSession, cancellation);
     if (session == null) return;
-    final id = _leftHere(session);
-    if (id == null) {
-      final other = _other(session);
-      trace?.call('room.occupied', {
-        'endable': other != null,
-        if (session is Map) ...{'room': session['id'], 'kind': session['kind'], 'title': session['titleId']},
-        'deviceKnown': device != null,
-        if (session is Map && session['members'] is List)
-          'others': (session['members'] as List).where((member) => member is! Map || member['userId'] != me).length,
-        if (session is Map && session['members'] is List)
-          'myDevices': [
-            for (final member in session['members'] as List)
-              if (member is Map && member['userId'] == me) member['device'] == device ? 'this' : 'other',
-          ].join(','),
-      });
-      throw RetroRoomOccupied(other);
-    }
+    final id = session is Map ? session['id'] : null;
+    final using = holds;
+    if (using == null || id is! String || !_uuid.hasMatch(id) || using(id)) throw const RetroRoomOccupied();
     _checkAdmission(cancellation);
-    final hosted = (session as Map)['host'] is Map && (session['host'] as Map)['userId'] == me;
+    final host = (session as Map)['host'];
+    final hosted = host is Map && host['userId'] == me;
     try {
       await call(hosted ? 'DELETE' : 'POST', hosted ? _path(id) : '${_path(id)}/leave');
     } on Object catch (error) {
-      trace?.call('room.leftover', {'room': id, 'hosted': hosted, 'result': 'failed', ...InviteLog.error(error)});
+      trace?.call('room.replaced', {'room': id, 'hosted': hosted, 'result': 'failed', ...InviteLog.error(error)});
       throw const RetroRoomOccupied();
     }
-    ledger?.remove(id);
-    trace?.call('room.leftover', {'room': id, 'hosted': hosted, 'result': 'ok'});
+    trace?.call('room.replaced', {'room': id, 'hosted': hosted, 'result': 'ok'});
     if (await _admissionRead(_currentSession, cancellation) != null) throw const RetroRoomOccupied();
   }
 
@@ -344,56 +292,6 @@ final class RetroOnlineRooms {
       'me/game-session',
     ).timeout(deadline, onTimeout: () => throw RetroRoomStatusTimeout(deadline));
     return current['session'];
-  }
-
-  /// The ID of [session] when this device left it behind: every membership of this account in
-  /// it is on this socket's device and this launcher no longer uses it. The socket's device
-  /// changes with each connection, so this is a room from earlier in this run; a room from an
-  /// earlier run is ended through the [ledger], and any other is the player's to end.
-  String? _leftHere(Object? session) {
-    final using = holds;
-    final here = device;
-    if (using == null || here == null || session is! Map) return null;
-    final id = session['id'];
-    final members = session['members'];
-    if (id is! String || !_uuid.hasMatch(id) || members is! List || using(id)) return null;
-    final mine = [
-      for (final member in members)
-        if (member is Map && member['userId'] == me) member['device'],
-    ];
-    if (mine.isEmpty || mine.any((device) => device != here)) return null;
-    return id;
-  }
-
-  /// [session] as one the player may end: this account is in it, this launcher does not use it,
-  /// and no launcher running here recorded it.
-  OtherOnlineGame? _other(Object? session) {
-    final using = holds;
-    if (using == null || session is! Map) return null;
-    final id = session['id'];
-    final members = session['members'];
-    final host = session['host'];
-    if (id is! String || !_uuid.hasMatch(id) || members is! List || using(id)) return null;
-    if (ledger?.liveOwned(id) ?? false) return null;
-    if (!members.any((member) => member is Map && member['userId'] == me)) return null;
-    return (
-      id: id,
-      hosted: host is Map && host['userId'] == me,
-      titleId: session['titleId'] is String ? session['titleId'] as String : '',
-      since: RetroRoomLedger.createdAt(id),
-      others: members.where((member) => member is! Map || member['userId'] != me).length,
-    );
-  }
-
-  /// Ends [game] (as its host) or leaves it, at the player's word; a session already gone counts
-  /// as ended.
-  Future<void> endOther(OtherOnlineGame game) async {
-    try {
-      await call(game.hosted ? 'DELETE' : 'POST', game.hosted ? _path(game.id) : '${_path(game.id)}/leave');
-    } on TogetherProblem catch (problem) {
-      if (!RetroRoomLedger.isGone(problem)) rethrow;
-    }
-    trace?.call('room.ended-by-player', {'room': game.id, 'hosted': game.hosted});
   }
 
   // Stop waiting only for reads. Once a write is sent, the caller must

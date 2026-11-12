@@ -400,9 +400,7 @@ extension TogetherPs1Netplay on TogetherModel {
       discDigest: discDigest,
       coreDigest: coreDigest,
       trace: inviteLog.write,
-      device: hub.socket.session,
-      holds: _holdsGameSession,
-      ledger: roomLedger,
+      holds: (id) => hub.games.session?.id == id,
       signal: (to, device, sessionId, kind, data) {
         if (!hub.socket.send(
           OnlinePeerSignal.frame(to: to, device: device, sessionId: sessionId, kind: kind, data: data),
@@ -644,25 +642,7 @@ extension TogetherPs1Netplay on TogetherModel {
       if (opened != null || active()) app.show(T.text('retroRoomStatusTimeout'));
     } on RetroRoomOccupied catch (error) {
       failed(error, shown: opened != null || active());
-      if (opened != null || active()) {
-        if (error.other case final other?) {
-          _askOtherOnlineGame(
-            other,
-            rooms(),
-            () => _startPs1Netplay(
-              profile,
-              friendId: friendId,
-              roomId: roomId,
-              expectedHost: expectedHost,
-              localWorker: localWorker,
-              selectedGame: selectedGame,
-              mode: mode,
-            ),
-          );
-        } else {
-          app.show(T.text('retroRoomOccupied'));
-        }
-      }
+      if (opened != null || active()) app.show(T.text('retroRoomOccupied'));
     } on RetroConnectionTimeout catch (error) {
       failed(error, shown: opened != null || active());
       if (opened != null || active()) app.show(T.text(timeoutMessage));
