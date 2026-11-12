@@ -92,11 +92,15 @@ Future<void> main(List<String> arguments) async {
   StallWatch? watch;
   const window = ChannelLauncherWindow();
   // Quit: the marker says closing, then the window closes as its title bar's close does.
+  AppModel? launcher;
   final shutdown = LauncherShutdown(
     health: health,
     beforeClose: () => watch?.closing(),
     closeWindow: window.close,
-    exit: exit,
+    exit: (code) {
+      launcher?.closeSound();
+      exit(code);
+    },
   );
   void closing() {
     watch?.closing();
@@ -161,6 +165,7 @@ Future<void> main(List<String> arguments) async {
       quit: (code) => unawaited(shutdown.quit(code)),
     ),
   );
+  launcher = model;
   // An update left for this launch (Later) goes in first: its installer opens the launcher again.
   if (await model.updates.applyPendingAtLaunch()) exit(0);
   model
@@ -173,6 +178,7 @@ Future<void> main(List<String> arguments) async {
     onExitRequested: () async {
       if (!await model.prepareToQuit()) return AppExitResponse.cancel;
       closing();
+      model.closeSound();
       return AppExitResponse.exit;
     },
   );
