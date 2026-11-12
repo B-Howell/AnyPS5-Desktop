@@ -20,6 +20,7 @@ import '../core/online/ps1_netplay_session.dart';
 import '../core/online/ps2_lan_profile.dart';
 import '../core/online/retro_lan_match.dart';
 import '../core/online/retro_online_rooms.dart';
+import '../core/online/retro_room_ledger.dart';
 import '../core/ps3_online_profile.dart';
 import '../core/profiles/profiles.dart' show ProfileAccount, ProfileMode;
 import '../core/remote/remote_protocol.dart';
@@ -113,6 +114,19 @@ class TogetherModel {
 
   /// Each step of a game invite sent or received, in the logs folder.
   late final InviteLog inviteLog = InviteLog.inFolder(app.paths.logs);
+
+  /// When this launcher started: a room left open from before it was left by an earlier run.
+  final DateTime _launched = DateTime.now();
+
+  /// The PS1, PS2 and PS3 rooms this launcher is in, kept so the next run ends what a crash or a
+  /// forced close left open.
+  late final RetroRoomLedger roomLedger = RetroRoomLedger(
+    File(p.join(app.paths.config, 'Together', 'retro-rooms.json')),
+    started: _launched,
+  );
+
+  /// The accounts whose rooms from an earlier run were ended in this run.
+  final _endedEarlierRooms = <String>{};
 
   /// Whether this launcher still uses that game session. A PS1, PS2 or PS3 room is asked for
   /// only while no other one runs here, so the session games of the library are all it can hold.
@@ -904,6 +918,36 @@ class TogetherModel {
     }
   }
 
+  /// Before the launcher closes: every online room it is in is left, and the service has heard
+  /// so (a few seconds at most), so friends never see it in a game that has gone.
+  Future<void> leaveOnlineGamesAndWait() async {
+    const wait = Duration(seconds: 4);
+    _cancelPs1InviteVerification();
+    final waits = <Future<void>>[
+      if (_ps1Match case final match?) match.leave(),
+      if (_ps2Lan case final attempt?)
+        () async {
+          attempt.cancel();
+          await attempt.match?.roomCleanupDone;
+        }(),
+      cancelPs3PartyAndWait(),
+    ];
+    await Future.wait(waits).timeout(wait, onTimeout: () => const []).catchError((Object _) => const <void>[]);
+  }
+
+  void _endEarlierRooms() {
+    final me = account.user?.id;
+    if (me == null || !_endedEarlierRooms.add(me)) return;
+    unawaited(
+      roomLedger
+          .endEarlier(me, (method, path, [body]) {
+            if (account.user?.id != me) throw StateError('The AnyTogether account changed.');
+            return account.call(method, path, body);
+          }, trace: inviteLog.write)
+          .catchError((Object _) => _endedEarlierRooms.remove(me)),
+    );
+  }
+
   /// A phone's side of a hand-off: it asks to be signed in as us, or answers ours.
   void phoneMessage(RemoteMessage received, String deviceId) {
     switch (received) {
@@ -1636,8 +1680,9 @@ class TogetherModel {
     final data = event.json;
     switch (event.type) {
       case 'live.ready':
-        // Back online: whatever waited goes up.
+        // Back online: whatever waited goes up, and rooms an earlier run left open end.
         flushSoon();
+        _endEarlierRooms();
       case 'family.updated':
         // A parent changed the limits or gave extra time.
         unawaited(family.refresh());

@@ -306,14 +306,34 @@ admission retain their existing cleanup path.
 Before hosting or joining, the shared room client also gives the
 current-session check 12 seconds. If that read stalls, the launcher
 can retry while the old response is still pending. If the service
-reports an existing session that an earlier run of this launcher left
-behind, the room client ends it (or leaves it, when this device was a
-guest) and goes on. A session counts as left behind only when every
-membership of this account in it is on this device, as the realtime
-socket's session names it, and this launcher no longer uses it. A
-launcher that was force-closed mid-match keeps the same device on its
-next run, so the service never saw that device leave and kept the room
-open. Any other existing session gets the "leave your current game"
+reports an existing session that was left behind, the room client
+ends it (or leaves it, when this account was a guest) and goes on.
+Rooms are ended by leaving them, so a launcher that crashed or was
+force-closed left its room open, and the service kept it for a day or
+more. Closing the launcher also lost rooms: it started leaving and then
+closed its connection before the request went out. Three things now
+cover this:
+
+- On quit and on window close, `prepareToQuit` awaits
+  `leaveOnlineGamesAndWait` in the [together model](../lib/ui/together_model.dart).
+  It leaves the PS1 match, the PS2 LAN room and the PS3 party, for four
+  seconds at most.
+- The [room ledger](../lib/core/online/retro_room_ledger.dart) records each
+  room in `Together/retro-rooms.json` under the config folder when it is
+  created or joined, and removes it once it is left. On the first socket
+  `ready` of a run, and before every host or join, the launcher ends the
+  rooms an earlier run recorded. A room the service says is gone (a 4xx
+  answer) is forgotten; one it could not be asked about is kept for next
+  time.
+- A room that no build recorded is still treated as left behind when this
+  launcher does not use it and either of these holds: every membership of
+  this account in it is on this socket's device; or nobody else is in it
+  and its UUIDv7 ID says it was created before this run began (an
+  unanswered invite). The socket's device changes with each connection,
+  so the first case covers only reconnects within one run.
+
+Any other existing session, such as a room a friend is in from another
+device of this account, gets the "leave your current game"
 message and is not changed. For PS1 the invite log records
 `room.leftover` or `room.occupied`; PS2 and PS3 rooms take no trace. The
 [room tests](../test/core/online/ps1_netplay_rooms_test.dart) cover

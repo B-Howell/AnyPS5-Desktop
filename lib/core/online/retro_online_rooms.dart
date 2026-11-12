@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import '../together/account.dart';
 import '../together/invite_log.dart';
 import 'online_peer.dart';
+import 'retro_room_ledger.dart';
 
 typedef RetroRoomMember = ({String userId, String device});
 typedef RetroRoom = ({String id, String hostId});
@@ -66,6 +68,7 @@ final class RetroOnlineRooms {
     this.trace,
     this.device,
     this.holds,
+    this.ledger,
   });
 
   String get protocol => spec.mode.protocol;
@@ -86,6 +89,10 @@ final class RetroOnlineRooms {
 
   /// Whether this launcher still uses the game session with that ID.
   final bool Function(String sessionId)? holds;
+
+  /// Where the rooms this launcher is in are recorded, so a run closed by force is cleaned up by
+  /// the next one.
+  final RetroRoomLedger? ledger;
 
   Future<T> _traced<T>(String event, Map<String, Object?> fields, Future<T> Function() step) async {
     try {
@@ -135,6 +142,7 @@ final class RetroOnlineRooms {
       rethrow;
     }
     if (room.hostId != me) throw StateError('This launcher did not create the retro room.');
+    ledger?.add((id: room.id, user: me, hosted: true));
     return _publish(room);
   }
 
@@ -145,6 +153,7 @@ final class RetroOnlineRooms {
     _checkInviteHost(room, expectedHost);
     _checkAdmission(cancelBeforeAdmission);
     await call('POST', '$path/join', {'gameVersion': spec.gameVersion, 'engineBuild': protocol});
+    ledger?.add((id: room.id, user: me, hosted: false));
     return _publish(room);
   }
 
@@ -258,17 +267,25 @@ final class RetroOnlineRooms {
 
   Future<void> leave(RetroRoom room) async {
     final path = _path(room.id);
-    if (room.hostId == me) {
-      await call('DELETE', path);
-    } else {
-      await call('POST', '$path/leave');
+    try {
+      if (room.hostId == me) {
+        await call('DELETE', path);
+      } else {
+        await call('POST', '$path/leave');
+      }
+    } on TogetherProblem catch (problem) {
+      if (problem.status >= 400 && problem.status < 500) ledger?.remove(room.id);
+      rethrow;
     }
+    ledger?.remove(room.id);
   }
 
-  /// No session for this account, after ending one an earlier run on this device left behind.
-  /// The reads stop waiting when [cancellation] completes; the cleanup is sent only by an
-  /// attempt that is still wanted, and is always waited for.
+  /// No session for this account, after ending the ones an earlier run left behind. The reads
+  /// stop waiting when [cancellation] completes; the cleanup is sent only by an attempt that is
+  /// still wanted, and is always waited for.
   Future<void> _requireIdle(Completer<void>? cancellation) async {
+    _checkAdmission(cancellation);
+    if (ledger case final kept?) await kept.endEarlier(me, call, trace: trace);
     final session = await _admissionRead(_currentSession, cancellation);
     if (session == null) return;
     final id = _leftHere(session);
@@ -276,6 +293,8 @@ final class RetroOnlineRooms {
       trace?.call('room.occupied', {
         if (session is Map) ...{'room': session['id'], 'kind': session['kind'], 'title': session['titleId']},
         'deviceKnown': device != null,
+        if (session is Map && session['members'] is List)
+          'others': (session['members'] as List).where((member) => member is! Map || member['userId'] != me).length,
         if (session is Map && session['members'] is List)
           'myDevices': [
             for (final member in session['members'] as List)
@@ -292,6 +311,7 @@ final class RetroOnlineRooms {
       trace?.call('room.leftover', {'room': id, 'hosted': hosted, 'result': 'failed', ...InviteLog.error(error)});
       throw const RetroRoomOccupied();
     }
+    ledger?.remove(id);
     trace?.call('room.leftover', {'room': id, 'hosted': hosted, 'result': 'ok'});
     if (await _admissionRead(_currentSession, cancellation) != null) throw const RetroRoomOccupied();
   }
@@ -305,13 +325,14 @@ final class RetroOnlineRooms {
     return current['session'];
   }
 
-  /// The ID of [session] when an earlier run of this launcher left it behind: every membership
-  /// of this account in it is on this device, and this launcher no longer uses it. A session of
-  /// this account on another device is never touched.
+  /// The ID of [session] when it was left behind and this launcher no longer uses it: every
+  /// membership of this account in it is on this device, or nobody else is in it and it was
+  /// opened before this run began (an invite that was never answered, from a launcher that
+  /// closed without ending it). A session someone else plays in from another device of this
+  /// account, or one opened since this run began, is never touched.
   String? _leftHere(Object? session) {
-    final here = device;
     final using = holds;
-    if (here == null || using == null || session is! Map) return null;
+    if (using == null || session is! Map) return null;
     final id = session['id'];
     final members = session['members'];
     if (id is! String || !_uuid.hasMatch(id) || members is! List || using(id)) return null;
@@ -319,8 +340,14 @@ final class RetroOnlineRooms {
       for (final member in members)
         if (member is Map && member['userId'] == me) member['device'],
     ];
-    if (mine.isEmpty || mine.any((device) => device != here)) return null;
-    return id;
+    if (mine.isEmpty) return null;
+    final here = device;
+    if (here != null && mine.every((device) => device == here)) return id;
+    final alone = members.every((member) => member is Map && member['userId'] == me);
+    final created = RetroRoomLedger.createdAt(id);
+    final started = ledger?.started;
+    if (alone && created != null && started != null && created.isBefore(started)) return id;
+    return null;
   }
 
   // Stop waiting only for reads. Once a write is sent, the caller must

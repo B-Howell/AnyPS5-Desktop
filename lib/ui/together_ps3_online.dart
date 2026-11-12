@@ -293,6 +293,7 @@ extension TogetherPs3Online on TogetherModel {
       profileDigest: release.partyFingerprint,
       device: hub.socket.session,
       holds: _holdsGameSession,
+      ledger: roomLedger,
     );
     final owner = app.currentProfile?.id;
     final attempt = _ps3Party = _Ps3PartyAttempt(runningWorker)..roomId = invite?.sessionId;

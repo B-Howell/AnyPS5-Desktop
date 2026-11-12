@@ -6695,7 +6695,7 @@ class AppModel extends ChangeNotifier {
     }
     final playing = running;
     if (playing == null || playing.$1.retro == null) {
-      await together.cancelPs3PartyAndWait();
+      await together.leaveOnlineGamesAndWait();
       return true;
     }
     final run = playing.$2;
@@ -6719,7 +6719,7 @@ class AppModel extends ChangeNotifier {
       show(run.error);
       return false;
     }
-    await together.cancelPs3PartyAndWait();
+    await together.leaveOnlineGamesAndWait();
     return true;
   }
 
