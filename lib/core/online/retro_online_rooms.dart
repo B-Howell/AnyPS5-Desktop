@@ -142,7 +142,7 @@ final class RetroOnlineRooms {
       rethrow;
     }
     if (room.hostId != me) throw StateError('This launcher did not create the retro room.');
-    ledger?.add((id: room.id, user: me, hosted: true));
+    ledger?.add(room.id, user: me, hosted: true);
     return _publish(room);
   }
 
@@ -153,7 +153,7 @@ final class RetroOnlineRooms {
     _checkInviteHost(room, expectedHost);
     _checkAdmission(cancelBeforeAdmission);
     await call('POST', '$path/join', {'gameVersion': spec.gameVersion, 'engineBuild': protocol});
-    ledger?.add((id: room.id, user: me, hosted: false));
+    ledger?.add(room.id, user: me, hosted: false);
     return _publish(room);
   }
 
@@ -274,7 +274,7 @@ final class RetroOnlineRooms {
         await call('POST', '$path/leave');
       }
     } on TogetherProblem catch (problem) {
-      if (problem.status >= 400 && problem.status < 500) ledger?.remove(room.id);
+      if (RetroRoomLedger.isGone(problem)) ledger?.remove(room.id);
       rethrow;
     }
     ledger?.remove(room.id);
@@ -285,7 +285,10 @@ final class RetroOnlineRooms {
   /// still wanted, and is always waited for.
   Future<void> _requireIdle(Completer<void>? cancellation) async {
     _checkAdmission(cancellation);
-    if (ledger case final kept?) await kept.endEarlier(me, call, trace: trace);
+    if (ledger case final kept?) {
+      await kept.endEarlier(me, call, trace: trace).timeout(const Duration(seconds: 12), onTimeout: () {});
+      _checkAdmission(cancellation);
+    }
     final session = await _admissionRead(_currentSession, cancellation);
     if (session == null) return;
     final id = _leftHere(session);
@@ -325,11 +328,14 @@ final class RetroOnlineRooms {
     return current['session'];
   }
 
+  /// How long a PS1, PS2 or PS3 room nobody else joined is kept for a launcher still waiting on it.
+  static const abandonedAfter = Duration(hours: 1);
+
   /// The ID of [session] when it was left behind and this launcher no longer uses it: every
-  /// membership of this account in it is on this device, or nobody else is in it and it was
-  /// opened before this run began (an invite that was never answered, from a launcher that
-  /// closed without ending it). A session someone else plays in from another device of this
-  /// account, or one opened since this run began, is never touched.
+  /// membership of this account in it is on this socket's device, or it is a PS1, PS2 or PS3
+  /// room nobody else is in, opened before this run began and over [abandonedAfter] ago (an
+  /// invite never answered, from a launcher that closed without ending it). A room a friend is
+  /// in, or one opened since, is never touched.
   String? _leftHere(Object? session) {
     final using = holds;
     if (using == null || session is! Map) return null;
@@ -344,9 +350,21 @@ final class RetroOnlineRooms {
     final here = device;
     if (here != null && mine.every((device) => device == here)) return id;
     final alone = members.every((member) => member is Map && member['userId'] == me);
+    final properties = session['properties'];
+    final retro =
+        properties is Map &&
+        properties['protocol'] is String &&
+        RetroOnlineMode.isRetroProtocol(properties['protocol'] as String);
     final created = RetroRoomLedger.createdAt(id);
     final started = ledger?.started;
-    if (alone && created != null && started != null && created.isBefore(started)) return id;
+    if (alone &&
+        retro &&
+        created != null &&
+        started != null &&
+        created.isBefore(started) &&
+        DateTime.now().difference(created) > abandonedAfter) {
+      return id;
+    }
     return null;
   }
 

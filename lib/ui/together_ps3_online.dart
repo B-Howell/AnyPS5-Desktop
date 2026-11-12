@@ -375,6 +375,7 @@ extension TogetherPs3Online on TogetherModel {
     } finally {
       final pendingBoot = app.isStartingPs3Party(attempt) ? launch : null;
       if (pendingBoot != null && app.running != null) unawaited(app.stopRunningGame());
+      if (room != null && attempt.roomEnded) roomLedger.remove(room.id);
       if (room != null && !attempt.roomEnded && account.user?.id == me) {
         try {
           await rooms.leave(room);

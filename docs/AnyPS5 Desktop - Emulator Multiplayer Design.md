@@ -263,7 +263,9 @@ continues to use the validated room host.
 The [shared room admission checks](../lib/core/online/retro_online_rooms.dart)
 use the closing signal from the [PS1 match](../lib/core/online/ps1_netplay_match.dart),
 [PS2 LAN match](../lib/core/online/retro_lan_match.dart), or PS3 invite.
-Cancel releases pending read-only checks immediately. A canceled
+Cancel releases pending read-only checks immediately, except the
+recorded-room cleanup described below, which runs first and is given
+at most 12 seconds before the attempt goes on or stops. A canceled
 attempt never ends a left-behind room: that cleanup is sent only after
 the current-session read returns to an attempt that is still wanted,
 and the attempt waits for it, so a late answer cannot end a room a retry
@@ -320,17 +322,30 @@ cover this:
   seconds at most.
 - The [room ledger](../lib/core/online/retro_room_ledger.dart) records each
   room in `Together/retro-rooms.json` under the config folder when it is
-  created or joined, and removes it once it is left. On the first socket
-  `ready` of a run, and before every host or join, the launcher ends the
-  rooms an earlier run recorded. A room the service says is gone (a 4xx
-  answer) is forgotten; one it could not be asked about is kept for next
-  time.
+  created or joined, and removes it once it is left. Each record names
+  the launcher run that wrote it. The run holds an exclusive lock on
+  `Together/retro-room-runs/<run>.lock` from its first record until it
+  exits, and the system releases it however the process ends. A record
+  is ended only when its run's lock can be taken. A second launcher
+  running beside the first therefore never ends the first one's rooms.
+  On the first socket `ready` of a run, and before every host or join,
+  the launcher ends the rooms of runs that are gone. Sweeps run one at a
+  time, give each request 6 seconds, and skip a record this run has
+  taken up again. A room is forgotten only when it was ended, or the
+  service answers 404 or 410. Any other refusal, or no answer, keeps it
+  for next time. A PS3 room the service ended is removed when its
+  attempt finishes.
 - A room that no build recorded is still treated as left behind when this
   launcher does not use it and either of these holds: every membership of
-  this account in it is on this socket's device; or nobody else is in it
-  and its UUIDv7 ID says it was created before this run began (an
-  unanswered invite). The socket's device changes with each connection,
-  so the first case covers only reconnects within one run.
+  this account in it is on this socket's device; or it is a PS1, PS2 or
+  PS3 room nobody else is in, created (by its UUIDv7 ID) before this run
+  began and over an hour ago. The second case is an invite nobody
+  answered, from a launcher that closed without ending it. The socket's
+  device changes with each connection, so the first case covers only
+  reconnects within one run.
+- The [ledger tests](../test/core/online/retro_room_ledger_test.dart) cover
+  earlier runs, a live second launcher holding its lock, refusals that
+  keep a record, overlapping sweeps, and the unrecorded-room rules.
 
 Any other existing session, such as a room a friend is in from another
 device of this account, gets the "leave your current game"
