@@ -79,6 +79,33 @@ struct FrameLease {
   ProxyFrame frame;
   FlutterDesktopPixelBuffer buffer;
 };
+
+// What a texture's copy callback reaches. Flutter can still be inside a copy
+// when the adapter goes away, so the callback holds this state, and the proxy
+// stays alive until such a copy returns.
+struct TextureState {
+  std::mutex mutex;
+  std::shared_ptr<RetroHostProxy> proxy;
+  std::map<int64_t, int64_t> slots;
+
+  const FlutterDesktopPixelBuffer* Copy(int64_t slot) {
+    std::shared_ptr<RetroHostProxy> owner;
+    int64_t id;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      const auto found = slots.find(slot);
+      if (!proxy || found == slots.end()) return nullptr;
+      owner = proxy;
+      id = found->second;
+    }
+    auto frame = owner->Acquire(id);
+    if (!frame) return nullptr;
+    auto* lease = new FrameLease{std::move(*frame), {}};
+    lease->buffer = {lease->frame.pixels, lease->frame.width, lease->frame.height,
+                     [](void* data) { delete static_cast<FrameLease*>(data); }, lease};
+    return &lease->buffer;
+  }
+};
 }  // namespace
 
 class RetroCoreHost::Impl {
@@ -95,7 +122,7 @@ class RetroCoreHost::Impl {
     anyps5::retro_ipc::ProxyOptions options;
     options.host = RetroHostProxy::DefaultHostPath();
     options.texture_per_session = true;
-    proxy_ = std::make_unique<RetroHostProxy>(
+    state_->proxy = std::make_shared<RetroHostProxy>(
         std::move(options),
         anyps5::retro_ipc::ProxyPlatform{
             [this] { return Register(); },
@@ -107,7 +134,7 @@ class RetroCoreHost::Impl {
             }});
     channel_.SetMethodCallHandler([this](const auto& call, auto result) {
       std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> reply(std::move(result));
-      proxy_->Handle(call.method_name(), call.arguments() ? ToHost(*call.arguments()) : ipc::Value(),
+      state_->proxy->Handle(call.method_name(), call.arguments() ? ToHost(*call.arguments()) : ipc::Value(),
                      [reply](ProxyResult answer) {
                        switch (answer.kind) {
                          case ProxyResult::Kind::kSuccess:
@@ -126,20 +153,24 @@ class RetroCoreHost::Impl {
 
   ~Impl() {
     channel_.SetMethodCallHandler(nullptr);
-    proxy_->Shutdown();
-    proxy_.reset();
+    std::shared_ptr<RetroHostProxy> proxy;
+    {
+      std::lock_guard<std::mutex> lock(state_->mutex);
+      proxy = std::move(state_->proxy);
+    }
+    proxy->Shutdown();
     if (tasks_) DestroyWindow(tasks_);
   }
 
  private:
   int64_t Register() {
-    auto texture = std::make_unique<flutter::TextureVariant>(flutter::PixelBufferTexture(
-        [this, slot = next_slot_++](size_t, size_t) -> const FlutterDesktopPixelBuffer* { return Copy(slot); }));
-    const auto slot = next_slot_ - 1;
+    const auto slot = next_slot_++;
+    auto texture = std::make_shared<flutter::TextureVariant>(flutter::PixelBufferTexture(
+        [state = state_, slot](size_t, size_t) { return state->Copy(slot); }));
     const auto id = textures_->RegisterTexture(texture.get());
     if (id < 0) return -1;
-    std::lock_guard<std::mutex> lock(mutex_);
-    slots_[slot] = id;
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    state_->slots[slot] = id;
     owned_[id] = {slot, std::move(texture)};
     return id;
   }
@@ -147,39 +178,21 @@ class RetroCoreHost::Impl {
   void Unregister(int64_t id) {
     std::shared_ptr<flutter::TextureVariant> texture;
     {
-      std::lock_guard<std::mutex> lock(mutex_);
+      std::lock_guard<std::mutex> lock(state_->mutex);
       const auto found = owned_.find(id);
       if (found == owned_.end()) return;
-      slots_.erase(found->second.first);
+      state_->slots.erase(found->second.first);
       texture = std::move(found->second.second);
       owned_.erase(found);
     }
     textures_->UnregisterTexture(id, [texture] {});
   }
 
-  const FlutterDesktopPixelBuffer* Copy(int64_t slot) {
-    int64_t id;
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      const auto found = slots_.find(slot);
-      if (found == slots_.end()) return nullptr;
-      id = found->second;
-    }
-    auto frame = proxy_ ? proxy_->Acquire(id) : std::nullopt;
-    if (!frame) return nullptr;
-    auto* lease = new FrameLease{std::move(*frame), {}};
-    lease->buffer = {lease->frame.pixels, lease->frame.width, lease->frame.height,
-                     [](void* data) { delete static_cast<FrameLease*>(data); }, lease};
-    return &lease->buffer;
-  }
-
   flutter::TextureRegistrar* textures_;
   flutter::MethodChannel<flutter::EncodableValue> channel_;
   HWND tasks_ = nullptr;
-  std::unique_ptr<RetroHostProxy> proxy_;
-  std::mutex mutex_;
+  std::shared_ptr<TextureState> state_ = std::make_shared<TextureState>();
   int64_t next_slot_ = 0;
-  std::map<int64_t, int64_t> slots_;
   std::map<int64_t, std::pair<int64_t, std::shared_ptr<flutter::TextureVariant>>> owned_;
 };
 

@@ -35,14 +35,18 @@ starts it. It finds the host beside the launcher executable, or at
   three RGBA slots. The host fills a slot neither side is using; the
   launcher's raster thread pins the newest one while Flutter copies it. This is
   the same picture the in-process pixel-buffer texture showed, because every
-  renderer already read its frame back to RGBA.
+  renderer already read its frame back to RGBA. A pin lasts until the next copy, which is safe
+  because both Flutter embedders release a pixel buffer before asking for the
+  next.
 - The [build](../native/retro_ipc/CMakeLists.txt) is one static library that
   both runners link.
 
 The Windows [channel adapter](../windows/runner/retro_core_host.cpp)
 ([interface](../windows/runner/retro_core_host.h)) converts Flutter values,
 registers one pixel-buffer texture per game as before, and runs replies on the
-platform thread through a message-only window. The Linux
+platform thread through a message-only window. Each texture's copy callback holds a shared
+state that owns the proxy, so a copy Flutter is still running when the window
+closes keeps the proxy alive until it returns. The Linux
 [channel adapter](../linux/runner/retro_core_host_linux.cc)
 ([interface](../linux/runner/retro_core_host_linux.h)) keeps one texture for
 the view, as before, draws black until a frame exists, and runs replies on the
