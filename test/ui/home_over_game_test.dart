@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
+import '../support/fixtures.dart';
 import '../support/ui_support.dart';
 import 'desktop_features_test.dart' show FakePads;
 
@@ -32,7 +33,7 @@ void main() {
     final fixture = makeFixture(environment: env, pads: () => pads);
     final model = fixture.model..startPads();
     env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
-    File(p.join(fixture.temp.path, model.embeddedCoreHost.libraryName(RetroPlatform.ps1))).createSync();
+    installFixtureCore(fixture.temp.path, model.embeddedCoreHost, RetroPlatform.ps1);
     for (final (folder, titleId, name) in [
       ('First', 'HOME00001', 'First game'),
       ('Second', 'HOME00002', 'Second game'),
