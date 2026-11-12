@@ -78,4 +78,9 @@ class FakeAudio implements AudioOut {
 
   @override
   void release(Object sound) => (sound as FakeSound).released = true;
+
+  int closes = 0;
+
+  @override
+  void close() => closes++;
 }

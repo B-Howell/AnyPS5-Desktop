@@ -21,6 +21,10 @@ abstract class AudioOut {
 
   /// Lets go of a sound loaded earlier (and stops its voices).
   void release(Object sound);
+
+  /// Shuts the output down before the process ends: an engine still running at exit waits on
+  /// its audio thread, which the exit has already ended, and the process never finishes.
+  void close();
 }
 
 /// No sound at all.
@@ -47,4 +51,7 @@ class SilentAudio implements AudioOut {
 
   @override
   void release(Object sound) {}
+
+  @override
+  void close() {}
 }

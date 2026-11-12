@@ -1627,6 +1627,9 @@ class AppModel extends ChangeNotifier {
   /// play's sound plays through it.
   Future<bool> startSound() => _audio.start();
 
+  /// The sound card let go of as the launcher ends (see [AudioOut.close]).
+  void closeSound() => _audio.close();
+
   /// The interface's soft sounds (moving, selecting, going back, something finished).
   late final InterfaceSounds sounds = InterfaceSounds(_audio);
 
@@ -5946,6 +5949,7 @@ class AppModel extends ChangeNotifier {
     stopGame();
     unawaited(_stopReplay());
     unawaited(discord.close());
+    if (services.quit == null) closeSound();
     (services.quit ?? exit)(0);
   }
 

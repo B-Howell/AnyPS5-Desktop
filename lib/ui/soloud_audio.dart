@@ -80,6 +80,17 @@ class SoloudAudio implements AudioOut {
     if (!_ready || sound is! AudioSource) return;
     unawaited(_soloud.disposeSource(sound).catchError((Object _) {}));
   }
+
+  @override
+  void close() {
+    if (!_soloud.isInitialized) return;
+    _ready = false;
+    try {
+      _soloud.deinit();
+    } on Object {
+      // Already stopped: nothing is left to wait on.
+    }
+  }
 }
 
 /// A playing sound's handle (an extension type, kept in a class to be told apart).
