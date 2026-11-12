@@ -169,9 +169,13 @@ class PanelView extends StatelessWidget {
 
   final AppModel model;
 
-  /// The PS menu over a game, as tall as its rows: a row with a second line is taller.
-  static Size gameMenuSize(List<PanelRow> rows, double scale) =>
-      Size(760 * scale, (168 + rows.fold<double>(0, (sum, row) => sum + (row.detail == null ? 62 : 82))) * scale);
+  /// The PS menu over a game, as tall as its rows: a row with a second line is taller, and Now
+  /// playing's card (its cover and three lines) taller still.
+  static Size gameMenuSize(List<PanelRow> rows, double scale) => Size(
+    760 * scale,
+    (168 + rows.fold<double>(0, (sum, row) => sum + (row.detail == null ? 62 : 82) + (row.kind is MediaRow ? 40 : 0))) *
+        scale,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -409,7 +413,10 @@ class PanelView extends StatelessWidget {
                         SizedBox(width: 22 * scale),
                       ],
                       if (retroControls) ...[
-                        SizedBox(width: 830 * scale, child: RetroControlsArt(model: model)),
+                        SizedBox(
+                          width: 830 * scale,
+                          child: RetroControlsArt(model: model),
+                        ),
                         SizedBox(width: 28 * scale),
                       ],
                       Expanded(
@@ -1011,10 +1018,7 @@ class _RowView extends StatelessWidget {
                   ],
                 ),
               ),
-              if (row.playerSlots.isEmpty) ...[
-                SizedBox(width: 18 * scale),
-                value(),
-              ],
+              if (row.playerSlots.isEmpty) ...[SizedBox(width: 18 * scale), value()],
             ],
           );
 
