@@ -85,8 +85,13 @@ The host repository's protocol tests run the real host against fixture cores
 on Windows and Linux: frames reach the texture, input reaches the right port,
 a PS1 checkpoint exported by one game imports into the next, a crash is
 reported and the next game gets a new host, and a hung core or host is killed
-after its timeout. Its `ps1_host_probe` drives host processes with the line
-commands of the earlier in-process probes, so the
+after its timeout. A PS1 game always has a DualShock in port 1: SwanStation
+runs a port left as a plain RetroPad as a digital controller and never reads
+its sticks, which is why the sticks did nothing in Crash Team Racing during
+ordinary play. The host test drives the left stick through `input` and
+checks that a SwanStation-named fixture core reads it on ports 1 and 2. Its
+`ps1_host_probe` drives host processes with the line commands of the earlier
+in-process probes, so the
 [mixed rollback harness](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/run_ps1_netplay_probe.py)
 runs a Windows host against a Linux host. On 2026-11-11 the full CTR Coco Park
 trace (13,706 frames, 120 ms with loss) finished with 114 matching RAM

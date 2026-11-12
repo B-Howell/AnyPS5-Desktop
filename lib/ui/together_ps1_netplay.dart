@@ -281,25 +281,24 @@ extension TogetherPs1Netplay on TogetherModel {
 
   Future<void> _unsupportedRetroInvite() async => app.show(T.text('retroOnlineUnavailable'));
 
-  EmbeddedRetroGame? _ps1GuestWorker(GameInvite invite) {
+  EmbeddedRetroGame? _ps1GuestWorker(GameInvite invite) =>
+      _ps1GuestUnavailable(invite) == null ? app.embeddedGame : null;
+
+  /// Why the game playing cannot take [invite] in place (the invite log's words), or null when it can.
+  String? _ps1GuestUnavailable(GameInvite invite) {
     final game = app.running?.$1;
     final worker = app.embeddedGame;
     final mode = Ps1NetplayRoomMode.tryRead(invite.gameVersion);
-    if (!_ps1NetplayEnabled ||
-        _verifyingPs1 ||
-        _ps1Match != null ||
-        _ps2LanBusy ||
-        app.stopping ||
-        app.starting != null ||
-        game?.retroSerial != invite.titleId ||
-        worker == null ||
-        mode == null ||
-        (mode.execution.usesRollback && !mode.handoffFromOrdinary) ||
-        !_ps1SupportsMode(mode) ||
-        _ps1HostMode(worker, game)?.handoffFromOrdinary != true) {
-      return null;
-    }
-    return worker;
+    if (!_ps1NetplayEnabled) return 'ps1-online-off';
+    if (_verifyingPs1 || _ps1Match != null || _ps2LanBusy) return 'online-busy';
+    if (app.stopping || app.starting != null) return 'game-starting-or-stopping';
+    if (worker == null) return 'no-embedded-game';
+    if (game?.retroSerial != invite.titleId) return 'other-game';
+    if (mode == null) return 'unknown-mode';
+    final rollbackOnly = mode.execution.usesRollback && !mode.handoffFromOrdinary;
+    if (rollbackOnly || !_ps1SupportsMode(mode)) return 'unsupported-mode';
+    if (_ps1HostMode(worker, game)?.handoffFromOrdinary != true) return 'game-cannot-hand-off';
+    return null;
   }
 
   Future<void> joinPs1Netplay(GameInvite invite) async {
@@ -339,19 +338,31 @@ extension TogetherPs1Netplay on TogetherModel {
     final me = account.user?.id;
     final owner = app.currentProfile?.id;
     final candidates = _ps1Candidates(profile).toList();
+    final partnerId = friendId ?? expectedHost;
+    inviteLog.write(roomId == null ? 'send.chosen' : 'join.chosen', {
+      'to': InviteLog.hash(partnerId),
+      'name': hub.friends.friends.where((friend) => friend.person.id == partnerId).firstOrNull?.person.displayName,
+      'title': profile.titleId,
+      'mode': mode.version,
+      'room': roomId,
+      'inGame': localWorker != null,
+      'socket': hub.socket.status.name,
+    });
+    void stop(String reason, String text) {
+      inviteLog.write('send.stopped', {'reason': reason, 'room': roomId});
+      app.show(T.text(text));
+    }
+
     if (!_ps1NetplayEnabled || !_ps1SupportsMode(mode) || me == null || hub.socket.status != SocketStatus.ready) {
-      app.show(T.text('ps1OnlineUnavailable'));
-      return;
+      return stop('unavailable', 'ps1OnlineUnavailable');
     }
-    if (localWorker == null && candidates.isEmpty) {
-      app.show(T.text('ps1OnlineDisc'));
-      return;
-    }
+    if (localWorker == null && candidates.isEmpty) return stop('no-disc', 'ps1OnlineDisc');
     bool hostAvailable() =>
         !app.stopping &&
         app.starting == null &&
         (localWorker == null ? app.running == null : identical(app.embeddedGame, localWorker));
-    if (_verifyingPs1 || _ps1Match != null || _ps2LanBusy || !hostAvailable()) return;
+    if (_verifyingPs1 || _ps1Match != null || _ps2LanBusy) return stop('online-busy', 'retroOnlineBusy');
+    if (!hostAvailable()) return stop('game-changed', 'ps1OnlineStopped');
     _verifyingPs1 = true;
     final partner = friendId ?? expectedHost;
     _ps1Partner = partner == null ? null : (id: partner, hosting: friendId != null);
@@ -361,6 +372,20 @@ extension TogetherPs1Netplay on TogetherModel {
         account.user?.id == me &&
         app.currentProfile?.id == owner &&
         hostAvailable();
+    // Stopped before the invite went out: said, unless the player cancelled it.
+    bool stopped(String step) {
+      if (active()) return false;
+      final cancelled = verification.canceled.isCompleted;
+      inviteLog.write('send.stopped', {'reason': cancelled ? 'cancelled' : 'game-or-account-changed', 'step': step});
+      if (!cancelled) app.show(T.text('ps1OnlineStopped'));
+      return true;
+    }
+
+    void failed(Object error, {required bool shown}) {
+      inviteLog.write('send.failed', {...InviteLog.error(error), 'room': roomId, 'shown': shown});
+      if (!shown && !verification.canceled.isCompleted) app.show(T.text('ps1OnlineStopped'));
+    }
+
     final timeoutMessage = roomId == null ? 'retroConnectionTimeoutHost' : 'retroConnectionTimeoutGuest';
     Ps1NetplayMatch? opened;
     var holdingTransition = false;
@@ -374,6 +399,7 @@ extension TogetherPs1Netplay on TogetherModel {
       spec: profile.roomFor(mode),
       discDigest: discDigest,
       coreDigest: coreDigest,
+      trace: inviteLog.write,
       signal: (to, device, sessionId, kind, data) {
         if (!hub.socket.send(
           OnlinePeerSignal.frame(to: to, device: device, sessionId: sessionId, kind: kind, data: data),
@@ -385,14 +411,14 @@ extension TogetherPs1Netplay on TogetherModel {
     try {
       if (localWorker != null && roomId != null) app.resumeGame();
       app.refresh();
-      if (!active()) return;
+      if (stopped('start')) return;
       final invite = roomId == null
           ? null
           : await Future.any<RetroRoomInvite?>([
               rooms().readInvite(roomId, expectedHost: expectedHost),
               verification.canceled.future.then((_) => null),
             ]);
-      if (!active()) return;
+      if (stopped('read-invite')) return;
       final invitedDigest = invite?.disc;
       if (mode.freshFromDisc) expectedCore = invite?.core;
       if (expectedCore != null && !mode.execution.coreDigests.contains(expectedCore)) {
@@ -405,7 +431,11 @@ extension TogetherPs1Netplay on TogetherModel {
           : localWorker == null
           ? await app.preparePs1NetplayBios(canContinue: active)
           : null;
-      if (!active() || (localWorker == null && bios == null)) return;
+      if (stopped('bios')) return;
+      if (localWorker == null && bios == null) {
+        inviteLog.write('send.stopped', {'reason': 'no-bios'});
+        return app.show(T.text('ps1OnlineBios'));
+      }
       if (ordinaryWorker != null && bios == null) return app.show(T.text('ps1OnlineBios'));
       final runningGame = localWorker == null ? null : app.running!.$1;
       final sourceMedia = ordinaryWorker == null
@@ -420,7 +450,7 @@ extension TogetherPs1Netplay on TogetherModel {
                   : Ps1NetplayExecution.ordinaryHandoff,
               canContinue: active,
             );
-      if (!active()) return;
+      if (stopped('verify-source')) return;
       if (invitedDigest != null && sourceMedia != null && sourceMedia.discDigest != invitedDigest) {
         return app.show(T.text('ps1OnlineMismatchDisc'));
       }
@@ -463,7 +493,7 @@ extension TogetherPs1Netplay on TogetherModel {
               expectedCore: expectedCore,
               canContinue: active,
             );
-      if (!active()) return;
+      if (stopped('verify-media')) return;
       if (invitedDigest != null && media.discDigest != invitedDigest) {
         return app.show(T.text('ps1OnlineMismatchDisc'));
       }
@@ -556,6 +586,7 @@ extension TogetherPs1Netplay on TogetherModel {
         await match.host(friendId!);
       }
       await match.done;
+      inviteLog.write('match.ended', {'ended': match.session?.ended?.name, 'matched': match.hasMatchedPlayer});
       if (switching != null && app.ordinaryPs1RecoveryPending) {
         app.show(T.text('ps1OnlineReturnFailed'));
         return;
@@ -589,6 +620,7 @@ extension TogetherPs1Netplay on TogetherModel {
           break;
       }
     } on Ps1NetplayMediaFailure catch (error) {
+      failed(error, shown: opened != null || active());
       if (opened != null || active()) {
         if (expectedCore != null && error.problem == Ps1NetplayMediaProblem.core) {
           app.show(T.text('ps1OnlineMismatchCore'));
@@ -598,19 +630,26 @@ extension TogetherPs1Netplay on TogetherModel {
           _showPs1MediaError(error, handoff: mode.needsCheckpoint);
         }
       }
-    } on RetroRoomHostMismatch {
+    } on RetroRoomHostMismatch catch (error) {
+      failed(error, shown: opened != null || active());
       if (opened != null || active()) app.show(T.text('retroInviteHostChanged'));
-    } on RetroInviteSendTimeout {
+    } on RetroInviteSendTimeout catch (error) {
+      failed(error, shown: opened != null || active());
       if (opened != null || active()) app.show(T.text('retroInviteSendTimeout'));
-    } on RetroRoomStatusTimeout {
+    } on RetroRoomStatusTimeout catch (error) {
+      failed(error, shown: opened != null || active());
       if (opened != null || active()) app.show(T.text('retroRoomStatusTimeout'));
-    } on RetroRoomOccupied {
+    } on RetroRoomOccupied catch (error) {
+      failed(error, shown: opened != null || active());
       if (opened != null || active()) app.show(T.text('retroRoomOccupied'));
-    } on RetroConnectionTimeout {
+    } on RetroConnectionTimeout catch (error) {
+      failed(error, shown: opened != null || active());
       if (opened != null || active()) app.show(T.text(timeoutMessage));
-    } on RetroRoomLookupTimeout {
+    } on RetroRoomLookupTimeout catch (error) {
+      failed(error, shown: opened != null || active());
       if (opened != null || active()) app.show(T.text('retroInviteLookupTimeout'));
-    } on Object {
+    } on Object catch (error) {
+      failed(error, shown: opened != null || active());
       if (opened != null || active()) app.show(T.text('ps1OnlineDisconnected'));
     } finally {
       if (holdingTransition) app.setOrdinaryPs1Transition(null);

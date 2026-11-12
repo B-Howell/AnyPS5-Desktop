@@ -683,12 +683,18 @@ extension TogetherProfiles on TogetherModel {
     kind: ActionRow(accept ?? () => unawaited(_acceptGameInvite(invite))),
   );
 
-  bool _canAcceptRunningInvite(GameInvite invite) => switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {
-    RetroOnlineMode.synchronized => _ps1GuestWorker(invite) != null,
-    RetroOnlineMode.lan => _canJoinPs2FromGame(invite),
-    RetroOnlineMode.nativeOnline => _ps3ReadyGame(invite: invite) != null,
-    _ => false,
-  };
+  bool _canAcceptRunningInvite(GameInvite invite) => _runningInviteUnavailable(invite) == null;
+
+  /// Why the game playing gets no Join row for [invite] (the invite log's words), or null when it does.
+  String? _runningInviteUnavailable(GameInvite invite) {
+    if (hub.socket.status != SocketStatus.ready) return 'not-connected';
+    return switch (RetroOnlineMode.fromProtocol(invite.engineBuild)) {
+      RetroOnlineMode.synchronized => _ps1GuestUnavailable(invite),
+      RetroOnlineMode.lan => _canJoinPs2FromGame(invite) ? null : 'ps2-cannot-join-here',
+      RetroOnlineMode.nativeOnline => _ps3ReadyGame(invite: invite) != null ? null : 'ps3-not-ready',
+      _ => 'not-a-retro-invite',
+    };
+  }
 
   List<PanelRow> runningGameInviteRows() {
     final worker = app.embeddedGame;

@@ -353,6 +353,44 @@ The PS1 peer keeps the local timeout reason if a pending plugin call
 fails while the connection closes. The wire protocol still sends its
 existing leave message to the other peer.
 
+### Following a lost invite
+
+A Windows-to-Linux Couch Co-op invite on 2026-11-11 never appeared on the
+Linux launcher. Neither launcher recorded anything about invites, so the
+failure could not be placed on the sending launcher, the service or the
+receiving launcher. Each launcher now keeps an
+[invite log](../lib/core/together/invite_log.dart), `Invites.log` in its logs
+folder (`%LOCALAPPDATA%\AnyPS5\Logs` on Windows,
+`$XDG_STATE_HOME/AnyPS5/logs`, by default `~/.local/state/AnyPS5/logs`, on
+Linux). Past 512 KB it becomes `Invites.previous.log`. A line is the time, the
+step and its fields. Account ids appear only as the first 12 hex digits of
+their SHA-256, so the same friend can be matched across both launchers'
+logs. Tokens, keys and message text are never written.
+
+- The sending launcher logs the friend chosen (`send.chosen` or
+  `join.chosen`), each room step the
+  [room client](../lib/core/online/retro_online_rooms.dart) takes
+  (`room.create`, `invite.send`, with `result=ok` or the error type, HTTP
+  status and AnyTogether code), why a send stopped (`send.stopped`) or
+  failed (`send.failed`), every toast shown while it runs, and how the
+  match ended. A send that stops before the invite goes out because the
+  game, profile or account changed now says so with a toast; one the player
+  cancels stays quiet.
+- The receiving launcher logs every `game_session.*` event as
+  [game sessions](../lib/core/together/game_sessions.dart) receives it, then
+  what [the invite handler](../lib/ui/together_model.dart) showed: the toast,
+  where the invite can be answered (the Friends panel, the PS menu's Join
+  row, or none with the reason the game playing cannot take it), and whether
+  the card over the game was drawn, skipped for Do Not Disturb or not needed
+  with the launcher in front. Opening the PS menu logs whether the Join row
+  was found.
+
+The [log tests](../test/core/invite_log_test.dart) cover the line format,
+hashing, rotation and the room steps' results. The
+[hook tests](../test/ui/invite_log_hooks_test.dart) push an invite through the
+fake service and check both log lines and the toast, and check that a send
+that cannot start shows a toast and logs why.
+
 - On a clean AnyPS5 install, set up the needed emulator inside Settings,
   select user-supplied firmware and games, and start or accept a session
   from the dashboard or Quick Menu. Report incompatible media, missing
