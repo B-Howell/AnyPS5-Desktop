@@ -335,14 +335,21 @@ cover this:
   - When a room is forgotten: once it was ended, or the service answers
     404 or 410. Any other refusal, or no answer, keeps it for next time.
     A PS3 room the service ended is removed when its attempt finishes.
-  - Unanswered ends: until the request for a room is answered, joining
-    that room is refused, and no second request is sent for it. Join
-    checks this both before admission and again just before it sends
-    `join`, after its own sweep, so a late "leave" cannot undo a new join.
-  - Locks during a sweep: while a sweep holds a gone run's lock, its own
-    checks treat that run as live and never reopen the lock file. On
-    Linux, closing any handle to the file would release the process's
-    lock. The sweep also deletes that run's leftover `.json.tmp`.
+  - Joining a room is refused while it could be undone by a cleanup.
+    That covers a request for it that is still unanswered, a room this
+    run failed to leave, and a room any other run's file records. Join
+    checks this before admission and again just before it sends `join`,
+    so a late "leave" cannot undo a new join, in this launcher or
+    another.
+  - Locks during a sweep: a gone run's lock is held until every request
+    sent for its rooms is answered, even past the 6-second wait.
+    Meanwhile this launcher's own checks treat that run as live and never
+    reopen its lock file. On Linux, closing any handle to the file would
+    release the process's lock. The sweep also deletes that run's
+    leftover `.json.tmp`.
+  - Failed leaves: a room this run failed to leave stays recorded but is
+    no longer in use. The run's own next sweep ends it. Until then it is
+    not offered to the player to end, and it cannot be joined.
 - A session this device joined earlier in the same run is ended when
   every membership of this account in it is on this socket's device and
   this launcher no longer uses it. The socket's device changes with each

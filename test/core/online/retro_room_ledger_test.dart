@@ -195,8 +195,84 @@ void main(List<String> args) {
           );
       clock.elapse(const Duration(seconds: 13));
       expect(failure, isA<RetroRoomOccupied>());
-      expect(calls, ['POST game-sessions/$_joined/leave', 'GET me/game-session', 'GET game-sessions/$_joined']);
+      expect(calls, isEmpty, reason: 'a room another run recorded is not joined before its cleanup');
+      next.endEarlier(_me, (method, path, [body]) async {
+        calls.add('$method $path');
+        return Completer<Map<String, dynamic>>().future;
+      });
+      clock.elapse(const Duration(seconds: 7));
       expect(next.unresolved(_joined), isTrue);
+      expect(next.blocksJoin(_joined), isTrue);
+    });
+  });
+
+  test('a room this run failed to leave is ended by its next sweep, and not joined before', () async {
+    final ledger = RetroRoomLedger(folder)..add(_hosted, user: _me, hosted: true);
+    final rooms = RetroOnlineRooms(
+      spec: _spec,
+      me: _me,
+      ledger: ledger,
+      call: (method, path, [body]) async => throw const TogetherProblem(503, 'down', 'Down'),
+      signal: (_, _, _, _, _) {},
+    );
+    await expectLater(rooms.leave((id: _hosted, hostId: _me)), throwsA(isA<TogetherProblem>()));
+    expect(ledger.liveOwned(_hosted), isFalse);
+    expect(ledger.blocksJoin(_hosted), isTrue);
+    expect(await sweep(ledger), ['DELETE game-sessions/$_hosted']);
+    expect(ledger.blocksJoin(_hosted), isFalse);
+    expect(await sweep(ledger), isEmpty);
+  });
+
+  test('a room another run recorded is not joined until its cleanup is done', () async {
+    earlierRun([(_joined, _me, false)]);
+    final ledger = RetroRoomLedger(folder);
+    final calls = <String>[];
+    final rooms = RetroOnlineRooms(
+      spec: _spec,
+      me: _me,
+      ledger: ledger,
+      call: (method, path, [body]) async {
+        calls.add('$method $path');
+        return {};
+      },
+      signal: (_, _, _, _, _) {},
+    );
+    await expectLater(rooms.join(_joined), throwsA(isA<RetroRoomOccupied>()));
+    expect(calls, isEmpty);
+    await sweep(ledger);
+    expect(ledger.blocksJoin(_joined), isFalse);
+  });
+
+  test('a request that fails before it is sent leaves nothing waiting', () async {
+    earlierRun([(_hosted, _me, true)]);
+    final ledger = RetroRoomLedger(folder);
+    await ledger.endEarlier(_me, (method, path, [body]) => throw StateError('The AnyTogether account changed.'));
+    await Future<void>.delayed(Duration.zero);
+    expect(ledger.unresolved(_hosted), isFalse);
+    expect(await sweep(ledger), ['DELETE game-sessions/$_hosted']);
+  });
+
+  test('a gone run stays locked until a slow request for its room is answered', () {
+    fakeAsync((clock) {
+      earlierRun([(_hosted, _me, true)]);
+      final ledger = RetroRoomLedger(folder);
+      final answer = Completer<Map<String, dynamic>>();
+      var done = false;
+      ledger.endEarlier(_me, (method, path, [body]) => answer.future).then((_) => done = true);
+      clock.elapse(const Duration(seconds: 7));
+      expect(done, isTrue);
+      expect(ledger.unresolved(_hosted), isTrue);
+      expect(ledger.blocksJoin(_hosted), isTrue);
+      final calls = <String>[];
+      ledger.endEarlier(_me, (method, path, [body]) async {
+        calls.add(path);
+        return {};
+      });
+      clock.flushMicrotasks();
+      expect(calls, isEmpty, reason: 'the run is still being ended');
+      answer.complete({});
+      clock.flushMicrotasks();
+      expect(ledger.unresolved(_hosted), isFalse);
     });
   });
 

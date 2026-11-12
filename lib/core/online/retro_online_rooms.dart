@@ -155,12 +155,12 @@ final class RetroOnlineRooms {
 
   Future<RetroRoom> join(String id, {String? expectedHost, Completer<void>? cancelBeforeAdmission}) async {
     final path = _path(id);
-    if (ledger?.unresolved(id) ?? false) throw const RetroRoomOccupied();
+    if (ledger?.blocksJoin(id) ?? false) throw const RetroRoomOccupied();
     await _requireIdle(cancelBeforeAdmission);
     final room = _room(await _admissionRead(() => _readRoomView(path), cancelBeforeAdmission), id: id);
     _checkInviteHost(room, expectedHost);
     _checkAdmission(cancelBeforeAdmission);
-    if (ledger?.unresolved(id) ?? false) throw const RetroRoomOccupied();
+    if (ledger?.blocksJoin(id) ?? false) throw const RetroRoomOccupied();
     await call('POST', '$path/join', {'gameVersion': spec.gameVersion, 'engineBuild': protocol});
     ledger?.add(room.id, user: me, hosted: false);
     return _publish(room);
@@ -283,7 +283,14 @@ final class RetroOnlineRooms {
         await call('POST', '$path/leave');
       }
     } on TogetherProblem catch (problem) {
-      if (RetroRoomLedger.isGone(problem)) ledger?.remove(room.id);
+      if (RetroRoomLedger.isGone(problem)) {
+        ledger?.remove(room.id);
+      } else {
+        ledger?.leaveFailed(room.id);
+      }
+      rethrow;
+    } on Object {
+      ledger?.leaveFailed(room.id);
       rethrow;
     }
     ledger?.remove(room.id);

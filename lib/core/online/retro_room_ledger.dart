@@ -32,17 +32,23 @@ final class RetroRoomLedger {
   Future<void> _sweeping = Future.value();
   final _records = <RetroRoomRecord>[];
 
+  /// This run's rooms whose leave failed: still recorded, and ended by this run's own sweeps.
+  final _leftBehind = <String>{};
+
   /// Rooms with an end or leave sent and not yet answered: not joined, nor sent another, until
   /// it is.
   final _unresolved = <String>{};
 
-  /// The runs that are gone whose locks this run holds while ending their rooms.
+  /// The runs that are gone whose locks this run holds, from taking them until every request it
+  /// sent for their rooms is answered.
   final _sweepLocks = <String>{};
 
   static final _uuid = RegExp(r'^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$', caseSensitive: false);
   static final _runName = RegExp(r'^[0-9a-f]{16}$');
 
-  /// How long a sweep waits for the service about each room before going on to the next.
+  /// How long a sweep waits for the service about each room before going on to the next. The
+  /// request is not dropped: the room stays [unresolved], and a gone run's lock stays held,
+  /// until it is answered.
   static const callDeadline = Duration(seconds: 6);
 
   static String _newRun() {
@@ -56,6 +62,7 @@ final class RetroRoomLedger {
 
   void add(String id, {required String user, required bool hosted}) {
     _holdLock();
+    _leftBehind.remove(id);
     _records
       ..removeWhere((record) => record.id == id)
       ..add((id: id, user: user, hosted: hosted));
@@ -63,17 +70,31 @@ final class RetroRoomLedger {
   }
 
   void remove(String id) {
+    _leftBehind.remove(id);
     final before = _records.length;
     _records.removeWhere((record) => record.id == id);
     if (_records.length != before) _save(run, _records);
   }
 
-  /// Whether an end or leave for room [id] is still on its way: joining it now could be undone.
+  /// This run left room [id] but the service did not hear it: kept, and ended by the next sweep.
+  void leaveFailed(String id) {
+    if (_records.any((record) => record.id == id)) _leftBehind.add(id);
+  }
+
+  /// Whether an end or leave for room [id] is still on its way.
   bool unresolved(String id) => _unresolved.contains(id);
 
-  /// Whether a launcher run still going, this one or another, recorded room [id].
+  /// Whether joining room [id] now could be undone by a cleanup: an end or leave for it is on its
+  /// way, or it is recorded to be ended (left behind by this run, or recorded by any other).
+  bool blocksJoin(String id) =>
+      unresolved(id) ||
+      _leftBehind.contains(id) ||
+      _otherRuns().any((other) => _read(other).any((record) => record.id == id));
+
+  /// Whether a launcher run still going, this one or another, uses room [id]. A room this run
+  /// failed to leave is not in use.
   bool liveOwned(String id) {
-    if (_records.any((record) => record.id == id)) return true;
+    if (_records.any((record) => record.id == id && !_leftBehind.contains(id))) return true;
     for (final other in _otherRuns()) {
       if (_read(other).any((record) => record.id == id) && !_gone(other)) return true;
     }
@@ -90,9 +111,10 @@ final class RetroRoomLedger {
     _lock = null;
   }
 
-  /// Ends (as host) or leaves (as guest) each room [user] was in under a run that is gone, one
-  /// sweep at a time. A room is forgotten once it was ended or the service says it is gone; one
-  /// the service could not be asked about, or refused for another reason, stays for next time.
+  /// Ends (as host) or leaves (as guest) each room [user] was in that no running launcher uses:
+  /// this run's own rooms it failed to leave, then the rooms of runs that are gone. One sweep at
+  /// a time. A room is forgotten once it was ended or the service says it is gone; one the
+  /// service could not be asked about, or refused for another reason, stays for next time.
   Future<void> endEarlier(
     String user,
     OnlineCall call, {
@@ -108,45 +130,69 @@ final class RetroRoomLedger {
     OnlineCall call,
     void Function(String event, Map<String, Object?> fields)? trace,
   ) async {
+    for (final record in [..._records]) {
+      if (record.user != user || !_leftBehind.contains(record.id)) continue;
+      final (gone, _) = await _end(record, call, trace);
+      if (gone && _leftBehind.contains(record.id)) remove(record.id);
+    }
     for (final other in _otherRuns()) {
+      if (_sweepLocks.contains(other)) continue;
       final lock = _take(other);
       if (lock == null) continue;
       _sweepLocks.add(other);
+      final answered = <Future<void>>[];
       try {
-        final records = _read(other);
         final kept = <RetroRoomRecord>[];
-        for (final record in records) {
-          if (record.user != user || !await _end(record, call, trace)) kept.add(record);
+        for (final record in _read(other)) {
+          if (record.user != user) {
+            kept.add(record);
+            continue;
+          }
+          final (gone, settled) = await _end(record, call, trace);
+          answered.add(settled);
+          if (!gone) kept.add(record);
         }
         _save(other, kept);
       } finally {
-        _sweepLocks.remove(other);
-        try {
-          lock.closeSync();
-          final temp = File('${_recordsOf(other).path}.tmp');
-          if (temp.existsSync()) temp.deleteSync();
-          if (!_recordsOf(other).existsSync()) _lockOf(other).deleteSync();
-        } on FileSystemException {
-          // Tried again next time.
-        }
+        unawaited(Future.wait(answered).whenComplete(() => _release(other, lock)));
       }
     }
   }
 
-  /// Ends or leaves [record]'s room; whether it is gone now.
-  Future<bool> _end(
+  void _release(String other, RandomAccessFile lock) {
+    try {
+      lock.closeSync();
+      final temp = File('${_recordsOf(other).path}.tmp');
+      if (temp.existsSync()) temp.deleteSync();
+      if (!_recordsOf(other).existsSync()) _lockOf(other).deleteSync();
+    } on FileSystemException {
+      // Tried again next time.
+    } finally {
+      _sweepLocks.remove(other);
+    }
+  }
+
+  /// Ends or leaves [record]'s room: whether it is gone now, and when the request is answered.
+  Future<(bool, Future<void>)> _end(
     RetroRoomRecord record,
     OnlineCall call,
     void Function(String event, Map<String, Object?> fields)? trace,
   ) async {
     if (unresolved(record.id)) {
       trace?.call('room.recorded', {'room': record.id, 'hosted': record.hosted, 'result': 'still-waiting'});
-      return false;
+      return (false, Future<void>.value());
     }
     final path = 'game-sessions/${record.id}';
     _unresolved.add(record.id);
-    final request = call(record.hosted ? 'DELETE' : 'POST', record.hosted ? path : '$path/leave');
-    unawaited(request.then<void>((_) {}, onError: (Object _) {}).whenComplete(() => _unresolved.remove(record.id)));
+    Future<Map<String, dynamic>> request;
+    try {
+      request = call(record.hosted ? 'DELETE' : 'POST', record.hosted ? path : '$path/leave');
+    } on Object catch (error) {
+      request = Future.error(error);
+    }
+    final settled = request
+        .then<void>((_) {}, onError: (Object _) {})
+        .whenComplete(() => _unresolved.remove(record.id));
     Object result;
     var gone = false;
     try {
@@ -162,7 +208,7 @@ final class RetroRoomLedger {
       result = 'unreachable';
     }
     trace?.call('room.recorded', {'room': record.id, 'hosted': record.hosted, 'result': result});
-    return gone;
+    return (gone, settled);
   }
 
   /// Whether the service's answer says the room is no longer there to end or leave.
