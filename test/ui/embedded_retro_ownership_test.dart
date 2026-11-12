@@ -26,6 +26,8 @@ void main() {
     messenger.setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
       if (call.method == 'start') return {'texture': 123, 'session': ++owner};
+      // Answered by the launcher's host proxy, not by a game session.
+      if (call.method == 'hostProcessId') return 4321;
       final arguments = call.arguments as Map;
       expectSync(arguments.keys, unorderedEquals(['owner', 'value']));
       expectSync(arguments['owner'], owner);
@@ -53,6 +55,7 @@ void main() {
         changed: () {},
       );
       expect(game.textureId, 123);
+      expect(game.pid, 4321);
       await tester.pump(const Duration(milliseconds: 150));
       expect(await game.ready, isTrue);
       game.playback(playing: false, focused: true);
@@ -61,7 +64,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 150));
       await game.exitCode;
       expect(calls.map((call) => call.method), containsAll(['start', 'status', 'input', 'pause', 'stop', 'release']));
-      for (final call in calls.where((call) => call.method != 'start')) {
+      for (final call in calls.where((call) => call.method != 'start' && call.method != 'hostProcessId')) {
         expect((call.arguments as Map)['owner'], run);
       }
     }
