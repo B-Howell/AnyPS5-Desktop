@@ -400,6 +400,8 @@ extension TogetherPs1Netplay on TogetherModel {
       discDigest: discDigest,
       coreDigest: coreDigest,
       trace: inviteLog.write,
+      device: hub.socket.session,
+      holds: _holdsGameSession,
       signal: (to, device, sessionId, kind, data) {
         if (!hub.socket.send(
           OnlinePeerSignal.frame(to: to, device: device, sessionId: sessionId, kind: kind, data: data),

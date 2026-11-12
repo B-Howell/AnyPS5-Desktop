@@ -114,6 +114,10 @@ class TogetherModel {
   /// Each step of a game invite sent or received, in the logs folder.
   late final InviteLog inviteLog = InviteLog.inFolder(app.paths.logs);
 
+  /// Whether this launcher still uses that game session. A PS1, PS2 or PS3 room is asked for
+  /// only while no other one runs here, so the session games of the library are all it can hold.
+  bool _holdsGameSession(String sessionId) => hub.games.session?.id == sessionId;
+
   TogetherModel(this.app) : environment = app.services.environment ?? Platform.environment {
     // The session of the profile playing; another profile's goes in when it plays.
     sessions = ProfileTokenStore(app.tokenStoreFor(app.sessionProfileId));

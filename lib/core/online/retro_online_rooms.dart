@@ -64,6 +64,8 @@ final class RetroOnlineRooms {
     this.coreDigest,
     this.profileDigest,
     this.trace,
+    this.device,
+    this.holds,
   });
 
   String get protocol => spec.mode.protocol;
@@ -78,6 +80,12 @@ final class RetroOnlineRooms {
   final String? coreDigest;
   final String? profileDigest;
   final RetroRoomTrace? trace;
+
+  /// This launcher's device as the service names it (the realtime socket's session).
+  final String? device;
+
+  /// Whether this launcher still uses the game session with that ID.
+  final bool Function(String sessionId)? holds;
 
   Future<T> _traced<T>(String event, Map<String, Object?> fields, Future<T> Function() step) async {
     try {
@@ -263,7 +271,52 @@ final class RetroOnlineRooms {
       'GET',
       'me/game-session',
     ).timeout(deadline, onTimeout: () => throw RetroRoomStatusTimeout(deadline));
-    if (current['session'] != null) throw const RetroRoomOccupied();
+    final session = current['session'];
+    if (session == null) return;
+    final id = _leftHere(session);
+    if (id == null) {
+      trace?.call('room.occupied', {
+        if (session is Map) ...{'room': session['id'], 'kind': session['kind'], 'title': session['titleId']},
+        'deviceKnown': device != null,
+        if (session is Map && session['members'] is List)
+          'myDevices': [
+            for (final member in session['members'] as List)
+              if (member is Map && member['userId'] == me) member['device'] == device ? 'this' : 'other',
+          ].join(','),
+      });
+      throw const RetroRoomOccupied();
+    }
+    final hosted = (session as Map)['host'] is Map && (session['host'] as Map)['userId'] == me;
+    try {
+      await call(hosted ? 'DELETE' : 'POST', hosted ? _path(id) : '${_path(id)}/leave');
+    } on Object catch (error) {
+      trace?.call('room.leftover', {'room': id, 'hosted': hosted, 'result': 'failed', ...InviteLog.error(error)});
+      throw const RetroRoomOccupied();
+    }
+    trace?.call('room.leftover', {'room': id, 'hosted': hosted, 'result': 'ok'});
+    final after = await call(
+      'GET',
+      'me/game-session',
+    ).timeout(deadline, onTimeout: () => throw RetroRoomStatusTimeout(deadline));
+    if (after['session'] != null) throw const RetroRoomOccupied();
+  }
+
+  /// The ID of [session] when an earlier run of this launcher left it behind: every membership
+  /// of this account in it is on this device, and this launcher no longer uses it. A session of
+  /// this account on another device is never touched.
+  String? _leftHere(Object? session) {
+    final here = device;
+    final using = holds;
+    if (here == null || using == null || session is! Map) return null;
+    final id = session['id'];
+    final members = session['members'];
+    if (id is! String || !_uuid.hasMatch(id) || members is! List || using(id)) return null;
+    final mine = [
+      for (final member in members)
+        if (member is Map && member['userId'] == me) member['device'],
+    ];
+    if (mine.isEmpty || mine.any((device) => device != here)) return null;
+    return id;
   }
 
   // Stop waiting only for reads. Once a write is sent, the caller must

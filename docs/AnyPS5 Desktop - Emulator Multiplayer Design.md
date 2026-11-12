@@ -302,14 +302,25 @@ admission retain their existing cleanup path.
 Before hosting or joining, the shared room client also gives the
 current-session check 12 seconds. If that read stalls, the launcher
 can retry while the old response is still pending. If the service
-reports an existing session, the launcher tells the player to leave
-it first. It makes no room changes in either case. The
+reports an existing session that an earlier run of this launcher left
+behind, the room client ends it (or leaves it, when this device was a
+guest) and goes on. A session counts as left behind only when every
+membership of this account in it is on this device, as the realtime
+socket's session names it, and this launcher no longer uses it. A
+launcher that was force-closed mid-match keeps the same device on its
+next run, so the service never saw that device leave and kept the room
+open. Any other existing session gets the "leave your current game"
+message and is not changed. The invite log records `room.leftover` or
+`room.occupied`. The
 [room tests](../test/core/online/ps1_netplay_rooms_test.dart) cover
 host and guest retries after a stalled read, and the
 [PS3 host fixture](../test/ui/ps3_settings_test.dart) verifies the
 occupied-session message and that the existing room is preserved.
-The focused Windows suite passed 71 tests. An existing session can be
-on another device. The launcher does not assume it owns that session.
+The focused Windows suite passed 71 tests. The
+[room tests](../test/core/online/ps1_netplay_rooms_test.dart) also cover
+the left-behind cases: ended when this device hosted, left when it was a
+guest, and kept when it is on another device, still in use here, or this
+device is unknown.
 The [PS1 handoff fixture](../test/ui/ps1_netplay_setup_test.dart) and
 [PS2 LAN fixture](../test/ui/ps2_lan_invite_test.dart) verify retry while the
 first response is still withheld. This update passed 33 focused tests on

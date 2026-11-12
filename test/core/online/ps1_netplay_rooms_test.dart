@@ -310,6 +310,90 @@ void main() {
     expect(requests, ['GET', 'GET', 'GET']);
   });
 
+  group('a session this account is already in', () {
+    const leftover = '00000000-0000-0000-0000-000000000009';
+    const otherDevice = '00000000-0000-0000-0000-00000000000a';
+
+    Map<String, dynamic> session({required String device, String host = _host}) => {
+      'id': leftover,
+      'host': {'userId': host},
+      'members': [
+        {'userId': _host, 'device': device},
+      ],
+    };
+
+    ({RetroOnlineRooms rooms, List<String> calls, List<String> traced}) setUp({
+      required Map<String, dynamic> current,
+      bool held = false,
+      String? device = _device,
+    }) {
+      var occupied = true;
+      final calls = <String>[];
+      final traced = <String>[];
+      final rooms = RetroOnlineRooms(
+        spec: _spec,
+        me: _host,
+        device: device,
+        holds: (id) => held && id == leftover,
+        trace: (event, fields) => traced.add('$event ${fields['result'] ?? fields['myDevices']}'),
+        call: (method, path, [body]) async {
+          calls.add('$method $path');
+          if (path == 'me/game-session') return {'session': occupied ? current : null};
+          if (path == 'game-sessions/$leftover' && method == 'DELETE') {
+            occupied = false;
+            return <String, dynamic>{};
+          }
+          if (path == 'game-sessions/$leftover/leave') {
+            occupied = false;
+            return <String, dynamic>{};
+          }
+          throw StateError('stop after admission');
+        },
+        signal: (_, _, _, _, _) {},
+      );
+      return (rooms: rooms, calls: calls, traced: traced);
+    }
+
+    test('is ended when an earlier run on this device left it', () async {
+      final run = setUp(current: session(device: _device));
+      await expectLater(run.rooms.host(), throwsStateError);
+      expect(run.calls.take(4), [
+        'GET me/game-session',
+        'DELETE game-sessions/$leftover',
+        'GET me/game-session',
+        'POST game-sessions',
+      ]);
+      expect(run.traced, contains('room.leftover ok'));
+    });
+
+    test('is left, not ended, when this device joined someone else\'s', () async {
+      final run = setUp(
+        current: session(device: _device, host: _guest),
+      );
+      await expectLater(run.rooms.host(), throwsStateError);
+      expect(run.calls.take(3), ['GET me/game-session', 'POST game-sessions/$leftover/leave', 'GET me/game-session']);
+    });
+
+    test('is kept when it is on another device', () async {
+      final run = setUp(current: session(device: otherDevice));
+      await expectLater(run.rooms.host(), throwsA(isA<RetroRoomOccupied>()));
+      expect(run.calls, ['GET me/game-session']);
+      expect(run.traced, ['room.occupied other', 'room.create failed']);
+    });
+
+    test('is kept while this launcher still uses it', () async {
+      final run = setUp(current: session(device: _device), held: true);
+      await expectLater(run.rooms.host(), throwsA(isA<RetroRoomOccupied>()));
+      expect(run.calls, ['GET me/game-session']);
+    });
+
+    test('is kept when this device is not known', () async {
+      final run = setUp(current: session(device: _device), device: null);
+      await expectLater(run.rooms.host(), throwsA(isA<RetroRoomOccupied>()));
+      expect(run.calls, ['GET me/game-session']);
+    });
+  });
+
   test('reads the invited disc fingerprint and rejects a change before joining', () async {
     final digest = 'b' * 64;
     var advertised = digest;

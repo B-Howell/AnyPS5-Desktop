@@ -276,6 +276,8 @@ extension TogetherPs2Lan on TogetherModel {
       me: me,
       spec: spec,
       discDigest: digest,
+      device: hub.socket.session,
+      holds: _holdsGameSession,
       signal: (to, device, id, kind, data) {
         if (!hub.socket.send(OnlinePeerSignal.frame(to: to, device: device, sessionId: id, kind: kind, data: data))) {
           throw StateError('The AnyTogether connection closed.');
