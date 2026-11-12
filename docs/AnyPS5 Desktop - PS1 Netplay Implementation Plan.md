@@ -73,7 +73,7 @@ Archive unique evidence and discard generated staging from completed runs.
 The [PS1 determinism harness](<AnyPS5 Desktop - PS1 Determinism Harness.md>) records the local proof and its limits.
 
 **Existing code:** [ManagedRetro](../lib/core/managed_retro.dart) resolves a
-moving Buildbot package for PS1. The [native runner](../windows/runner/retro_core_host.cpp)
+moving Buildbot package for PS1. The [native runner](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp)
 calls `retro_run`, installs input and output callbacks, and already exercises
 serialization during some live graphics changes. It uses a process-wide
 callback target. Use two separate worker processes for the harness. The
@@ -184,7 +184,7 @@ diagnostics if rollback exceeds the frame budget.
 
 ## 4. Connect to AnyTogether without changing PS5 sessions
 
-The [Windows worker](../windows/runner/retro_core_host.cpp) now detects the
+The [Windows worker](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) now detects the
 portable core exports. It captures on the emulation thread and returns
 the snapshot together with the exact next input frame. It can import into
 an isolated guest only while the guest is held before starting its input
@@ -195,7 +195,7 @@ game session. [Media verification](../lib/core/online/ps1_netplay_media.dart)
 accepts the qualified portable build alongside the stock build. Peers still
 need matching binaries because the core hash is part of match identity.
 
-The [native probe driver](../windows/runner/tests/run_ps1_netplay_probe.py)
+The [native probe driver](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/run_ps1_netplay_probe.py)
 accepts `--checkpoint-guest` to test a running host and a separately
 booted guest with a renamed CUE. It compares their full RAM fingerprints
 and checks rejection for an incorrect digest and for importing after
@@ -237,11 +237,11 @@ is the checkpoint cursor. Both peers start the new input epoch at zero. The
 session tests cover delayed restore and replay, a wrong cursor, incompatible
 bootstrap modes, cancellation, and the first live fingerprint after cutover.
 
-The [Windows worker](../windows/runner/retro_core_host.cpp) holds between
+The [Windows worker](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) holds between
 committed frames and keeps that history stable for the guest. Starting again
 clears the previous peer's inputs, history, and fingerprint counters while
-preserving the emulator state. The [input timeline](../native/retro/ps1_netplay_timeline.h)
-refuses to hold while a frame is being committed. The [headless probe](../windows/runner/tests/run_ps1_netplay_probe.py)
+preserving the emulator state. The [input timeline](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/ps1_netplay_timeline.h)
+refuses to hold while a frame is being committed. The [headless probe](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/run_ps1_netplay_probe.py)
 can replace a peer with `--cutover` and verify the fresh input epoch with
 the real core. With the recorded CTR fixture, `--cutover-frame 4748`
 selects a neutral input span for the new two-tick buffer. The headless
@@ -341,7 +341,7 @@ This verifies package setup and the native checkpoint path on one PC.
 
 ### Checkpoint capture from ordinary Play
 
-The [Windows runner](../windows/runner/retro_core_host.cpp) reports a
+The [Windows runner](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) reports a
 `localBlankCardCheckpoint` source token after an ordinary PS1 session
 presents a visible frame with a core that exposes the blank-card exporter.
 `ps1LocalCheckpointExport` requires that token and the texture ID and
@@ -352,8 +352,8 @@ The match still needs its own input epoch. A busy card can reject the
 capture while ordinary play continues. The worker only calls the
 blank-card exporter for these requests.
 
-The [native worker fixture](../windows/runner/tests/ps1_netplay_runner_probe.cpp)
-and its [driver](../windows/runner/tests/run_ps1_netplay_probe.py) exercise
+The [native worker fixture](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/ps1_netplay_runner_probe.cpp)
+and its [driver](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/run_ps1_netplay_probe.py) exercise
 this path with `--ordinary-checkpoint` and a temporary BIOS and save
 directory. Pass `--ordinary-control-core` with the preceding checkpoint
 core to check that it cannot handle the new request. This entry point
@@ -404,7 +404,7 @@ and DLL, then installs the match core under `Emulators/PS1-Netplay-Ordinary`.
 The [media verifier](../lib/core/online/ps1_netplay_media.dart) binds that
 DLL and the Recompiler profile to the match identity. The
 [embedded launch](../lib/ui/embedded_retro_game.dart) passes the CPU choice
-to the [native worker](../windows/runner/retro_core_host.cpp), which accepts
+to the [native worker](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp), which accepts
 it only for an isolated match seat using a core with the blank-card export.
 The profile is distinct from the existing Cached Interpreter profile.
 The installation targets the match core only.
@@ -471,7 +471,7 @@ original game and memory card.
 
 `ps1LocalCheckpointPark` uses the same source token and texture checks as
 capture. The qualified core supplies both portable exporters and the
-portable importer. The [worker](../windows/runner/retro_core_host.cpp) saves the
+portable importer. The [worker](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) saves the
 blank-card checkpoint for the guest and a second, private recovery
 checkpoint at the same emulation boundary. It returns only the
 blank-card checkpoint. The private snapshot stays in the native session
@@ -506,7 +506,7 @@ After unpause, a return that cannot produce a visible frame within eight
 seconds also leaves recovery available. `ps1LocalCheckpointDiscard` can
 free it with the same token once the worker has exited.
 
-The [headless driver](../windows/runner/tests/run_ps1_netplay_probe.py)
+The [headless driver](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/run_ps1_netplay_probe.py)
 accepts `--ordinary-checkpoint --ordinary-restore --ordinary-park`. The
 fixture holds a hardware source while two separate software workers
 consume the guest checkpoint. It deliberately erases the marker from the
@@ -666,7 +666,7 @@ every 120 confirmed frames and stops the match at the first mismatch. The
 other player may see a disconnect if the link closes before their copy
 receives the final fingerprint.
 
-The [headless Flutter runner](../windows/runner/tests/ps1_webrtc_loopback.cpp)
+The [headless Flutter runner](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/ps1_webrtc_loopback.cpp)
 registers the real Windows WebRTC plugin without creating a view. Its
 [Dart probe](../tool/ps1_netplay/webrtc_loopback.dart) connects two local
 peers over real data channels with in-process signaling. It verified a
@@ -683,10 +683,10 @@ the plugin headers, and the launcher's pinned Vulkan headers. Link
 `d3d11.lib`, `d3dcompiler.lib`, `winmm.lib`, and `dxgi.lib`.
 Stage the matching debug Flutter DLL, plugin DLL and libwebrtc DLL next
 to the executable and `icudtl.dat` under `data`. The
-[probe host](../windows/runner/tests/ps1_probe_host.h) consumes native
+[probe host](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/ps1_probe_host.h) consumes native
 textures in memory and discards audio writes.
 
-To include the real emulator, build the [native worker probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp)
+To include the real emulator, build the [native worker probe](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/ps1_netplay_runner_probe.cpp)
 and set `ANYPS5_PS1_WEBRTC_NATIVE` to a JSON file containing an array of
 five strings in this order. Use the worker executable, portable SwanStation
 DLL, local CUE, BIOS, and boot serial. The [worker client](../tool/ps1_netplay/webrtc_native_worker.dart)
@@ -752,7 +752,7 @@ playback. Room and signaling events came from the local fixture service.
 The PS2 result verifies transport and recovery, with a native race and WAN
 qualification separate.
 
-The [Windows worker](../windows/runner/retro_core_host.cpp) starts with
+The [Windows worker](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) starts with
 isolated storage, the full BIOS boot and two digital pads. It holds until both inputs for a
 frame are confirmed, with a two-tick input buffer. The stock SwanStation DLL
 diverged when restoring checkpoints in the earlier tests. The separate patched
@@ -769,9 +769,9 @@ and passed the same 13,706-frame race with 114 matching checkpoints.
 That run shared the machine with the PS2 test and used the Python harness
 clock. Treat it as a correctness result. Native frame-budget qualification
 and continuous in-app video and audio remain separate tests.
-The [native timeline](../native/retro/ps1_netplay_timeline.h) owns the
+The [native timeline](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/ps1_netplay_timeline.h) owns the
 delay, retransmit window and ordered inputs. Its
-[unit test](../native/retro/test/ps1_netplay_timeline_test.cpp) checks
+[unit test](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/core/test/ps1_netplay_timeline_test.cpp) checks
 gaps and conflicting inputs. The timeline can also be constructed with a
 bounded prediction window. It marks frames that need a checkpoint,
 reports the earliest incorrect prediction at a frame boundary, and
@@ -784,7 +784,7 @@ private until their frames are confirmed. If an earlier correction
 arrives during restore and invalidates the rewind target, restore that
 earlier checkpoint before stepping again.
 
-The [Windows embedded worker](../windows/runner/retro_core_host.cpp)
+The [Windows embedded worker](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp)
 has a headless-only rollback mode. It stores at most one in-memory
 SwanStation checkpoint per prediction slot, uses the same-instance
 save-state context, and discards speculative fingerprints on rewind.
@@ -795,7 +795,7 @@ to the output in frame order. The confirmed input mode remains the
 launcher default while presentation and device pacing are being
 integrated.
 
-The [native driver](../windows/runner/tests/run_ps1_netplay_probe.py)
+The [native driver](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/run_ps1_netplay_probe.py)
 accepts `--rollback --frames 720` with the stock command's disc and BIOS
 arguments and the [SPU-patched Release core](<AnyPS5 Desktop - PS1 Determinism Harness.md>).
 It withholds frame 119 until the prediction worker passes it, checks
@@ -831,7 +831,7 @@ provides the comparison for keeping presentation active during replay.
 The Windows worker now has distinct primary and presentation callback
 slots. Each slot binds its own Libretro functions and owns a separate
 loaded DLL instance until shutdown. The headless `isolated-cores` mode in
-the [native runner probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp)
+the [native runner probe](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/ps1_netplay_runner_probe.cpp)
 accepts a second private copy of the same pinned DLL as its final
 argument. It checks duplicate-slot and shared-module rejection, distinct
 audio and texture output, and continued presentation after the primary
@@ -969,7 +969,7 @@ same game action. New fresh rooms from Game Settings or Friends use room
 version `6` and a DualShock execution fingerprint. The
 [execution profile](../lib/core/online/ps1_netplay_media.dart) binds controller
 type into the compatibility handshake. The
-[Windows worker](../windows/runner/retro_core_host.cpp) selects SwanStation's
+[Windows worker](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) selects SwanStation's
 DualShock device on both ports, with the existing
 [signed stick and button snapshots](../lib/core/online/ps1_netplay_wire.dart).
 Games that support analog input can use the sticks. Both players need a
@@ -995,7 +995,7 @@ both ports on all 360 confirmed frames in both native histories. It checks
 the exact order of each seat's transitions and three RAM fingerprints,
 then releases the room after the guest leaves. Use the
 portable standard SwanStation DLL in the five-field native fixture and
-build the [native worker probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp)
+build the [native worker probe](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/ps1_netplay_runner_probe.cpp)
 from the same checkout. Only the DualShock probe mode adds signed axes to
 the worker's existing [command pipe](../tool/ps1_netplay/webrtc_native_worker.dart).
 
@@ -1156,7 +1156,7 @@ or loses its connection, the host returns to ordinary Play at the latest
 confirmed frame. The guest returns to their own pre-match session if they
 joined from a running game.
 
-The [native host](../windows/runner/retro_core_host.cpp) checks the recovery
+The [native host](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp) checks the recovery
 ticket and active texture before freezing network input. If the worker is
 ahead of confirmation, it restores the rollback state immediately before
 the first unconfirmed frame. The blank-card exporter refuses an active
@@ -1194,10 +1194,10 @@ installed twice under `PS1-Netplay-Rollback-Handoff` for the isolated match.
 Ordinary Play uses the existing single copy in `PS1-Netplay-Ordinary`.
 
 The [embedded start call](../lib/ui/embedded_retro_game.dart) passes the
-presentation library path to the [Windows host](../windows/runner/retro_core_host.cpp).
+presentation library path to the [Windows host](https://github.com/B-Howell/anyps5-retro-host/blob/main/src/windows/windows_backend.cpp).
 The host rejects aliased DLLs, waits for both cores, and uses one texture
 and one audio output for the session. The
-[channel probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) exercises
+[channel probe](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/ps1_netplay_runner_probe.cpp) exercises
 the real start, input exchange, presentation and shutdown methods with a
 silent output and no launcher window. The
 [setup test](../test/ui/ps1_netplay_setup_test.dart) uses a fake service to
@@ -1235,8 +1235,8 @@ from boot. The 720-frame test covers the separate checkpoint import path.
 Production signaling, audible playout and the two-PC player experience
 remain release gates.
 
-The [console probe](../windows/runner/tests/ps1_netplay_runner_probe.cpp) and its
-[driver](../windows/runner/tests/run_ps1_netplay_probe.py) use the real
+The [console probe](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/ps1_netplay_runner_probe.cpp) and its
+[driver](https://github.com/B-Howell/anyps5-retro-host/blob/main/tests/run_ps1_netplay_probe.py) use the real
 embedded worker with a headless texture and audio sink. They check periodic
 RAM fingerprints and the race result against the recorded CTR trace.
 On Windows x64, two stock-core workers finished the 13,706-frame Coco Park

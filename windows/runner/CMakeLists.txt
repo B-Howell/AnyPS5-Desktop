@@ -1,16 +1,9 @@
 cmake_minimum_required(VERSION 3.18)
 project(runner LANGUAGES CXX)
 
-include(FetchContent)
-if(POLICY CMP0135)
-  cmake_policy(SET CMP0135 NEW)
-endif()
-FetchContent_Declare(vulkan_headers
-  URL https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/2fa203425eb4af9dfc6b03f97ef72b0b5bcb8350
-  URL_HASH SHA256=66e0dc7932203def85d94bf65a4fa3a3b29e61366713404f0465cdeb02e6ffd3
-  SOURCE_SUBDIR include
-)
-FetchContent_MakeAvailable(vulkan_headers)
+# The retro host protocol client. Emulator cores run in the separate
+# anyps5-retro-host program; nothing that loads a core is built here.
+add_subdirectory("${CMAKE_SOURCE_DIR}/../native/retro_ipc" "${CMAKE_CURRENT_BINARY_DIR}/retro_ipc")
 
 # Define the application target. To change its name, change BINARY_NAME in the
 # top-level CMakeLists.txt, not the value here, or `flutter run` will no longer
@@ -21,7 +14,6 @@ add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
   "main.cpp"
   "retro_core_host.cpp"
-  "retro_vulkan_video.cpp"
   "utils.cpp"
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
@@ -45,10 +37,9 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 
 # Add dependency libraries and include directories. Add any application-specific
 # dependencies here.
-target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app flutter_wrapper_plugin)
-target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib" "dxgi.lib" "gdi32.lib" "winmm.lib" "d3d11.lib" "d3dcompiler.lib")
-target_link_options(${BINARY_NAME} PRIVATE "/STACK:8388608")
-target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}" "${vulkan_headers_SOURCE_DIR}/include")
+target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app flutter_wrapper_plugin anyps5_retro_ipc)
+target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib" "dxgi.lib" "gdi32.lib")
+target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)

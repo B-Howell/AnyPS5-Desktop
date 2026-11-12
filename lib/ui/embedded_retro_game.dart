@@ -67,7 +67,20 @@ class EmbeddedRetroGame extends RunningGame {
     this.ps3OnlineRelease,
     this._sourcePaths,
     this._ordinaryRecovery,
-  ) : super.embedded(_finished.future, DateTime.now());
+    int hostPid,
+  ) : super.embedded(_finished.future, DateTime.now(), pid: hostPid);
+
+  /// The emulator host process's pid, which per-process capture uses; 0 when it is unknown.
+  static Future<int> _hostProcessId() async {
+    try {
+      final pid = await _channel.invokeMethod<Object>('hostProcessId');
+      return pid is int && pid > 0 ? pid : 0;
+    } on PlatformException {
+      return 0;
+    } on MissingPluginException {
+      return 0;
+    }
+  }
 
   static const _channel = MethodChannel('anyps5/retro_core');
   static const ps3Resolution = 'rpcs3_resolution_scale';
@@ -247,6 +260,7 @@ class EmbeddedRetroGame extends RunningGame {
     } on FormatException {
       throw StateError('The game surface could not start.');
     }
+    final hostPid = await _hostProcessId();
     final session = EmbeddedRetroGame._(
       native,
       Completer<int>(),
@@ -259,6 +273,7 @@ class EmbeddedRetroGame extends RunningGame {
       onlineProfile?.release,
       (core: core, disc: p.absolute(disc.path), system: p.join(folder, 'system')),
       ordinaryRecovery,
+      hostPid,
     );
     session._buttonMap = buttonMap;
     for (var index = 0; index < seatButtonMaps.length && index < 3; index++) {
