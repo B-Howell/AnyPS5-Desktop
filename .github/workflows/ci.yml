@@ -39,7 +39,7 @@ env:
   FLUTTER_VERSION: 3.47.1
   # libpulse-dev: flutter_webrtc's Linux loopback capture (share play's Opus track) builds only
   # with it; the bundle then needs libpulse0, which PulseAudio and PipeWire systems have.
-  LINUX_PACKAGES: clang cmake ninja-build pkg-config libgtk-3-dev libegl1-mesa-dev libepoxy-dev liblzma-dev libstdc++-12-dev libsdl2-2.0-0 libpulse-dev file
+  LINUX_PACKAGES: clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libsdl2-2.0-0 libpulse-dev file
   # libmpv-dev: the in-app clip player's headers (media_kit_video's plugin links the launcher's
   # libanyps5_mpv.so, which opens the system's libmpv: none is carried); patchelf: the packaging
   # takes the build folders out of the plugin libraries' RUNPATHs (packaging/linux/runpaths.sh).
@@ -214,10 +214,6 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: bash packaging/set-version.sh "$VERSION"
       - run: flutter build linux --release
-      - name: Build the retro host protocol client
-        run: |
-          cmake -S native/retro_ipc -B build/retro-ipc -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/retro-ipc --parallel 3
       # The system's libmpv, never a carried one: no libmpv in the bundle, nothing in it links one,
       # and the clip player's plugin links libanyps5_mpv.so (packaging/linux/no-libmpv.sh).
       - name: Check the bundle carries no libmpv
@@ -367,13 +363,6 @@ jobs:
         with:
           key: ${{ steps.archives.outputs.key }}
           path: ${{ env.WINDOWS_ARCHIVES }}
-      - name: Build the retro host protocol client
-        shell: pwsh
-        run: |
-          cmake -S native/retro_ipc -B build/retro-ipc
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cmake --build build/retro-ipc --config Release --parallel 3
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       # The clip player's libmpv and ANGLE (media_kit_libs_windows_video) and SDL2 beside the
       # launcher: the installer and the .zip take the whole folder.
       - name: Check SDL2 and the clip player's libraries are beside the launcher

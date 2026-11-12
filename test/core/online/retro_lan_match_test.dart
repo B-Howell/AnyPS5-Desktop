@@ -5,7 +5,7 @@ import 'package:anyps5_desktop/core/online/retro_lan_match.dart';
 import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import '../../../tool/ps1_netplay/webrtc_room_fixture.dart';
+import '../../support/webrtc_room_fixture.dart';
 import '../../support/online_fakes.dart';
 
 void main() {

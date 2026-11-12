@@ -53,7 +53,6 @@ late final AppLifecycleListener _exit;
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
-  final isolatedExperiment = Platform.environment.containsKey('ANYPS5_DESKTOP_EXPERIMENT_HOME');
   final paths = AppPaths.forSystem(HostSystem.current);
   final relayFile = LinkRelay.fileIn(paths.config);
   // A theme file opened while a launcher already runs goes to that one (as anyps5:// links do);
@@ -248,7 +247,7 @@ Future<void> main(List<String> arguments) async {
   runApp(AnyPS5App(model: model));
   // .anyps5theme files open with this launcher (the zip, the AppImage and the archive install
   // nothing that would say so); not for a development build.
-  if (!kDebugMode && !isolatedExperiment) {
+  if (!kDebugMode) {
     unawaited(
       ThemeFileType(
         system: HostSystem.current,
@@ -281,9 +280,7 @@ Future<void> main(List<String> arguments) async {
       }),
     ),
   );
-  if (!isolatedExperiment) {
-    unawaited(UrlScheme.register());
-  }
+  unawaited(UrlScheme.register());
 }
 
 class AnyPS5App extends StatelessWidget {
