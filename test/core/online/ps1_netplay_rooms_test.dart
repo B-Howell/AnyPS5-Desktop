@@ -387,6 +387,31 @@ void main() {
       expect(run.calls, ['GET me/game-session']);
     });
 
+    test('a cancelled check never ends the room a retry opened', () async {
+      final late = Completer<Map<String, dynamic>>();
+      final calls = <String>[];
+      final rooms = RetroOnlineRooms(
+        spec: _spec,
+        me: _host,
+        device: _device,
+        holds: (_) => false,
+        call: (method, path, [body]) async {
+          calls.add('$method $path');
+          if (path == 'me/game-session') return calls.length == 1 ? late.future : {'session': null};
+          throw StateError('stop after admission');
+        },
+        signal: (_, _, _, _, _) {},
+      );
+      final cancel = Completer<void>();
+      final first = expectLater(rooms.host(cancelBeforeAdmission: cancel), throwsStateError);
+      cancel.complete();
+      await first;
+      await expectLater(rooms.host(), throwsStateError);
+      late.complete({'session': session(device: _device)});
+      await Future<void>.delayed(Duration.zero);
+      expect(calls, ['GET me/game-session', 'GET me/game-session', 'POST game-sessions']);
+    });
+
     test('is kept when this device is not known', () async {
       final run = setUp(current: session(device: _device), device: null);
       await expectLater(run.rooms.host(), throwsA(isA<RetroRoomOccupied>()));

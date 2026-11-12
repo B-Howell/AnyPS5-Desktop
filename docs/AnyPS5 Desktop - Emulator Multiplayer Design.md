@@ -263,7 +263,11 @@ continues to use the validated room host.
 The [shared room admission checks](../lib/core/online/retro_online_rooms.dart)
 use the closing signal from the [PS1 match](../lib/core/online/ps1_netplay_match.dart),
 [PS2 LAN match](../lib/core/online/retro_lan_match.dart), or PS3 invite.
-Cancel releases pending read-only checks immediately. Once a room
+Cancel releases pending read-only checks immediately. A canceled
+attempt never ends a left-behind room: that cleanup is sent only after
+the current-session read returns to an attempt that is still wanted,
+and the attempt waits for it, so a late answer cannot end a room a retry
+opened. Once a room
 create or join request has gone out, cleanup keeps tracking the result
 so it can release any room it acquired. PS2 retains its existing
 eight-second close wait cap. Friends keeps the Closing status and

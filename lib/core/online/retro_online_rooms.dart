@@ -102,7 +102,7 @@ final class RetroOnlineRooms {
       _traced('room.create', {'title': spec.titleId, 'mode': spec.gameVersion}, () => _host(cancelBeforeAdmission));
 
   Future<RetroRoom> _host(Completer<void>? cancelBeforeAdmission) async {
-    await _admissionRead(_requireIdle, cancelBeforeAdmission);
+    await _requireIdle(cancelBeforeAdmission);
     _checkAdmission(cancelBeforeAdmission);
     final json = await call('POST', 'game-sessions', {
       'kind': 'online',
@@ -140,7 +140,7 @@ final class RetroOnlineRooms {
 
   Future<RetroRoom> join(String id, {String? expectedHost, Completer<void>? cancelBeforeAdmission}) async {
     final path = _path(id);
-    await _admissionRead(_requireIdle, cancelBeforeAdmission);
+    await _requireIdle(cancelBeforeAdmission);
     final room = _room(await _admissionRead(() => _readRoomView(path), cancelBeforeAdmission), id: id);
     _checkInviteHost(room, expectedHost);
     _checkAdmission(cancelBeforeAdmission);
@@ -265,13 +265,11 @@ final class RetroOnlineRooms {
     }
   }
 
-  Future<void> _requireIdle() async {
-    const deadline = Duration(seconds: 12);
-    final current = await call(
-      'GET',
-      'me/game-session',
-    ).timeout(deadline, onTimeout: () => throw RetroRoomStatusTimeout(deadline));
-    final session = current['session'];
+  /// No session for this account, after ending one an earlier run on this device left behind.
+  /// The reads stop waiting when [cancellation] completes; the cleanup is sent only by an
+  /// attempt that is still wanted, and is always waited for.
+  Future<void> _requireIdle(Completer<void>? cancellation) async {
+    final session = await _admissionRead(_currentSession, cancellation);
     if (session == null) return;
     final id = _leftHere(session);
     if (id == null) {
@@ -286,6 +284,7 @@ final class RetroOnlineRooms {
       });
       throw const RetroRoomOccupied();
     }
+    _checkAdmission(cancellation);
     final hosted = (session as Map)['host'] is Map && (session['host'] as Map)['userId'] == me;
     try {
       await call(hosted ? 'DELETE' : 'POST', hosted ? _path(id) : '${_path(id)}/leave');
@@ -294,11 +293,16 @@ final class RetroOnlineRooms {
       throw const RetroRoomOccupied();
     }
     trace?.call('room.leftover', {'room': id, 'hosted': hosted, 'result': 'ok'});
-    final after = await call(
+    if (await _admissionRead(_currentSession, cancellation) != null) throw const RetroRoomOccupied();
+  }
+
+  Future<Object?> _currentSession() async {
+    const deadline = Duration(seconds: 12);
+    final current = await call(
       'GET',
       'me/game-session',
     ).timeout(deadline, onTimeout: () => throw RetroRoomStatusTimeout(deadline));
-    if (after['session'] != null) throw const RetroRoomOccupied();
+    return current['session'];
   }
 
   /// The ID of [session] when an earlier run of this launcher left it behind: every membership
