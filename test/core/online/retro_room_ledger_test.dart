@@ -18,36 +18,75 @@ final String? _dart = switch (Platform.environment['FLUTTER_ROOT']) {
   null => null,
 };
 
-/// Records [rooms] as a launcher that has since exited would have.
-void _earlierRun(File file, List<(String, String, bool)> rooms) {
-  final ledger = RetroRoomLedger(file);
-  for (final (id, user, hosted) in rooms) {
-    ledger.add(id, user: user, hosted: hosted);
-  }
-  ledger.close();
-}
-
 void main() {
   late Directory temp;
-  late File file;
+  late Directory folder;
 
   setUp(() {
     temp = Directory.systemTemp.createTempSync('retro-room-ledger');
-    file = File(p.join(temp.path, 'Together', 'retro-rooms.json'));
+    folder = Directory(p.join(temp.path, 'Together', 'retro-rooms'));
   });
 
   tearDown(() => temp.deleteSync(recursive: true));
 
-  test('a room this run recorded is left by its own match, not by the cleanup', () {
-    final ledger = RetroRoomLedger(file)..add(_hosted, user: _me, hosted: true);
-    expect(ledger.earlier(_me), isEmpty);
+  /// Records [rooms] as a launcher that has since exited would have.
+  void earlierRun(List<(String, String, bool)> rooms) {
+    final ledger = RetroRoomLedger(folder);
+    for (final (id, user, hosted) in rooms) {
+      ledger.add(id, user: user, hosted: hosted);
+    }
     ledger.close();
-    expect(RetroRoomLedger(file).earlier(_me), hasLength(1));
+  }
+
+  Future<List<String>> sweep(RetroRoomLedger ledger, {Object? failure}) async {
+    final calls = <String>[];
+    await ledger.endEarlier(_me, (method, path, [body]) async {
+      calls.add('$method $path');
+      if (failure != null) throw failure;
+      return {};
+    });
+    return calls;
+  }
+
+  test('a room this run recorded is left by its own match, not by the cleanup', () async {
+    final ledger = RetroRoomLedger(folder)..add(_hosted, user: _me, hosted: true);
+    expect(await sweep(ledger), isEmpty);
+    expect(ledger.liveOwned(_hosted), isTrue);
     ledger.remove(_hosted);
-    expect(file.existsSync(), isFalse);
+    expect(ledger.liveOwned(_hosted), isFalse);
   });
 
-  test('a room of a launcher still running is kept', () async {
+  test('a later run ends what a run that is gone left open, and forgets it', () async {
+    earlierRun([(_hosted, _me, true), (_joined, _me, false), ('01a1cc22-8fc6-7cc6-93e5-e19493f61745', _friend, true)]);
+    final next = RetroRoomLedger(folder);
+    expect(next.liveOwned(_hosted), isFalse);
+    expect(await sweep(next), ['DELETE game-sessions/$_hosted', 'POST game-sessions/$_joined/leave']);
+    expect(await sweep(next), isEmpty);
+    expect(folder.listSync(), hasLength(2), reason: 'the other account\'s record and its run\'s lock stay');
+  });
+
+  test('a room the service says is gone is forgotten', () async {
+    earlierRun([(_hosted, _me, true)]);
+    final next = RetroRoomLedger(folder);
+    await sweep(next, failure: const TogetherProblem(404, 'not_found', 'Gone'));
+    expect(await sweep(next), isEmpty);
+    expect(folder.listSync(), isEmpty);
+  });
+
+  test('a room the service could not be asked about, or refused, is kept for next time', () async {
+    earlierRun([(_hosted, _me, true)]);
+    final next = RetroRoomLedger(folder);
+    for (final failure in <Object>[
+      const SocketException('offline'),
+      const TogetherProblem(503, 'down', 'Down'),
+      const TogetherProblem(429, 'rate_limited', 'Slow down'),
+      const TogetherProblem(403, 'forbidden', 'No'),
+    ]) {
+      expect(await sweep(next, failure: failure), hasLength(1), reason: '$failure');
+    }
+  });
+
+  test('a room a launcher still running recorded is kept', () async {
     final script = File(p.join(temp.path, 'hold.dart'))
       ..writeAsStringSync('''
 import 'dart:io';
@@ -58,78 +97,62 @@ void main(List<String> args) {
 }
 ''');
     const live = '00112233445566ff';
-    file.parent.createSync(recursive: true);
-    file.writeAsStringSync('[{"id":"$_hosted","user":"$_me","hosted":true,"run":"$live"}]');
-    final lock = File(p.join(file.parent.path, 'retro-room-runs', '$live.lock'))..createSync(recursive: true);
-    final holder = await Process.start(_dart!, [script.path, lock.path]);
+    folder.createSync(recursive: true);
+    File(p.join(folder.path, '$live.json')).writeAsStringSync('[{"id":"$_hosted","user":"$_me","hosted":true}]');
+    final holder = await Process.start(_dart!, [script.path, p.join(folder.path, '$live.lock')]);
     try {
       await holder.stdout.transform(const SystemEncoding().decoder).firstWhere((line) => line.contains('held'));
-      final calls = <String>[];
-      await RetroRoomLedger(file).endEarlier(_me, (method, path, [body]) async {
-        calls.add(path);
-        return {};
-      });
-      expect(calls, isEmpty);
+      final next = RetroRoomLedger(folder);
+      expect(await sweep(next), isEmpty);
+      expect(next.liveOwned(_hosted), isTrue);
     } finally {
       holder.kill();
       await holder.exitCode;
     }
-    expect(RetroRoomLedger(file).earlier(_me), hasLength(1));
+    expect(await sweep(RetroRoomLedger(folder)), ['DELETE game-sessions/$_hosted']);
   }, skip: _dart == null ? 'needs FLUTTER_ROOT for the dart program' : false);
 
-  test('the next run ends what an earlier run left open and forgets what is gone', () async {
-    _earlierRun(file, [
-      (_hosted, _me, true),
-      (_joined, _me, false),
-      ('01a1cc22-8fc6-7cc6-93e5-e19493f61745', _friend, true),
-    ]);
-    final calls = <String>[];
-    final next = RetroRoomLedger(file);
-    await next.endEarlier(_me, (method, path, [body]) async {
-      calls.add('$method $path');
-      if (path.endsWith('/leave')) throw const TogetherProblem(404, 'not_found', 'Gone');
-      return {};
-    });
-    expect(calls, ['DELETE game-sessions/$_hosted', 'POST game-sessions/$_joined/leave']);
-    expect(next.earlier(_me), isEmpty);
-    expect(next.earlier(_friend), hasLength(1));
-  });
-
-  test('a room the service could not be asked about, or refused, is kept for next time', () async {
-    _earlierRun(file, [(_hosted, _me, true)]);
-    final next = RetroRoomLedger(file);
-    for (final failure in <Object>[
-      const SocketException('offline'),
-      const TogetherProblem(503, 'down', 'Down'),
-      const TogetherProblem(429, 'rate_limited', 'Slow down'),
-      const TogetherProblem(403, 'forbidden', 'No'),
-    ]) {
-      await next.endEarlier(_me, (method, path, [body]) async => throw failure);
-      expect(next.earlier(_me), hasLength(1), reason: '$failure');
-    }
-  });
-
-  test('sweeps run one at a time and never end a room this run took up again', () async {
-    _earlierRun(file, [(_hosted, _me, true), (_joined, _me, true)]);
-    final next = RetroRoomLedger(file);
+  test('sweeps run one at a time', () async {
+    earlierRun([(_hosted, _me, true)]);
+    earlierRun([(_joined, _me, true)]);
+    final next = RetroRoomLedger(folder);
     final first = Completer<Map<String, dynamic>>();
     final calls = <String>[];
-    final sweep = next.endEarlier(_me, (method, path, [body]) {
+    final one = next.endEarlier(_me, (method, path, [body]) {
       calls.add(path);
       return calls.length == 1 ? first.future : Future.value({});
     });
-    final again = next.endEarlier(_me, (method, path, [body]) async {
+    final two = next.endEarlier(_me, (method, path, [body]) async {
       calls.add('again $path');
       return {};
     });
-    await Future<void>.delayed(Duration.zero);
-    next.add(_joined, user: _me, hosted: false);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(calls, hasLength(1));
     first.complete({});
-    await sweep;
-    await again;
-    expect(calls, ['game-sessions/$_hosted']);
-    expect(next.earlier(_me), isEmpty);
-    expect(file.readAsStringSync(), contains(_joined));
+    await one;
+    await two;
+    expect(calls, hasLength(2));
+    expect(calls.where((call) => call.startsWith('again')), isEmpty);
+  });
+
+  test('a room whose end has not been answered is not joined meanwhile', () async {
+    earlierRun([(_joined, _me, false)]);
+    final next = RetroRoomLedger(folder);
+    final answer = Completer<Map<String, dynamic>>();
+    final sweeping = next.endEarlier(_me, (method, path, [body]) => answer.future);
+    await Future<void>.delayed(Duration.zero);
+    expect(next.unresolved(_joined), isTrue);
+    final rooms = RetroOnlineRooms(
+      spec: _spec,
+      me: _me,
+      ledger: next,
+      call: (method, path, [body]) async => throw StateError('no call expected'),
+      signal: (_, _, _, _, _) {},
+    );
+    await expectLater(rooms.join(_joined), throwsA(isA<RetroRoomOccupied>()));
+    answer.complete({});
+    await sweeping;
+    expect(next.unresolved(_joined), isFalse);
   });
 
   test('reads when a room was created from its ID', () {
@@ -140,15 +163,15 @@ void main(List<String> args) {
   group('room admission', () {
     Map<String, dynamic> session(String id, {bool friend = false}) => {
       'id': id,
+      'titleId': 'SCUS94426',
       'host': {'userId': _me},
-      'properties': {'protocol': RetroOnlineMode.synchronized.protocol},
       'members': [
         {'userId': _me, 'device': 'an-earlier-connection'},
         if (friend) {'userId': _friend, 'device': 'their-connection'},
       ],
     };
 
-    Future<List<String>> host(RetroRoomLedger ledger, Map<String, dynamic>? current) async {
+    Future<(List<String>, Object?)> host(RetroRoomLedger ledger, Map<String, dynamic>? current) async {
       final calls = <String>[];
       var occupied = current;
       final rooms = RetroOnlineRooms(
@@ -168,50 +191,53 @@ void main(List<String> args) {
         },
         signal: (_, _, _, _, _) {},
       );
-      await expectLater(rooms.host(), throwsA(anything));
-      return calls;
+      Object? failure;
+      try {
+        await rooms.host();
+      } on Object catch (error) {
+        failure = error;
+      }
+      return (calls, failure);
     }
 
-    test('ends a recorded room from an earlier run before checking', () async {
-      _earlierRun(file, [(_hosted, _me, true)]);
-      final calls = await host(RetroRoomLedger(file), null);
+    test('ends a recorded room from a run that is gone before checking', () async {
+      earlierRun([(_hosted, _me, true)]);
+      final (calls, _) = await host(RetroRoomLedger(folder), null);
       expect(calls.take(3), ['DELETE game-sessions/$_hosted', 'GET me/game-session', 'POST game-sessions']);
     });
 
-    test('ends an unanswered room opened before this run', () async {
-      final calls = await host(RetroRoomLedger(file), session(_hosted));
-      expect(calls.take(4), [
-        'GET me/game-session',
-        'DELETE game-sessions/$_hosted',
-        'GET me/game-session',
-        'POST game-sessions',
-      ]);
+    test('never ends an unrecorded room itself, but offers it to the player', () async {
+      for (final friend in [false, true]) {
+        final (calls, failure) = await host(RetroRoomLedger(folder), session(_hosted, friend: friend));
+        expect(calls, ['GET me/game-session']);
+        final other = (failure! as RetroRoomOccupied).other!;
+        expect((other.id, other.hosted, other.titleId, other.others), (_hosted, true, 'SCUS94426', friend ? 1 : 0));
+        expect(other.since, DateTime.fromMillisecondsSinceEpoch(0x01a1cc228fc6));
+      }
     });
 
-    test('keeps a room someone else is in', () async {
-      final calls = await host(RetroRoomLedger(file), session(_hosted, friend: true));
-      expect(calls, ['GET me/game-session']);
+    test('offers nothing to end for a room a running launcher recorded', () async {
+      final ledger = RetroRoomLedger(folder)..add(_hosted, user: _me, hosted: true);
+      final (_, failure) = await host(ledger, session(_hosted));
+      expect((failure! as RetroRoomOccupied).other, isNull);
     });
 
-    test('keeps an unanswered room opened within the hour', () async {
-      final now = DateTime.now().millisecondsSinceEpoch.toRadixString(16).padLeft(12, '0');
-      final fresh = '${now.substring(0, 8)}-${now.substring(8)}-7cc6-93e5-e19493f61743';
-      final calls = await host(
-        RetroRoomLedger(file, started: DateTime.now().add(const Duration(minutes: 1))),
-        session(fresh),
+    test('the player ending it leaves a room hosted by someone else', () async {
+      final calls = <String>[];
+      final rooms = RetroOnlineRooms(
+        spec: _spec,
+        me: _me,
+        call: (method, path, [body]) async {
+          calls.add('$method $path');
+          if (calls.length == 2) throw const TogetherProblem(404, 'not_found', 'Gone');
+          return {};
+        },
+        signal: (_, _, _, _, _) {},
       );
-      expect(calls, ['GET me/game-session']);
-    });
-
-    test('keeps a room that is not a PS1, PS2 or PS3 room', () async {
-      final calls = await host(RetroRoomLedger(file), session(_hosted)..['properties'] = {'protocol': 'other'});
-      expect(calls, ['GET me/game-session']);
-    });
-
-    test('keeps an unanswered room opened since this run began', () async {
-      final ledger = RetroRoomLedger(file, started: DateTime.fromMillisecondsSinceEpoch(0x01a1cc228fc6 - 1));
-      final calls = await host(ledger, session(_hosted));
-      expect(calls, ['GET me/game-session']);
+      const game = (id: _joined, hosted: false, titleId: 'SCUS94426', since: null, others: 1);
+      await rooms.endOther(game);
+      await rooms.endOther(game);
+      expect(calls, ['POST game-sessions/$_joined/leave', 'POST game-sessions/$_joined/leave']);
     });
   });
 }

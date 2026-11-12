@@ -321,49 +321,59 @@ cover this:
   It leaves the PS1 match, the PS2 LAN room and the PS3 party, for four
   seconds at most.
 - The [room ledger](../lib/core/online/retro_room_ledger.dart) records each
-  room in `Together/retro-rooms.json` under the config folder when it is
-  created or joined, and removes it once it is left. Each record names
-  the launcher run that wrote it. The run holds an exclusive lock on
-  `Together/retro-room-runs/<run>.lock` from its first record until it
-  exits, and the system releases it however the process ends. A record
-  is ended only when its run's lock can be taken. A second launcher
-  running beside the first therefore never ends the first one's rooms.
-  On the first socket `ready` of a run, and before every host or join,
-  the launcher ends the rooms of runs that are gone. Sweeps run one at a
-  time, give each request 6 seconds, and skip a record this run has
-  taken up again. A room is forgotten only when it was ended, or the
-  service answers 404 or 410. Any other refusal, or no answer, keeps it
-  for next time. A PS3 room the service ended is removed when its
-  attempt finishes.
-- A room that no build recorded is still treated as left behind when this
-  launcher does not use it and either of these holds: every membership of
-  this account in it is on this socket's device; or it is a PS1, PS2 or
-  PS3 room nobody else is in, created (by its UUIDv7 ID) before this run
-  began and over an hour ago. The second case is an invite nobody
-  answered, from a launcher that closed without ending it. The socket's
-  device changes with each connection, so the first case covers only
-  reconnects within one run.
-- The [ledger tests](../test/core/online/retro_room_ledger_test.dart) cover
-  earlier runs, a live second launcher holding its lock, refusals that
-  keep a record, overlapping sweeps, and the unrecorded-room rules.
+  room when this launcher creates or joins it, and removes it once it is
+  left. Each launcher run writes only its own file,
+  `Together/retro-rooms/<run>.json` under the config folder. From its
+  first record until it exits, the run holds an exclusive lock on
+  `<run>.lock`, which the system releases however the process ends.
+  Another run's records are read and ended only while holding that run's
+  lock. So a launcher still running keeps its rooms, and two launchers
+  never end the same run's rooms at once.
+  - When it runs: on the first socket `ready` of a run, and before every
+    host or join. Sweeps run one at a time. Admission gives the sweep
+    12 seconds, and the sweep gives each request 6 seconds.
+  - When a room is forgotten: once it was ended, or the service answers
+    404 or 410. Any other refusal, or no answer, keeps it for next time.
+    A PS3 room the service ended is removed when its attempt finishes.
+  - Unanswered ends: until the request for a room is answered, joining
+    that room is refused. This stops a late "leave" from undoing a new
+    join.
+- A session this device joined earlier in the same run is ended when
+  every membership of this account in it is on this socket's device and
+  this launcher no longer uses it. The socket's device changes with each
+  connection, so this only covers reconnects within one run.
+- The launcher never ends any other session by itself. It cannot tell an
+  abandoned room from one that is open on another device. When this
+  account is in a session this launcher does not use, and no running
+  launcher recorded, `RetroOnlineRooms` throws `RetroRoomOccupied` with
+  the session's details. The PS1 invite then asks over the game
+  ([Layer.otherOnlineGame](../lib/ui/app_model.dart)): "End your other
+  online game?", naming the game and when it started. Yes ends the
+  session (or leaves it, when this account was a guest) and sends the
+  invite again; No returns to Couch Co-op. PS2 and PS3 still show the
+  "leave your current game" message.
+- Tests: the [ledger tests](../test/core/online/retro_room_ledger_test.dart)
+  cover earlier runs, a live second launcher holding its lock (a real
+  second process), refusals that keep a record, overlapping sweeps,
+  unanswered ends, and the offer to end. The
+  [prompt test](../test/ui/other_online_game_test.dart) covers both
+  answers.
 
-Any other existing session, such as a room a friend is in from another
-device of this account, gets the "leave your current game"
-message and is not changed. For PS1 the invite log records
-`room.leftover` or `room.occupied`; PS2 and PS3 rooms take no trace. The
+Any other existing session gets the "leave your current game" message
+and is not changed. For PS1 the invite log records `room.leftover`,
+`room.recorded`, `room.occupied` (with `endable`) and
+`room.ended-by-player`; PS2 and PS3 rooms take no trace. The
 [room tests](../test/core/online/ps1_netplay_rooms_test.dart) cover
 host and guest retries after a stalled read, and the
 [PS3 host fixture](../test/ui/ps3_settings_test.dart) verifies the
 occupied-session message and that the existing room is preserved.
-The focused Windows suite passed 71 tests. The
-[room tests](../test/core/online/ps1_netplay_rooms_test.dart) also cover
-the left-behind cases: ended when this device hosted, left when it was a
-guest, and kept when it is on another device, still in use here, or this
-device is unknown.
-The [PS1 handoff fixture](../test/ui/ps1_netplay_setup_test.dart) and
+The [room tests](../test/core/online/ps1_netplay_rooms_test.dart) also
+cover the same-run cases: ended when this device hosted, left when it
+was a guest, and kept when it is on another device, still in use here,
+or this device is unknown. The
+[PS1 handoff fixture](../test/ui/ps1_netplay_setup_test.dart) and
 [PS2 LAN fixture](../test/ui/ps2_lan_invite_test.dart) verify retry while the
-first response is still withheld. This update passed 33 focused tests on
-Windows with a local fixture room service.
+first response is still withheld.
 
 PS1 netplay and PS2 LAN also bound the read-only WebRTC connection
 settings request to 12 seconds after a peer joins. If it stalls, the

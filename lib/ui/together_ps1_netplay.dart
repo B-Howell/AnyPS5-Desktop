@@ -644,7 +644,25 @@ extension TogetherPs1Netplay on TogetherModel {
       if (opened != null || active()) app.show(T.text('retroRoomStatusTimeout'));
     } on RetroRoomOccupied catch (error) {
       failed(error, shown: opened != null || active());
-      if (opened != null || active()) app.show(T.text('retroRoomOccupied'));
+      if (opened != null || active()) {
+        if (error.other case final other?) {
+          _askOtherOnlineGame(
+            other,
+            rooms(),
+            () => _startPs1Netplay(
+              profile,
+              friendId: friendId,
+              roomId: roomId,
+              expectedHost: expectedHost,
+              localWorker: localWorker,
+              selectedGame: selectedGame,
+              mode: mode,
+            ),
+          );
+        } else {
+          app.show(T.text('retroRoomOccupied'));
+        }
+      }
     } on RetroConnectionTimeout catch (error) {
       failed(error, shown: opened != null || active());
       if (opened != null || active()) app.show(T.text(timeoutMessage));

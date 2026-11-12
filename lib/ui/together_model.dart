@@ -115,15 +115,47 @@ class TogetherModel {
   /// Each step of a game invite sent or received, in the logs folder.
   late final InviteLog inviteLog = InviteLog.inFolder(app.paths.logs);
 
-  /// When this launcher started: a room left open from before it was left by an earlier run.
-  final DateTime _launched = DateTime.now();
-
   /// The PS1, PS2 and PS3 rooms this launcher is in, kept so the next run ends what a crash or a
   /// forced close left open.
   late final RetroRoomLedger roomLedger = RetroRoomLedger(
-    File(p.join(app.paths.config, 'Together', 'retro-rooms.json')),
-    started: _launched,
+    Directory(p.join(app.paths.config, 'Together', 'retro-rooms')),
   );
+
+  /// A game this account is still in that is in the way of an invite, asked about over the
+  /// game ([Layer.otherOnlineGame]): ended at the player's word, then the invite is tried again.
+  ({OtherOnlineGame game, RetroOnlineRooms rooms, Future<void> Function() retry, Layer? back})? otherOnlineGame;
+
+  void _askOtherOnlineGame(OtherOnlineGame game, RetroOnlineRooms rooms, Future<void> Function() retry) {
+    final back = app.overlay;
+    otherOnlineGame = (game: game, rooms: rooms, retry: retry, back: back);
+    app.open(Layer.otherOnlineGame);
+  }
+
+  /// No to [otherOnlineGame]: back to where the invite was sent from.
+  void keepOtherOnlineGame() {
+    final back = otherOnlineGame?.back;
+    otherOnlineGame = null;
+    if (back != null && app.running != null) {
+      app.open(back, cue: Cue.back);
+    } else {
+      app.closeOverlay();
+    }
+  }
+
+  /// Yes to [otherOnlineGame]: it is ended, then the invite goes out again.
+  Future<void> endOtherOnlineGame() async {
+    final asked = otherOnlineGame;
+    if (asked == null) return;
+    keepOtherOnlineGame();
+    try {
+      await asked.rooms.endOther(asked.game);
+    } on Object catch (error) {
+      inviteLog.write('room.end-failed', {'room': asked.game.id, ...InviteLog.error(error)});
+      app.show(T.text('otherOnlineGameEndFailed'));
+      return;
+    }
+    await asked.retry();
+  }
 
   /// The accounts whose rooms from an earlier run were ended in this run.
   final _endedEarlierRooms = <String>{};

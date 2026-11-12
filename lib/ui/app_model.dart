@@ -1019,6 +1019,9 @@ enum Layer {
   /// Play on another game while one runs: close the one running and start this one?
   switchGame,
 
+  /// An invite is held up by another online game this account is still in: end it and invite?
+  otherOnlineGame,
+
   /// PS held in the launcher: Switch Profile, Quit AnyPS5.
   homeMenu,
 
@@ -4521,7 +4524,12 @@ class AppModel extends ChangeNotifier {
         unawaited(services.window?.restore());
       }
       // The quick menu and the question go with the game.
-      if (overlay == Layer.quickMenu || overlay == Layer.closeGame || overlay == Layer.switchGame) overlay = null;
+      if (overlay == Layer.quickMenu ||
+          overlay == Layer.closeGame ||
+          overlay == Layer.switchGame ||
+          overlay == Layer.otherOnlineGame) {
+        overlay = null;
+      }
       updates.gameEnded();
       together.gameChanged();
       discord.update();
@@ -5407,6 +5415,7 @@ class AppModel extends ChangeNotifier {
       if (overlay == Layer.quickMenu ||
           overlay == Layer.closeGame ||
           overlay == Layer.switchGame ||
+          overlay == Layer.otherOnlineGame ||
           overlay == Layer.retroGraphics ||
           overlay == Layer.retroDiscs ||
           overlay == Layer.retroOnlineFriends ||
@@ -5944,6 +5953,7 @@ class AppModel extends ChangeNotifier {
       Layer.retroGraphics ||
       Layer.retroDiscs ||
       Layer.retroOnlineFriends ||
+      Layer.otherOnlineGame ||
       Layer.coopLobby => true,
       Layer.emulatorMenu => _emulatorMenu.fromGraphics || _emulatorMenu.fromQuickMenu,
       Layer.gameSettings || Layer.controls => playing.retro != null && selectedGame?.id == playing.id,
@@ -6288,6 +6298,9 @@ class AppModel extends ChangeNotifier {
       case Layer.coopLobby when command == Command.back || command == Command.options:
         open(Layer.quickMenu, cue: Cue.back);
         return;
+      case Layer.otherOnlineGame when command == Command.back || command == Command.options:
+        together.keepOtherOnlineGame();
+        return;
       case Layer.settings ||
           Layer.gameSettings ||
           Layer.retroGraphics ||
@@ -6312,6 +6325,7 @@ class AppModel extends ChangeNotifier {
           Layer.coopLobby ||
           Layer.closeGame ||
           Layer.switchGame ||
+          Layer.otherOnlineGame ||
           Layer.homeMenu ||
           Layer.confirmQuit ||
           Layer.launcherReport ||
@@ -6636,7 +6650,13 @@ class AppModel extends ChangeNotifier {
   }
 
   /// The layers that ask a plain yes or no, drawn as ConfirmCard: two answers side by side.
-  static const twoChoiceLayers = {Layer.confirmQuit, Layer.closeGame, Layer.switchGame, Layer.confirmDeleteGame};
+  static const twoChoiceLayers = {
+    Layer.confirmQuit,
+    Layer.closeGame,
+    Layer.switchGame,
+    Layer.otherOnlineGame,
+    Layer.confirmDeleteGame,
+  };
 
   bool get twoChoice => twoChoiceLayers.contains(overlay);
 
@@ -7636,6 +7656,27 @@ class AppModel extends ChangeNotifier {
                 title: T.text('switchGameConfirm'),
                 detail: T.format('switchGameDetail', [running!.$1.name]),
                 kind: ActionRow(switchToTarget, destructive: true),
+              ),
+            ],
+          ),
+        ];
+      case Layer.otherOnlineGame when together.otherOnlineGame != null:
+        final other = together.otherOnlineGame!.game;
+        final name = games.where((game) => game.titleId == other.titleId).firstOrNull?.name ?? other.titleId;
+        final since = other.since;
+        return [
+          PanelCategory(
+            id: 'otherOnlineGame',
+            title: T.text('otherOnlineGameTitle'),
+            rows: [
+              PanelRow(id: 'cancel', title: T.text('cancel'), kind: ActionRow(together.keepOtherOnlineGame)),
+              PanelRow(
+                id: 'endOtherOnlineGame',
+                title: T.text('otherOnlineGameConfirm'),
+                detail: since == null
+                    ? T.format('otherOnlineGameDetail', [name])
+                    : T.format('otherOnlineGameDetailSince', [name, TogetherSocial.ago(since)]),
+                kind: ActionRow(() => unawaited(together.endOtherOnlineGame()), destructive: true),
               ),
             ],
           ),

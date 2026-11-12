@@ -39,6 +39,8 @@ class ConfirmCard extends StatelessWidget {
     final icon = switch (model.overlay) {
       Layer.closeGame => model.running?.$1.icon,
       Layer.switchGame => model.switchTarget?.icon,
+      Layer.otherOnlineGame =>
+        model.games.where((game) => game.titleId == model.together.otherOnlineGame?.game.titleId).firstOrNull?.icon,
       _ => deleting?.game.icon,
     };
     final profile = model.currentProfile;
