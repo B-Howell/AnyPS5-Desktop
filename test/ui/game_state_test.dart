@@ -48,7 +48,7 @@ void main() {
       (const WaitingForEngine(job, forThisGame: true), 'Updating engine…', ActionTone.busy),
       (const WaitingForEngine(job), 'Waiting for engine', ActionTone.busy),
       (const Starting(), 'Starting…', ActionTone.busy),
-      (const Running(4242), 'Playing', ActionTone.normal),
+      (const Running(4242), 'Resume', ActionTone.normal),
       (const Stopping(4242), 'Stopping…', ActionTone.danger),
       (const Failed('relinker failed'), 'Try again', ActionTone.normal),
     ];
@@ -71,7 +71,7 @@ void main() {
 
     test('Turkish', () {
       T.language = Language.byCode('tr');
-      expect(GameAction.of(const Running(1)).title, 'Oynanıyor');
+      expect(GameAction.of(const Running(1)).title, 'Devam et');
       expect(GameAction.of(const Installing(InstallStep.copy, 0.5, updating: true)).title, 'Güncelleniyor… %75');
       expect(GameAction.of(const WaitingForEngine(job)).title, 'Motor bekleniyor');
     });
@@ -106,7 +106,7 @@ void main() {
         expect(model.stateOf(orbit), isA<Starting>());
         await until(() => model.running != null);
         expect(model.stateOf(orbit), isA<Running>().having((state) => state.pid, 'pid', 4242));
-        expect(GameAction.of(model.stateOf(orbit)).title, 'Playing');
+        expect(GameAction.of(model.stateOf(orbit)).title, 'Resume');
         model.primaryAction(orbit);
         await Future<void>.delayed(const Duration(milliseconds: 20));
         expect(model.stateOf(orbit), isA<Running>(), reason: 'the press brings it to the front, it does not stop it');
@@ -325,13 +325,13 @@ void main() {
       expect(find.text('Engine build · Building the relinker and libraries'), findsNothing);
     });
 
-    testWidgets('a game playing: the button says Playing, the game\'s menu asks it to close', (tester) async {
+    testWidgets('a game playing: the button says Resume, the game\'s menu asks it to close', (tester) async {
       final process = FakeGameProcess(ignoresTerm: true);
       model.stopGrace = const Duration(seconds: 30);
       model.running = (orbit, runningFor(process));
       await pumpLauncher(tester, model);
       final button = tester.widget<ConsoleButton>(find.byKey(const ValueKey('primary-action')));
-      expect(button.title, 'Playing');
+      expect(button.title, 'Resume');
       expect(button.stop, isFalse);
       await tester.tap(find.byKey(const ValueKey('primary-action')));
       await settle(tester);

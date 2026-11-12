@@ -236,13 +236,142 @@ class _HomeViewState extends State<HomeView> {
             ),
           Padding(
             padding: EdgeInsets.symmetric(horizontal: 64 * scale, vertical: 28 * scale),
-            child: Align(
-              alignment: AlignmentDirectional.centerEnd,
-              child: Legible(softness: 14, child: HintBar(options: model.selectedHomeFolder == null)),
+            child: Row(
+              children: [
+                if (model.running case (final playing, _)) ...[
+                  RunningGameCard(model: model, game: playing),
+                  SizedBox(width: 24 * scale),
+                ],
+                Expanded(
+                  child: Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: Legible(softness: 14, child: HintBar(options: model.selectedHomeFolder == null)),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
       ],
+    );
+  }
+}
+
+/// Home's corner while a game runs behind it: the game's icon, its name and whether it waits
+/// paused or keeps playing, with Resume. A click anywhere on it goes back to the game, as its
+/// tile's Resume does.
+class RunningGameCard extends StatelessWidget {
+  const RunningGameCard({super.key, required this.model, required this.game});
+
+  final AppModel model;
+  final Game game;
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = LayoutScale.of(context);
+    final accent = model.accentChoice.color;
+    final paused = switch (model.stateOf(game)) {
+      Running(:final paused) => paused,
+      _ => false,
+    };
+    final icon = game.icon;
+    return Pressable(
+      key: const ValueKey('running-game-card'),
+      onTap: () => model.primaryAction(game),
+      builder: (context, hovering) => Semantics(
+        button: true,
+        label: '${game.name}, ${T.text(paused ? 'homeGamePaused' : 'running')}. ${T.text('quickResume')}',
+        excludeSemantics: true,
+        child: AnimatedContainer(
+          duration: Motion.focus,
+          height: 56 * scale,
+          padding: EdgeInsetsDirectional.only(start: 8 * scale, end: 8 * scale),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: hovering ? 0.42 : 0.32),
+            borderRadius: BorderRadius.circular(28 * scale),
+            border: Border.all(color: Colors.white.withValues(alpha: hovering ? 0.18 : 0.1)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(20 * scale),
+                child: SizedBox.square(
+                  dimension: 40 * scale,
+                  child: icon == null
+                      ? ColoredBox(
+                          color: Colors.white.withValues(alpha: 0.08),
+                          child: Icon(Icons.sports_esports_rounded, size: 22 * scale, color: Colors.white70),
+                        )
+                      : ArtworkImage(path: icon, cacheWidth: 120),
+                ),
+              ),
+              SizedBox(width: 12 * scale),
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: 280 * scale),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          paused ? Icons.pause_circle_rounded : Icons.play_circle_rounded,
+                          size: 14 * scale,
+                          color: accent,
+                        ),
+                        SizedBox(width: 5 * scale),
+                        Text(
+                          T.text(paused ? 'homeGamePaused' : 'running'),
+                          style: AppText.display(12 * scale, weight: FontWeight.w600, color: accent),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 2 * scale),
+                    Text(
+                      game.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.display(
+                        15 * scale,
+                        weight: FontWeight.w600,
+                        color: Colors.white.withValues(alpha: 0.95),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: 14 * scale),
+              AnimatedContainer(
+                duration: Motion.focus,
+                height: 36 * scale,
+                padding: EdgeInsets.symmetric(horizontal: 14 * scale),
+                decoration: BoxDecoration(
+                  color: hovering ? Colors.white : Colors.white.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(18 * scale),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.play_arrow_rounded, size: 18 * scale, color: hovering ? Colors.black : Colors.white),
+                    SizedBox(width: 4 * scale),
+                    Text(
+                      T.text('quickResume'),
+                      style: AppText.display(
+                        13 * scale,
+                        weight: FontWeight.w600,
+                        color: hovering ? Colors.black : Colors.white.withValues(alpha: 0.95),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1174,6 +1303,7 @@ class StateLabel extends StatelessWidget {
       Installed(outdated: true) => (Icons.sync_rounded, T.text('updateAvailable'), Palette.warning),
       Installed() => (Icons.check_circle_rounded, T.text('ready'), dim),
       Starting(:final detail) => (Icons.hourglass_top_rounded, detail ?? T.text('starting'), accent),
+      Running(paused: true) => (Icons.pause_circle_rounded, T.text('homeGamePaused'), accent),
       Running() => (Icons.play_circle_rounded, T.text('running'), accent),
     };
     return Row(
