@@ -11,6 +11,7 @@ import 'package:ffi/ffi.dart';
 import 'frame_ring.dart';
 import 'retro_host_native.dart';
 import 'retro_host_protocol.dart';
+import 'retro_host_release.dart';
 import 'strict_json.dart';
 
 /// How a connection to the emulator host ended (anyps5-retro-host docs/protocol.md "Fixtures",
@@ -145,12 +146,24 @@ class RetroHostClient {
   FrameRing? _previousRing;
   PinnedFrame? _frame;
   FrameRing? _frameRing;
+  RetroHostChecked? _checked;
+
+  void _releaseChecked() {
+    final checked = _checked;
+    _checked = null;
+    checked?.release();
+  }
 
   /// Starts the host: [command] is the executable's absolute path and any arguments before the
   /// protocol's own; [environment] adds to the launcher's environment for the host. [volume] and
   /// [muted] are sent as the first call after `welcome`.
+  ///
+  /// [checked] is a host whose files were checked (retro_host_release.dart): it is started through
+  /// the checked file, and its files stay held until the first game's `status` shows `ready` or
+  /// `ended`, or the connection ends (protocol.md "Finding and checking the host").
   static RetroHostClient start({
     required List<String> command,
+    RetroHostChecked? checked,
     Map<String, String>? environment,
     double volume = 1,
     bool muted = false,
@@ -166,8 +179,11 @@ class RetroHostClient {
     final error = calloc<Uint8>(512).cast<Utf8>();
     final argv = _strings(command);
     final envp = _strings(env);
+    final program = checked?.program?.toNativeUtf8() ?? nullptr;
+    client._checked = checked;
     try {
       client._connection = retroHostStart(
+        program,
         argv.$1,
         command.length,
         envp.$1,
@@ -179,11 +195,13 @@ class RetroHostClient {
       );
       if (client._connection == nullptr) {
         client._callback.close();
+        client._releaseChecked();
         throw ProcessException(command.first, command.skip(1).toList(), error.toDartString());
       }
     } finally {
       argv.$2();
       envp.$2();
+      if (program != nullptr) calloc.free(program);
       calloc.free(error);
     }
     client.pid = retroHostPid(client._connection);
@@ -560,6 +578,7 @@ class RetroHostClient {
           if (afterStop) _stopDeadline = null;
         } else {
           final status = RetroStatus.parse(_object(result, 'status'));
+          if (status.ready || status.ended) _releaseChecked();
           if (status.ended && !_lastStatusEnded) _zeroRumble();
           _lastStatusEnded = status.ended;
           if (status.ended && afterStop) _stopDeadline = null;
@@ -785,6 +804,7 @@ class RetroHostClient {
       }
     }
     if (!_ready.isCompleted) _ready.completeError(RetroHostGone(end));
+    _releaseChecked();
     _ended.complete(end);
     if (kill) unawaited(_release());
   }

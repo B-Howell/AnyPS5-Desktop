@@ -6,8 +6,11 @@ import 'dart:typed_data';
 
 import 'package:anyps5_desktop/core/retro_host/retro_host_client.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_host_release.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+
+import '../../support/signing.dart';
 
 /// The client against the real emulator host and the real SwanStation core, as the host
 /// repository's tests/real_core.py drives them: a freely licensed BIOS (OpenBIOS) boots a PS-EXE
@@ -24,6 +27,11 @@ import 'package:test/test.dart';
 ///
 /// `environment` is optional and is added to the launcher's environment for the host. Python 3
 /// must be on PATH to build the disc. Without ANYPS5_RETRO_HOST_REAL the test is skipped.
+///
+/// With `"packer"` (that repository's tools/package_release.py) and `"coreLicence"` (SwanStation's
+/// LICENSE) the host and core are first packed as a release, signed with a throwaway key,
+/// installed and checked (lib/core/retro_host/retro_host_release.dart), and the host is started
+/// from the checked files: on Windows they must stay held until the game is ready.
 void main() {
   final configPath = Platform.environment['ANYPS5_RETRO_HOST_REAL'];
   if (configPath == null || configPath.isEmpty) {
@@ -43,8 +51,11 @@ void main() {
       final built = Process.runSync(_python(), [path('discBuilder'), path('program'), disc]);
       expect(built.exitCode, 0, reason: 'make_test_disc.py: ${built.stderr}');
 
+      final checked = config['packer'] == null ? null : await _checkedRelease(config, work, path);
+      final core = checked?.core ?? path('core');
       final started = RetroHostClient.start(
-        command: [path('host')],
+        command: [checked?.executable ?? path('host')],
+        checked: checked,
         environment: (config['environment'] as Map<String, Object?>?)?.cast<String, String>(),
         volume: 0,
         muted: true,
@@ -66,7 +77,7 @@ void main() {
       });
 
       final epoch = await started.startGame({
-        'core': path('core'),
+        'core': core,
         'system': system.path,
         'saves': p.join(work.path, 'saves'),
         'disc': disc,
@@ -79,8 +90,19 @@ void main() {
       });
       _report('start: epoch $epoch');
 
+      if (checked != null && Platform.isWindows) {
+        expect(checked.held, isTrue);
+        for (final file in [checked.executable, checked.core]) {
+          expect(() => File(file).openSync(mode: FileMode.append).closeSync(), throwsA(isA<FileSystemException>()));
+        }
+        _report('the checked files are held while the game loads');
+      }
       final ready = await _waitFor(started, (s) => s.ready || s.ended, const Duration(seconds: 60));
       expect(ready.ended, isFalse, reason: 'the game ended at start: ${ready.errorCode} ${ready.error}');
+      if (checked != null) {
+        expect(checked.held, isFalse, reason: 'the checked files are let go once the game is ready');
+        _report('host ${checked.version} checked and started from ${checked.program ?? checked.executable}');
+      }
       _report('ready: hardware=${ready.hardware} resolutionError=${jsonEncode(ready.resolutionError)}');
 
       final before = drawn;
@@ -117,6 +139,44 @@ void main() {
       work.deleteSync(recursive: true);
     }
   }, timeout: const Timeout(Duration(minutes: 3)));
+}
+
+/// Packs the host and core as a release, signs it with a throwaway key, installs it and checks it.
+Future<RetroHostChecked> _checkedRelease(
+  Map<String, Object?> config,
+  Directory work,
+  String Function(String) path,
+) async {
+  final system = RetroHostSystem.current!;
+  final download = Directory(p.join(work.path, 'download'))..createSync();
+  final packed = Process.runSync(_python(), [
+    path('packer'),
+    '--version',
+    '1.0.0',
+    '--system',
+    system.name,
+    '--host',
+    path('host'),
+    '--core',
+    path('core'),
+    '--core-licence',
+    path('coreLicence'),
+    '--host-commit',
+    '0' * 40,
+    '--swanstation-commit',
+    '0' * 40,
+    '--out',
+    download.path,
+  ]);
+  expect(packed.exitCode, 0, reason: 'package_release.py: ${packed.stderr}');
+  final names = download.listSync().whereType<File>().map((file) => p.basename(file.path));
+  final sums = sumsOf({for (final name in names) name: File(p.join(download.path, name)).readAsBytesSync()});
+  final key = TestReleaseKey('real host release');
+  File(p.join(download.path, 'SHA256SUMS')).writeAsBytesSync(sums);
+  File(p.join(download.path, 'SHA256SUMS.sig')).writeAsStringSync('${key.signatureLine(sums)}\n');
+  final installed = Directory(p.join(work.path, 'retro-host'));
+  await RetroHostRelease.install(download, installed, keys: [key.key]);
+  return RetroHostRelease.checkBeforeStart(installed, keys: [key.key]);
 }
 
 Future<RetroStatus> _waitFor(RetroHostClient client, bool Function(RetroStatus) done, Duration limit) async {
