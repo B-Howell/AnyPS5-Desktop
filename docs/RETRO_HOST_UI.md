@@ -186,7 +186,8 @@ focus lost and back within 16 ms is not missed. A controller held through a
 focus change therefore reaches the game again when focus comes back. A port
 whose controller left is sent as idle. While `suspended` is true (the in-game
 menu is open), both ports are sent as idle. When it becomes false, the
-buttons held at that moment stay out of the game until they are let go, as
+controllers are seated again first, and the buttons held at that moment stay
+out of the game until they are let go, as
 the launcher's own `PadGate` does when the launcher comes back in front. The
 sticks come back at once.
 
@@ -275,7 +276,8 @@ native memory as a real ring slot would be, so no host is started.
     loads with two, and let go when it leaves;
   - both ports sent again after focus comes back, also when focus is lost
     and back between two reads;
-  - `suspended`, and a button held when it ends kept out until pressed again;
+  - `suspended`, and a button held when it ends kept out until pressed
+    again, also on a controller that sat down just before;
   - vibration sent to the controller at its port, a leaving controller's
     motors stopped, motors stopped when the host is shut down (also against a
     late `rumble`), vibration turned off, and `dispose`, which also lets go

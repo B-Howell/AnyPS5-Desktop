@@ -91,7 +91,8 @@ class RetroHostControls {
   set suspended(bool value) {
     if (_suspended == value) return;
     _suspended = value;
-    if (!value) {
+    if (!value && !_disposed) {
+      _syncSeats();
       for (var port = 0; port < RetroSeats.portCount; port++) {
         _swallowed[port] = _read(port)?.buttons ?? 0;
       }
@@ -122,9 +123,7 @@ class RetroHostControls {
   /// Reads the controllers and sends what changed (tests drive this; the timer calls it).
   void poll() {
     if (_disposed) return;
-    for (final change in seats.sync(pads.pads())) {
-      if (!change.joined) _left(change);
-    }
+    _syncSeats();
     final held = [for (var port = 0; port < RetroSeats.portCount; port++) _suspended ? null : _read(port)];
     for (var port = 0; port < RetroSeats.portCount; port++) {
       _swallowed[port] &= held[port]?.buttons ?? 0;
@@ -151,6 +150,13 @@ class RetroHostControls {
         rightX: input.rightX,
         rightY: input.rightY,
       );
+    }
+  }
+
+  /// Seats the controllers connected now, and lets go of what a leaving one had.
+  void _syncSeats() {
+    for (final change in seats.sync(pads.pads())) {
+      if (!change.joined) _left(change);
     }
   }
 

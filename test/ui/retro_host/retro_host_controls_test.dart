@@ -188,6 +188,18 @@ void main() {
     expect(motors.orders, [('a', 1.0, 0.0, const Duration(hours: 2)), ('a', 0.0, 0.0, Duration.zero)]);
   });
 
+  test('a controller that sat down holding a button just before the suspension ends is kept out too', () async {
+    await started();
+    pads.connect('a');
+    controls.poll();
+    controls.suspended = true;
+    pads.disconnect('a');
+    pads.connect('b', const PadState(pressed: {PadButton.south}));
+    controls.suspended = false;
+    expect(controls.seats.at(0), 'b');
+    expect(session.inputStates.where((sent) => sent.$1 == 0).last.$2, RetroPadInput.idle);
+  });
+
   test('a held button let go and pressed again while the window has no focus reaches the game', () async {
     await started();
     pads.connect('a');
