@@ -65,6 +65,28 @@ void main() {
     }
   }, timeout: const Timeout(Duration(seconds: 90)));
   test(
+    'a frame of another game takes away the frame shown',
+    () => _playOwn(checkout, python, 'A drawn frame, then a frame of another epoch in the same ring.', 'clean', [
+      ..._startedGame(checkout),
+      {'launcherDraws': true},
+      {
+        'from': 'host',
+        'message': {'type': 'frame'},
+        'publish': {
+          'latest': 1,
+          'slot': {'width': 320, 'height': 240, 'visible': 1, 'epoch': 7, 'sequence': 2},
+        },
+      },
+      {'launcherDraws': false},
+      {
+        'from': 'launcher',
+        'message': {'type': 'shutdown'},
+      },
+      {'hostExits': 0},
+    ]),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
     'a call refused before it is sent leaves the next call in order',
     () => _playOwn(
       checkout,
@@ -165,6 +187,15 @@ Future<void> _playOwn(
   } finally {
     directory.deleteSync(recursive: true);
   }
+}
+
+/// Steps 4 to 7 of ring-grows: `start`, its reply, a ring, and a frame of the game.
+List<Map<String, Object?>> _startedGame(String checkout) {
+  final steps =
+      (jsonDecode(File(p.join(checkout, 'fixtures', 'v1', 'sessions', 'ring-grows.json')).readAsStringSync())
+              as Map<String, Object?>)['steps']!
+          as List<Object?>;
+  return [for (final step in steps.sublist(4, 8)) step! as Map<String, Object?>];
 }
 
 /// The start of a session: hello, welcome and the first volume call.
@@ -383,6 +414,9 @@ class _Session {
       } else if (step.containsKey('launcherDraws')) {
         await _until(() => frames.length >= frameSteps, 'frame $frameSteps');
         expect(frames[frameSteps - 1].drawn, step['launcherDraws'], reason: 'step $index launcherDraws');
+        // A frame that is not drawn moved the pin in the frame's ring, so the frame shown before is no
+        // longer readable either.
+        expect(client.frame, step['launcherDraws'] == true ? isNotNull : isNull, reason: 'step $index frame');
         await _resume(index, report);
       } else if (step.containsKey('launcherReports')) {
         if (!clean) await client.ended.timeout(const Duration(seconds: 30));
