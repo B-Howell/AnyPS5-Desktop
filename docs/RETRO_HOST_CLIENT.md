@@ -5,8 +5,9 @@ PS1 games run in a separate program, the emulator host
 runs SwanStation through libretro. It talks to the launcher over a private
 control stream and shares each picture through shared memory. Both sides follow
 that repository's `docs/protocol.md`, version 1. This page explains the
-launcher's side. It was written from the protocol alone, and has no UI yet:
-that is the next step.
+launcher's side. It was written from the protocol alone. The first UI built on
+it, the game's picture and the object that runs one game, is described in
+[The emulator host in the launcher's UI](RETRO_HOST_UI.md).
 
 ## Files
 
@@ -197,8 +198,8 @@ job), against the host repository at the commit named in
 
 ## Not yet
 
-- **No UI.** Picking the host's files, showing frames and the player's
-  controls are the next step.
+- **Not in the game flow.** Frames can be shown ([RETRO_HOST_UI.md](RETRO_HOST_UI.md)),
+  but picking the host's files and the player's controls are still to come.
 - **No signature checks.** The release-time file checks from the protocol's
   "Finding and checking the host" section come with signed distribution.
   Until then, the client runs the command it is given.
