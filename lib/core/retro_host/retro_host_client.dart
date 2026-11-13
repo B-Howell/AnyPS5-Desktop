@@ -134,7 +134,6 @@ class RetroHostClient {
 
   bool _gameLoaded = false;
   bool _lastStatusEnded = false;
-  bool _releaseUnseen = false;
   bool _paused = false;
   bool _inputFocus = true;
   int _ports = 1;
@@ -413,7 +412,7 @@ class RetroHostClient {
         _protocolError('The control stream broke a framing rule (length $length).');
       case RetroHostEvent.end:
         if (!_ended.isCompleted && !_unsupportedSeen && !_shutdownSent) {
-          _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostExited, kill: true, hostLeft: true);
+          _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostExited, kill: true);
         }
       case RetroHostEvent.exited:
         _exitCode = extra;
@@ -424,7 +423,7 @@ class RetroHostClient {
         } else if (_shutdownSent && (extra == 0 || extra == RetroHostEvent.exitUnknown) && _calls.isEmpty) {
           _finish(RetroHostEnd.clean);
         } else {
-          _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostExited, hostLeft: true);
+          _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostExited);
         }
         unawaited(_release());
     }
@@ -438,7 +437,6 @@ class RetroHostClient {
       retroHostCloseDescriptor(descriptor);
       rethrow;
     }
-    _releaseUnseen = false;
     final type = message['type'];
     if (type is! String) {
       retroHostCloseDescriptor(descriptor);
@@ -550,12 +548,14 @@ class RetroHostClient {
         _setFrame(null, null);
       case 'status':
         if (result == null) {
+          if (_gameLoaded) _zeroRumble();
           _gameLoaded = false;
           _epoch = null;
           _lastStatusEnded = false;
           _stopDeadline = null;
         } else {
           final status = RetroStatus.parse(_object(result, 'status'));
+          if (status.ended && !_lastStatusEnded) _zeroRumble();
           _lastStatusEnded = status.ended;
           if (status.ended) _stopDeadline = null;
         }
@@ -565,8 +565,6 @@ class RetroHostClient {
           _gameLoaded = false;
           _epoch = null;
           _stopDeadline = null;
-        } else {
-          _releaseUnseen = _gameLoaded;
         }
       case 'connectedPorts' || 'changeDisc' || 'option':
         if (result is! bool) throw RetroProtocolError('The result of $method must be a boolean.');
@@ -671,13 +669,12 @@ class RetroHostClient {
     _rumble.add(event);
   }
 
-  /// Zeroes the motors when the state rumble follows has become stricter than [before]: no game
-  /// running, paused, or fewer ports with a controller.
+  /// Zeroes the motors when the state rumble follows has become stricter than [before]: paused, or
+  /// fewer ports with a controller. The end of a game zeroes them where a `status` shows it, since
+  /// a next `start` still waiting would hide the end here.
   void _zeroIfStricter(({bool live, bool paused, int ports}) before) {
     final after = _expectedRumble();
-    if ((before.live && !after.live) || (after.paused && !before.paused) || after.ports < before.ports) {
-      _zeroRumble();
-    }
+    if ((after.paused && !before.paused) || after.ports < before.ports) _zeroRumble();
   }
 
   /// Whether a game runs (loaded and not seen ended), whether it is paused and how many ports have
@@ -752,21 +749,13 @@ class RetroHostClient {
   /// The reason the client gave up on the host, for logs.
   String? failureReason;
 
-  /// Ends the connection. [hostLeft] says the host's process or stream ended on its own. A host that
-  /// does so right after answering `release`, with no other message between, did what protocol.md
-  /// "release" allows for a game whose core is stuck: no game is loaded then, so no failed game is
-  /// reported. The motors are zeroed either way.
-  void _finish(RetroHostEnd end, {String? errorCode, bool kill = false, String? reason, bool hostLeft = false}) {
+  void _finish(RetroHostEnd end, {String? errorCode, bool kill = false, String? reason}) {
     if (_ended.isCompleted) return;
     _endValue = end;
     failureReason = reason;
     _timer?.cancel();
     if (kill && _connection != nullptr) retroHostKill(_connection);
     if (_gameLoaded) _zeroRumble();
-    if (_releaseUnseen && hostLeft) {
-      _gameLoaded = false;
-      _epoch = null;
-    }
     if (end != RetroHostEnd.clean && end != RetroHostEnd.unsupported && _gameLoaded && errorCode != null) {
       _failedStatus = RetroStatus.failed(
         error: errorCode == RetroErrorCode.hostHung

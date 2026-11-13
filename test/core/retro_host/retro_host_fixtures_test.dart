@@ -363,15 +363,16 @@ void main() {
     timeout: const Timeout(Duration(seconds: 90)),
   );
   test(
-    'a host that exits right after release reports no game',
+    'a host that exits right after releasing an ended game reports no game',
     () => _playOwn(
       checkout,
       python,
-      'release answered before any status showed the end, then the host exits, as after a stuck core.',
+      'status shows the game ended, release is answered, then the host exits, as after a stuck core.',
       'hostFailure',
       [
         ..._startCall(checkout),
-        ..._call('release', null, null, id: 3),
+        ..._status(checkout, 3, ended: true),
+        ..._call('release', null, null, id: 4),
         {'hostExits': 0},
       ],
       check: (session) => expectLater(session.client.status(), throwsA(isA<RetroHostGone>())),
@@ -417,6 +418,61 @@ void main() {
         expect(session.rumbles.last, _zero(1), reason: 'motors zeroed at the end');
         expectLater(session.client.status(), completion(_failedGame));
       },
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'the end of a game zeroes the motors even with the next start waiting',
+    () => _playOwn(
+      checkout,
+      python,
+      'status, release and the next start sent together; the old game rumbles before status shows its end.',
+      'clean',
+      [
+        ..._startCall(checkout),
+        _status(checkout, 3, ended: true)[0],
+        _call('release', null, null, id: 4)[0],
+        _secondStart(checkout, 5),
+        _rumbleStep(0, 1000),
+        _status(checkout, 3, ended: true)[1],
+        _call('release', null, null, id: 4)[1],
+        {
+          'from': 'host',
+          'message': {
+            'type': 'reply',
+            'id': 5,
+            'result': {'epoch': 2},
+          },
+          'anyValueFor': ['id'],
+        },
+        {
+          'from': 'launcher',
+          'message': {'type': 'shutdown'},
+        },
+        {'hostExits': 0},
+      ],
+      check: (session) {
+        final forwarded = session.rumbles.indexWhere((r) => r.strong == 1000);
+        expect(forwarded, isNot(-1), reason: 'rumble of the old game forwarded while it ran');
+        final zeros = session.rumbles.skip(forwarded + 1).where((r) => r.strong == 0 && r.weak == 0);
+        expect(zeros.length, 4, reason: 'zeroed when the game ended, and again at the end');
+      },
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'a host that exits right after releasing a running game reports the game failed',
+    () => _playOwn(
+      checkout,
+      python,
+      'release answered while the game runs, which does nothing, then the host exits unasked.',
+      'hostFailure',
+      [
+        ..._startCall(checkout),
+        ..._call('release', null, null, id: 3),
+        {'hostExits': 1},
+      ],
+      check: (session) => expectLater(session.client.status(), completion(_failedGame)),
     ),
     timeout: const Timeout(Duration(seconds: 90)),
   );

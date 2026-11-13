@@ -176,14 +176,14 @@ answered the same way, and never left waiting.
 The client counts a game as loaded from `start`'s reply until `release` is
 answered for a game a `status` showed ended, or until a `status` returns null,
 which means no game is loaded. `release` does nothing while the game still
-runs, so a `release` answered before the end was seen leaves the game loaded
-until a `status` says otherwise. The protocol lets a host whose game's core is
-stuck answer `release` and exit, with no game loaded; so when the host's
-process or stream ends right after a `release` was answered, with no other
-message between, the client counts no game as loaded. A protocol error, a
-failed write or `close()` is not such an exit, and the motors are zeroed
-either way. A host failure reports a failed game (see above)
-only while a game is loaded.
+runs, and its reply is null either way, so a `release` answered before the end
+was seen leaves the game loaded. The protocol has the launcher call `release`
+for an ended game, so the client relies on a `status` showing the end first:
+the host may then answer `release` and exit with no game loaded (a stuck
+core), which reports no failed game, while a host that exits after a
+`release` of a running game reports the game failed. A host failure reports a
+failed game (see above) only while a game is loaded, and zeroes the motors
+whenever one is.
 
 ## Resets
 
