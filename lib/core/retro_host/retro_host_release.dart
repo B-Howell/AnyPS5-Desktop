@@ -108,6 +108,15 @@ class RetroHostChecked {
   /// Whether the checked files are still held.
   bool get held => _files.any((file) => file.isOpen);
 
+  bool _claimed = false;
+
+  /// Takes this check for one start: false when it was released or another start took it.
+  bool claim() {
+    if (_claimed || !held) return false;
+    _claimed = true;
+    return true;
+  }
+
   /// Lets the checked files go. Calling it again does nothing.
   void release() {
     for (final file in _files) {
@@ -198,7 +207,7 @@ abstract final class RetroHostRelease {
         try {
           file = CheckedFile.open(p.join(folder.path, name));
         } on FileSystemException {
-          throw RetroHostReleaseFailure('$name is missing');
+          throw RetroHostReleaseFailure('$name is missing or not a file');
         }
         held.add(file);
         if (await file.sha256Hex() != expected) {

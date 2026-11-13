@@ -158,7 +158,11 @@ where the maintainers sign.
     `status`, or when the connection ends, whichever is first. It refuses a
     command whose program is not the checked executable, and for the whole
     life of that host it refuses any `start` whose `core` is not the release's
-    SwanStation, so a checked host never loads another core.
+    SwanStation, so a checked host never loads another core. A check is good
+    for one start: a second start with it, or a start after it was released,
+    is refused, so run `checkBeforeStart` again before each start.
+  - A file swapped for something that is not a regular file (a FIFO, say) is
+    refused at once; the descriptor is opened without blocking.
 - **When a check fails.** `RetroHostReleaseFailure` is thrown and the host is
   not started. The UI should then say that the emulator needs to be downloaded
   again.

@@ -180,6 +180,9 @@ class RetroHostClient {
       checked.release();
       throw ArgumentError.value(command.first, 'command', 'is not the checked host ${checked.executable}');
     }
+    if (checked != null && !checked.claim()) {
+      throw ArgumentError.value(checked, 'checked', 'was released or used by another start; check again');
+    }
     final client = RetroHostClient._(volume, muted, pixelFormats);
     final token = _nextToken++;
     client._callback = NativeCallable<RetroHostCallbackNative>.listener(client._onEvent);

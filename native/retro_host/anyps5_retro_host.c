@@ -1326,9 +1326,11 @@ ANYPS5_EXPORT void anyps5_rh_store(void* address, uint32_t value) {
 // A release file opened for its check (protocol.md "Finding and checking the
 // host"): close-on-exec, at a number above 3, so the dup2 to descriptor 3 at
 // the host's start cannot replace it and it never reaches the host. On Linux
-// the host is started through it, as /proc/self/fd/<n>.
+// the host is started through it, as /proc/self/fd/<n>. O_NONBLOCK keeps a
+// FIFO put in a file's place from blocking the open; it is then refused as
+// not a regular file, and reads of a regular file are not changed by it.
 ANYPS5_EXPORT int64_t anyps5_rh_open_checked(const char* path, char* error, int32_t error_size) {
-  int fd = open(path, O_RDONLY | O_CLOEXEC);
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
   if (fd < 0) {
     char text[128];
     snprintf(text, sizeof text, "The file could not be opened: %s.", strerror(errno));

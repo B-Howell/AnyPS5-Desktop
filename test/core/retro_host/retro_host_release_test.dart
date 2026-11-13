@@ -217,7 +217,7 @@ void main() {
         File(p.join(installed().path, name)).deleteSync();
         expect(
           await failure(() => RetroHostRelease.checkBeforeStart(installed(), keys: keys, system: _linux)),
-          '$name is missing',
+          '$name is missing or not a file',
         );
       });
     }
@@ -293,7 +293,36 @@ void main() {
       throwsA(isA<RetroCallError>()),
     );
     await client.close();
+    expect(
+      () => RetroHostClient.start(command: [checked.executable, ...host.arguments(out)], checked: checked),
+      throwsArgumentError,
+      reason: 'a check is good for one start',
+    );
   }, skip: Platform.isLinux || Platform.isWindows ? null : 'Linux and Windows');
+
+  test('a check is taken by one start only', () async {
+    final host = await _realProgram(temp);
+    final folder = signedRelease(temp, host.program, key);
+    final checked = await RetroHostRelease.checkBeforeStart(folder, keys: keys, system: _current);
+    expect(checked.claim(), isTrue);
+    expect(checked.claim(), isFalse);
+    checked.release();
+    final released = await RetroHostRelease.checkBeforeStart(folder, keys: keys, system: _current);
+    released.release();
+    expect(released.claim(), isFalse);
+  });
+
+  test('a FIFO in the place of a checked file is refused without blocking', () async {
+    await RetroHostRelease.install(download(), installed(), keys: keys, system: _linux);
+    final core = p.join(installed().path, 'swanstation_libretro.so');
+    File(core).deleteSync();
+    expect(Process.runSync('mkfifo', [core]).exitCode, 0);
+    expect(
+      await failure(() => RetroHostRelease.checkBeforeStart(installed(), keys: keys, system: _linux))
+          .timeout(const Duration(seconds: 10)),
+      'swanstation_libretro.so is missing or not a file',
+    );
+  }, skip: Platform.isLinux ? null : 'Linux only');
 
   test('the host override is for debug builds only', () {
     expect(RetroHostRelease.debugBuild, isTrue, reason: 'tests run as a debug build');
@@ -311,7 +340,7 @@ void main() {
       expect(launch.core, isNull);
     });
 
-    test('a release build ignores ANYPS5_RETRO_HOST and checks the host beside it', () async {
+    test('with debug false, ANYPS5_RETRO_HOST is ignored and the host beside it is checked', () async {
       expect(
         await failure(
           () => RetroHostRelease.locate(
