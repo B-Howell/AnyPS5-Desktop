@@ -110,10 +110,12 @@ class FakeRetroHostSession extends FakeFrameSource implements RetroHostSession {
     return 1;
   }
 
+  /// `release` forgets an ended game, as protocol.md "release" says: `status` is then null.
   @override
   Future<Object?> call(String method, [Object? args]) async {
     calls.add((method, args));
     await callGate?.future;
+    if (method == 'release' && (nextStatus?.ended ?? true)) nextStatus = null;
     return callResults[method];
   }
 
@@ -124,9 +126,11 @@ class FakeRetroHostSession extends FakeFrameSource implements RetroHostSession {
     return nextStatus;
   }
 
+  /// `stop`: the game has ended, and `status` says so until `release`.
   @override
   Future<RetroStatus?> stopGame() async {
     calls.add(('stop', null));
+    if (nextStatus != null) nextStatus = stopStatus;
     return stopStatus;
   }
 

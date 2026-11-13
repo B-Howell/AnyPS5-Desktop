@@ -46,6 +46,14 @@ caller adds variables on Windows, the native code builds the block for
   out and `CreateProcessW` does not add to a block it is given;
 - it sorts the entries by name without regard to case, as Windows requires.
 
+With `inheritEnvironment: false` the variables the caller gives are the host's
+whole environment, and nothing is inherited. The launcher does this on Linux,
+where it gives the host its own environment without what its AppImage set
+([RETRO_HOST_UI.md](RETRO_HOST_UI.md), "The host's environment"). That
+environment cannot be empty: the native code gives the host the launcher's own
+environment when it is given no entries, so `start` refuses an empty one with
+an `ArgumentError` instead.
+
 **Windows.**
 
 - The host gets two anonymous pipes. Their host ends are made inheritable only

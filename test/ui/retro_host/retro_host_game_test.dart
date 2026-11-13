@@ -254,4 +254,76 @@ void main() {
     expect(session.closed, isTrue);
     game = RetroHostGame(FakeRetroHostSession());
   });
+
+  test('detach stops and forgets the game and leaves the host running for the next one', () async {
+    await started(status: fakeStatus());
+    await game.setFocused(false);
+    session.focusChanges.clear();
+    final first = game.detach();
+    final second = game.detach();
+    expect(await first, isTrue);
+    expect(await second, isTrue);
+    expect(session.calls.map((call) => call.$1), containsAllInOrder(['stop', 'release']));
+    expect(session.shutdownAsked, isFalse);
+    expect(session.closed, isFalse);
+    expect(game.phase, RetroHostGamePhase.closed);
+    expect(session.focusChanges, [true], reason: 'the next game starts with focus, as a new host does');
+    game.input(0, 1);
+    expect(session.inputs, isEmpty, reason: 'a detached game sends nothing');
+    game.dispose();
+    await pumpEventQueue();
+    expect(session.shutdownAsked, isFalse, reason: 'the host is no longer the game\'s');
+
+    final next = RetroHostGame(session, statusEvery: const Duration(hours: 1));
+    session.nextStatus = fakeStatus();
+    await next.start(_request);
+    expect(next.phase, RetroHostGamePhase.playing);
+    next.dispose();
+    await pumpEventQueue();
+    expect(session.shutdownAsked, isTrue);
+    game = RetroHostGame(FakeRetroHostSession());
+  });
+
+  test('detach releases a game that ended on its own', () async {
+    await started(status: fakeStatus());
+    session.nextStatus = fakeStatus(ended: true, errorCode: RetroErrorCode.stalled);
+    await game.refresh();
+    expect(game.phase, RetroHostGamePhase.ended);
+    session.calls.clear();
+    expect(await game.detach(), isTrue);
+    expect(session.calls, [('release', null)]);
+  });
+
+  test('detach shuts the host down when it still holds a game after release', () async {
+    await started(status: fakeStatus());
+    session.stopStatus = fakeStatus();
+    expect(await game.detach(), isFalse);
+    expect(session.shutdownAsked, isTrue);
+    expect(session.closed, isTrue);
+  });
+
+  test('detach shuts the host down when release or status fails', () async {
+    await started(status: fakeStatus());
+    session.statusError = const RetroCallError(RetroCallError.argument, 'refused');
+    expect(await game.detach(), isFalse);
+    expect(session.shutdownAsked, isTrue);
+  });
+
+  test('detach after the host ended keeps nothing', () async {
+    await started(status: fakeStatus());
+    session.nextStatus = const RetroStatus.failed(
+      error: 'The emulator closed unexpectedly.',
+      errorCode: RetroErrorCode.hostExited,
+    );
+    session.endedCompleter.complete(RetroHostEnd.hostFailure);
+    await pumpEventQueue();
+    expect(await game.detach(), isFalse);
+    expect(session.closed, isTrue);
+  });
+
+  test('detach after shutdown keeps nothing', () async {
+    await started(status: fakeStatus());
+    await game.shutdown();
+    expect(await game.detach(), isFalse);
+  });
 }

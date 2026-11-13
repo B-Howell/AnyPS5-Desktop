@@ -2428,5 +2428,16 @@
   "retroMenuDiscChangingDetail": "Changing discs…",
   "retroMenuDiscFailedDetail": "In the console. The last disc change did not work.",
   "retroMenuOptionPendingDetail": "Takes effect in a moment.",
-  "retroMenuOptionRestartDetail": "Takes effect when the game is started again."
+  "retroMenuOptionRestartDetail": "Takes effect when the game is started again.",
+  "retroMenuOptionRestartOnlyDetail": "Changes take effect when the game is started again.",
+  "retroMenuGraphics": "Graphics",
+  "retroMenuGraphicsDetail": "Resolution, filtering and the picture's shape.",
+  "retroMenuAudio": "Audio",
+  "retroMenuAudioDetail": "Volume, mute and the disc's music.",
+  "retroMenuController": "Controller",
+  "retroMenuControllerDetail": "Analog mode, vibration and the sticks.",
+  "retroMenuConsole": "Console",
+  "retroMenuConsoleDetail": "Region, BIOS, fast boot and disc speed.",
+  "retroMenuAdvanced": "Advanced",
+  "retroMenuAdvancedDetail": "How the emulator runs the game. Change these only to fix a problem."
 }

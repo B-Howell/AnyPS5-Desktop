@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../core/retro_host/retro_host_protocol.dart';
 import 'retro_host_controls.dart';
 import 'retro_host_game.dart';
+import 'retro_option_sections.dart';
 
 /// One row of the in-game menu.
 sealed class RetroMenuRow {
@@ -47,7 +48,12 @@ class RetroOptionRow extends RetroMenuRow {
   final RetroOption option;
 
   String get key => option.key;
-  String get title => option.title;
+
+  /// The option's title, without SwanStation's own " (Restart)" ([retroOptionTitle]).
+  String get title => retroOptionTitle(option.title);
+
+  /// Where it is shown ([retroOptionSection]); rows are made only for options that are shown.
+  RetroOptionSection get section => retroOptionSection(key)!;
 
   /// The label of the value chosen.
   String get choice => option.labels[option.selected];
@@ -111,9 +117,15 @@ class RetroGameMenu extends ChangeNotifier {
   /// Whether the last disc change failed (`discs.failed`).
   bool get discChangeFailed => game.status?.discs?.failed ?? false;
 
-  /// The rows for the game's last status: the discs of a multi-disc game, then the core options in
-  /// the order the host lists them, then the volume.
+  /// The rows for the game's last status: the discs of a multi-disc game, then the core options
+  /// that are shown ([retroOptionSection]) in the order the host lists them, then the volume.
   List<RetroMenuRow> get rows => rowsFor(game.status, volume: game.volume, muted: game.muted);
+
+  /// The core options of [section], in the order the host lists them.
+  List<RetroOptionRow> optionsIn(RetroOptionSection section) => [
+    for (final row in rows.whereType<RetroOptionRow>())
+      if (row.section == section) row,
+  ];
 
   /// The rows for [status] (null before the first one) and the volume.
   static List<RetroMenuRow> rowsFor(RetroStatus? status, {required double volume, required bool muted}) {
@@ -127,7 +139,8 @@ class RetroGameMenu extends ChangeNotifier {
             inserted: discs.inserted == index,
             enabled: !discs.busy && discs.inserted != index,
           ),
-      for (final option in status?.options.values ?? const <RetroOption>[]) RetroOptionRow(option),
+      for (final option in status?.options.values ?? const <RetroOption>[])
+        if (retroOptionShown(option.key)) RetroOptionRow(option),
       RetroVolumeRow(level: volume, muted: muted),
     ];
   }

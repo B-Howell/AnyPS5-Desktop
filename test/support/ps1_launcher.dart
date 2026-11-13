@@ -6,7 +6,6 @@ import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_install.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
-import 'package:anyps5_desktop/ui/retro_host/retro_host_game.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -15,7 +14,8 @@ import 'fixtures.dart';
 import 'ui_support.dart';
 
 /// A launcher with one PS1 disc in its games folder, a host where ANYPS5_RETRO_HOST says, and a
-/// fake host session for every game opened in it.
+/// fake host session for every host started in it: [sessions] in order, a new one made for a
+/// host started once every session there was used.
 class Ps1Launcher {
   Ps1Launcher({bool hostFound = true}) {
     final temp = temporaryFolder('ps1-host');
@@ -31,9 +31,11 @@ class Ps1Launcher {
     );
     model.setRetroLibrary(true);
     game = model.games.singleWhere((game) => game.retro != null);
+    model.retroStatusEvery = const Duration(hours: 1);
     model.openRetroHost = (install, {required volume, required muted}) {
       opened.add((install, volume, muted));
-      return RetroHostGame(session, statusEvery: const Duration(hours: 1), volume: volume, muted: muted);
+      if (opened.length > sessions.length) sessions.add(FakeRetroHostSession());
+      return sessions[opened.length - 1];
     };
   }
 
@@ -43,17 +45,20 @@ class Ps1Launcher {
   late final String disc;
   late final Game game;
   final folders = <Directory>[];
-  final session = FakeRetroHostSession();
+  final sessions = [FakeRetroHostSession()];
+
+  /// The session made last: the host the next game starts on, until another is made.
+  FakeRetroHostSession get session => sessions.last;
   final opened = <(RetroHostInstall, double, bool)>[];
 
   AppModel get model => fixture.model;
   RetroPlay get play => model.retroPlay!;
 
-  /// Plays the game, the host greets the launcher and the game loads.
+  /// Plays the game, the host greets the launcher (unless it did before) and the game loads.
   Future<void> start({RetroStatus? status}) async {
     session.nextStatus = status ?? fakeStatus();
     final playing = model.play(game);
-    session.readyCompleter.complete();
+    if (!session.readyCompleter.isCompleted) session.readyCompleter.complete();
     await playing;
     await pumpEventQueue();
   }
@@ -109,3 +114,21 @@ RetroStatus menuStatus({int selected = 0, bool busy = false, bool failed = false
     failed: failed,
   ),
 );
+
+/// The real host's status once a game was ready, with its fifty SwanStation options in the host's
+/// order (test/fixtures/retro-host-swanstation-status.json), and the two discs of [menuStatus].
+/// [selected] chooses an option's value by its index, and makes it the value in effect.
+RetroStatus recordedStatus({Map<String, int> selected = const {}}) {
+  final file = jsonDecode(File('test/fixtures/retro-host-swanstation-status.json').readAsStringSync()) as Map;
+  final status = (file['status'] as Map).cast<String, Object?>();
+  final options = (status['options']! as Map).cast<String, Object?>();
+  for (final MapEntry(:key, :value) in selected.entries) {
+    final option = (options[key]! as Map).cast<String, Object?>();
+    option['selected'] = value;
+    option['activeValue'] = (option['values']! as List)[value];
+    options[key] = option;
+  }
+  status['options'] = options;
+  status['discs'] = menuStatus().discs!.toJson();
+  return RetroStatus.parse(status);
+}

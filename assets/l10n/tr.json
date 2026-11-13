@@ -2428,5 +2428,16 @@
   "retroMenuDiscChangingDetail": "Disk değiştiriliyor…",
   "retroMenuDiscFailedDetail": "Konsolda. Son disk değiştirme başarısız oldu.",
   "retroMenuOptionPendingDetail": "Birazdan etkili olur.",
-  "retroMenuOptionRestartDetail": "Oyun yeniden başlatıldığında etkili olur."
+  "retroMenuOptionRestartDetail": "Oyun yeniden başlatıldığında etkili olur.",
+  "retroMenuOptionRestartOnlyDetail": "Değişiklikler oyun yeniden başlatıldığında etkili olur.",
+  "retroMenuGraphics": "Grafik",
+  "retroMenuGraphicsDetail": "Çözünürlük, filtreleme ve görüntünün biçimi.",
+  "retroMenuAudio": "Ses",
+  "retroMenuAudioDetail": "Ses düzeyi, sessiz ve diskin müziği.",
+  "retroMenuController": "Kumanda",
+  "retroMenuControllerDetail": "Analog mod, titreşim ve çubuklar.",
+  "retroMenuConsole": "Konsol",
+  "retroMenuConsoleDetail": "Bölge, BIOS, hızlı açılış ve disk hızı.",
+  "retroMenuAdvanced": "Gelişmiş",
+  "retroMenuAdvancedDetail": "Emülatörün oyunu nasıl çalıştırdığı. Yalnızca bir sorunu gidermek için değiştir."
 }
