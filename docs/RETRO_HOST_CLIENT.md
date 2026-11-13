@@ -182,7 +182,9 @@ answered the same way, and never left waiting.
     after `connectedPorts(1)`) is not forwarded;
   - when the connection ends with a game loaded, a clean shutdown included;
   - on a host failure.
-- **Which rumble is forwarded.** The host takes calls in order, so the client
+- **Which rumble is forwarded.** Only rumble of a running game: none while no
+  game is loaded, and none once a `status` showed the game ended, until the
+  next `start`. The host takes calls in order, so the client
   judges each `rumble` by the state the host will have once it has taken every
   call sent so far: what the replies confirmed, then each call still waiting as
   if it succeeds. A `pause(true)` or `connectedPorts(1)` stops rumble as soon

@@ -549,7 +549,6 @@ class RetroHostClient {
       case 'status':
         if (result != null) {
           final status = RetroStatus.parse(_object(result, 'status'));
-          if (status.ended && !_lastStatusEnded) _zeroRumble();
           _lastStatusEnded = status.ended;
           if (status.ended) _stopDeadline = null;
         }
@@ -656,24 +655,28 @@ class RetroHostClient {
   void _onRumble(RetroFields f) {
     final event = RetroRumble(f.integer('port', 0, 1), f.integer('strong', 0, 0xFFFF), f.integer('weak', 0, 0xFFFF));
     final expected = _expectedRumble();
-    if (expected.paused || !_inputFocus || event.port >= expected.ports) return;
+    if (!expected.live || expected.paused || !_inputFocus || event.port >= expected.ports) return;
     _rumble.add(event);
   }
 
-  /// Zeroes the motors when the state rumble follows has become stricter than [before]: paused, or
-  /// fewer ports with a controller.
-  void _zeroIfStricter(({bool paused, int ports}) before) {
+  /// Zeroes the motors when the state rumble follows has become stricter than [before]: no game
+  /// running, paused, or fewer ports with a controller.
+  void _zeroIfStricter(({bool live, bool paused, int ports}) before) {
     final after = _expectedRumble();
-    if ((after.paused && !before.paused) || after.ports < before.ports) _zeroRumble();
+    if ((before.live && !after.live) || (after.paused && !before.paused) || after.ports < before.ports) {
+      _zeroRumble();
+    }
   }
 
-  /// Whether the game is paused and how many ports have a controller once the host has taken every
-  /// call sent so far, as the host takes them in order: what the replies confirmed, then each call
-  /// still waiting as if it succeeds, except a `start` while a game is loaded, which the host
-  /// refuses with `busy`. Rumble follows this, so it stops as soon as a pause or a controller
-  /// leaving is sent, and a call sent before an earlier `start` was answered still counts.
-  ({bool paused, int ports}) _expectedRumble() {
+  /// Whether a game runs (loaded and not seen ended), whether it is paused and how many ports have
+  /// a controller once the host has taken every call sent so far, as the host takes them in order:
+  /// what the replies confirmed, then each call still waiting as if it succeeds, except a `start`
+  /// while a game is loaded, which the host refuses with `busy`. Rumble follows this, so it stops
+  /// as soon as a pause or a controller leaving is sent, and a call sent before an earlier `start`
+  /// was answered still counts.
+  ({bool live, bool paused, int ports}) _expectedRumble() {
     var loaded = _gameLoaded;
+    var live = _gameLoaded && !_lastStatusEnded;
     var paused = _paused;
     var ports = _ports;
     for (final call in _calls) {
@@ -681,6 +684,7 @@ class RetroHostClient {
       switch (call.method) {
         case 'start' when !loaded:
           loaded = true;
+          live = true;
           paused = false;
           ports = 1;
         case 'release' when _lastStatusEnded:
@@ -691,7 +695,7 @@ class RetroHostClient {
           ports = args;
       }
     }
-    return (paused: paused, ports: ports);
+    return (live: live, paused: paused, ports: ports);
   }
 
   void _zeroRumble() {

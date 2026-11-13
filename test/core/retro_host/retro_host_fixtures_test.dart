@@ -322,6 +322,29 @@ void main() {
     ),
     timeout: const Timeout(Duration(seconds: 90)),
   );
+  test(
+    'rumble after the game ended is not forwarded',
+    () => _playOwn(
+      checkout,
+      python,
+      'status shows the game ended, then a late rumble, then status again.',
+      'clean',
+      [
+        ..._startCall(checkout),
+        ..._endedStatus(checkout, 3),
+        _rumbleStep(0, 1000),
+        ..._endedStatus(checkout, 4),
+        {
+          'from': 'launcher',
+          'message': {'type': 'shutdown'},
+        },
+        {'hostExits': 0},
+      ],
+      check: (session) =>
+          expect([for (final r in session.rumbles) r.strong], isNot(contains(1000)), reason: 'no rumble after the end'),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
 }
 
 Matcher _zero(int port) => isA<RetroRumble>()
@@ -356,6 +379,27 @@ Map<String, Object?> _secondStart(String checkout, int id) {
     ...step,
     'message': {...step['message']! as Map<String, Object?>, 'id': id},
   };
+}
+
+/// A `status` call, as the session's call [id], whose reply is play-and-quit's status of the ended
+/// game.
+List<Map<String, Object?>> _endedStatus(String checkout, int id) {
+  final steps =
+      (jsonDecode(File(p.join(checkout, 'fixtures', 'v1', 'sessions', 'play-and-quit.json')).readAsStringSync())
+              as Map<String, Object?>)['steps']!
+          as List<Object?>;
+  final reply = steps.cast<Map<String, Object?>>().firstWhere((step) {
+    final message = step['message'] as Map<String, Object?>?;
+    final result = message?['result'];
+    return message?['type'] == 'reply' && result is Map && result['ended'] == true;
+  });
+  return [
+    _call('status', null, null, id: id)[0],
+    {
+      ...reply,
+      'message': {...reply['message']! as Map<String, Object?>, 'id': id},
+    },
+  ];
 }
 
 /// Steps 4 and 5 of ring-grows: `start` and its reply.
