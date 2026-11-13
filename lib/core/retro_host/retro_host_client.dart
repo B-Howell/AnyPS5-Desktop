@@ -63,16 +63,13 @@ class RetroRumble {
 /// The host's environment as `NAME=value` entries: [base] with [added] on top. Windows treats
 /// names that differ only in case as one variable, and `Platform.environment` gives them in upper
 /// case there, so an added `Path` must replace the inherited `PATH` rather than sit beside it.
-/// Windows also requires the block `CreateProcessW` takes to be sorted by name without regard to
-/// case, so there the entries come in that order.
+/// On Windows native/retro_host adds the hidden `=` entries and sorts the block.
 List<String> retroHostEnvironment(Map<String, String> base, Map<String, String> added, {required bool windows}) {
   final merged = <String, MapEntry<String, String>>{};
   for (final entry in [...base.entries, ...added.entries]) {
     merged[windows ? entry.key.toUpperCase() : entry.key] = entry;
   }
-  final names = merged.keys.toList();
-  if (windows) names.sort();
-  return [for (final name in names) '${merged[name]!.key}=${merged[name]!.value}'];
+  return [for (final entry in merged.values) '${entry.key}=${entry.value}'];
 }
 
 class _Pending {
@@ -138,6 +135,7 @@ class RetroHostClient {
   bool _lastStatusEnded = false;
   bool _paused = false;
   bool _inputFocus = true;
+  int _ports = 1;
   int? _epoch;
   RetroStatus? _failedStatus;
 
@@ -238,7 +236,8 @@ class RetroHostClient {
   /// it is the frame shown.
   PinnedFrame? get frame => _frame;
 
-  /// Vibration to forward to the controller at a port; nothing while paused or without input focus.
+  /// Vibration to forward to the controller at a port; nothing while paused, without input focus, or
+  /// for a port that `connectedPorts` left without a controller.
   /// Events come asynchronously, so a listener may call anything on the client, [close] included.
   Stream<RetroRumble> get rumble => _rumble.stream;
 
@@ -287,7 +286,11 @@ class RetroHostClient {
     }
     final pending = _Pending(_nextCallId++, method, DateTime.now().add(replyLimit));
     _calls.add(pending);
-    if (method == 'start' || method == 'release' || (method == 'connectedPorts' && args == 1)) _zeroRumble();
+    if (method == 'start' || method == 'release') _zeroRumble();
+    if (method == 'connectedPorts' && args is int && (args == 1 || args == 2)) {
+      if (args < _ports) _zeroRumble();
+      _ports = args;
+    }
     if (method == 'pause' && args is bool && _gameLoaded) {
       _paused = args;
       if (args) _zeroRumble();
@@ -537,6 +540,7 @@ class RetroHostClient {
         _epoch = epoch;
         _gameLoaded = true;
         _paused = false;
+        _ports = 1;
         _lastStatusEnded = false;
         _setFrame(null, null);
       case 'status':
@@ -646,7 +650,7 @@ class RetroHostClient {
 
   void _onRumble(RetroFields f) {
     final event = RetroRumble(f.integer('port', 0, 1), f.integer('strong', 0, 0xFFFF), f.integer('weak', 0, 0xFFFF));
-    if (_paused || !_inputFocus) return;
+    if (_paused || !_inputFocus || event.port >= _ports) return;
     _rumble.add(event);
   }
 

@@ -185,20 +185,22 @@ void main() {
     timeout: const Timeout(Duration(seconds: 90)),
   );
   test(
-    'a controller leaving port 2 stops the motors',
+    'rumble reaches only ports with a controller, and leaving port 2 stops the motors',
     () => _playOwn(
       checkout,
       python,
-      'Port 2 rumbles, then connectedPorts(1) takes its controller away.',
+      'Port 2 rumbles before a controller joins it, while one is in it, and after it left.',
       'clean',
       [
         ..._startCall(checkout),
+        _rumbleStep(1, 3000),
+        ..._call('status', null, null),
         ..._call('connectedPorts', 2, true),
-        {
-          'from': 'host',
-          'message': {'type': 'rumble', 'port': 1, 'strong': 1000, 'weak': 500},
-        },
+        _rumbleStep(1, 1000),
+        ..._call('status', null, null),
         ..._call('connectedPorts', 1, true),
+        _rumbleStep(1, 2000),
+        ..._call('status', null, null),
         {
           'from': 'launcher',
           'message': {'type': 'shutdown'},
@@ -206,9 +208,13 @@ void main() {
         {'hostExits': 0},
       ],
       check: (session) {
-        final last = session.rumbles.lastIndexWhere((r) => r.strong == 1000);
-        expect(last, isNot(-1), reason: 'rumble forwarded');
-        expect(session.rumbles.skip(last + 1).where((r) => r.port == 1), contains(_zero(1)), reason: 'port 2 zeroed');
+        final strong = [for (final r in session.rumbles) r.strong];
+        expect(strong, isNot(contains(3000)), reason: 'no rumble before a controller joined port 2');
+        expect(strong, isNot(contains(2000)), reason: 'no rumble after the controller left port 2');
+        final forwarded = strong.indexOf(1000);
+        expect(forwarded, isNot(-1), reason: 'rumble forwarded while port 2 had a controller');
+        final zeros = session.rumbles.skip(forwarded + 1).where((r) => r.port == 1 && r.strong == 0 && r.weak == 0);
+        expect(zeros.length, 2, reason: 'port 2 zeroed when its controller left, and again at the end');
       },
     ),
     timeout: const Timeout(Duration(seconds: 90)),
@@ -235,6 +241,11 @@ Matcher _zero(int port) => isA<RetroRumble>()
     .having((r) => r.port, 'port', port)
     .having((r) => r.strong, 'strong', 0)
     .having((r) => r.weak, 'weak', 0);
+
+Map<String, Object?> _rumbleStep(int port, int strong) => {
+  'from': 'host',
+  'message': {'type': 'rumble', 'port': port, 'strong': strong, 'weak': 0},
+};
 
 /// A call the launcher sends and the host's reply.
 List<Map<String, Object?>> _call(String method, Object? args, Object? result) => [

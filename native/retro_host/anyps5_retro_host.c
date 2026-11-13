@@ -204,33 +204,73 @@ static wchar_t* widen(const char* text) {
   return wide;
 }
 
+// The length of an environment entry's name. A name may start with '=', as
+// the hidden per-drive current directories ("=C:=C:\dir") do.
+static int entry_name_length(const wchar_t* entry) {
+  const wchar_t* equals = entry[0] ? wcschr(entry + 1, L'=') : NULL;
+  return (int)(equals ? equals - entry : (ptrdiff_t)wcslen(entry));
+}
+
+static int same_name(const wchar_t* a, const wchar_t* b) {
+  return CompareStringOrdinal(a, entry_name_length(a), b, entry_name_length(b), TRUE) == CSTR_EQUAL;
+}
+
+static int compare_entries(const void* a, const void* b) {
+  const wchar_t* x = *(const wchar_t* const*)a;
+  const wchar_t* y = *(const wchar_t* const*)b;
+  return CompareStringOrdinal(x, entry_name_length(x), y, entry_name_length(y), TRUE) - CSTR_EQUAL;
+}
+
+// The block CreateProcessW takes: the given entries, plus the launcher's own
+// hidden entries whose names start with '=' (dart:io leaves those out, and
+// CreateProcessW does not add the drives' current directories to a block it
+// is given), sorted by name without regard to case as Windows requires.
 static wchar_t* environment_block(const char* const* env, int32_t count) {
-  size_t used = 0;
-  size_t room = 1;
-  wchar_t* block = (wchar_t*)malloc(sizeof(wchar_t));
-  if (!block) return NULL;
-  for (int32_t i = 0; i < count; ++i) {
-    wchar_t* entry = widen(env[i]);
-    if (!entry) {
-      free(block);
-      return NULL;
-    }
-    size_t length = wcslen(entry) + 1;
-    wchar_t* bigger = (wchar_t*)realloc(block, (used + length + 1) * sizeof(wchar_t));
-    if (!bigger) {
-      free(entry);
-      free(block);
-      return NULL;
-    }
-    block = bigger;
-    memcpy(block + used, entry, length * sizeof(wchar_t));
-    used += length;
-    room = used + 1;
-    free(entry);
+  wchar_t* own = GetEnvironmentStringsW();
+  size_t hidden = 0;
+  for (const wchar_t* entry = own; entry && *entry; entry += wcslen(entry) + 1) {
+    if (entry[0] == L'=') ++hidden;
   }
-  if (used == 0) block[used++] = 0;
-  block[used] = 0;
-  (void)room;
+  wchar_t** entries = (wchar_t**)calloc((size_t)count + hidden + 1, sizeof(wchar_t*));
+  wchar_t* block = NULL;
+  size_t total = 0;
+  size_t length = 1;
+  int ok = entries != NULL;
+  for (int32_t i = 0; ok && i < count; ++i) {
+    entries[total] = widen(env[i]);
+    ok = entries[total] != NULL;
+    if (ok) length += wcslen(entries[total++]) + 1;
+  }
+  for (const wchar_t* entry = own; ok && entry && *entry; entry += wcslen(entry) + 1) {
+    if (entry[0] != L'=') continue;
+    int given = 0;
+    for (size_t i = 0; i < (size_t)count && !given; ++i) given = same_name(entries[i], entry);
+    if (given) continue;
+    size_t size = wcslen(entry) + 1;
+    entries[total] = (wchar_t*)malloc(size * sizeof(wchar_t));
+    ok = entries[total] != NULL;
+    if (ok) {
+      memcpy(entries[total++], entry, size * sizeof(wchar_t));
+      length += size;
+    }
+  }
+  if (ok) {
+    qsort(entries, total, sizeof(wchar_t*), compare_entries);
+    block = (wchar_t*)malloc((length + 1) * sizeof(wchar_t));
+  }
+  if (block) {
+    size_t used = 0;
+    for (size_t i = 0; i < total; ++i) {
+      size_t size = wcslen(entries[i]) + 1;
+      memcpy(block + used, entries[i], size * sizeof(wchar_t));
+      used += size;
+    }
+    if (used == 0) block[used++] = 0;
+    block[used] = 0;
+  }
+  for (size_t i = 0; entries && i < total; ++i) free(entries[i]);
+  free(entries);
+  if (own) FreeEnvironmentStringsW(own);
   return block;
 }
 

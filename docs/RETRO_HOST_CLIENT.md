@@ -36,9 +36,14 @@ The client adds the protocol's own arguments after the command it is given:
 **The environment.** The host inherits the launcher's environment, with any
 variables the caller adds on top. On Windows names that differ only in case are
 one variable, so an added `Path` replaces the inherited `PATH` instead of
-sitting beside it, where the host would read whichever came first. Windows also
-requires the environment block to be sorted by name without regard to case, so
-the entries are passed in that order there.
+sitting beside it, where the host would read whichever came first. When the
+caller adds variables on Windows, the native code builds the block for
+`CreateProcessW` itself:
+
+- it adds the launcher's hidden entries whose names start with `=`, such as
+  the drives' current directories (`=C:`), which `Platform.environment` leaves
+  out and `CreateProcessW` does not add to a block it is given;
+- it sorts the entries by name without regard to case, as Windows requires.
 
 **Windows.**
 
@@ -168,7 +173,9 @@ answered the same way, and never left waiting.
   - on `start`, `release` and `pause(true)`;
   - when a `status` first shows the game ended;
   - when input focus is lost;
-  - when `connectedPorts(1)` takes the controller out of port 2;
+  - when `connectedPorts(1)` takes the controller out of port 2. Rumble for a
+    port without a controller (port 2 until `connectedPorts(2)`, and again
+    after `connectedPorts(1)`) is not forwarded;
   - when the connection ends with a game loaded, a clean shutdown included;
   - on a host failure.
 - **Rumble events** come asynchronously, so a listener may call anything on the
