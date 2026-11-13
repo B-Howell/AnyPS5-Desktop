@@ -1,0 +1,14 @@
+[
+  {
+    "name": "llvmpipe (LLVM 15.0.7, 256 bits)",
+    "type": 4,
+    "vendorId": 65541,
+    "deviceId": 0,
+    "heaps": [
+      {
+        "size": 33237393408,
+        "flags": 1
+      }
+    ]
+  }
+]

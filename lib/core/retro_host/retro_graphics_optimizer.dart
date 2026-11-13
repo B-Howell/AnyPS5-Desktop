@@ -6,7 +6,7 @@ import 'retro_host_protocol.dart';
 
 /// Why the Auto Optimizer has nothing to suggest.
 enum RetroOptimizeBlock {
-  /// The computer could not be read (not Windows, or no display).
+  /// The computer could not be read (neither Windows nor Linux, or no display).
   noHardware,
 
   /// No single graphics adapter with memory of its own could be told apart.

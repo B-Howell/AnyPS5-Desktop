@@ -1,4 +1,5 @@
-/// One graphics adapter Windows reports (DXGI), without the software ones.
+/// One graphics adapter, without the software ones: from DXGI on Windows, from the Vulkan driver on Linux
+/// (`RetroVulkanAdapters`).
 class RetroAdapter {
   const RetroAdapter({required this.name, required this.dedicatedBytes});
 

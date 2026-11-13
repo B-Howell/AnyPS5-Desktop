@@ -1,0 +1,34 @@
+[
+  {
+    "name": "NVIDIA GeForce RTX 4080 SUPER",
+    "type": 2,
+    "vendorId": 4318,
+    "deviceId": 9986,
+    "heaps": [
+      {
+        "size": 16824401920,
+        "flags": 1
+      },
+      {
+        "size": 50694995968,
+        "flags": 0
+      }
+    ]
+  },
+  {
+    "name": "AMD Radeon(TM) Graphics",
+    "type": 1,
+    "vendorId": 4098,
+    "deviceId": 5710,
+    "heaps": [
+      {
+        "size": 16987783168,
+        "flags": 0
+      },
+      {
+        "size": 33975631872,
+        "flags": 3
+      }
+    ]
+  }
+]

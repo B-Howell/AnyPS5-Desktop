@@ -24,6 +24,8 @@ the launcher plays a PS1 disc from its emulator library through all of them
 | [`lib/ui/retro_host/retro_game_menu.dart`](../lib/ui/retro_host/retro_game_menu.dart) | `RetroGameMenu`: the in-game menu's rows (discs, core options, volume) and what choosing them does. |
 | [`lib/core/retro_host/retro_graphics_catalog.dart`](../lib/core/retro_host/retro_graphics_catalog.dart) | `RetroGraphicsCatalog`: SwanStation's picture settings as the Graphics page shows them, the presets' values, and how a wanted value is matched to one the host offers. |
 | [`lib/core/retro_host/retro_hardware.dart`](../lib/core/retro_host/retro_hardware.dart) | `RetroHardware` and `RetroAdapter`: what the Auto Optimizer reads of the computer. |
+| [`lib/core/retro_host/retro_vulkan_adapters.dart`](../lib/core/retro_host/retro_vulkan_adapters.dart) | `RetroVulkanAdapters`: the graphics adapters on Linux, read from the Vulkan driver, and the rules that make them match Windows' DXGI list. |
+| [`windows/runner/retro_adapters.cpp`](../windows/runner/retro_adapters.cpp) | `RetroAdapters()`: the graphics adapters on Windows, read through DXGI, for the runner's `retroAdapters`. |
 | [`lib/core/retro_host/retro_graphics_optimizer.dart`](../lib/core/retro_host/retro_graphics_optimizer.dart) | `RetroGraphicsOptimizer`: the Auto Optimizer's suggestion for one game, and one notch down. |
 | [`lib/core/retro_host/retro_graphics_profile.dart`](../lib/core/retro_host/retro_graphics_profile.dart) | `RetroGraphicsProfile`: one game's kept picture settings and what the Auto Optimizer changed, for Undo. |
 | [`lib/core/retro_host/retro_frame_rate.dart`](../lib/core/retro_host/retro_frame_rate.dart) | `RetroFrameRate`: frames per second over a window of frame times. |
@@ -360,10 +362,29 @@ theirs.
 
 **The Auto Optimizer.** It is the launcher's Auto Optimizer
 (`RetroOptimizer` and `RetroLaunchOptimizer` on `claude/integrated-0.1.22`)
-for the host path. Check this PC reads `LauncherServices.retroHardware`: on
-Windows the height of the display the launcher is on, the graphics adapters
-the runner's `retroAdapters` lists through DXGI (without software adapters),
-and `Platform.numberOfProcessors`. `RetroGraphicsOptimizer.recommend` then:
+for the host path. Check this PC reads `LauncherServices.retroHardware`: the
+height of the display the launcher is on, the graphics adapters and
+`Platform.numberOfProcessors`.
+
+- **Windows:** the runner's `retroAdapters` lists the adapters through DXGI
+  (`windows/runner/retro_adapters.cpp`), without software adapters, each with
+  its `DedicatedVideoMemory`.
+- **Linux:** `RetroVulkanAdapters` reads the devices the Vulkan driver lists,
+  through `libvulkan.so.1`, on an isolate of its own. It creates an instance
+  only, and opens no device. The kernel has no single place for this:
+  `/sys/class/drm` gives an AMD card's video memory (`mem_info_vram_total`)
+  but not NVIDIA's own driver's, and no names. Vulkan names every vendor's
+  device, which is how games and emulators list them. The rules make the
+  list match DXGI's. The CPU's device (Mesa's lavapipe) is left out. A
+  discrete device's memory is its largest heap on the device; the heaps are
+  not added up, as a Resizable BAR heap is part of the same memory. Any other
+  device counts 0, since its device heap is shared system memory. A device
+  two drivers both list (RADV and AMDVLK) counts once. No Vulkan loader, or a
+  list that cannot be read whole, gives no adapters. The same code finds
+  MoltenVK on a Mac (`libvulkan.1.dylib`, `libMoltenVK.dylib`), but the Mac
+  has no host to optimize yet.
+
+`RetroGraphicsOptimizer.recommend` then:
 
 - picks the adapter as before: the only one with memory of its own, or the
   only one with at least 2 GiB;
@@ -630,6 +651,27 @@ native memory as a real ring slot would be, so no host is started.
   matching to offered values, the suggestion for several computers, the
   adapter choice, one notch down, the kept profile in the preferences file,
   and the frame rate.
+- [`retro_adapters_test.dart`](../test/core/retro_host/retro_adapters_test.dart)
+  replays adapter lists read on real computers in `test/fixtures/retro_host`:
+  - `dxgi_adapters_rtx4080super_radeon.json` is the output of
+    `RetroAdapters()` itself, built with MSVC and run on a Windows PC with an
+    RTX 4080 SUPER and a Radeon iGPU on 13 November 2026. It goes through the
+    channel's codec and `parseRetroAdapters`, and on that PC's 5120x1440
+    display with 16 threads the Auto Optimizer picks the RTX (16,824,401,920
+    bytes) and suggests 4x, smooth textures, 2x MSAA and PGXP.
+  - `vulkan_devices_windows_rtx4080super_radeon.json` is
+    `RetroVulkanAdapters.readDevices()` on the same PC. The RTX's device heap
+    is the same 16,824,401,920 bytes DXGI gives. The iGPU's device heap is
+    33,975,631,872 bytes of shared memory, so it counts 0, and the advice is
+    the same.
+  - `vulkan_devices_linux_lavapipe.json` is the same reader on Linux (WSL
+    with Mesa's lavapipe), which is left out as a software device.
+
+  The tests also check that a device two drivers list counts once, that heaps
+  are not added up, that a recording that is not whole is refused, and that
+  the computer running the tests is read without failing. The same reader in
+  WSL gave an empty list with a loader and no driver, and none with no
+  loader.
 - [`retro_pad_test.dart`](../test/core/retro_host/retro_pad_test.dart) checks
   every button against the protocol's bit table, the triggers, both ends of
   the stick range and the dead zone.
@@ -746,8 +788,12 @@ it, so WinLibs' `bin` folder has to be on `PATH` there.
   screen is in front.
 - **No mouse.** The mouse buttons and the wheel in a game's Controls are not
   read for a PS1 game.
-- **The Auto Optimizer on Linux.** Only Windows reads the graphics adapters
-  (DXGI), so on Linux Check this PC says the computer could not be read.
+- **The Auto Optimizer on Linux with a real card.** The Vulkan reader has run
+  on Linux only with Mesa's software device (WSL has no GPU driver for it), and
+  on real cards only on Windows. The display height comes from Flutter's
+  Linux display list, which has not been checked in the app. A computer with
+  only built-in graphics gets "no adapter could be told apart" on Linux, where
+  Windows counts the small memory DXGI reports for it.
 - **One step down.** The speed check lowers one notch once. It does not
   measure again after that, and it does not change the PGXP or smoothing
   settings.

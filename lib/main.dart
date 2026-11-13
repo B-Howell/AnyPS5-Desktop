@@ -28,6 +28,7 @@ import 'core/launcher_health.dart';
 import 'core/libmpv.dart';
 import 'core/release_signing.dart';
 import 'core/retro_host/retro_hardware.dart';
+import 'core/retro_host/retro_vulkan_adapters.dart';
 import 'core/steam/steam_launch.dart';
 import 'core/toolkit_download.dart';
 import 'ui/app_model.dart';
@@ -169,13 +170,14 @@ Future<void> main(List<String> arguments) async {
       pads: () => PadReader.open(arguments: arguments),
       systemProbe: () => HostProbe(HostSystem.current),
       // The Auto Optimizer of a PS1 game in the emulator host: the display the launcher is on, the
-      // graphics adapters Windows reports (the runner's DXGI list), and the CPU's threads.
+      // graphics adapters (the runner's DXGI list on Windows, the Vulkan driver's devices on
+      // Linux), and the CPU's threads.
       retroHardware: () async {
         final view = PlatformDispatcher.instance.implicitView;
-        if (!Platform.isWindows || view == null) return null;
+        if (!(Platform.isWindows || Platform.isLinux) || view == null) return null;
         return RetroHardware(
           displayHeight: view.display.size.height.round(),
-          adapters: await window.retroAdapters(),
+          adapters: Platform.isWindows ? await window.retroAdapters() : await RetroVulkanAdapters.read(),
           logicalProcessors: Platform.numberOfProcessors,
         );
       },
