@@ -300,6 +300,17 @@ void main() {
     );
   }, skip: Platform.isLinux || Platform.isWindows ? null : 'Linux and Windows');
 
+  test("a refused second start leaves the first start's files held", () async {
+    final host = await _realProgram(temp);
+    final folder = signedRelease(temp, host.program, key);
+    final checked = await RetroHostRelease.checkBeforeStart(folder, keys: keys, system: _current);
+    expect(checked.claim(), isTrue, reason: 'the first start owns it');
+    expect(() => RetroHostClient.start(command: const [], checked: checked), throwsArgumentError);
+    expect(() => RetroHostClient.start(command: [host.program], checked: checked), throwsArgumentError);
+    expect(checked.held, isTrue);
+    checked.release();
+  });
+
   test('a check is taken by one start only', () async {
     final host = await _realProgram(temp);
     final folder = signedRelease(temp, host.program, key);

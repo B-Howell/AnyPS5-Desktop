@@ -172,6 +172,9 @@ class RetroHostClient {
     bool muted = false,
     List<String> pixelFormats = const [RetroPixelFormat.rgba8, RetroPixelFormat.bgra8],
   }) {
+    if (checked != null && !checked.claim()) {
+      throw ArgumentError.value(checked, 'checked', 'was released or used by another start; check again');
+    }
     if (command.isEmpty) {
       checked?.release();
       throw ArgumentError.value(command, 'command', 'names no program');
@@ -179,9 +182,6 @@ class RetroHostClient {
     if (checked != null && command.first != checked.executable) {
       checked.release();
       throw ArgumentError.value(command.first, 'command', 'is not the checked host ${checked.executable}');
-    }
-    if (checked != null && !checked.claim()) {
-      throw ArgumentError.value(checked, 'checked', 'was released or used by another start; check again');
     }
     final client = RetroHostClient._(volume, muted, pixelFormats);
     final token = _nextToken++;
