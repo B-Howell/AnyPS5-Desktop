@@ -66,13 +66,23 @@ code belongs to this client.
   - kills go through `pidfd_send_signal`, so they can never reach a later
     process given the same id.
 
-On a kernel without pidfd (before 5.3), the exit code can be lost to the VM.
-The client then reports it as unknown, and treats an unknown code after
-`shutdown` as a clean exit.
+  With glibc 2.39 or later, `pidfd_spawn` makes the pidfd together with the
+  process. With older glibc it is opened just after the start with
+  `pidfd_open`; in principle that can meet a reused id, if the host ended at
+  once and the VM reaped it first. On Linux 5.3, which has `pidfd_open` but not
+  `waitid(P_PIDFD)`, the pid is waited for instead.
 
-On every system, the exit is reported only after the reader has passed on
-everything the host wrote. So a reply sent just before the host exits is never
-overtaken by the exit.
+**The exit code is not always known.** If the VM reaps the host before the
+client reads its exit code, the code is lost. That can happen on any Linux
+kernel, and on kernels without pidfd it applies to kills too. The client then
+reports the code as unknown, and treats an unknown code after `shutdown` as a
+clean exit.
+
+**The last reply comes before the exit.** On every system, the exit is
+reported only after the reader has passed on everything the host wrote, so a
+reply sent just before the host exits is not overtaken. The exception is when
+something else still holds the host's end of the stream: the reader then
+cannot see the stream end, and the exit is reported after 2 seconds anyway.
 
 ## Threads and the UI
 
@@ -90,11 +100,12 @@ requires.
 | A reply to each call | 5 s | The host is killed: `hostHung` |
 | A `pong` to each ping (pings every 2 s) | 5 s | The host is killed: `hostHung` |
 | A write in progress | 5 s | The host is killed: `hostHung` |
-| The game ends after `stopGame()` sends `stop` | 10 s | The host is killed: `hostHung` |
+| The game ends after `stopGame()` sends `stop`, counted from the send | 10 s | The host is killed: `hostHung` |
 | The host exits after `shutdown()` | 15 s | The host is killed: `hostHung` |
 
 `stopGame()` asks for `status` until the game has ended, because the client
-has to see the end to enforce the stop limit.
+has to see the end to enforce the stop limit. So `call('stop')` is refused:
+`stop` goes only through `stopGame()`.
 
 If the host breaks a rule, exits unasked or misses a limit while a game is
 loaded:
@@ -115,9 +126,11 @@ answered the same way, and never left waiting.
 - **Which frames are drawn.** Only a frame of the current game (its `epoch` is
   the one `start` returned) is drawn and kept as `frame`.
 - **How long a frame stays readable.** A ring stays mapped while the frame
-  being shown is in it, and the client never maps more than two rings. So
-  `frame` stays readable until another frame replaces it. A frame that was not
-  drawn can be read only until the next message.
+  being shown is in it, but the client never maps more than two rings. So
+  `frame` stays readable until another frame replaces it, or until a second
+  newer ring arrives first; then `frame` becomes null. Read `frame` again after
+  each message. A frame that was not drawn can be read only until the next
+  message.
 
 ## Resets
 
@@ -145,7 +158,7 @@ is the launcher's conformance test.
 - **Extra session.** One session of its own checks that a reply with a wrong
   result still answers its call.
 
-[`strict_json_test.dart`](../test/core/retro_host/strict_json_test.dart)
+[`test/core/retro_host/strict_json_test.dart`](../test/core/retro_host/strict_json_test.dart)
 covers the JSON rules.
 
 To run the fixture test, point `ANYPS5_RETRO_HOST_CHECKOUT` at a checkout of

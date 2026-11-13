@@ -246,7 +246,14 @@ class RetroHostClient {
 
   /// Sends a call and gives its result; `error` replies throw [RetroCallError]. After a host
   /// failure with a game loaded this gives what protocol.md "Host failure" lists, until `release`.
+  ///
+  /// `stop` goes through [stopGame], which enforces its time limit.
   Future<Object?> call(String method, [Object? args]) {
+    if (method == 'stop') throw ArgumentError.value(method, 'method', 'use stopGame');
+    return _send(method, args);
+  }
+
+  Future<Object?> _send(String method, Object? args) {
     if (_ended.isCompleted) return Future.value(_afterFailure(method));
     if (!_greeted) throw StateError('No call may be sent before welcome.');
     if (method != 'volume' && !_capabilities.contains(retroCapabilityPs1)) {
@@ -288,8 +295,8 @@ class RetroHostClient {
   /// game has not ended 10 seconds after `stop` (protocol.md "Timeouts"), and the status then is the
   /// failure report. Null when no game was loaded.
   Future<RetroStatus?> stopGame() async {
-    await call('stop');
     if (_gameLoaded && !_ended.isCompleted) _stopDeadline ??= DateTime.now().add(stopLimit);
+    await _send('stop', null);
     while (true) {
       final current = await status();
       if (current == null || current.ended) return current;
@@ -369,6 +376,8 @@ class RetroHostClient {
           _protocolError(error.message);
         } on StrictJsonError catch (error) {
           _protocolError(error.message);
+        } on Object catch (error) {
+          _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostExited, kill: true, reason: '$error');
         }
       case RetroHostEvent.framing:
         _protocolError('The control stream broke a framing rule (length $length).');
@@ -569,9 +578,13 @@ class RetroHostClient {
         retroHostUnmapRing(base, bytes);
         rethrow;
       }
-      if (_previousRing != null) {
-        if (identical(_frameRing, _previousRing)) _setFrame(null, null);
-        _previousRing!.unmap();
+      final previous = _previousRing;
+      if (previous != null) {
+        if (identical(_frameRing, previous)) {
+          _frame = null;
+          _frameRing = null;
+        }
+        previous.unmap();
       }
       _previousRing = _ring;
       _ring = ring;

@@ -403,18 +403,24 @@ ANYPS5_EXPORT int64_t anyps5_rh_write_age_ms(void* handle) {
   return (int64_t)(GetTickCount64() - (ULONGLONG)started);
 }
 
+// Cancels the thread's synchronous I/O until it has finished: a cancel only
+// reaches a call already in progress, so one made just before the thread's next
+// ReadFile or WriteFile would be missed.
+static void stop_thread(HANDLE thread) {
+  while (WaitForSingleObject(thread, 20) == WAIT_TIMEOUT) CancelSynchronousIo(thread);
+}
+
 ANYPS5_EXPORT void anyps5_rh_close(void* handle) {
   Connection* c = (Connection*)handle;
+  TerminateJobObject(c->job, 1);
   TerminateProcess(c->process, 1);
   WaitForSingleObject(c->process, INFINITE);
   EnterCriticalSection(&c->lock);
   c->closing = 1;
   WakeAllConditionVariable(&c->wake);
   LeaveCriticalSection(&c->lock);
-  CancelSynchronousIo(c->writer);
-  WaitForSingleObject(c->writer, INFINITE);
-  CancelSynchronousIo(c->reader);
-  WaitForSingleObject(c->reader, INFINITE);
+  stop_thread(c->writer);
+  stop_thread(c->reader);
   WaitForSingleObject(c->waiter, INFINITE);
   while (c->first) {
     Outgoing* next = c->first->next;
@@ -501,6 +507,7 @@ ANYPS5_EXPORT void anyps5_rh_store(void* address, uint32_t value) {
 #include <time.h>
 #include <unistd.h>
 
+#include <dlfcn.h>
 #include <poll.h>
 #include <spawn.h>
 #include <sys/syscall.h>
@@ -724,10 +731,11 @@ static int64_t exit_code(const siginfo_t* info) {
 // any child, the host included. So the host is watched through a pidfd: its
 // exit is seen even when the VM reaps it first, the exit code is read with
 // WNOWAIT while it is still there, and anyps5_rh_kill signals through the
-// pidfd, which can never reach a later process given the same id. Without
-// pidfd (Linux before 5.3) the exit code may be lost to the VM: it is then
-// EXIT_UNKNOWN. macOS: the VM waits only for its own process ids (kqueue), so
-// the host is this file's to reap.
+// pidfd, which can never reach a later process given the same id. When the VM
+// reaps the host before that read, its exit code is lost: it is then
+// EXIT_UNKNOWN. On Linux 5.3, which has pidfd_open but not waitid(P_PIDFD), the
+// pid is waited for instead. macOS: the VM waits only for its own process ids
+// (kqueue), so the host is this file's to reap.
 static void* waiter_main(void* argument) {
   Connection* c = (Connection*)argument;
   int64_t code = EXIT_UNKNOWN;
@@ -738,11 +746,25 @@ static void* waiter_main(void* argument) {
     struct pollfd ready = {c->pidfd, POLLIN, 0};
     while (poll(&ready, 1, -1) < 0 && errno == EINTR) {
     }
-    if (waitid((idtype_t)P_PIDFD, (id_t)c->pidfd, &info, WEXITED | WNOWAIT) == 0) code = exit_code(&info);
+    int result;
+    do result = waitid((idtype_t)P_PIDFD, (id_t)c->pidfd, &info, WEXITED | WNOWAIT);
+    while (result < 0 && errno == EINTR);
+    const int by_pidfd = !(result < 0 && errno == EINVAL);
+    if (!by_pidfd) {
+      do result = waitid(P_PID, (id_t)c->pid, &info, WEXITED | WNOWAIT);
+      while (result < 0 && errno == EINTR);
+    }
+    if (result == 0) code = exit_code(&info);
     pthread_mutex_lock(&c->lock);
     c->exited = 1;
     pthread_mutex_unlock(&c->lock);
-    while (waitid((idtype_t)P_PIDFD, (id_t)c->pidfd, &info, WEXITED) < 0 && errno == EINTR) {
+    if (by_pidfd) {
+      while (waitid((idtype_t)P_PIDFD, (id_t)c->pidfd, &info, WEXITED) < 0 && errno == EINTR) {
+      }
+    } else {
+      int status;
+      while (waitpid(c->pid, &status, 0) < 0 && errno == EINTR) {
+      }
     }
   } else
 #endif
@@ -775,7 +797,11 @@ static void* waiter_main(void* argument) {
 // macOS also gives the host no other descriptor (POSIX_SPAWN_CLOEXEC_DEFAULT);
 // on Linux every descriptor of the launcher's is close-on-exec, and the host
 // closes any above 3 itself. `host_end` is never 3 (see anyps5_rh_start).
-static int spawn_now(char* const* argv, char* const* envp, int host_end, pid_t* pid) {
+// Linux also gives the host's pidfd: made with the process by pidfd_spawn
+// (glibc 2.39 and later), or opened just after it with pidfd_open, which can
+// in principle meet a reused id if the VM has already reaped a host that ended
+// at once.
+static int spawn_now(char* const* argv, char* const* envp, int host_end, pid_t* pid, int* pidfd) {
   posix_spawn_file_actions_t actions;
   posix_spawnattr_t attributes;
   posix_spawn_file_actions_init(&actions);
@@ -793,7 +819,30 @@ static int spawn_now(char* const* argv, char* const* envp, int host_end, pid_t* 
   flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
 #endif
   posix_spawnattr_setflags(&attributes, flags);
-  int failure = posix_spawn(pid, argv[0], &actions, &attributes, argv, envp);
+  int failure;
+  *pidfd = -1;
+#if defined(__linux__)
+  typedef int (*pidfd_spawn_t)(int*, const char*, const posix_spawn_file_actions_t*, const posix_spawnattr_t*,
+                               char* const*, char* const*);
+  typedef pid_t (*pidfd_getpid_t)(int);
+  pidfd_spawn_t pidfd_spawn_call = (pidfd_spawn_t)dlsym(RTLD_DEFAULT, "pidfd_spawn");
+  pidfd_getpid_t pidfd_getpid_call = (pidfd_getpid_t)dlsym(RTLD_DEFAULT, "pidfd_getpid");
+  if (pidfd_spawn_call && pidfd_getpid_call) {
+    failure = pidfd_spawn_call(pidfd, argv[0], &actions, &attributes, argv, envp);
+    if (!failure) {
+      *pid = pidfd_getpid_call(*pidfd);
+      fcntl(*pidfd, F_SETFD, FD_CLOEXEC);
+    }
+  } else {
+    failure = posix_spawn(pid, argv[0], &actions, &attributes, argv, envp);
+    if (!failure) {
+      *pidfd = (int)syscall(SYS_pidfd_open, *pid, 0);
+      if (*pidfd >= 0) fcntl(*pidfd, F_SETFD, FD_CLOEXEC);
+    }
+  }
+#else
+  failure = posix_spawn(pid, argv[0], &actions, &attributes, argv, envp);
+#endif
   posix_spawn_file_actions_destroy(&actions);
   posix_spawnattr_destroy(&attributes);
   return failure;
@@ -810,6 +859,7 @@ typedef struct Spawn {
   char* const* envp;
   int host_end;
   pid_t pid;
+  int pidfd;
   int failure;
   int done;
 } Spawn;
@@ -827,7 +877,7 @@ static void* spawner_main(void* argument) {
     while (!g_spawn_job) pthread_cond_wait(&g_spawn_wake, &g_spawn_lock);
     Spawn* job = g_spawn_job;
     pthread_mutex_unlock(&g_spawn_lock);
-    job->failure = spawn_now(job->argv, job->envp, job->host_end, &job->pid);
+    job->failure = spawn_now(job->argv, job->envp, job->host_end, &job->pid, &job->pidfd);
     pthread_mutex_lock(&g_spawn_lock);
     job->done = 1;
     g_spawn_job = NULL;
@@ -845,7 +895,7 @@ static void start_spawner(void) {
   pthread_attr_destroy(&attributes);
 }
 
-static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int* failure) {
+static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int* failure, int* pidfd) {
   pthread_once(&g_spawner_once, start_spawner);
   if (!g_spawner_ready) {
     *failure = EAGAIN;
@@ -863,14 +913,15 @@ static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int*
   while (!job.done) pthread_cond_wait(&g_spawn_wake, &g_spawn_lock);
   pthread_mutex_unlock(&g_spawn_lock);
   *failure = job.failure;
+  *pidfd = job.pidfd;
   return job.failure ? -1 : job.pid;
 }
 
 #else
 
-static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int* failure) {
+static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int* failure, int* pidfd) {
   pid_t pid = -1;
-  *failure = spawn_now(argv, envp, host_end, &pid);
+  *failure = spawn_now(argv, envp, host_end, &pid, pidfd);
   return *failure ? -1 : pid;
 }
 
@@ -928,7 +979,8 @@ ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const
   for (int32_t i = 0; i < envc; ++i) environment[i] = env[i];
   char* const* envp = envc > 0 ? (char* const*)environment : environ;
   int failure = 0;
-  pid_t pid = spawn_host((char* const*)arguments, envp, ends[1], &failure);
+  int pidfd = -1;
+  pid_t pid = spawn_host((char* const*)arguments, envp, ends[1], &failure, &pidfd);
   free(arguments);
   free(environment);
   close(ends[1]);
@@ -942,6 +994,7 @@ ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const
   Connection* c = (Connection*)calloc(1, sizeof(Connection));
   if (!c) {
     kill(pid, SIGKILL);
+    if (pidfd >= 0) close(pidfd);
     close(ends[0]);
     set_error(error, error_size, "Out of memory.");
     return NULL;
@@ -950,11 +1003,7 @@ ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const
   c->callback = callback;
   c->pid = pid;
   c->socket = ends[0];
-  c->pidfd = -1;
-#if defined(__linux__)
-  c->pidfd = (int)syscall(SYS_pidfd_open, pid, 0);
-  if (c->pidfd >= 0) fcntl(c->pidfd, F_SETFD, FD_CLOEXEC);
-#endif
+  c->pidfd = pidfd;
   pthread_mutex_init(&c->lock, NULL);
   pthread_cond_init(&c->wake, NULL);
   if (pthread_create(&c->waiter, NULL, waiter_main, c) == 0) c->threads |= 1;
