@@ -16,6 +16,7 @@ the launcher plays a PS1 disc from its emulator library through all of them
 | [`lib/ui/retro_host/retro_frame_view.dart`](../lib/ui/retro_host/retro_frame_view.dart) | Draws a picture on black at an aspect ratio. |
 | [`lib/ui/retro_host/retro_host_focus.dart`](../lib/ui/retro_host/retro_host_focus.dart) | Reports whether the launcher's window has input focus. |
 | [`lib/ui/retro_host/retro_host_game.dart`](../lib/ui/retro_host/retro_host_game.dart) | `RetroHostGame`: one game in one host. |
+| [`lib/ui/retro_host/retro_host_keeper.dart`](../lib/ui/retro_host/retro_host_keeper.dart) | `RetroHostKeeper`: keeps the host of the last game running for the next one, and shuts it down when it is no longer wanted. |
 | [`lib/ui/retro_host/retro_host_game_view.dart`](../lib/ui/retro_host/retro_host_game_view.dart) | Puts the last three together: a game's picture that pauses the game when focus is lost. |
 | [`lib/core/retro_host/retro_pad.dart`](../lib/core/retro_host/retro_pad.dart) | `RetroPadInput`: one controller's state as the protocol's `input` carries it, made from the launcher's `PadState`. |
 | [`lib/core/retro_host/retro_seats.dart`](../lib/core/retro_host/retro_seats.dart) | `RetroSeats`: which controller sits at each of the PS1's two ports. |
@@ -29,6 +30,7 @@ the launcher plays a PS1 disc from its emulator library through all of them
 | [`lib/ui/retro_host/retro_frame_monitor.dart`](../lib/ui/retro_host/retro_frame_monitor.dart) | `RetroFrameMonitor`: counts a game's frames from the client's frame events while it plays. |
 | [`lib/ui/retro_host/retro_graphics.dart`](../lib/ui/retro_host/retro_graphics.dart) | `RetroGraphics`: the Graphics page's logic for one game: settings, presets, preview, Apply, Undo and the speed check. |
 | [`lib/ui/retro_host_graphics.dart`](../lib/ui/retro_host_graphics.dart) | The `RetroHostGraphicsPage` part of `AppModel`: the Graphics page's rows, its keys, and the toast after a speed check. |
+| [`lib/ui/retro_host/retro_option_sections.dart`](../lib/ui/retro_host/retro_option_sections.dart) | `RetroOptionSection` and `retroOptionSection`: which section of the menu (or the Graphics page) each SwanStation option belongs to, and which options are not shown. |
 | [`lib/core/retro_host/retro_host_install.dart`](../lib/core/retro_host/retro_host_install.dart) | `RetroHostInstall`: the host and SwanStation library a build may run. |
 | [`lib/core/retro_host/retro_keyboard.dart`](../lib/core/retro_host/retro_keyboard.dart) | `RetroKeyboard`: the keyboard as a PS1 controller, with the keys of a game's Controls. |
 | [`lib/ui/retro_host_play.dart`](../lib/ui/retro_host_play.dart) | `RetroPlay` and the `RetroHostPlaying` part of `AppModel`: the setting, starting a disc in the host, the commands while it plays, the menu's panel rows, closing. |
@@ -89,9 +91,12 @@ core reports; 1.3333333333333333 until it reports one").
 
 ## One game in one host: `RetroHostGame`
 
-`RetroHostGame` owns one `RetroHostSession` and the `RetroFrameImage` of its
-frames. `RetroHostGame.launch(command: …)` starts a real host;
-`RetroHostGame(session)` takes any session, which is how the tests give a fake.
+`RetroHostGame` runs one game on one `RetroHostSession` and owns the
+`RetroFrameImage` of its frames. The session is its own until it is shut down
+or detached (below), so the next game can start on the same host.
+`RetroHostGame.launch(command: …)` starts a real host;
+`RetroHostGame(session)` takes any session: one the launcher just started,
+one kept from the last game, or a fake in the tests.
 
 | Phase | Meaning |
 | --- | --- |
@@ -153,6 +158,20 @@ frames. `RetroHostGame.launch(command: …)` starts a real host;
   end (the client kills a host that has not exited within 15 seconds), then
   calls `close()`. `dispose()` shuts down too. Calling `shutdown()` again
   returns the same shutdown.
+- **Detach.** `detach()` lets go of the host without shutting it down, so the
+  next game can start on it. protocol.md "Processes" says "One host runs games
+  one after another until the launcher exits or the host fails." It stops the
+  game if it still runs, then calls `release` even for a game that ended on
+  its own, since `start` is `busy` "if a game is loaded, running or ended",
+  and asks `status`. It gives true only when the host still runs and `status`
+  is `null`, that is, no game is loaded. Otherwise it shuts the host down and
+  gives false. That covers a host that crashed, one still holding a game, a
+  failed call, and the host protocol.md "release" describes, which "sends the
+  reply to `release` and exits" after a game stuck in its core: it answers
+  no `status` after that reply, so the call fails. A detached game's phase is
+  `closed`, it sends nothing more, and `dispose()` leaves the host running.
+  The window's focus is given back to the host (`inputFocus` true), as a new
+  host starts with it, since the next game tells it its own.
 
 Nothing here waits on the host on the UI thread. Every wait is a `Future`,
 and the client's time limits make sure each one ends.
@@ -237,14 +256,42 @@ held something, so a game that goes on is not left with a held button.
   (`discs.busy`). `chooseDisc` sends `changeDisc` with the row's index, which
   the protocol defines as "the index into `discs.labels`". `discChangeFailed`
   is `discs.failed`.
-- **Core options.** One `RetroOptionRow` per entry of `status.options`, in the
-  host's order. `choice` is the label of `selected`. `pending` is true while
-  the chosen value is not yet the `activeValue`, and `restartNeeded` is the
-  option's `restart`. `stepOption(key, steps)` moves through `values` and
-  stops at the first and last. It sends `option` with `key` and `value`.
+- **Core options.** One `RetroOptionRow` per entry of `status.options` that
+  is shown (below), in the host's order. `title` is SwanStation's title
+  without its own " (Restart)", since the menu says that under every option
+  whose `restart` is true. `section` is where the row goes, and
+  `optionsIn(section)` gives the rows of one section. `choice` is the label of
+  `selected`. `pending` is true while the chosen value is not yet the
+  `activeValue`, and `restartNeeded` is the option's `restart`.
+  `stepOption(key, steps)` moves through `values` and stops at the first and
+  last. It sends `option` with `key` and `value`.
 - **Volume.** A `RetroVolumeRow` with the game's `volume` and `muted`.
   `stepVolume` moves it by tenths from 0 to 1, and turning it up unmutes.
   `toggleMute` switches `muted`.
+
+**Sections.** The host lists every option SwanStation lets the player change
+now: fifty for a PS1 game with the host and SwanStation recorded in
+[`test/fixtures/retro-host-swanstation-status.json`](../test/fixtures/retro-host-swanstation-status.json).
+`retroOptionSection(key)` sorts them by SwanStation's key,
+`swanstation_<Group>_<Name>`, so an option a later SwanStation adds still
+finds its place:
+
+| Section | SwanStation options |
+| --- | --- |
+| Graphics (the game's Graphics page, not the menu) | `GPU_*` and `Display_*` |
+| Audio | `Audio_*` and Mute CD Audio (`CDROM_MuteCDAudio`) |
+| Controller | `Controller*` (`Controller_`, `Controller1_`, `Controller2_`, `ControllerPorts_`) |
+| Console | `Console_*`, `BIOS_*`, CD-ROM Region Check, Read Speedup and Seek Speedup, CPU Overclocking |
+| Advanced | everything else: the CPU's execution mode, how the disc is read, compatibility settings, run-ahead, hacks, and any group not named here |
+
+Ten options are not shown, since players have no use for them in the
+launcher: the on-screen messages (the host draws none), the four display
+offsets (sixty-one steps of SwanStation's own calibration each), texture
+replacements (the host gives SwanStation no texture folder), the development
+console's 8 MB of RAM (no game sold uses it), the CPU recompiler's three
+debugging switches, and the light gun crosshair (the host plugs in only
+DualShocks). A value kept for one of them from before is not sent in `start`,
+so nobody is left with a setting they can no longer change.
 
 `open()` pauses the game (`pause` with `true`, the same as the player's own
 pause) and sets the controls' `suspended`, so presses in the menu never reach
@@ -279,9 +326,10 @@ options the page shows, in its order, each with a plain name and one line
 
 The page lists only what `status.options` lists. A real host's status
 (recorded in `test/fixtures/retro_host`) shows that SwanStation lists its
-other PGXP options only while geometry correction is on. PGXP's tuning
-options (CPU mode, vertex cache, tolerance) stay in the game's menu with the
-core's other options. SwanStation's `Enabled` and `Disabled` show as On and
+other PGXP options only while geometry correction is on. SwanStation's other
+picture options that the menu shows (PGXP's tuning, the aspect ratio and
+crop, Force NTSC Timings and the like) are on the page's More picture
+settings section, with the host's titles. SwanStation's `Enabled` and `Disabled` show as On and
 Off, and the texture filters get plain names. Every other label is the
 host's.
 
@@ -392,8 +440,35 @@ The family play-time watcher follows the game as it follows any game
 through Close game. No other game starts while it plays. A host that cannot
 be started at all (a file that is not a program) says so in a toast. Every
 path is sent normalized, so it has no `.` or `..` segment (protocol.md
-"Paths"). One host runs one game: `RetroHostGame` starts one game, and the
-host is shut down when the game is closed. The next game starts a new host.
+"Paths").
+
+**One host for several games.** A game that is closed, or that ended, leaves
+its host running for the next game when `RetroHostGame.detach()` says no game
+is loaded. `RetroHostKeeper` (`AppModel.retroHostKeeper`) keeps that one host.
+The next PS1 game takes it instead of starting a new one, as long as it is the
+same host program, and sends it the player's volume again. The kept host is
+shut down:
+
+- once the player has left the PS1 games: the game selected is not a PS1
+  disc that plays in the host, the setting was turned off, or another game
+  is starting or running (`_letUnwantedRetroHostGo`, checked on every change
+  of the launcher's state);
+- after five minutes without a game (`RetroHostKeeper.idleLimit`);
+- when the launcher goes away.
+
+A kept host that ends by itself (it crashed, or exited after `release` as
+protocol.md "release" allows) is forgotten and freed, and the next game starts
+a new host, as protocol.md "Host failure" says: "The next game starts a new
+host." A host that failed during a game is shut down when the game is left,
+never kept.
+
+**The host's environment.** On Windows the host gets the launcher's
+environment. On Linux it gets the launcher's environment without what the
+launcher's AppImage set (`RetroHostInstall.environmentFor`, which is
+`GameProcess.withoutAppImage`), as a standalone emulator does: no `APPIMAGE`,
+`APPDIR`, `ARGV0` or `OWD`, and not the AppImage's own `usr/share` at the head
+of `XDG_DATA_DIRS`. `RetroHostClient.start` then gets it as the whole
+environment (`inheritEnvironment: false`).
 
 **The controllers.** `RetroHostControls` reads the app's own controller
 reader: `ControllersModel.pads` in the launcher's order (Player 1, the
@@ -425,14 +500,24 @@ menu shortcut, and the mouse's right or Back button open the game's menu.
 While the game loads, PS or Esc gives the start up.
 
 **The menu.** `Layer.retroMenu` is a panel styled as the quick menu
-("Paused", the game's icon and name). Its rows come from `RetroGameMenu`:
+("Paused", the game's icon and name), as tall as its rows. Its first page:
 Resume, each disc of a multi-disc game ("In the console." under the inserted
-one), Graphics, each other SwanStation option as a choice of its labels,
-Volume (a bar in tenths), Mute, and Close game. Graphics opens
-`Layer.retroGraphics`, the Graphics page with two sections, Picture and Auto
-Optimizer. The game stays paused there. Back returns to the menu on
-Graphics, and PS to the game. Opening it pauses the game and keeps the
-controllers out of it. PS, Back or Resume close it. Any other layer over the
+one), Graphics (with a line saying what is in it), a row for each section
+that has rows (Audio, Controller, Console, Advanced, each with a line saying
+what is in it), and Close game. Graphics opens `Layer.retroGraphics`, the
+Graphics page, with the sections Picture, Auto Optimizer and More picture
+settings (SwanStation's other `GPU` and `Display` options that are shown, as
+`RetroGameMenu.optionsIn(RetroOptionSection.graphics)` gives them, kept for
+that game as the rest of the page is). The game stays paused there. Back
+returns to the menu on Graphics, and PS to the game. Choosing a
+section shows its page, headed with its name: its SwanStation options as
+choices of their labels, and in Audio, Volume (a bar in tenths) and Mute
+first. An option that takes effect only when the game starts again says so
+under its title, and a chosen value not yet in effect says when it will be.
+Back on a section's page goes back to the first page, on that section's row.
+The menu always opens on its first page. Opening it pauses the game and keeps
+the controllers out of it. PS, Options or Resume close it, and so does Back
+on the first page. Any other layer over the
 game (a family notice) pauses it the same way, and the game's own screen back
 in front resumes it. The game's play time is counted for the family rules
 until it ends, not until its error screen is left. A chosen option is kept in
@@ -441,8 +526,9 @@ setting in that game's `Preferences.retroHostGraphics`), and the volume and mute
 in `Preferences.retroHostVolume` and `retroHostMuted`, so the next game starts
 with them.
 
-**Ending.** Close game stops the game (the host writes the memory card),
-releases it and shuts the host down, then the library comes back. A game that
+**Ending.** Close game stops the game (the host writes the memory card) and
+releases it, keeps the host for the next game (above), then the library comes
+back. A game that
 ends without an error goes back to the library the same way. A game that ends
 with an error stays on its error screen ("Night Racer stopped") with the words
 for its `errorCode` (`retroHostErrorKey`; a code the launcher does not know is
@@ -474,7 +560,25 @@ native memory as a real ring slot would be, so no host is started.
   - frames that arrive after the game ended or during shutdown;
   - focus changes after shutdown or a host failure;
   - `stop`, `shutdown` and `dispose`, including disposing before a game was
-    started on a host that is gone.
+    started on a host that is gone;
+  - `detach`: a host left running with no game and the next game started on
+    it, a game that ended on its own released first, and the host shut down
+    instead when it still holds a game, a call fails, it has ended or it was
+    shut down.
+- [`retro_host_keeper_test.dart`](../test/ui/retro_host/retro_host_keeper_test.dart)
+  checks that a kept host goes to the next game of the same program once,
+  that one of another program, a second one kept, or one idle too long is
+  shut down, and that a kept host that ends by itself is forgotten and freed.
+- [`retro_option_sections_test.dart`](../test/ui/retro_host/retro_option_sections_test.dart)
+  sorts the fifty options of the recorded real status into their sections and
+  the ten not shown, checks keys the recording lacks (port 2, multitap, a
+  group SwanStation may add, another core's key), and the " (Restart)" titles.
+- [`retro_host_launch_environment_test.dart`](../test/ui/retro_host/retro_host_launch_environment_test.dart)
+  starts `AppModel.openRetroHost` on Linux with a host that writes the
+  environment it got: the AppImage's variables are gone, `XDG_DATA_DIRS` has
+  lost the AppImage's folder, and nothing of the test process's own
+  environment came in. It also checks that Windows keeps the launcher's
+  environment and that an empty whole environment is refused.
 - [`retro_host_game_view_test.dart`](../test/ui/retro_host/retro_host_game_view_test.dart)
   checks the letterboxing and that a frame from the fake host reaches the
   screen. It also checks that an `inactive` lifecycle pauses the game and
@@ -539,16 +643,23 @@ native memory as a real ring slot would be, so no host is started.
   ([`ps1_launcher.dart`](../test/support/ps1_launcher.dart)): the setting off
   (DuckStation as before) and without a host, the `start` argument with the
   player's paths, volume and options, the controller kept from the launcher
-  on the game's screen, PS opening and closing the menu, the menu's rows and
-  what they keep, Close game, an error screen, a clean end, an outdated host,
-  and a start given up. It also opens the Graphics page: its names, a preset
-  kept for that game only, Custom, Back to the menu, PS to the game, a game
-  started with its own graphics, and the Auto Optimizer's rows, its toast and
-  Undo.
+  on the game's screen, PS opening and closing the menu, the menu's first page
+  and each section's page against the recorded real status (Back to the first
+  page on the section's row, the restart marks, what is kept), options not
+  shown and not sent, Close game keeping the host and the next game starting
+  on it, the kept host shut down when the player leaves the PS1 games, after
+  the idle limit and when another game starts, a kept host that crashed and a
+  host that crashed during a game (both replaced by a new host for the next
+  game), a host still holding a game after `release` (shut down), an error
+  screen, a clean end, an outdated host, and a start given up. It also
+  opens the Graphics page: its names, a preset kept for that game only,
+  Custom, Back to the menu, PS to the game, a game started with its own
+  graphics, and the Auto Optimizer's rows, its toast and Undo.
 - [`retro_host_play_golden_test.dart`](../test/ui/retro_host_play_golden_test.dart)
-  draws the loading screen, the error screen, the game's picture, the menu
-  over it, the Graphics page with Enhanced chosen, the Auto Optimizer's
-  suggestion, and Settings › Emulators with the host's rows.
+  draws the loading screen, the error screen, the game's picture, the menu's
+  first page over it, its Console page, the Graphics page with Enhanced
+  chosen, the Auto Optimizer's suggestion, and Settings › Emulators with the
+  host's rows.
 - [`retro_keyboard_test.dart`](../test/core/retro_host/retro_keyboard_test.dart)
   checks the keyboard layout as a PS1 pad, a moved key, the stick modifier
   and the keys joining a controller.
@@ -611,12 +722,18 @@ names, the PS-EXE is put on a disc in a games folder, OpenBIOS goes in the
 PS1 BIOS folder, and `AppModel.play` starts the disc with the setting on. The
 game reaches `playing` and shows two pictures that differ. A second
 controller in the app's controller reader connects port 2. PS opens the menu
-(the host takes `pause`), Graphics opens and the resolution is changed and
-kept for that game, Back returns to the menu, the volume is set and kept, PS resumes, and Close game ends with the host's clean
-exit and a memory card written. Its helpers, shared with the test above, are
+(the host takes `pause`) on Graphics and its four sections, Graphics
+opens and the resolution is changed and kept for that game, Back returns
+to the menu, each section's page holds only
+SwanStation options, CD-ROM Read Speedup is changed in Console and kept, the
+volume is set in Audio and kept, and PS resumes. Close game leaves the host
+running with a memory card written. The same disc then plays again in the
+same host (its frames carry epoch 2, as protocol.md "start" counts games in a
+host), Close game keeps the host again, and turning the setting off shuts it
+down with a clean exit. Its helpers, shared with the test above, are
 in [`real_host_support.dart`](../test/ui/retro_host/real_host_support.dart).
 It passed on Windows on 13 November 2026 with the same host and SwanStation
-builds. The host runs with the test's own environment, as the launcher starts
+builds, and again with the sections and the kept host the same day. The host runs with the test's own environment, as the launcher starts
 it, so WinLibs' `bin` folder has to be on `PATH` there.
 
 ## Not yet
@@ -624,19 +741,11 @@ it, so WinLibs' `bin` folder has to be on `PATH` there.
 - **Release builds.** Only debug builds find a host. Release builds get the
   signed host release, with the checks of protocol.md "Finding and checking
   the host", later.
-- **One host per game.** The host is shut down when its game is closed, and
-  the next game starts a new one. The protocol allows one host to run games
-  one after another.
-- **The host's environment on Linux.** The host gets the launcher's whole
-  environment. An emulator started from the AppImage gets it without what the
-  AppImage set (`GameProcess.withoutAppImage`); the host does not yet.
 - **No phone pad.** A phone or browser pad (Remote Play's) does not play a
   PS1 game in the host, and does not move the launcher while the game's own
   screen is in front.
 - **No mouse.** The mouse buttons and the wheel in a game's Controls are not
   read for a PS1 game.
-- **Long menus.** The menu lists every option SwanStation offers that is not
-  on the Graphics page (about forty for a PS1 game), in the host's order.
 - **The Auto Optimizer on Linux.** Only Windows reads the graphics adapters
   (DXGI), so on Linux Check this PC says the computer could not be read.
 - **One step down.** The speed check lowers one notch once. It does not

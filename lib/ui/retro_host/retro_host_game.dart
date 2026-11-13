@@ -52,14 +52,23 @@ class RetroHostGame extends ChangeNotifier {
     );
   }
 
-  /// Starts a real host from [command] and takes it over.
+  /// Starts a real host from [command] and takes it over. [environment] is added to the
+  /// launcher's, or with [inheritEnvironment] false is the host's whole environment
+  /// ([RetroHostClient.start]).
   factory RetroHostGame.launch({
     required List<String> command,
     Map<String, String>? environment,
+    bool inheritEnvironment = true,
     double volume = 1,
     bool muted = false,
   }) => RetroHostGame(
-    RetroHostClient.start(command: command, environment: environment, volume: volume, muted: muted),
+    RetroHostClient.start(
+      command: command,
+      environment: environment,
+      inheritEnvironment: inheritEnvironment,
+      volume: volume,
+      muted: muted,
+    ),
     volume: volume,
     muted: muted,
   );
@@ -128,7 +137,9 @@ class RetroHostGame extends ChangeNotifier {
   bool _polling = false;
   bool _disposed = false;
   bool _hostEnded = false;
+  bool _detached = false;
   Future<void>? _closing;
+  Future<bool>? _detaching;
   Future<void>? _starting;
 
   bool get _gameLive => _phase == RetroHostGamePhase.loading || _phase == RetroHostGamePhase.playing;
@@ -325,9 +336,46 @@ class RetroHostGame extends ChangeNotifier {
     }
   }
 
+  /// Lets go of the host without shutting it down, so a next game can start on it: protocol.md
+  /// "Processes" says "One host runs games one after another until the launcher exits or the host
+  /// fails." The game is stopped if it still runs, and an ended game is forgotten with `release`,
+  /// since `start` is `busy` "if a game is loaded, running or ended". True when the host still runs
+  /// and `status` then says no game is loaded; the caller may then start the next game on
+  /// [session] and must shut it down itself. False when the host ended, was shut down, or still
+  /// holds a game: the host is shut down as usual. The window's focus is given back to the host as
+  /// a new host starts with it, since the next game tells it its own. Every caller waits for the
+  /// same answer.
+  Future<bool> detach() => _detaching ??= _detachNow();
+
+  Future<bool> _detachNow() async {
+    if (_closing != null) return false;
+    await stop();
+    _poll?.cancel();
+    picture.accepting = false;
+    picture.clear();
+    var free = false;
+    if (!_hostEnded && _closing == null) {
+      try {
+        await session.call('release');
+        free = await session.status() == null && !_hostEnded && _closing == null;
+      } on Object catch (error) {
+        _failure ??= '$error';
+      }
+    }
+    if (!free) {
+      await shutdown();
+      return false;
+    }
+    _detached = true;
+    if (!_focused) session.inputFocus = true;
+    _setPhase(RetroHostGamePhase.closed);
+    return true;
+  }
+
   /// Asks the host to exit and frees the connection once it has; the client kills a host that has
-  /// not exited within its time limit. Every caller waits for the same shutdown.
-  Future<void> shutdown() => _closing ??= _shutdownNow();
+  /// not exited within its time limit. Every caller waits for the same shutdown. A host this game
+  /// was [detach]ed from is no longer its own: nothing is done.
+  Future<void> shutdown() => _closing ??= _detached ? Future.value() : _shutdownNow();
 
   Future<void> _shutdownNow() async {
     _poll?.cancel();
@@ -367,11 +415,12 @@ class RetroHostGame extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  /// Shuts the host down if nothing did yet and frees the picture.
+  /// Shuts the host down if nothing did yet, unless it was [detach]ed for the next game, and frees
+  /// the picture.
   @override
   void dispose() {
     _disposed = true;
-    unawaited(shutdown());
+    if (_detaching == null) unawaited(shutdown());
     picture.dispose();
     super.dispose();
   }

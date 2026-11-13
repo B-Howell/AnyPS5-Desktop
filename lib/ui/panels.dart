@@ -222,7 +222,7 @@ class PanelView extends StatelessWidget {
       Layer.controls => T.text('controls'),
       Layer.advanced => T.text('advanced'),
       Layer.gameSettings => T.text('gameSettings'),
-      Layer.retroGraphics => T.text('retroGraphics'),
+      Layer.retroGraphics => T.text('retroMenuGraphics'),
       Layer.cloudStorage => T.text('cloudStorageTitle'),
       // Appearance › Themes.
       Layer.themes => T.text('appearance'),
@@ -242,15 +242,17 @@ class PanelView extends StatelessWidget {
               (psMenu
                   // The Options menu's rows say what each does: a line more each.
                   ? 168 +
-                        switch (model.overlay) {
-                              Layer.profileMenu => 74,
-                              // Send Report says what it sends: two lines more.
-                              Layer.launcherReport => 98,
-                              // The question's line is a sentence or two.
-                              Layer.cloudQuestion => 72,
-                              _ => 62,
-                            } *
-                            category.rows.length +
+                        (model.overlay == Layer.retroMenu
+                            ? _gameMenuRowsHeight(category.rows)
+                            : switch (model.overlay) {
+                                    Layer.profileMenu => 74,
+                                    // Send Report says what it sends: two lines more.
+                                    Layer.launcherReport => 98,
+                                    // The question's line is a sentence or two.
+                                    Layer.cloudQuestion => 72,
+                                    _ => 62,
+                                  } *
+                                  category.rows.length) +
                         // Now playing's card is taller than a row: its cover and three lines.
                         (category.rows.any((row) => row.kind is MediaRow) ? 40 : 0)
                   : compact
@@ -425,6 +427,11 @@ class PanelView extends StatelessWidget {
     );
   }
 }
+
+/// How tall the rows of a PS1 game's menu are, with the gap under each: its pages mix actions,
+/// choices, a slider and a switch, some with a line under the title, so each counts its own.
+double _gameMenuRowsHeight(List<PanelRow> rows) =>
+    rows.fold(0, (height, row) => height + (row.detail != null ? 81 : (row.kind is ActionRow ? 58 : 65)));
 
 /// The sections' column: as large as the rows, scrolling with a scrollbar that shows whenever
 /// there are more than fit (Settings in a short window), the selected one kept in view.

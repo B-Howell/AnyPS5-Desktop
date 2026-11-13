@@ -148,22 +148,30 @@ class RetroHostClient implements RetroHostSession {
   FrameRing? _frameRing;
 
   /// Starts the host: [command] is the executable's absolute path and any arguments before the
-  /// protocol's own; [environment] adds to the launcher's environment for the host. [volume] and
-  /// [muted] are sent as the first call after `welcome`.
+  /// protocol's own; [environment] adds to the launcher's environment for the host, or, with
+  /// [inheritEnvironment] false, is the host's whole environment. A whole environment cannot be
+  /// empty, since native/retro_host gives the launcher's own for none. [volume] and [muted] are
+  /// sent as the first call after `welcome`.
   static RetroHostClient start({
     required List<String> command,
     Map<String, String>? environment,
+    bool inheritEnvironment = true,
     double volume = 1,
     bool muted = false,
     List<String> pixelFormats = const [RetroPixelFormat.rgba8, RetroPixelFormat.bgra8],
   }) {
     if (command.isEmpty) throw ArgumentError.value(command, 'command', 'names no program');
+    if (!inheritEnvironment && (environment == null || environment.isEmpty)) {
+      throw ArgumentError.value(environment, 'environment', "is empty, so the host would get the launcher's own");
+    }
+    final env = !inheritEnvironment
+        ? retroHostEnvironment(const {}, environment!, windows: Platform.isWindows)
+        : environment == null
+        ? const <String>[]
+        : retroHostEnvironment(Platform.environment, environment, windows: Platform.isWindows);
     final client = RetroHostClient._(volume, muted, pixelFormats);
     final token = _nextToken++;
     client._callback = NativeCallable<RetroHostCallbackNative>.listener(client._onEvent);
-    final env = environment == null
-        ? const <String>[]
-        : retroHostEnvironment(Platform.environment, environment, windows: Platform.isWindows);
     final error = calloc<Uint8>(512).cast<Utf8>();
     final argv = _strings(command);
     final envp = _strings(env);

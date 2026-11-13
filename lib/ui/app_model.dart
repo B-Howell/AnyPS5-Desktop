@@ -60,10 +60,10 @@ import '../core/retro_host/retro_graphics_catalog.dart';
 import '../core/retro_host/retro_graphics_optimizer.dart';
 import '../core/retro_host/retro_graphics_profile.dart';
 import '../core/retro_host/retro_hardware.dart';
-import '../core/retro_host/retro_host_client.dart' show RetroHostEnd;
+import '../core/retro_host/retro_host_client.dart' show RetroHostClient, RetroHostEnd;
 import '../core/retro_host/retro_host_install.dart';
 import '../core/retro_host/retro_host_protocol.dart' show RetroErrorCode, RetroOption;
-import '../core/retro_host/retro_host_session.dart' show RetroHostStartRequest;
+import '../core/retro_host/retro_host_session.dart' show RetroHostSession, RetroHostStartRequest;
 import '../core/retro_host/retro_keyboard.dart';
 import '../core/remote/adb_tunnel.dart';
 import '../core/remote/assist.dart';
@@ -115,6 +115,8 @@ import 'retro_host/retro_game_menu.dart';
 import 'retro_host/retro_graphics.dart';
 import 'retro_host/retro_host_controls.dart';
 import 'retro_host/retro_host_game.dart';
+import 'retro_host/retro_host_keeper.dart';
+import 'retro_host/retro_option_sections.dart';
 import 'share_play_model.dart';
 import 'game_delete_model.dart';
 import 'game_files_model.dart';
@@ -2713,6 +2715,14 @@ class AppModel extends ChangeNotifier {
   /// A PS1 game playing in the launcher's window through the emulator host (retro_host_play.dart).
   RetroPlay? retroPlay;
 
+  /// The emulator host of the last PS1 game, kept for the next one (retro_host_play.dart).
+  @visibleForTesting
+  final retroHostKeeper = RetroHostKeeper();
+
+  /// How often a PS1 game in the host is asked its `status`; tests ask by hand.
+  @visibleForTesting
+  Duration retroStatusEvery = const Duration(milliseconds: 500);
+
   /// A short message at the bottom of the screen, with a trophy level's badge before it when
   /// it says one was reached.
   String? toast;
@@ -3019,6 +3029,7 @@ class AppModel extends ChangeNotifier {
     _publishLibrary();
     _publishActivity();
     _prepareWhenChanged();
+    _letUnwantedRetroHostGo();
   }
 
   void savePreferences() {
@@ -4317,10 +4328,20 @@ class AppModel extends ChangeNotifier {
     primaryAction(game);
   }
 
-  /// Opens the emulator host for a PS1 game (retro_host_play.dart); tests give a fake session.
+  /// Starts the emulator host for a PS1 game (retro_host_play.dart); tests give a fake session. On
+  /// Linux it gets the launcher's environment without what the launcher's AppImage set
+  /// ([RetroHostInstall.environmentFor]), as a standalone emulator does.
   @visibleForTesting
-  late RetroHostOpener openRetroHost = (install, {required volume, required muted}) =>
-      RetroHostGame.launch(command: [install.host], volume: volume, muted: muted);
+  late RetroHostOpener openRetroHost = (install, {required volume, required muted}) {
+    final environment = RetroHostInstall.environmentFor(system, services.environment ?? Platform.environment);
+    return RetroHostClient.start(
+      command: [install.host],
+      environment: environment,
+      inheritEnvironment: environment == null,
+      volume: volume,
+      muted: muted,
+    );
+  };
 
   /// Starts a standalone emulator. On Linux it gets the launcher's environment without what the
   /// launcher's AppImage set ([GameProcess.withoutAppImage]).
@@ -8224,6 +8245,7 @@ class AppModel extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _disposeRetroPlay();
+    unawaited(retroHostKeeper.shutdown());
     profileFlow.listLeave?.cancel();
     saveSync.dispose();
     powerWatch.stop();

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../game_process.dart';
 import '../host.dart';
 
 /// The emulator host and the SwanStation library it loads for a PS1 game.
@@ -26,6 +27,14 @@ class RetroHostInstall {
   /// SwanStation's file name on [system], as libretro builds name it.
   static String coreName(HostSystem system) =>
       system == HostSystem.windows ? 'swanstation_libretro.dll' : 'swanstation_libretro.so';
+
+  /// The host's whole environment on [system], from the launcher's [launcher] environment, or
+  /// null where the host gets the launcher's own. On Linux it is the launcher's without what the
+  /// launcher's AppImage set ([GameProcess.withoutAppImage]), as for a standalone emulator: the
+  /// AppImage's runtime variables and its own `usr/share` at the head of `XDG_DATA_DIRS` belong to
+  /// the launcher, not to a program it starts.
+  static Map<String, String>? environmentFor(HostSystem system, Map<String, String> launcher) =>
+      system == HostSystem.linux ? GameProcess.withoutAppImage(launcher) : null;
 
   /// The host [environment] names and the SwanStation library beside it, when this is a [debug]
   /// build and both files are there; null otherwise.

@@ -16,7 +16,7 @@ RetroHardware _pc({int height = 1440, int memory = 8 * _gib, int threads = 16, L
     );
 
 RetroStatus _status({bool hardware = true, List<String>? scales}) {
-  final recorded = recordedStatus();
+  final recorded = swanstationStatus();
   final options = {...recorded.options};
   if (scales != null) {
     final scale = options[RetroGraphicsCatalog.resolution]!;

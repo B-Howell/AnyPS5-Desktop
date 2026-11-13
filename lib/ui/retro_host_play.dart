@@ -11,10 +11,14 @@ class RetroPlay {
     required this.graphics,
     required this.monitor,
     required this.started,
+    required this.program,
   });
 
   final Game game;
   final RetroHostGame host;
+
+  /// The host executable the game runs in, so its host is kept only for games of the same one.
+  final String program;
   final RetroHostControls controls;
   final RetroGameMenu menu;
 
@@ -35,6 +39,9 @@ class RetroPlay {
 
   /// Its play time went to the family rules ([RetroHostPlaying._countRetroPlay]); once only.
   bool counted = false;
+
+  /// The section of the menu shown, or null for the menu's first page.
+  RetroOptionSection? menuSection;
 
   bool _released = false;
 
@@ -88,12 +95,30 @@ String? retroHostErrorKey(String errorCode) => switch (errorCode) {
   _ => 'retroHostOtherDetail',
 };
 
-/// Opens one emulator host for a PS1 game, with the player's volume.
-typedef RetroHostOpener = RetroHostGame Function(
+/// Starts one emulator host for PS1 games, with the player's volume.
+typedef RetroHostOpener = RetroHostSession Function(
   RetroHostInstall install, {
   required double volume,
   required bool muted,
 });
+
+/// The menu's sections, in the order its first page lists them. Graphics is on the game's
+/// Graphics page instead.
+const retroMenuSections = [
+  RetroOptionSection.audio,
+  RetroOptionSection.controller,
+  RetroOptionSection.console,
+  RetroOptionSection.advanced,
+];
+
+/// The words of a section's row and heading, and of the row's detail.
+(String, String) retroMenuSectionKeys(RetroOptionSection section) => switch (section) {
+  RetroOptionSection.graphics => ('retroMenuGraphics', 'retroMenuGraphicsDetail'),
+  RetroOptionSection.audio => ('retroMenuAudio', 'retroMenuAudioDetail'),
+  RetroOptionSection.controller => ('retroMenuController', 'retroMenuControllerDetail'),
+  RetroOptionSection.console => ('retroMenuConsole', 'retroMenuConsoleDetail'),
+  RetroOptionSection.advanced => ('retroMenuAdvanced', 'retroMenuAdvancedDetail'),
+};
 
 /// Settings › Emulators › Run PS1 games in the separate host: PS1 discs played in the launcher's
 /// window through the emulator host, with the launcher's controllers and keyboard, and the game's
@@ -170,14 +195,24 @@ extension RetroHostPlaying on AppModel {
       _padLog?.call('emulator host: no BIOS folder: $error');
     }
 
-    final RetroHostGame host;
-    try {
-      host = openRetroHost(install, volume: preferences.retroHostVolume / 100, muted: preferences.retroHostMuted);
-    } on Object catch (error) {
-      _padLog?.call('emulator host: ${install.host} did not start: $error');
-      show(T.text('retroHostNotStartedDetail'));
-      return;
+    final volume = preferences.retroHostVolume / 100;
+    final muted = preferences.retroHostMuted;
+    final kept = retroHostKeeper.take(program: install.host);
+    final RetroHostSession session;
+    if (kept != null) {
+      session = kept;
+      _padLog?.call('emulator host: the kept ${install.host} plays the next game');
+    } else {
+      try {
+        session = openRetroHost(install, volume: volume, muted: muted);
+      } on Object catch (error) {
+        _padLog?.call('emulator host: ${install.host} did not start: $error');
+        show(T.text('retroHostNotStartedDetail'));
+        return;
+      }
     }
+    final host = RetroHostGame(session, statusEvery: retroStatusEvery, volume: volume, muted: muted);
+    if (kept != null) unawaited(host.setVolume(level: volume, muted: muted));
     final settings = currentSettings(game);
     final keyboard = RetroKeyboard(
       settings.controls ?? const {},
@@ -204,6 +239,7 @@ extension RetroHostPlaying on AppModel {
       graphics: graphics,
       monitor: monitor,
       started: DateTime.now(),
+      program: install.host,
     );
     retroPlay = play;
     host.addListener(_retroChanged);
@@ -220,7 +256,13 @@ extension RetroHostPlaying on AppModel {
         disc: p.normalize(disc.path),
         system: p.normalize(paths.retroSystem),
         saves: p.normalize(paths.retroSaves),
-        options: {...preferences.retroHostOptions, ...?preferences.retroHostGraphics[game.id]?.options},
+        options: {
+          for (final MapEntry(:key, :value) in {
+            ...preferences.retroHostOptions,
+            ...?preferences.retroHostGraphics[game.id]?.options,
+          }.entries)
+            if (retroOptionShown(key)) key: value,
+        },
       ),
     );
   }
@@ -237,6 +279,7 @@ extension RetroHostPlaying on AppModel {
       }
       if (play.menu.isOpen || retroMenuShown) {
         overlay = null;
+        play.menuSection = null;
         unawaited(play.menu.close());
       }
       final problem = play.problem;
@@ -253,6 +296,7 @@ extension RetroHostPlaying on AppModel {
   void openRetroMenu() {
     final play = retroPlay;
     if (play == null || play.closing || !play.host.loaded || retroMenuShown) return;
+    play.menuSection = null;
     open(Layer.retroMenu);
     unawaited(play.menu.open());
   }
@@ -271,6 +315,7 @@ extension RetroHostPlaying on AppModel {
   void resumeRetroGame() {
     final play = retroPlay;
     if (play == null) return;
+    play.menuSection = null;
     if (retroMenuShown) {
       overlay = null;
       sounds.play(Cue.back);
@@ -279,19 +324,24 @@ extension RetroHostPlaying on AppModel {
     _changed();
   }
 
-  /// Closes the game: it is stopped (its memory cards written), the host shut down, and the
-  /// library comes back.
+  /// Closes the game: it is stopped (its memory cards written) and forgotten in the host, and the
+  /// library comes back. The host is kept for the next game ([RetroHostKeeper]) when it is left
+  /// with no game loaded; otherwise, or when the launcher went away meanwhile, it is shut down.
   Future<void> closeRetroGame() async {
     final play = retroPlay;
     if (play == null || play.closing) return;
     play.closing = true;
+    play.menuSection = null;
     _countRetroPlay(play);
     if (retroMenuShown) overlay = null;
     _changed();
     try {
-      await play.host.stop();
+      if (await play.host.detach()) {
+        retroHostKeeper.keep(play.host.session, program: play.program);
+        if (_disposed) await retroHostKeeper.shutdown();
+        _padLog?.call('emulator host: kept for the next game');
+      }
     } finally {
-      await play.host.shutdown();
       play.release(_retroChanged);
       if (identical(retroPlay, play)) retroPlay = null;
       if (retroMenuShown) overlay = null;
@@ -306,6 +356,10 @@ extension RetroHostPlaying on AppModel {
     final play = retroPlay;
     if (play == null) return false;
     if (overlay == Layer.retroMenu) {
+      if (command == Command.back && play.menuSection != null) {
+        _leaveRetroMenuSection(play);
+        return true;
+      }
       if (command == Command.home || command == Command.back || command == Command.options) {
         resumeRetroGame();
         return true;
@@ -330,21 +384,31 @@ extension RetroHostPlaying on AppModel {
     return true;
   }
 
-  /// The game's menu: Resume, the discs of a multi-disc game, Graphics, the core's other options,
-  /// the volume, Close Game.
+  /// The game's menu. Its first page: Resume, the discs of a multi-disc game, Graphics (the
+  /// game's Graphics page), a row for each section ([retroMenuSections]) that has rows, and Close
+  /// Game. A section's page: its options in the order the host lists them, with Volume and Mute
+  /// first in Audio. Back on a section's page goes back to the first page.
   List<PanelCategory> _retroMenuCategories() {
     final play = retroPlay;
     if (play == null) return const [];
+    final section = play.menuSection;
+    if (section != null) {
+      return [
+        PanelCategory(
+          id: 'retroMenu-${section.name}',
+          title: T.text(retroMenuSectionKeys(section).$1),
+          rows: _retroSectionRows(play, section),
+        ),
+      ];
+    }
     final menu = play.menu;
-    final rows = menu.rows;
-    final volume = rows.whereType<RetroVolumeRow>().first;
     return [
       PanelCategory(
         id: 'retroMenu',
         title: play.game.name,
         rows: [
           PanelRow(id: 'resume', title: T.text('quickResume'), kind: ActionRow(resumeRetroGame)),
-          for (final disc in rows.whereType<RetroDiscRow>())
+          for (final disc in menu.rows.whereType<RetroDiscRow>())
             PanelRow(
               id: 'disc-${disc.index}',
               title: disc.label,
@@ -354,38 +418,20 @@ extension RetroHostPlaying on AppModel {
               kind: ActionRow(() => unawaited(menu.chooseDisc(disc))),
             ),
           if (play.graphics.available)
-            PanelRow(id: 'graphics', title: T.text('retroGraphics'), kind: ActionRow(openRetroGraphics)),
-          for (final option in rows.whereType<RetroOptionRow>().where((row) => !RetroGraphicsCatalog.covers(row.key)))
             PanelRow(
-              id: 'option-${option.key}',
-              title: option.title,
-              detail: option.pending
-                  ? T.text(option.restartNeeded ? 'retroMenuOptionRestartDetail' : 'retroMenuOptionPendingDetail')
-                  : null,
-              kind: ChoiceRow(
-                option.option.labels,
-                option.option.selected,
-                (index) => unawaited(_chooseRetroOption(option.option, index)),
+              id: 'graphics',
+              title: T.text(retroMenuSectionKeys(RetroOptionSection.graphics).$1),
+              detail: T.text(retroMenuSectionKeys(RetroOptionSection.graphics).$2),
+              kind: ActionRow(openRetroGraphics),
+            ),
+          for (final section in retroMenuSections)
+            if (_retroSectionRows(play, section).isNotEmpty)
+              PanelRow(
+                id: 'section-${section.name}',
+                title: T.text(retroMenuSectionKeys(section).$1),
+                detail: T.text(retroMenuSectionKeys(section).$2),
+                kind: ActionRow(() => _openRetroMenuSection(play, section)),
               ),
-            ),
-          PanelRow(
-            id: 'volume',
-            title: T.text('retroMenuVolume'),
-            kind: StepperRow(
-              value: (volume.level * 100).round(),
-              min: 0,
-              max: 100,
-              step: 10,
-              slider: true,
-              format: AppModel._percent,
-              set: (value) => unawaited(_setRetroVolume(value)),
-            ),
-          ),
-          PanelRow(
-            id: 'mute',
-            title: T.text('retroMenuMute'),
-            kind: ToggleRow(volume.muted, (muted) => unawaited(_setRetroMuted(muted))),
-          ),
           PanelRow(
             id: 'closeGame',
             title: T.text('quickCloseGame'),
@@ -394,6 +440,67 @@ extension RetroHostPlaying on AppModel {
         ],
       ),
     ];
+  }
+
+  /// The rows of one section's page: Volume and Mute first in Audio, then the section's options.
+  /// An option that takes effect only when the game starts again says so; a chosen value not yet
+  /// in effect says when it will be.
+  List<PanelRow> _retroSectionRows(RetroPlay play, RetroOptionSection section) {
+    final menu = play.menu;
+    return [
+      if (section == RetroOptionSection.audio) ...[
+        PanelRow(
+          id: 'volume',
+          title: T.text('retroMenuVolume'),
+          kind: StepperRow(
+            value: (play.host.volume * 100).round(),
+            min: 0,
+            max: 100,
+            step: 10,
+            slider: true,
+            format: AppModel._percent,
+            set: (value) => unawaited(_setRetroVolume(value)),
+          ),
+        ),
+        PanelRow(
+          id: 'mute',
+          title: T.text('retroMenuMute'),
+          kind: ToggleRow(play.host.muted, (muted) => unawaited(_setRetroMuted(muted))),
+        ),
+      ],
+      for (final option in menu.optionsIn(section))
+        PanelRow(
+          id: 'option-${option.key}',
+          title: option.title,
+          detail: option.pending
+              ? T.text(option.restartNeeded ? 'retroMenuOptionRestartDetail' : 'retroMenuOptionPendingDetail')
+              : (option.restartNeeded ? T.text('retroMenuOptionRestartOnlyDetail') : null),
+          kind: ChoiceRow(
+            option.option.labels,
+            option.option.selected,
+            (index) => unawaited(_chooseRetroOption(option.option, index)),
+          ),
+        ),
+    ];
+  }
+
+  void _openRetroMenuSection(RetroPlay play, RetroOptionSection section) {
+    if (!identical(retroPlay, play) || overlay != Layer.retroMenu) return;
+    play.menuSection = section;
+    panelRow = 0;
+    sounds.play(Cue.select);
+    _changed();
+  }
+
+  /// Back from a section's page to the first page, on the section's row.
+  void _leaveRetroMenuSection(RetroPlay play) {
+    final section = play.menuSection;
+    play.menuSection = null;
+    final rows = _retroMenuCategories().single.rows;
+    final index = rows.indexWhere((row) => row.id == 'section-${section?.name}');
+    panelRow = index < 0 ? 0 : index;
+    sounds.play(Cue.back);
+    _changed();
   }
 
   /// A core option chosen in the menu: sent to the game, and kept for every later one once the
@@ -431,6 +538,18 @@ extension RetroHostPlaying on AppModel {
       ..retroHostMuted = play.host.muted;
     savePreferences();
     _changed();
+  }
+
+  /// The kept host is shut down once the player has left the PS1 games: the game selected is not a
+  /// PS1 disc that plays in the host, or another game starts or runs.
+  void _letUnwantedRetroHostGo() {
+    if (!retroHostKeeper.holding || retroPlay != null) return;
+    final wanted =
+        running == null &&
+        starting == null &&
+        selectedGame?.retro?.platform == RetroPlatform.ps1 &&
+        playsInHost(RetroPlatform.ps1);
+    if (!wanted) unawaited(retroHostKeeper.shutdown());
   }
 
   /// The launcher goes: the game's controllers and menu let go, and its host is shut down.

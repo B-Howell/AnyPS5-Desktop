@@ -8,7 +8,7 @@ import 'fake_retro_host_session.dart';
 /// The `status` a real host gave for the OpenBIOS test program with SwanStation on Windows
 /// (test/fixtures/retro_host), before and after PGXP geometry correction was turned on, which
 /// makes SwanStation list its other PGXP options.
-RetroStatus recordedStatus({bool pgxp = false}) => RetroStatus.parse(
+RetroStatus swanstationStatus({bool pgxp = false}) => RetroStatus.parse(
   jsonDecode(File('test/fixtures/retro_host/swanstation_status${pgxp ? '_pgxp' : ''}.json').readAsStringSync())
       as Map<String, Object?>,
 );
@@ -17,8 +17,8 @@ RetroStatus recordedStatus({bool pgxp = false}) => RetroStatus.parse(
 /// status offers and selects it, and the PGXP options show only while geometry correction is on.
 class FakeOptionSession extends FakeRetroHostSession {
   FakeOptionSession({Map<String, List<String>>? offered, this.hardware = true}) {
-    _base = recordedStatus();
-    _pgxp = recordedStatus(pgxp: true);
+    _base = swanstationStatus();
+    _pgxp = swanstationStatus(pgxp: true);
     for (final MapEntry(:key, :value) in (offered ?? const {}).entries) {
       _offered[key] = value;
     }

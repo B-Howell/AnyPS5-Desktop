@@ -104,13 +104,16 @@ void main() {
     await expectLater(shell, matchesGoldenFile('goldens/retro_host_playing_en.png'));
   });
 
-  testWidgets('the menu over the paused game: discs, Graphics, the volume', (tester) async {
-    await playing(tester, status: menuStatus());
+  testWidgets('the menu over the paused game: discs, its sections, Close Game', (tester) async {
+    await playing(tester, status: recordedStatus());
     launcher.model.openRetroMenu();
     await settle(tester);
     expect(find.text('Disc 2'), findsOneWidget);
-    expect(find.text(T.text('retroGraphics')), findsOneWidget);
-    expect(find.text('Internal Resolution'), findsNothing, reason: 'on the Graphics page');
+    for (final key in ['retroMenuAudio', 'retroMenuController', 'retroMenuConsole', 'retroMenuAdvanced']) {
+      expect(find.text(T.text(key)), findsOneWidget, reason: key);
+    }
+    expect(find.text(T.text('retroMenuGraphics')), findsOneWidget);
+    expect(find.text('Internal Resolution Scale'), findsNothing, reason: 'on the Graphics page');
     expect(find.text(T.text('quickCloseGame')), findsOneWidget);
     await expectLater(shell, matchesGoldenFile('goldens/retro_host_menu_en.png'));
   });
@@ -143,7 +146,7 @@ void main() {
     model.selectCategory(1);
     await tester.runAsync(() => launcher.play.graphics.preview());
     await settle(tester);
-    final apply = model.panelCategories().last.rows.indexWhere((row) => row.id == 'opt-apply');
+    final apply = model.panelCategories()[1].rows.indexWhere((row) => row.id == 'opt-apply');
     for (var row = 0; row < apply; row++) {
       model.handle(Command.down);
     }
@@ -152,6 +155,17 @@ void main() {
     expect(find.text('Suggested for GeForce RTX 3070'), findsOneWidget);
     expect(find.text(T.text('retroOptimizerApply')), findsOneWidget);
     await expectLater(shell, matchesGoldenFile('goldens/retro_host_optimizer_en.png'));
+  });
+
+  testWidgets('a section of the menu: Console, with the options that need a restart marked', (tester) async {
+    await playing(tester, status: recordedStatus());
+    final model = launcher.model..openRetroMenu();
+    (model.panelCategories().single.rows.singleWhere((row) => row.id == 'section-console').kind as ActionRow).run();
+    await settle(tester);
+    expect(find.text('Console Region'), findsOneWidget);
+    expect(find.text('NTSC-U BIOS'), findsOneWidget);
+    expect(find.text(T.text('retroMenuOptionRestartOnlyDetail')), findsNWidgets(3), reason: 'region, BIOS, fast boot');
+    await expectLater(shell, matchesGoldenFile('goldens/retro_host_menu_console_en.png'));
   });
 
   testWidgets('settings: Emulators with the host turned on and its BIOS folder', (tester) async {

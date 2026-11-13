@@ -16,7 +16,7 @@ RetroOption _option(String key, List<String> values, {int selected = 0}) => Retr
 
 void main() {
   test('the page lists the settings the recorded host offers, in its own order', () {
-    final keys = [for (final (setting, _) in RetroGraphicsCatalog.present(recordedStatus().options)) setting.key];
+    final keys = [for (final (setting, _) in RetroGraphicsCatalog.present(swanstationStatus().options)) setting.key];
     expect(keys, [
       RetroGraphicsCatalog.resolution,
       RetroGraphicsCatalog.textureFilter,
@@ -30,7 +30,7 @@ void main() {
       RetroGraphicsCatalog.widescreen,
     ]);
     final withPgxp = [
-      for (final (setting, _) in RetroGraphicsCatalog.present(recordedStatus(pgxp: true).options)) setting.key,
+      for (final (setting, _) in RetroGraphicsCatalog.present(swanstationStatus(pgxp: true).options)) setting.key,
     ];
     expect(
       withPgxp,
@@ -51,7 +51,7 @@ void main() {
   });
 
   test('every value a preset asks for is one SwanStation has', () {
-    final options = recordedStatus(pgxp: true).options;
+    final options = swanstationStatus(pgxp: true).options;
     for (final preset in RetroGraphicsPreset.values) {
       final values = RetroGraphicsCatalog.presetValues(preset, options);
       expect(values.keys, containsAll([RetroGraphicsCatalog.resolution, RetroGraphicsCatalog.textureFilter]));
@@ -70,7 +70,7 @@ void main() {
   });
 
   test('the recorded host starts on Original, and a changed setting is the player\'s own look', () {
-    final options = recordedStatus().options;
+    final options = swanstationStatus().options;
     expect(RetroGraphicsCatalog.matching(options), RetroGraphicsPreset.original);
     final changed = {
       ...options,
@@ -88,7 +88,7 @@ void main() {
     expect(RetroGraphicsCatalog.fit(msaa, '4'), '2', reason: 'SSAA is not a smaller multisample count');
     expect(RetroGraphicsCatalog.fit(_option(RetroGraphicsCatalog.textureFilter, ['Nearest']), 'xBR'), isNull);
 
-    final limited = {...recordedStatus().options, RetroGraphicsCatalog.resolution: scale};
+    final limited = {...swanstationStatus().options, RetroGraphicsCatalog.resolution: scale};
     expect(
       RetroGraphicsCatalog.presetValues(RetroGraphicsPreset.maximum, limited)[RetroGraphicsCatalog.resolution],
       '3',
@@ -96,7 +96,7 @@ void main() {
   });
 
   test('a value\'s label is the host\'s', () {
-    final options = recordedStatus().options;
+    final options = swanstationStatus().options;
     expect(RetroGraphicsCatalog.label(options[RetroGraphicsCatalog.resolution]!, '5'), '5x (for 1080p)');
     expect(RetroGraphicsCatalog.label(options[RetroGraphicsCatalog.antialiasing]!, '4-ssaa'), '4x SSAA');
     expect(RetroGraphicsCatalog.label(options[RetroGraphicsCatalog.antialiasing]!, 'nine'), 'nine');

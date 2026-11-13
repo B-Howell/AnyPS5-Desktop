@@ -48,7 +48,7 @@ void main() {
     model.openRetroHost = (install, {required volume, required muted}) {
       final session = RecordingSession(RetroHostClient.start(command: [install.host], volume: volume, muted: muted));
       sessions.add(session);
-      return RetroHostGame(session, volume: volume, muted: muted);
+      return session;
     };
     try {
       final folder = Directory(p.join(model.root!, 'Hello World'))..createSync();
@@ -73,6 +73,7 @@ void main() {
         states: {'one': PadState.idle},
       );
 
+      model.select(model.games.indexOf(game));
       await model.play(game);
       final play = model.retroPlay!;
       expect(model.retroInGame, isTrue);
@@ -117,15 +118,14 @@ void main() {
         () => session.answers.any((answer) => answer.$1 == 'pause' && answer.$2 == true),
         const Duration(seconds: 2),
       );
-      final rows = model.panelCategories().single.rows;
-      stdout.writeln('menu: ${[for (final row in rows) row.id]}');
-      (rows.singleWhere((row) => row.id == 'graphics').kind as ActionRow).run();
+      List<PanelRow> rows() => model.panelCategories().single.rows;
+      stdout.writeln('menu: ${[for (final row in rows()) row.id]}');
+      (rows().singleWhere((row) => row.id == 'graphics').kind as ActionRow).run();
       expect(model.overlay, Layer.retroGraphics);
-      final resolution = model.panelCategories().first.rows.singleWhere(
-        (row) => row.id == 'gfx-swanstation_GPU_ResolutionScale',
-      );
-      final choice = resolution.kind as ChoiceRow;
-      choice.set((choice.selected + 1) % choice.options.length);
+      final resolution =
+          model.panelCategories().first.rows.singleWhere((row) => row.id == 'gfx-swanstation_GPU_ResolutionScale').kind
+              as ChoiceRow;
+      resolution.set((resolution.selected + 1) % resolution.options.length);
       await until(() => session.answers.any((answer) => answer.$1 == 'option'), const Duration(seconds: 5));
       expect(session.answers.lastWhere((answer) => answer.$1 == 'option').$3, isTrue);
       await until(
@@ -136,7 +136,39 @@ void main() {
       );
       model.handle(Command.back);
       expect(model.overlay, Layer.retroMenu);
-      (rows.singleWhere((row) => row.id == 'volume').kind as StepperRow).set(30);
+      final options = session.answers.where((answer) => answer.$1 == 'option').length;
+      expect(
+        [
+          for (final row in rows())
+            if (row.id.startsWith('section-')) row.id,
+        ],
+        ['section-audio', 'section-controller', 'section-console', 'section-advanced'],
+      );
+      for (final section in ['console', 'controller', 'advanced']) {
+        (rows().singleWhere((row) => row.id == 'section-$section').kind as ActionRow).run();
+        final ids = [for (final row in rows()) row.id];
+        stdout.writeln('$section: $ids');
+        expect(ids, everyElement(startsWith('option-swanstation_')), reason: section);
+        expect(ids, isNotEmpty, reason: section);
+        model.handle(Command.back);
+      }
+      expect(play.host.paused, isTrue, reason: 'Back from a section stays in the menu');
+      (rows().singleWhere((row) => row.id == 'section-console').kind as ActionRow).run();
+      final speed = rows().singleWhere((row) => row.id == 'option-swanstation_CDROM_ReadSpeedup');
+      final choice = speed.kind as ChoiceRow;
+      choice.set((choice.selected + 1) % choice.options.length);
+      await until(
+        () => session.answers.where((answer) => answer.$1 == 'option').length > options,
+        const Duration(seconds: 5),
+      );
+      expect(session.answers.lastWhere((answer) => answer.$1 == 'option').$3, isTrue);
+      await until(
+        () => model.preferences.retroHostOptions.containsKey('swanstation_CDROM_ReadSpeedup'),
+        const Duration(seconds: 2),
+      );
+      model.handle(Command.back);
+      (rows().singleWhere((row) => row.id == 'section-audio').kind as ActionRow).run();
+      (rows().singleWhere((row) => row.id == 'volume').kind as StepperRow).set(30);
       await until(
         () => session.answers.any((answer) => answer.$1 == 'volume' && (answer.$2! as Map)['level'] == 0.3),
         const Duration(seconds: 2),
@@ -153,11 +185,30 @@ void main() {
       model.openRetroMenu();
       (model.panelCategories().single.rows.singleWhere((row) => row.id == 'closeGame').kind as ActionRow).run();
       await until(() => model.retroPlay == null, const Duration(seconds: 20));
-      expect(await session.ended, RetroHostEnd.clean);
       expect(session.answers.map((answer) => answer.$1), contains('release'));
       expect(play.host.phase, RetroHostGamePhase.closed);
+      expect(model.retroHostKeeper.holding, isTrue, reason: 'the host is kept for the next game');
       final card = File(p.join(model.paths.retroSaves, 'Hello World.srm'));
       stdout.writeln('memory card: ${card.existsSync() ? card.lengthSync() : 'none'} bytes');
+
+      await model.play(game);
+      final second = model.retroPlay!;
+      await until(() => second.host.phase != RetroHostGamePhase.loading, const Duration(seconds: 60));
+      expect(second.host.phase, RetroHostGamePhase.playing, reason: '${second.host.failure}');
+      expect(sessions, hasLength(1), reason: 'the second game runs in the same host');
+      expect(
+        session.client.frame?.epoch,
+        2,
+        reason: 'protocol.md "start": the epoch is one more for each later game in a host',
+      );
+      model.openRetroMenu();
+      (model.panelCategories().single.rows.singleWhere((row) => row.id == 'closeGame').kind as ActionRow).run();
+      await until(() => model.retroPlay == null, const Duration(seconds: 20));
+      expect(model.retroHostKeeper.holding, isTrue);
+
+      model.setRetroHostPs1(false);
+      expect(model.retroHostKeeper.holding, isFalse, reason: 'the player left the PS1 games in the host');
+      expect(await session.ended.timeout(const Duration(seconds: 20)), RetroHostEnd.clean);
     } finally {
       model.dispose();
       for (final session in sessions) {

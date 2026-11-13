@@ -69,8 +69,32 @@ extension RetroHostGraphicsPage on AppModel {
         rows: _retroPictureRows(graphics),
       ),
       PanelCategory(id: 'retroGraphicsOptimizer', title: T.text('retroOptimizer'), rows: _retroOptimizerRows(graphics)),
+      if (_retroMoreGraphicsRows(play) case final more when more.isNotEmpty)
+        PanelCategory(id: 'retroGraphicsMore', title: T.text('retroGraphicsMore'), rows: more),
     ];
   }
+
+  /// SwanStation's other picture options the menu leaves to this page ([RetroOptionSection.graphics]
+  /// without the page's own settings), with the host's titles; kept for this game as the rest are.
+  List<PanelRow> _retroMoreGraphicsRows(RetroPlay play) => [
+    for (final option in play.menu.optionsIn(RetroOptionSection.graphics))
+      if (!RetroGraphicsCatalog.covers(option.key))
+        PanelRow(
+          id: 'gfx-${option.key}',
+          title: option.title,
+          detail: option.pending
+              ? T.text(option.restartNeeded ? 'retroMenuOptionRestartDetail' : 'retroMenuOptionPendingDetail')
+              : (option.restartNeeded ? T.text('retroMenuOptionRestartOnlyDetail') : null),
+          kind: ChoiceRow(
+            [
+              for (final (index, value) in option.option.values.indexed)
+                _retroValueLabel(option.option, value, option.option.labels[index]),
+            ],
+            option.option.selected,
+            (index) => unawaited(play.graphics.choose(option.key, option.option.values[index])),
+          ),
+        ),
+  ];
 
   List<PanelRow> _retroPictureRows(RetroGraphics graphics) {
     final preset = graphics.preset;
