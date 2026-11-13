@@ -167,6 +167,9 @@ answered the same way, and never left waiting.
   - when a `status` first shows the game ended;
   - when input focus is lost;
   - on a host failure.
+- **After the end.** Once the connection has ended, a change of input focus is
+  ignored: there is no host to send input to, no rumble comes, and after
+  `close()` the rumble stream is closed.
 
 ## Tests
 
@@ -201,7 +204,9 @@ host repository's `tests/real_core.py` does:
   Without the variable the test is skipped, so CI skips it.
 
 [`test/core/retro_host/retro_host_environment_test.dart`](../test/core/retro_host/retro_host_environment_test.dart)
-covers how the host's environment is put together.
+covers how the host's environment is put together, and
+[`test/core/retro_host/retro_host_close_test.dart`](../test/core/retro_host/retro_host_close_test.dart)
+checks that a focus change after `close()` is ignored.
 
 [`test/core/retro_host/strict_json_test.dart`](../test/core/retro_host/strict_json_test.dart)
 covers the JSON rules, and

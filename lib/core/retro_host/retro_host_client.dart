@@ -238,9 +238,10 @@ class RetroHostClient {
   Stream<RetroRumble> get rumble => _rumble.stream;
 
   /// Whether the launcher's window has input focus; losing it zeroes the controllers' input and
-  /// their motors (protocol.md "input" and "rumble").
+  /// their motors (protocol.md "input" and "rumble"). Once the connection has ended there is no
+  /// input to zero and no rumble to forward, so a change is ignored.
   set inputFocus(bool focused) {
-    if (_inputFocus == focused) return;
+    if (_ended.isCompleted || _inputFocus == focused) return;
     _inputFocus = focused;
     if (!focused) {
       _zeroInput();
