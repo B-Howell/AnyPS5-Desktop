@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:anyps5_desktop/core/controllers/pad_info.dart';
+import 'package:anyps5_desktop/core/retro_host/frame_ring.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_host_client.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_session.dart';
@@ -49,7 +51,10 @@ void main() {
     final built = Process.runSync(_python(), [path('discBuilder'), path('program'), disc]);
     expect(built.exitCode, 0, reason: 'make_test_disc.py: ${built.stderr}');
 
-    final game = RetroHostGame.launch(command: [path('host')], environment: environment, volume: 0, muted: true);
+    final session = _RecordingSession(
+      RetroHostClient.start(command: [path('host')], environment: environment, volume: 0, muted: true),
+    );
+    final game = RetroHostGame(session, volume: 0, muted: true);
     final pads = FakePads()..connect('one');
     final controls = RetroHostControls(game, pads: pads.reader);
     try {
@@ -84,8 +89,15 @@ void main() {
       expect(pictures, hasLength(2), reason: 'two pictures on screen that are not black and differ');
 
       pads.connect('two', const PadState(pressed: {PadButton.south}));
-      await _until(() => controls.seats.at(1) == 'two', const Duration(seconds: 2));
-      expect(await game.connectedPorts(2), isTrue, reason: 'the host took port 2');
+      Iterable<(String, Object?, Object?)> ports() => session.answers.where((answer) => answer.$1 == 'connectedPorts');
+      await _until(() => ports().isNotEmpty, const Duration(seconds: 2));
+      pads.disconnect('two');
+      await _until(() => ports().length == 2, const Duration(seconds: 2));
+      expect(ports(), [
+        ('connectedPorts', 2, true),
+        ('connectedPorts', 1, true),
+      ], reason: 'the controls connected port 2 and let it go, and the host took both');
+      await game.refresh();
       expect(game.phase, RetroHostGamePhase.playing);
 
       final stopped = await game.stop();
@@ -220,4 +232,47 @@ String _python() {
       .firstWhere((line) => line.trim().isNotEmpty, orElse: () => '');
   if (path.isEmpty) throw StateError('$name is not on PATH');
   return path.trim();
+}
+
+/// The real client, with the answer to every call the launcher made through it.
+class _RecordingSession implements RetroHostSession {
+  _RecordingSession(this.client);
+
+  final RetroHostClient client;
+
+  /// Each call's method, argument and result, in the order the results came.
+  final answers = <(String, Object?, Object?)>[];
+
+  @override
+  Future<Object?> call(String method, [Object? args]) async {
+    final result = await client.call(method, args);
+    answers.add((method, args, result));
+    return result;
+  }
+
+  @override
+  Stream<RetroFrameEvent> get frames => client.frames;
+  @override
+  PinnedFrame? get frame => client.frame;
+  @override
+  Future<void> get ready => client.ready;
+  @override
+  Future<RetroHostEnd> get ended => client.ended;
+  @override
+  Stream<RetroRumble> get rumble => client.rumble;
+  @override
+  set inputFocus(bool focused) => client.inputFocus = focused;
+  @override
+  Future<int> startGame(Map<String, Object?> args) => client.startGame(args);
+  @override
+  Future<RetroStatus?> status() => client.status();
+  @override
+  Future<RetroStatus?> stopGame() => client.stopGame();
+  @override
+  void input(int port, int buttons, {int leftX = 0, int leftY = 0, int rightX = 0, int rightY = 0}) =>
+      client.input(port, buttons, leftX: leftX, leftY: leftY, rightX: rightX, rightY: rightY);
+  @override
+  void shutdown() => client.shutdown();
+  @override
+  Future<void> close() => client.close();
 }

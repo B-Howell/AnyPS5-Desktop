@@ -139,13 +139,14 @@ class RetroGameMenu extends ChangeNotifier {
     await game.pause(true);
   }
 
-  /// Closes the menu and gives the game back its controllers.
+  /// Closes the menu and gives the game back its controllers; a button still held from the menu
+  /// reaches the game only once it is let go and pressed again.
   Future<void> close() async {
     if (!_open) return;
     _open = false;
+    controls?.suspended = false;
     notifyListeners();
     await game.pause(false);
-    controls?.suspended = false;
   }
 
   /// Inserts a disc; false when the row cannot be chosen now or the host refused.

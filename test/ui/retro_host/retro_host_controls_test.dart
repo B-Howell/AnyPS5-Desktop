@@ -106,14 +106,45 @@ void main() {
     ]);
   });
 
-  test('while suspended both ports are idle, and the held state comes back after', () async {
+  test('focus lost and back between two reads still sends the held state again', () async {
     await started();
-    pads.connect('a', const PadState(pressed: {PadButton.l1}));
+    pads.connect('a', const PadState(pressed: {PadButton.south}));
+    controls.poll();
+    await game.setFocused(false);
+    await game.setFocused(true);
+    controls.poll();
+    expect(session.inputStates.skip(2), [
+      (0, RetroPadInput(buttons: RetroPadButton.cross.mask)),
+      (1, RetroPadInput.idle),
+    ]);
+  });
+
+  test('a button held when the suspension ends reaches the game only once pressed again', () async {
+    await started();
+    pads.connect('a');
+    controls.poll();
+    controls.suspended = true;
+    pads.states['a'] = const PadState(pressed: {PadButton.south}, leftX: 1);
+    controls.suspended = false;
+    expect(session.inputStates.last, (0, const RetroPadInput(leftX: 32767)));
+    pads.states['a'] = const PadState(pressed: {PadButton.south, PadButton.east});
+    controls.poll();
+    expect(session.inputStates.last, (0, RetroPadInput(buttons: RetroPadButton.circle.mask)));
+    pads.states['a'] = PadState.idle;
+    controls.poll();
+    pads.states['a'] = const PadState(pressed: {PadButton.south});
+    controls.poll();
+    expect(session.inputStates.last, (0, RetroPadInput(buttons: RetroPadButton.cross.mask)));
+  });
+
+  test('while suspended both ports are idle; after it the sticks come back at once', () async {
+    await started();
+    pads.connect('a', const PadState(pressed: {PadButton.l1}, leftY: -1));
     controls.poll();
     controls.suspended = true;
     expect(session.inputStates.last, (0, RetroPadInput.idle));
     controls.suspended = false;
-    expect(session.inputStates.last, (0, RetroPadInput(buttons: RetroPadButton.l1.mask)));
+    expect(session.inputStates.last, (0, const RetroPadInput(leftY: -32768)));
   });
 
   test('rumble goes to the controller at its port when it can vibrate', () async {

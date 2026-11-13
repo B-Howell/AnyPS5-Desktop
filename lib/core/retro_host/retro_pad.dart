@@ -98,7 +98,9 @@ class RetroPadInput {
     return unit < 0 ? (unit * 32768).round() : (unit * 32767).round();
   }
 
-  bool get isIdle => this == idle;
+  /// The same sticks with [buttons] held.
+  RetroPadInput withButtons(int buttons) =>
+      RetroPadInput(buttons: buttons, leftX: leftX, leftY: leftY, rightX: rightX, rightY: rightY);
 
   @override
   bool operator ==(Object other) =>

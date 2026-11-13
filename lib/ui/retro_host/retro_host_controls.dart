@@ -31,7 +31,8 @@ class RetroPadReader {
 /// The controllers are read every [every], as the launcher's reader polls them. A port's state is
 /// sent when it changes, and again in full whenever the game starts taking input (a game that
 /// loaded, focus that came back), because the client zeroes both ports when it starts a game or
-/// loses focus. While [suspended] (an in-game menu is open) both ports are sent as idle.
+/// loses focus. While [suspended] (an in-game menu is open) both ports are sent as idle, and a
+/// button still held when it ends reaches the game only once it is let go and pressed again.
 class RetroHostControls {
   RetroHostControls(
     this.game, {
@@ -41,6 +42,7 @@ class RetroHostControls {
     this.rumbleHold = const Duration(seconds: 2),
   }) {
     _rumble = game.rumble.listen(_onRumble);
+    game.addListener(_onGameChanged);
     _poll = Timer.periodic(every, (_) => poll());
     _rumbleRefresh = Timer.periodic(rumbleHold ~/ 2, (_) => _refreshRumble());
   }
@@ -76,18 +78,41 @@ class RetroHostControls {
   late final Timer _poll;
   late final Timer _rumbleRefresh;
   final List<RetroPadInput?> _sent = List.filled(RetroSeats.portCount, null);
+  final List<int> _swallowed = List.filled(RetroSeats.portCount, 0);
   final List<(int, int)> _levels = List.filled(RetroSeats.portCount, (0, 0));
   int _portsSent = 1;
   bool _suspended = false;
   bool _disposed = false;
 
   /// Whether the controllers' presses are kept from the game (an in-game menu is open): both
-  /// ports are sent as idle until it is false again.
+  /// ports are sent as idle until it is false again. The buttons held when it becomes false (the
+  /// press that closed the menu) stay out of the game until they are let go.
   bool get suspended => _suspended;
   set suspended(bool value) {
     if (_suspended == value) return;
     _suspended = value;
+    if (!value) {
+      for (var port = 0; port < RetroSeats.portCount; port++) {
+        _swallowed[port] = _read(port)?.buttons ?? 0;
+      }
+    }
     poll();
+  }
+
+  /// The game stopped taking input: the client zeroed both ports (a game that started, focus that
+  /// was lost), so what was sent is forgotten and sent again once it takes input. Told at each
+  /// change, so focus lost and back between two reads is not missed.
+  void _onGameChanged() {
+    if (game.acceptsInput) return;
+    _sent.fillRange(0, _sent.length, null);
+    if (!game.loaded) _portsSent = 1;
+  }
+
+  /// What the controller at [port] holds now, or null for a port without one.
+  RetroPadInput? _read(int port) {
+    final pad = seats.at(port);
+    final state = pad == null ? null : pads.state(pad);
+    return state == null ? null : RetroPadInput.fromPad(state, deadzonePercent: deadzonePercent);
   }
 
   /// Reads the controllers and sends what changed (tests drive this; the timer calls it).
@@ -97,8 +122,7 @@ class RetroHostControls {
       if (!change.joined) _left(change);
     }
     if (!game.acceptsInput) {
-      _sent.fillRange(0, _sent.length, null);
-      if (!game.loaded) _portsSent = 1;
+      _onGameChanged();
       return;
     }
     final count = seats.connectedPorts;
@@ -107,11 +131,9 @@ class RetroHostControls {
       unawaited(game.connectedPorts(count));
     }
     for (var port = 0; port < RetroSeats.portCount; port++) {
-      final pad = seats.at(port);
-      final state = pad == null ? null : pads.state(pad);
-      final input = _suspended || state == null
-          ? RetroPadInput.idle
-          : RetroPadInput.fromPad(state, deadzonePercent: deadzonePercent);
+      final held = _suspended ? null : _read(port);
+      _swallowed[port] &= held?.buttons ?? 0;
+      final input = held == null ? RetroPadInput.idle : held.withButtons(held.buttons & ~_swallowed[port]);
       if (input == _sent[port]) continue;
       _sent[port] = input;
       game.input(
@@ -128,6 +150,7 @@ class RetroHostControls {
   /// A controller left [change.port]: its motors stop (protocol.md "rumble": "when a controller
   /// leaves its port"), and the port is sent as idle by the next state that is sent.
   void _left(RetroSeatChange change) {
+    _swallowed[change.port] = 0;
     if (_levels[change.port] != (0, 0)) {
       _levels[change.port] = (0, 0);
       _setMotors(change.pad, 0, 0);
@@ -170,6 +193,7 @@ class RetroHostControls {
     if (_disposed) return;
     _poll.cancel();
     _rumbleRefresh.cancel();
+    game.removeListener(_onGameChanged);
     unawaited(_rumble.cancel());
     _stopMotors();
     _disposed = true;

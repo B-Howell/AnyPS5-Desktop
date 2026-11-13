@@ -68,6 +68,9 @@ class FakeRetroHostSession extends FakeFrameSource implements RetroHostSession {
   /// Every `input`, with its sticks.
   final inputStates = <(int, RetroPadInput)>[];
 
+  /// When set, every call is answered only once this completes.
+  Completer<void>? callGate;
+
   /// What a call returns, by method; null for any other.
   final callResults = <String, Object?>{};
   final focusChanges = <bool>[];
@@ -110,6 +113,7 @@ class FakeRetroHostSession extends FakeFrameSource implements RetroHostSession {
   @override
   Future<Object?> call(String method, [Object? args]) async {
     calls.add((method, args));
+    await callGate?.future;
     return callResults[method];
   }
 

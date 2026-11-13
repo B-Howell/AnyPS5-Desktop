@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
@@ -164,5 +165,26 @@ void main() {
     expect(game.paused, isFalse);
     expect(controls.suspended, isFalse);
     expect(session.calls, [('pause', true), ('pause', false)]);
+  });
+
+  test('opening the menu again while closing waits on the host keeps the controllers out', () async {
+    final controls = RetroHostControls(
+      game,
+      pads: RetroPadReader(pads: () => const [], state: (_) => null),
+      every: const Duration(hours: 1),
+    );
+    addTearDown(controls.dispose);
+    final withControls = RetroGameMenu(game, controls: controls);
+    addTearDown(withControls.dispose);
+    await started();
+    await withControls.open();
+    final gate = session.callGate = Completer<void>();
+    final closing = withControls.close();
+    final opening = withControls.open();
+    gate.complete();
+    await Future.wait([closing, opening]);
+    expect(withControls.isOpen, isTrue);
+    expect(game.paused, isTrue);
+    expect(controls.suspended, isTrue);
   });
 }

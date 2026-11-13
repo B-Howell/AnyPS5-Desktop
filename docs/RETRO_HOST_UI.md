@@ -181,9 +181,14 @@ sends it "when the state changes, and once with all zeros when a game starts
 or input focus is lost", and the client sends those zeros itself. So whenever
 the game stops taking input (not loaded, or no focus), the controls forget
 what they sent, and send both ports again in full once it takes input again.
-A controller held through a focus change therefore reaches the game again
-when focus comes back. A port whose controller left is sent as idle. While
-`suspended` is true (the in-game menu is open), both ports are sent as idle.
+They follow the game's changes as they happen, not only at each read, so
+focus lost and back within 16 ms is not missed. A controller held through a
+focus change therefore reaches the game again when focus comes back. A port
+whose controller left is sent as idle. While `suspended` is true (the in-game
+menu is open), both ports are sent as idle. When it becomes false, the
+buttons held at that moment stay out of the game until they are let go, as
+the launcher's own `PadGate` does when the launcher comes back in front. The
+sticks come back at once.
 
 **Vibration.** The protocol's `rumble` section says the launcher "forwards
 them to the controller seated at that port, if it can vibrate". So each
@@ -219,9 +224,12 @@ away. `dispose` stops any motor the game left running.
   `toggleMute` switches `muted`.
 
 `open()` pauses the game (`pause` with `true`, the same as the player's own
-pause) and sets the controls' `suspended`, so the press that opens or closes
-the menu never reaches the game. `close()` resumes the game and gives the
-controllers back. A game that is not loaded has no menu to open.
+pause) and sets the controls' `suspended`, so presses in the menu never reach
+the game. `close()` gives the controllers back at once, so a button still
+held from the menu reaches the game only once it is pressed again, then
+resumes the game. Neither does anything after waiting for the host, so
+opening the menu again while a close still waits for its reply keeps the
+controllers out. A game that is not loaded has no menu to open.
 
 ## Tests
 
@@ -260,13 +268,16 @@ native memory as a real ring slot would be, so no host is started.
   - a port's state sent once, then on each change;
   - port 2 connected when a second controller sits down, or when the game
     loads with two, and let go when it leaves;
-  - both ports sent again after focus comes back, and `suspended`;
+  - both ports sent again after focus comes back, also when focus is lost
+    and back between two reads;
+  - `suspended`, and a button held when it ends kept out until pressed again;
   - vibration sent to the controller at its port, a leaving controller's
     motors stopped, vibration turned off, and `dispose`.
 - [`retro_game_menu_test.dart`](../test/ui/retro_host/retro_game_menu_test.dart)
   builds the rows from the protocol's status example. It checks disc changes,
   option steps, volume steps and mute, volume set before `welcome`, and that
-  opening the menu pauses the game and suspends the controls.
+  opening the menu pauses the game and suspends the controls, also when it is
+  opened again while closing still waits for the host.
 - [`retro_pad_test.dart`](../test/core/retro_host/retro_pad_test.dart) checks
   every button against the protocol's bit table, the triggers, both ends of
   the stick range and the dead zone.
@@ -297,8 +308,10 @@ is skipped.
 
 - **SwanStation.** OpenBIOS boots the PS-EXE. The game reaches `playing`, and
   its `picture` shows two pictures that are not black and differ. A second
-  controller sits down at port 2, and the host takes `connectedPorts` with
-  `2`. `stop` then ends the game with no error.
+  controller sits down at port 2 and then leaves. The test records the calls
+  that go through the session: the controls sent `connectedPorts` with `2`,
+  then `1`, and the host answered `true` to both. `stop` then ends the game
+  with no error.
 - **The test core.** The test core's own description says it "rumbles port
   1's large motor while Cross is held". So holding Cross on the controller at
   port 1 must reach the core through `input`, and the core's vibration must
