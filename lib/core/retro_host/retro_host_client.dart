@@ -120,6 +120,7 @@ class RetroHostClient {
   late DateTime _welcomeDeadline;
   DateTime? _nextPing;
   DateTime? _stopDeadline;
+  int _stopId = 0;
   DateTime? _shutdownDeadline;
   int _nextCallId = 1;
   int _nextPingId = 1;
@@ -320,7 +321,10 @@ class RetroHostClient {
   Future<RetroStatus?> stopGame() async {
     if (!_ended.isCompleted) {
       if (!_greeted) throw StateError('No call may be sent before welcome.');
-      _stopDeadline ??= DateTime.now().add(stopLimit);
+      if (_stopDeadline == null) {
+        _stopDeadline = DateTime.now().add(stopLimit);
+        _stopId = _nextCallId;
+      }
     }
     await _send('stop', null);
     while (true) {
@@ -537,6 +541,7 @@ class RetroHostClient {
   Object? _checkResult(_Pending pending, Object? result) {
     final method = pending.method;
     final args = pending.args;
+    final afterStop = pending.id > _stopId;
     switch (method) {
       case 'start':
         final epoch = RetroFields(_object(result, 'start'), 'start').integer('epoch', 1, RetroFields.maxId);
@@ -552,19 +557,19 @@ class RetroHostClient {
           _gameLoaded = false;
           _epoch = null;
           _lastStatusEnded = false;
-          _stopDeadline = null;
+          if (afterStop) _stopDeadline = null;
         } else {
           final status = RetroStatus.parse(_object(result, 'status'));
           if (status.ended && !_lastStatusEnded) _zeroRumble();
           _lastStatusEnded = status.ended;
-          if (status.ended) _stopDeadline = null;
+          if (status.ended && afterStop) _stopDeadline = null;
         }
       case 'release':
         _expectNull(method, result);
         if (_lastStatusEnded) {
           _gameLoaded = false;
           _epoch = null;
-          _stopDeadline = null;
+          if (afterStop) _stopDeadline = null;
         }
       case 'connectedPorts' || 'changeDisc' || 'option':
         if (result is! bool) throw RetroProtocolError('The result of $method must be a boolean.');
@@ -677,12 +682,13 @@ class RetroHostClient {
     if ((after.paused && !before.paused) || after.ports < before.ports) _zeroRumble();
   }
 
-  /// Whether a game runs (loaded and not seen ended), whether it is paused and how many ports have
-  /// a controller once the host has taken every call sent so far, as the host takes them in order:
-  /// what the replies confirmed, then each call still waiting as if it succeeds, except a `start`
-  /// while a game is loaded, which the host refuses with `busy`. Rumble follows this, so it stops
-  /// as soon as a pause or a controller leaving is sent, and a call sent before an earlier `start`
-  /// was answered still counts.
+  /// Whether a game runs (its `start` answered and its end not seen), whether it is paused and how
+  /// many ports have a controller once the host has taken every call sent so far, as the host takes
+  /// them in order: what the replies confirmed, then each call still waiting as if it succeeds,
+  /// except a `start` while a game is loaded, which the host refuses with `busy`. A `start` still
+  /// waiting makes no game run, since its game loads only after the reply. Rumble follows this, so
+  /// it stops as soon as a pause or a controller leaving is sent, and a call sent before an earlier
+  /// `start` was answered still counts.
   ({bool live, bool paused, int ports}) _expectedRumble() {
     var loaded = _gameLoaded;
     var live = _gameLoaded && !_lastStatusEnded;
@@ -693,7 +699,7 @@ class RetroHostClient {
       switch (call.method) {
         case 'start' when !loaded:
           loaded = true;
-          live = true;
+          live = false;
           paused = false;
           ports = 1;
         case 'release' when _lastStatusEnded:
@@ -721,15 +727,21 @@ class RetroHostClient {
       _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostExited, kill: true);
       return;
     }
-    final hung =
-        writeAge > writeLimit.inMilliseconds ||
-        (!_greeted && !_unsupportedSeen && now.isAfter(_welcomeDeadline)) ||
-        (_calls.isNotEmpty && now.isAfter(_calls.first.deadline)) ||
-        (_pings.isNotEmpty && now.isAfter(_pings.first.$2)) ||
-        (_stopDeadline != null && now.isAfter(_stopDeadline!)) ||
-        (_shutdownDeadline != null && now.isAfter(_shutdownDeadline!));
-    if (hung) {
-      _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostHung, kill: true);
+    final missed = switch (now) {
+      _ when writeAge > writeLimit.inMilliseconds => 'A write to the host took longer than ${writeLimit.inSeconds} s.',
+      _ when !_greeted && !_unsupportedSeen && now.isAfter(_welcomeDeadline) =>
+        'No welcome within ${welcomeLimit.inSeconds} s.',
+      _ when _calls.isNotEmpty && now.isAfter(_calls.first.deadline) =>
+        'No reply to ${_calls.first.method} within ${replyLimit.inSeconds} s.',
+      _ when _pings.isNotEmpty && now.isAfter(_pings.first.$2) => 'No pong within ${replyLimit.inSeconds} s.',
+      _ when _stopDeadline != null && now.isAfter(_stopDeadline!) =>
+        'The game had not ended ${stopLimit.inSeconds} s after stop.',
+      _ when _shutdownDeadline != null && now.isAfter(_shutdownDeadline!) =>
+        'The host had not exited ${shutdownLimit.inSeconds} s after shutdown.',
+      _ => null,
+    };
+    if (missed != null) {
+      _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostHung, kill: true, reason: missed);
       return;
     }
     final next = _nextPing;

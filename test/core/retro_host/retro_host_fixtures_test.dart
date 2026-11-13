@@ -435,6 +435,7 @@ void main() {
         _secondStart(checkout, 5),
         _rumbleStep(0, 1000),
         _status(checkout, 3, ended: true)[1],
+        _rumbleStep(0, 3000),
         _call('release', null, null, id: 4)[1],
         {
           'from': 'host',
@@ -456,6 +457,7 @@ void main() {
         expect(forwarded, isNot(-1), reason: 'rumble of the old game forwarded while it ran');
         final zeros = session.rumbles.skip(forwarded + 1).where((r) => r.strong == 0 && r.weak == 0);
         expect(zeros.length, 4, reason: 'zeroed when the game ended, and again at the end');
+        expect([for (final r in session.rumbles) r.strong], isNot(contains(3000)), reason: 'no rumble after the end');
       },
     ),
     timeout: const Timeout(Duration(seconds: 90)),
@@ -476,6 +478,34 @@ void main() {
     ),
     timeout: const Timeout(Duration(seconds: 90)),
   );
+  test('a status answered before stop does not lift the stop time limit', () async {
+    final fixture =
+        (jsonDecode(File(p.join(checkout, 'fixtures', 'v1', 'sessions', 'stop-deadline.json')).readAsStringSync())
+                as Map<String, Object?>)['steps']!
+            as List<Object?>;
+    final steps = fixture.cast<Map<String, Object?>>();
+    Map<String, Object?> withId(Map<String, Object?> step, int id) => {
+      ...step,
+      'message': {...step['message']! as Map<String, Object?>, 'id': id},
+    };
+    await _playOwn(
+      checkout,
+      python,
+      'status, start and stop sent together with no game loaded; the game then never ends.',
+      'hostFailure',
+      [
+        _call('status', null, null, id: 2)[0],
+        withId(steps[4], 3),
+        withId(steps[8], 4),
+        _call('status', null, null, id: 2)[1],
+        withId(steps[5], 3),
+        withId(steps[9], 4),
+        ...steps.sublist(10),
+      ],
+      check: (session) =>
+          expect(session.client.failureReason, contains('after stop'), reason: 'killed by the stop limit'),
+    );
+  }, timeout: const Timeout(Duration(seconds: 90)));
 }
 
 final _failedGame = isA<RetroStatus>()

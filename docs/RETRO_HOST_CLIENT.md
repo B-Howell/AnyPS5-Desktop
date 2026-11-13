@@ -140,7 +140,10 @@ the connection, so a host it could not signal sees its stream end and exits.
 
 `stopGame()` asks for `status` until the game has ended, because the client
 has to see the end to enforce the stop limit. So `call('stop')` is refused:
-`stop` goes only through `stopGame()`.
+`stop` goes only through `stopGame()`. Only a reply to a call sent after
+that `stop` can lift the limit: a `status` sent before it, still answered
+null or ended for an earlier state, does not. `failureReason` names the limit
+that was missed.
 
 If the host breaks a rule, exits unasked or misses a limit while a game is
 loaded:
@@ -200,7 +203,7 @@ whenever one is.
   - on a host failure.
 - **Which rumble is forwarded.** Only rumble of a running game: none while no
   game is loaded, and none once a `status` showed the game ended, until the
-  next `start`. The host takes calls in order, so the client
+  next `start` is answered. The host takes calls in order, so the client
   judges each `rumble` by the state the host will have once it has taken every
   call sent so far: what the replies confirmed, then each call still waiting as
   if it succeeds. A `pause(true)` or `connectedPorts(1)` stops rumble as soon
