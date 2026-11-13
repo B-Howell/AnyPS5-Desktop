@@ -56,6 +56,10 @@ import '../core/package_install.dart';
 import '../core/power.dart';
 import '../core/prepare_queue.dart';
 import '../core/relinker_flags.dart';
+import '../core/retro_host/retro_graphics_catalog.dart';
+import '../core/retro_host/retro_graphics_optimizer.dart';
+import '../core/retro_host/retro_graphics_profile.dart';
+import '../core/retro_host/retro_hardware.dart';
 import '../core/retro_host/retro_host_client.dart' show RetroHostEnd;
 import '../core/retro_host/retro_host_install.dart';
 import '../core/retro_host/retro_host_protocol.dart' show RetroErrorCode, RetroOption;
@@ -106,7 +110,9 @@ import 'engine_model.dart';
 import 'ffmpeg_model.dart';
 import 'fonts_model.dart';
 import 'media_model.dart';
+import 'retro_host/retro_frame_monitor.dart';
 import 'retro_host/retro_game_menu.dart';
+import 'retro_host/retro_graphics.dart';
 import 'retro_host/retro_host_controls.dart';
 import 'retro_host/retro_host_game.dart';
 import 'share_play_model.dart';
@@ -128,6 +134,7 @@ import 'trophy_card.dart';
 
 part 'profiles_model.dart';
 part 'retro_home_folders.dart';
+part 'retro_host_graphics.dart';
 part 'retro_host_play.dart';
 part 'standalone_emulators.dart';
 part 'settings_search.dart';
@@ -171,6 +178,11 @@ class Preferences {
       if (json['retroHostOptions'] case final Map<dynamic, dynamic> entries)
         for (final MapEntry(:key, :value) in entries.entries)
           if (key is String && value is String) key: value,
+    }
+    ..retroHostGraphics = {
+      if (json['retroHostGraphics'] case final Map<dynamic, dynamic> entries)
+        for (final MapEntry(:key, :value) in entries.entries)
+          if (key is String) key: RetroGraphicsProfile.fromJson(value),
     }
     ..toolkitFolder = json['toolkitFolder'] as String?
     ..onboarded = json['onboarded'] as bool? ?? false
@@ -307,6 +319,10 @@ class Preferences {
   /// The SwanStation options the player chose in the game's menu, by key, given to every PS1 game
   /// the host starts (protocol.md "start": `options`).
   Map<String, String> retroHostOptions = {};
+
+  /// Each PS1 game's Graphics page (retro_host_graphics.dart), by game id: its picture settings,
+  /// given at `start` over [retroHostOptions], and what the Auto Optimizer changed, for Undo.
+  Map<String, RetroGraphicsProfile> retroHostGraphics = {};
   String? toolkitFolder;
   bool onboarded = false;
   bool gameArtwork = true;
@@ -499,6 +515,8 @@ class Preferences {
     if (retroHostVolume != 100) 'retroHostVolume': retroHostVolume,
     if (retroHostMuted) 'retroHostMuted': true,
     if (retroHostOptions.isNotEmpty) 'retroHostOptions': retroHostOptions,
+    if (retroHostGraphics.entries.where((entry) => !entry.value.isEmpty) case final kept when kept.isNotEmpty)
+      'retroHostGraphics': {for (final MapEntry(:key, :value) in kept) key: value.toJson()},
     // The first one under the old name too, for an older launcher started again.
     'gamesFolder': gamesFolders.firstOrNull,
     'toolkitFolder': toolkitFolder,
@@ -907,6 +925,10 @@ enum Layer {
   /// Resume, its discs, its options, the volume and Close Game.
   retroMenu,
 
+  /// The Graphics page of that game's menu (retro_host_graphics.dart): its picture settings, the
+  /// presets and the Auto Optimizer.
+  retroGraphics,
+
   /// A friend's share play watched full screen (share_play_model.dart): the controller is the
   /// game's, PS leaves.
   shareWatch,
@@ -1258,6 +1280,7 @@ class LauncherServices {
     this.pickFile,
     this.pickFileAt,
     this.pickImage,
+    this.retroHardware,
     this.pickPictures,
     this.systemInfo,
     this.startDetached,
@@ -1367,6 +1390,10 @@ class LauncherServices {
   /// Where controller input comes from (XInput and winmm on Windows, evdev on Linux); none when
   /// not given.
   final PadSource Function()? pads;
+
+  /// What the Auto Optimizer reads of the computer for a PS1 game in the emulator host (the
+  /// display's height, the graphics adapters, the CPU's threads); null where it cannot be read.
+  final Future<RetroHardware?> Function()? retroHardware;
 
   /// What the controller troubleshooter asks the system (running programs, drivers, Steam's
   /// setting, permissions); nothing asked when not given.
@@ -4948,6 +4975,7 @@ class AppModel extends ChangeNotifier {
           Layer.family ||
           Layer.quickMenu ||
           Layer.retroMenu ||
+          Layer.retroGraphics ||
           Layer.closeGame ||
           Layer.homeMenu ||
           Layer.confirmQuit ||
@@ -5123,7 +5151,7 @@ class AppModel extends ChangeNotifier {
   void homeHeld() {
     if (!preferences.onboarded) return;
     // A PS1 game in the emulator host: held PS is its menu, or back to the game from it.
-    if (retroPlay != null && (overlay == null || overlay == Layer.retroMenu)) {
+    if (retroPlay != null && (overlay == null || retroMenuShown)) {
       return overlay == null ? openRetroMenu() : resumeRetroGame();
     }
     if (overlay == Layer.profilePicker && profileFlow.atLaunch) return;
@@ -5730,6 +5758,8 @@ class AppModel extends ChangeNotifier {
         ];
       case Layer.retroMenu:
         return _retroMenuCategories();
+      case Layer.retroGraphics:
+        return _retroGraphicsCategories();
       case Layer.quickMenu when running != null:
         return [
           PanelCategory(

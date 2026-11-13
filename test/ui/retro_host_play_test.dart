@@ -3,9 +3,13 @@ import 'dart:io';
 
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_graphics_catalog.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_graphics_profile.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_hardware.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_client.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
+import 'package:anyps5_desktop/ui/retro_host/retro_graphics.dart';
 import 'package:anyps5_desktop/ui/retro_host/retro_host_game.dart';
 import 'package:anyps5_desktop/ui/strings.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +17,7 @@ import 'package:path/path.dart' as p;
 
 import '../support/fake_process.dart';
 import '../support/ps1_launcher.dart';
+import 'retro_host/fake_option_session.dart';
 import 'retro_host/fake_retro_host_session.dart';
 
 void main() {
@@ -156,10 +161,23 @@ void main() {
     },
   );
 
-  test('the menu: discs, the core\'s options, the volume, kept for later games', () async {
+  test('the menu: discs, Graphics, the core\'s other options, the volume, kept for later games', () async {
     launcher = Ps1Launcher();
     final model = launcher.model..setRetroHostPs1(true);
-    await launcher.start(status: menuStatus());
+    RetroStatus status({bool ntsc = false}) => menuStatus(
+      extra: {
+        'swanstation_GPU_ForceNTSCTimings': RetroOption(
+          key: 'swanstation_GPU_ForceNTSCTimings',
+          title: 'Force NTSC Timings',
+          values: const ['true', 'false'],
+          labels: const ['Enabled', 'Disabled'],
+          selected: ntsc ? 0 : 1,
+          activeValue: ntsc ? 'true' : 'false',
+          restart: false,
+        ),
+      },
+    );
+    await launcher.start(status: status());
     final session = launcher.session;
     await model.openQuickMenu();
     await pumpEventQueue();
@@ -167,7 +185,17 @@ void main() {
     expect(model.panelCategories().single.title, 'Night Racer');
     expect(
       [for (final row in model.panelCategories().single.rows) row.id],
-      ['resume', 'disc-0', 'disc-1', 'option-swanstation_GPU_ResolutionScale', 'volume', 'mute', 'closeGame'],
+      [
+        'resume',
+        'disc-0',
+        'disc-1',
+        'graphics',
+        'option-swanstation_GPU_ForceNTSCTimings',
+        'volume',
+        'mute',
+        'closeGame',
+      ],
+      reason: 'the picture settings are on the Graphics page',
     );
     expect(launcher.row('disc-0').detail, 'In the console.');
 
@@ -177,15 +205,15 @@ void main() {
     expect(session.calls, contains(('changeDisc', 1)));
 
     session.callResults['option'] = true;
-    final option = launcher.row('option-swanstation_GPU_ResolutionScale').kind as ChoiceRow;
-    expect(option.options, ['1x', '2x', '4x']);
-    expect(option.selected, 0);
-    session.nextStatus = menuStatus(selected: 2);
-    option.set(2);
+    final option = launcher.row('option-swanstation_GPU_ForceNTSCTimings').kind as ChoiceRow;
+    expect(option.options, ['Enabled', 'Disabled']);
+    expect(option.selected, 1);
+    session.nextStatus = status(ntsc: true);
+    option.set(0);
     await pumpEventQueue();
     expect(session.calls.last.$1, 'option');
-    expect(session.calls.last.$2, {'key': 'swanstation_GPU_ResolutionScale', 'value': '4'});
-    expect(model.preferences.retroHostOptions, {'swanstation_GPU_ResolutionScale': '4'});
+    expect(session.calls.last.$2, {'key': 'swanstation_GPU_ForceNTSCTimings', 'value': 'true'});
+    expect(model.preferences.retroHostOptions, {'swanstation_GPU_ForceNTSCTimings': 'true'});
 
     final volume = launcher.row('volume').kind as StepperRow;
     expect(volume.value, 100);
@@ -394,5 +422,141 @@ void main() {
     await pumpEventQueue();
     expect(model.retroPlay, isNull);
     expect(launcher.session.startArgs, isNull, reason: 'start is never sent for a start given up');
+  });
+
+  test('Graphics: plain names, presets kept for this game, Back to the menu, PS to the game', () async {
+    final session = FakeOptionSession();
+    launcher = Ps1Launcher(session: session);
+    final model = launcher.model..setRetroHostPs1(true);
+    model.preferences.retroHostOptions['swanstation_GPU_ResolutionScale'] = '2';
+    await launcher.start();
+    model.openRetroMenu();
+    await pumpEventQueue();
+    (launcher.row('graphics').kind as ActionRow).run();
+    expect(model.overlay, Layer.retroGraphics);
+    expect(
+      [for (final category in model.panelCategories()) category.id],
+      ['retroGraphicsPicture', 'retroGraphicsOptimizer'],
+    );
+    PanelRow picture(String id) => model.panelCategories().first.rows.singleWhere((row) => row.id == id);
+    final preset = picture('gfx-preset').kind as ChoiceRow;
+    expect(preset.options, ['Original', 'Enhanced', 'Maximum']);
+    expect(preset.selected, 0);
+    final resolution = picture('gfx-swanstation_GPU_ResolutionScale');
+    expect((resolution.title, resolution.detail), ('Resolution', T.text('retroGfxResolutionDetail')));
+    expect((resolution.kind as ChoiceRow).options.first, '1x');
+    expect((picture('gfx-swanstation_GPU_TextureFilter').kind as ChoiceRow).options.take(2), [
+      'Off (sharp pixels)',
+      'Smooth',
+    ]);
+    expect((picture('gfx-swanstation_GPU_PGXPEnable').kind as ChoiceRow).options, ['On', 'Off']);
+
+    preset.set(RetroGraphicsPreset.enhanced.index);
+    await pumpEventQueue();
+    expect(session.chosen('swanstation_GPU_ResolutionScale'), '4');
+    expect(session.chosen('swanstation_GPU_PGXPEnable'), 'true');
+    expect((picture('gfx-preset').kind as ChoiceRow).selected, RetroGraphicsPreset.enhanced.index);
+    expect(picture('gfx-swanstation_GPU_PGXPTextureCorrection').title, 'Straight textures');
+    expect(model.preferences.retroHostGraphics[launcher.game.id]!.options['swanstation_GPU_ResolutionScale'], '4');
+    expect(model.preferences.retroHostOptions, {
+      'swanstation_GPU_ResolutionScale': '2',
+    }, reason: 'other games keep theirs');
+
+    (picture('gfx-swanstation_GPU_MSAA').kind as ChoiceRow).set(1);
+    await pumpEventQueue();
+    final custom = picture('gfx-preset').kind as ChoiceRow;
+    expect((custom.options.last, custom.selected), ('Custom', 3));
+
+    model.handle(Command.back);
+    expect(model.overlay, Layer.retroMenu);
+    expect(model.panelCategories().single.rows[model.panelRow].id, 'graphics');
+    expect(launcher.play.menu.isOpen, isTrue, reason: 'the game stays paused');
+
+    (launcher.row('graphics').kind as ActionRow).run();
+    model.handle(Command.home);
+    await pumpEventQueue();
+    expect(model.overlay, isNull);
+    expect(session.calls.last, ('pause', false));
+  });
+
+  test('a game starts with its own graphics over the options every game gets', () async {
+    launcher = Ps1Launcher();
+    final model = launcher.model..setRetroHostPs1(true);
+    model.preferences
+      ..retroHostOptions.addAll({'swanstation_GPU_ResolutionScale': '2', 'swanstation_GPU_ForceNTSCTimings': 'true'})
+      ..retroHostGraphics[launcher.game.id] = RetroGraphicsProfile(
+        options: {'swanstation_GPU_ResolutionScale': '4', 'swanstation_GPU_PGXPEnable': 'true'},
+      );
+    await launcher.start();
+    expect(launcher.session.startArgs?['options'], {
+      'swanstation_GPU_ResolutionScale': '4',
+      'swanstation_GPU_ForceNTSCTimings': 'true',
+      'swanstation_GPU_PGXPEnable': 'true',
+    });
+  });
+
+  test('the Auto Optimizer: preview, Apply, the speed check told while playing, Undo', () async {
+    final session = FakeOptionSession();
+    launcher = Ps1Launcher(
+      session: session,
+      hardware: () async => const RetroHardware(
+        displayHeight: 1080,
+        adapters: [RetroAdapter(name: 'Radeon RX 6600', dedicatedBytes: 8 * 1024 * 1024 * 1024)],
+        logicalProcessors: 12,
+      ),
+    );
+    final model = launcher.model..setRetroHostPs1(true);
+    await launcher.start();
+    model.openRetroMenu();
+    await pumpEventQueue();
+    model.openRetroGraphics();
+    List<PanelRow> rows() => model.panelCategories().last.rows;
+    PanelRow optimizer(String id) => rows().singleWhere((row) => row.id == id);
+    expect([for (final row in rows()) row.id], ['opt-preview']);
+
+    (optimizer('opt-preview').kind as ActionRow).run();
+    await pumpEventQueue();
+    expect(optimizer('opt-summary').title, 'Suggested for Radeon RX 6600');
+    expect(
+      (optimizer('opt-summary').kind as InfoRow).text,
+      '8.0 GB of graphics memory · 1080p display · 12 processor threads',
+    );
+    expect(optimizer('opt-change-swanstation_GPU_ResolutionScale').title, 'Resolution');
+    expect((optimizer('opt-change-swanstation_GPU_ResolutionScale').kind as InfoRow).text, '1x → 4x');
+
+    (optimizer('opt-apply').kind as ActionRow).run();
+    await pumpEventQueue();
+    expect(session.chosen('swanstation_GPU_ResolutionScale'), '4');
+    expect([for (final row in rows()) row.id], containsAll(['opt-checking', 'opt-undo']));
+    expect(rows().map((row) => row.id), isNot(contains('opt-apply')));
+
+    launcher.play.graphics.onChecked!(
+      const RetroSpeedCheck(
+        rate: 41,
+        target: 59.94,
+        held: false,
+        lowered: (key: 'swanstation_GPU_ResolutionScale', label: '3x (for 720p)'),
+      ),
+    );
+    expect(model.toast, 'The game could not keep its full speed, so Resolution went down to 3x (for 720p).');
+
+    (optimizer('opt-undo').kind as ActionRow).run();
+    await pumpEventQueue();
+    expect(session.chosen('swanstation_GPU_ResolutionScale'), '1');
+    expect(rows().map((row) => row.id), isNot(contains('opt-undo')));
+    expect(model.preferences.retroHostGraphics[launcher.game.id]!.optimized, isNull);
+  });
+
+  test('without the computer read the Auto Optimizer says why and changes nothing', () async {
+    launcher = Ps1Launcher(session: FakeOptionSession());
+    final model = launcher.model..setRetroHostPs1(true);
+    await launcher.start();
+    model.openRetroMenu();
+    await pumpEventQueue();
+    model.openRetroGraphics();
+    (model.panelCategories().last.rows.single.kind as ActionRow).run();
+    await pumpEventQueue();
+    final blocked = model.panelCategories().last.rows.singleWhere((row) => row.id == 'opt-blocked');
+    expect((blocked.kind as InfoRow).text, T.text('retroOptimizerNoHardware'));
   });
 }

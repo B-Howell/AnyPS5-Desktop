@@ -203,7 +203,7 @@ class PanelView extends StatelessWidget {
     // ConfirmCard, with the icon too).
     final gameIcon = switch (model.overlay) {
       Layer.quickMenu => model.running?.$1.icon,
-      Layer.retroMenu => model.retroPlay?.game.icon,
+      Layer.retroMenu || Layer.retroGraphics => model.retroPlay?.game.icon,
       _ => null,
     };
     // The copy warning explains itself before its four choices.
@@ -222,6 +222,7 @@ class PanelView extends StatelessWidget {
       Layer.controls => T.text('controls'),
       Layer.advanced => T.text('advanced'),
       Layer.gameSettings => T.text('gameSettings'),
+      Layer.retroGraphics => T.text('retroGraphics'),
       Layer.cloudStorage => T.text('cloudStorageTitle'),
       // Appearance › Themes.
       Layer.themes => T.text('appearance'),
@@ -382,6 +383,7 @@ class PanelView extends StatelessWidget {
                         Layer.friendOptions,
                         Layer.quickMenu,
                         Layer.retroMenu,
+                        Layer.retroGraphics,
                       }.contains(model.overlay),
                     ),
                   ],
@@ -616,6 +618,7 @@ class _RowView extends StatelessWidget {
   static const _labelledMenus = {
     Layer.quickMenu,
     Layer.retroMenu,
+    Layer.retroGraphics,
     Layer.homeMenu,
     Layer.launcherReport,
     Layer.profileMenu,

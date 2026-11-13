@@ -8,6 +8,8 @@ class RetroPlay {
     required this.host,
     required this.controls,
     required this.menu,
+    required this.graphics,
+    required this.monitor,
     required this.started,
   });
 
@@ -15,6 +17,10 @@ class RetroPlay {
   final RetroHostGame host;
   final RetroHostControls controls;
   final RetroGameMenu menu;
+
+  /// Its Graphics page and the frame counter its speed check uses.
+  final RetroGraphics graphics;
+  final RetroFrameMonitor monitor;
   final DateTime started;
 
   /// The player chose Close Game: the end that follows is not an error to show.
@@ -39,6 +45,8 @@ class RetroPlay {
     _released = true;
     host.removeListener(listener);
     controls.dispose();
+    graphics.dispose();
+    monitor.dispose();
     menu.dispose();
     host.dispose();
   }
@@ -108,6 +116,9 @@ extension RetroHostPlaying on AppModel {
 
   /// Whether the game's own screen is in front: a game in the host and no layer over it.
   bool get retroInGame => retroPlay != null && overlay == null;
+
+  /// Whether the game's menu, or its Graphics page, is in front.
+  bool get retroMenuShown => overlay == Layer.retroMenu || overlay == Layer.retroGraphics;
 
   void setRetroHostPs1(bool enabled) {
     if (preferences.retroHostPs1 == enabled) return;
@@ -183,7 +194,17 @@ extension RetroHostPlaying on AppModel {
           ..deadzonePercent = preferences.stickDeadzone
           ..vibration = preferences.controllerVibration;
     final menu = RetroGameMenu(host, controls: controls);
-    final play = RetroPlay(game: game, host: host, controls: controls, menu: menu, started: DateTime.now());
+    final monitor = RetroFrameMonitor(host);
+    final graphics = _retroGraphicsFor(game, host, monitor);
+    final play = RetroPlay(
+      game: game,
+      host: host,
+      controls: controls,
+      menu: menu,
+      graphics: graphics,
+      monitor: monitor,
+      started: DateTime.now(),
+    );
     retroPlay = play;
     host.addListener(_retroChanged);
     sounds.play(Cue.select);
@@ -199,7 +220,7 @@ extension RetroHostPlaying on AppModel {
         disc: p.normalize(disc.path),
         system: p.normalize(paths.retroSystem),
         saves: p.normalize(paths.retroSaves),
-        options: Map.of(preferences.retroHostOptions),
+        options: {...preferences.retroHostOptions, ...?preferences.retroHostGraphics[game.id]?.options},
       ),
     );
   }
@@ -214,7 +235,7 @@ extension RetroHostPlaying on AppModel {
         play.endedAt = DateTime.now();
         together.family.followGame();
       }
-      if (play.menu.isOpen || overlay == Layer.retroMenu) {
+      if (play.menu.isOpen || retroMenuShown) {
         overlay = null;
         unawaited(play.menu.close());
       }
@@ -231,7 +252,7 @@ extension RetroHostPlaying on AppModel {
   /// PS in the game: its menu, the game paused and the controllers kept out of it.
   void openRetroMenu() {
     final play = retroPlay;
-    if (play == null || play.closing || !play.host.loaded || overlay == Layer.retroMenu) return;
+    if (play == null || play.closing || !play.host.loaded || retroMenuShown) return;
     open(Layer.retroMenu);
     unawaited(play.menu.open());
   }
@@ -250,7 +271,7 @@ extension RetroHostPlaying on AppModel {
   void resumeRetroGame() {
     final play = retroPlay;
     if (play == null) return;
-    if (overlay == Layer.retroMenu) {
+    if (retroMenuShown) {
       overlay = null;
       sounds.play(Cue.back);
     }
@@ -265,7 +286,7 @@ extension RetroHostPlaying on AppModel {
     if (play == null || play.closing) return;
     play.closing = true;
     _countRetroPlay(play);
-    if (overlay == Layer.retroMenu) overlay = null;
+    if (retroMenuShown) overlay = null;
     _changed();
     try {
       await play.host.stop();
@@ -273,7 +294,7 @@ extension RetroHostPlaying on AppModel {
       await play.host.shutdown();
       play.release(_retroChanged);
       if (identical(retroPlay, play)) retroPlay = null;
-      if (overlay == Layer.retroMenu) overlay = null;
+      if (retroMenuShown) overlay = null;
       if (!_disposed) _changed();
     }
   }
@@ -291,6 +312,7 @@ extension RetroHostPlaying on AppModel {
       }
       return command == Command.previousGame || command == Command.nextGame;
     }
+    if (overlay == Layer.retroGraphics) return _retroGraphicsCommand(command);
     if (overlay != null) return false;
     if (play.problem != null) {
       if (command == Command.select || command == Command.back || command == Command.home) {
@@ -308,8 +330,8 @@ extension RetroHostPlaying on AppModel {
     return true;
   }
 
-  /// The game's menu: Resume, the discs of a multi-disc game, the core's options, the volume,
-  /// Close Game.
+  /// The game's menu: Resume, the discs of a multi-disc game, Graphics, the core's other options,
+  /// the volume, Close Game.
   List<PanelCategory> _retroMenuCategories() {
     final play = retroPlay;
     if (play == null) return const [];
@@ -331,7 +353,9 @@ extension RetroHostPlaying on AppModel {
                   : (disc.enabled ? null : T.text('retroMenuDiscChangingDetail')),
               kind: ActionRow(() => unawaited(menu.chooseDisc(disc))),
             ),
-          for (final option in rows.whereType<RetroOptionRow>())
+          if (play.graphics.available)
+            PanelRow(id: 'graphics', title: T.text('retroGraphics'), kind: ActionRow(openRetroGraphics)),
+          for (final option in rows.whereType<RetroOptionRow>().where((row) => !RetroGraphicsCatalog.covers(row.key)))
             PanelRow(
               id: 'option-${option.key}',
               title: option.title,

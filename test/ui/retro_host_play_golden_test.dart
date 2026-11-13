@@ -1,5 +1,7 @@
 import 'dart:ffi';
 
+import 'package:anyps5_desktop/core/retro_host/retro_graphics_catalog.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_hardware.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/launcher.dart';
@@ -10,10 +12,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../support/ps1_launcher.dart';
 import '../support/ui_support.dart';
+import 'retro_host/fake_option_session.dart';
 import 'retro_host/fake_retro_host_session.dart';
 
 /// A PS1 game in the emulator host as it looks: loading, stopped on an error, its menu over the
-/// game, and Settings › Emulators with the host's rows.
+/// game, its Graphics page and Auto Optimizer, and Settings â€º Emulators with the host's rows.
 void main() {
   late Ps1Launcher launcher;
   final shell = find.byType(LauncherShell);
@@ -48,8 +51,14 @@ void main() {
     return slot;
   }
 
-  Future<void> playing(WidgetTester tester, {RetroStatus? status, bool frame = true}) async {
-    launcher = Ps1Launcher();
+  Future<void> playing(
+    WidgetTester tester, {
+    RetroStatus? status,
+    bool frame = true,
+    FakeRetroHostSession? session,
+    Future<RetroHardware?> Function()? hardware,
+  }) async {
+    launcher = Ps1Launcher(session: session, hardware: hardware);
     launcher.model.setRetroHostPs1(true);
     await tester.runAsync(() => launcher.start(status: status));
     await pumpLauncher(tester, launcher.model);
@@ -95,14 +104,54 @@ void main() {
     await expectLater(shell, matchesGoldenFile('goldens/retro_host_playing_en.png'));
   });
 
-  testWidgets('the menu over the paused game: discs, the resolution, the volume', (tester) async {
+  testWidgets('the menu over the paused game: discs, Graphics, the volume', (tester) async {
     await playing(tester, status: menuStatus());
     launcher.model.openRetroMenu();
     await settle(tester);
     expect(find.text('Disc 2'), findsOneWidget);
-    expect(find.text('Internal Resolution'), findsOneWidget);
+    expect(find.text(T.text('retroGraphics')), findsOneWidget);
+    expect(find.text('Internal Resolution'), findsNothing, reason: 'on the Graphics page');
     expect(find.text(T.text('quickCloseGame')), findsOneWidget);
     await expectLater(shell, matchesGoldenFile('goldens/retro_host_menu_en.png'));
+  });
+
+  testWidgets('Graphics: the Enhanced look, with plain names and one line each', (tester) async {
+    await playing(tester, session: FakeOptionSession());
+    final model = launcher.model;
+    model.openRetroMenu();
+    model.openRetroGraphics();
+    await tester.runAsync(() => launcher.play.graphics.choosePreset(RetroGraphicsPreset.enhanced));
+    await settle(tester);
+    expect(find.text(T.text('retroGfxPresetEnhanced')), findsOneWidget);
+    expect(find.text(T.text('retroGfxResolutionDetail')), findsOneWidget);
+    await expectLater(shell, matchesGoldenFile('goldens/retro_host_graphics_en.png'));
+  });
+
+  testWidgets('Graphics: the Auto Optimizer\'s suggestion for this computer', (tester) async {
+    await playing(
+      tester,
+      session: FakeOptionSession(),
+      hardware: () async => const RetroHardware(
+        displayHeight: 1440,
+        adapters: [RetroAdapter(name: 'GeForce RTX 3070', dedicatedBytes: 8 * 1024 * 1024 * 1024)],
+        logicalProcessors: 16,
+      ),
+    );
+    final model = launcher.model;
+    model.openRetroMenu();
+    model.openRetroGraphics();
+    model.selectCategory(1);
+    await tester.runAsync(() => launcher.play.graphics.preview());
+    await settle(tester);
+    final apply = model.panelCategories().last.rows.indexWhere((row) => row.id == 'opt-apply');
+    for (var row = 0; row < apply; row++) {
+      model.handle(Command.down);
+    }
+    expect(model.panelRow, apply);
+    await settle(tester);
+    expect(find.text('Suggested for GeForce RTX 3070'), findsOneWidget);
+    expect(find.text(T.text('retroOptimizerApply')), findsOneWidget);
+    await expectLater(shell, matchesGoldenFile('goldens/retro_host_optimizer_en.png'));
   });
 
   testWidgets('settings: Emulators with the host turned on and its BIOS folder', (tester) async {

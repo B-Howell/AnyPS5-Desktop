@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:anyps5_desktop/core/retro_host/retro_hardware.dart';
 import 'package:anyps5_desktop/core/discord_presence.dart';
 import 'package:anyps5_desktop/core/now_playing.dart';
 import 'package:anyps5_desktop/core/ffmpeg_download.dart';
@@ -198,6 +199,7 @@ Fixture makeFixture({
   ClipPlayback Function()? clipPlayback,
   VoicePlayback Function()? voicePlayback,
   Trash? trash,
+  Future<RetroHardware?> Function()? retroHardware,
 }) {
   final opened = <Uri>[];
   final copied = <String>[];
@@ -242,6 +244,7 @@ Fixture makeFixture({
       computerName: 'Desk',
       pickFolder: pickFolder ?? (_) async => root,
       pickImage: pickImage,
+      retroHardware: retroHardware,
       pickPictures: pickPictures,
       advertise: false,
       preferredPorts: false,

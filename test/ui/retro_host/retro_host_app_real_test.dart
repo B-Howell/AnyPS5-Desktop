@@ -119,18 +119,23 @@ void main() {
       );
       final rows = model.panelCategories().single.rows;
       stdout.writeln('menu: ${[for (final row in rows) row.id]}');
-      final resolution = rows.where((row) => row.id == 'option-swanstation_GPU_ResolutionScale').firstOrNull;
-      if (resolution != null) {
-        final choice = resolution.kind as ChoiceRow;
-        final next = (choice.selected + 1) % choice.options.length;
-        choice.set(next);
-        await until(() => session.answers.any((answer) => answer.$1 == 'option'), const Duration(seconds: 5));
-        expect(session.answers.lastWhere((answer) => answer.$1 == 'option').$3, isTrue);
-        await until(
-          () => model.preferences.retroHostOptions.containsKey('swanstation_GPU_ResolutionScale'),
-          const Duration(seconds: 2),
-        );
-      }
+      (rows.singleWhere((row) => row.id == 'graphics').kind as ActionRow).run();
+      expect(model.overlay, Layer.retroGraphics);
+      final resolution = model.panelCategories().first.rows.singleWhere(
+        (row) => row.id == 'gfx-swanstation_GPU_ResolutionScale',
+      );
+      final choice = resolution.kind as ChoiceRow;
+      choice.set((choice.selected + 1) % choice.options.length);
+      await until(() => session.answers.any((answer) => answer.$1 == 'option'), const Duration(seconds: 5));
+      expect(session.answers.lastWhere((answer) => answer.$1 == 'option').$3, isTrue);
+      await until(
+        () =>
+            model.preferences.retroHostGraphics[play.game.id]?.options.containsKey('swanstation_GPU_ResolutionScale') ??
+            false,
+        const Duration(seconds: 2),
+      );
+      model.handle(Command.back);
+      expect(model.overlay, Layer.retroMenu);
       (rows.singleWhere((row) => row.id == 'volume').kind as StepperRow).set(30);
       await until(
         () => session.answers.any((answer) => answer.$1 == 'volume' && (answer.$2! as Map)['level'] == 0.3),

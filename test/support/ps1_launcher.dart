@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/host.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_hardware.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_install.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
@@ -17,12 +18,17 @@ import 'ui_support.dart';
 /// A launcher with one PS1 disc in its games folder, a host where ANYPS5_RETRO_HOST says, and a
 /// fake host session for every game opened in it.
 class Ps1Launcher {
-  Ps1Launcher({bool hostFound = true}) {
+  Ps1Launcher({bool hostFound = true, FakeRetroHostSession? session, Future<RetroHardware?> Function()? hardware})
+    : session = session ?? FakeRetroHostSession() {
     final temp = temporaryFolder('ps1-host');
     final hostFolder = Directory(p.join(temp.path, 'host'))..createSync();
     host = (File(p.join(hostFolder.path, 'anyps5-retro-host'))..createSync()).path;
     core = (File(p.join(hostFolder.path, RetroHostInstall.coreName(HostSystem.current)))..createSync()).path;
-    fixture = makeFixture(withToolkit: false, environment: {if (hostFound) RetroHostInstall.variable: host});
+    fixture = makeFixture(
+      withToolkit: false,
+      environment: {if (hostFound) RetroHostInstall.variable: host},
+      retroHardware: hardware,
+    );
     folders.add(temp);
     final folder = Directory(p.join(model.root!, 'Night Racer'))..createSync();
     disc = (File(p.join(folder.path, 'game.cue'))..createSync()).path;
@@ -33,7 +39,7 @@ class Ps1Launcher {
     game = model.games.singleWhere((game) => game.retro != null);
     model.openRetroHost = (install, {required volume, required muted}) {
       opened.add((install, volume, muted));
-      return RetroHostGame(session, statusEvery: const Duration(hours: 1), volume: volume, muted: muted);
+      return RetroHostGame(this.session, statusEvery: const Duration(hours: 1), volume: volume, muted: muted);
     };
   }
 
@@ -43,7 +49,7 @@ class Ps1Launcher {
   late final String disc;
   late final Game game;
   final folders = <Directory>[];
-  final session = FakeRetroHostSession();
+  final FakeRetroHostSession session;
   final opened = <(RetroHostInstall, double, bool)>[];
 
   AppModel get model => fixture.model;
@@ -83,8 +89,14 @@ class Ps1Launcher {
   }
 }
 
-/// A two-disc game's status with the internal resolution option, as protocol.md "status" shows.
-RetroStatus menuStatus({int selected = 0, bool busy = false, bool failed = false}) => RetroStatus(
+/// A two-disc game's status with the internal resolution option, as protocol.md "status" shows,
+/// and any [extra] options.
+RetroStatus menuStatus({
+  int selected = 0,
+  bool busy = false,
+  bool failed = false,
+  Map<String, RetroOption> extra = const {},
+}) => RetroStatus(
   ready: true,
   ended: false,
   error: '',
@@ -99,6 +111,7 @@ RetroStatus menuStatus({int selected = 0, bool busy = false, bool failed = false
       activeValue: const ['1', '2', '4'][selected],
       restart: false,
     ),
+    ...extra,
   },
   discs: RetroDiscs(
     labels: const ['Disc 1', 'Disc 2'],
