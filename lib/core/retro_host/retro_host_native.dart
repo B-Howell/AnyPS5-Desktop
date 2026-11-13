@@ -77,9 +77,10 @@ external int retroHostWriteAgeMs(Pointer<Void> connection);
 external void retroHostKill(Pointer<Void> connection);
 
 /// Kills the host if it still runs, waits for it and for the stream's threads, and frees the
-/// connection. It blocks, so callers run it off the UI isolate.
-@Native<Void Function(Pointer<Void>)>(symbol: 'anyps5_rh_close')
-external void retroHostClose(Pointer<Void> connection);
+/// connection; gives the exit code as [RetroHostEvent.exited] does. It blocks, so callers run it
+/// off the UI isolate.
+@Native<Int64 Function(Pointer<Void>)>(symbol: 'anyps5_rh_close')
+external int retroHostClose(Pointer<Void> connection);
 
 @Native<Void Function(Pointer<Void>)>(symbol: 'anyps5_rh_free')
 external void retroHostFree(Pointer<Void> data);

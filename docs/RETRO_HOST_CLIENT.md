@@ -73,12 +73,14 @@ code belongs to this client.
   its descriptor 3 must be the launcher's own socket (`/proc/<pid>/fd/3`).
   This guards against a host that ended at once, was reaped by the VM, and had
   its id given to another process, even another child of the launcher.
-  - Where `/proc` hides a child's descriptors (`ptrace_scope` 2 or 3), only the
-    process's parent can be checked, which is weaker.
   - If the check fails, the client never signals or waits for that id, and takes
-    the end of the control stream as the host's exit.
-  - On Linux 5.3, which has `pidfd_open` but not `waitid(P_PIDFD)`, the pid is
-    waited for instead.
+    the end of the control stream as the host's exit. That includes systems
+    where `/proc` hides a child's descriptors (`ptrace_scope` 2 or 3) and the
+    glibc is older than 2.39. A host that has to be ended is then ended by
+    closing its stream, which the protocol makes it exit on within 10 seconds.
+  - On Linux 5.3, which has `pidfd_open` but not `waitid(P_PIDFD)`, the pidfd
+    still shows the exit, but the exit code is unknown and the host is left for
+    the VM to reap, since waiting by id could reach a later process.
   - Before 5.3 there is no pidfd, and the client kills and waits by id, as
     programs did before pidfd existed.
 
@@ -93,6 +95,8 @@ reported only after the reader has passed on everything the host wrote, so a
 reply sent just before the host exits is not overtaken. The exception is when
 something else still holds the host's end of the stream: the reader then
 cannot see the stream end, and the exit is reported after 2 seconds anyway.
+(Without a checked pidfd, the end of the stream is the exit, so there is no
+such limit.)
 
 ## Threads and the UI
 
@@ -112,6 +116,10 @@ requires.
 | A write in progress | 5 s | The host is killed: `hostHung` |
 | The game ends after `stopGame()` sends `stop`, counted from the send, also while `start` is still waiting | 10 s | The host is killed: `hostHung` |
 | The host exits after `shutdown()` | 15 s | The host is killed: `hostHung` |
+
+"Killed" means signalled through its pidfd, `TerminateProcess` on Windows, or
+by id only where the system has no pidfd. In every case the client then closes
+the connection, so a host it could not signal sees its stream end and exits.
 
 `stopGame()` asks for `status` until the game has ended, because the client
 has to see the end to enforce the stop limit. So `call('stop')` is refused:

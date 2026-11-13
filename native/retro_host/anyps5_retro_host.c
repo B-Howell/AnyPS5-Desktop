@@ -69,6 +69,7 @@ typedef struct Connection {
   Outgoing* last;
   int closing;
   volatile LONG64 write_started;
+  int64_t exit_code;
 } Connection;
 
 static SRWLOCK g_spawn_lock = SRWLOCK_INIT;
@@ -153,6 +154,7 @@ static DWORD WINAPI waiter_main(void* argument) {
   WaitForSingleObject(c->reader, 2000);
   DWORD code = 0;
   GetExitCodeProcess(c->process, &code);
+  c->exit_code = (int64_t)code;
   c->callback(c->token, EVENT_EXITED, NULL, 0, (int64_t)code);
   return 0;
 }
@@ -410,7 +412,9 @@ static void stop_thread(HANDLE thread) {
   while (WaitForSingleObject(thread, 20) == WAIT_TIMEOUT) CancelSynchronousIo(thread);
 }
 
-ANYPS5_EXPORT void anyps5_rh_close(void* handle) {
+// Gives the host's exit code as EVENT_EXITED does, since that event may still be
+// on its way to Dart when the callback is closed.
+ANYPS5_EXPORT int64_t anyps5_rh_close(void* handle) {
   Connection* c = (Connection*)handle;
   TerminateJobObject(c->job, 1);
   TerminateProcess(c->process, 1);
@@ -435,7 +439,9 @@ ANYPS5_EXPORT void anyps5_rh_close(void* handle) {
   close_handle(&c->job);
   close_handle(&c->process);
   DeleteCriticalSection(&c->lock);
+  const int64_t code = c->exit_code;
   free(c);
+  return code;
 }
 
 static int queue(Connection* c, const uint8_t* data, int32_t length) {
@@ -538,6 +544,7 @@ typedef struct Connection {
   int pidfd;
   int lost;
   int64_t write_started;
+  int64_t exit_code;
 } Connection;
 
 static int64_t now_ms(void) {
@@ -735,8 +742,10 @@ static int64_t exit_code(const siginfo_t* info) {
 // pidfd, which can never reach a later process given the same id. When the VM
 // reaps the host before that read, its exit code is lost: it is then
 // EXIT_UNKNOWN. On Linux 5.3, which has pidfd_open but not waitid(P_PIDFD), the
-// pid is waited for instead. macOS: the VM waits only for its own process ids
-// (kqueue), so the host is this file's to reap.
+// pidfd still shows the exit, but the code is EXIT_UNKNOWN and the host is left
+// for the VM to reap: waiting by id could reach a later process. macOS: the VM
+// waits only for its own process ids (kqueue), so the host is this file's to
+// reap.
 static void* waiter_main(void* argument) {
   Connection* c = (Connection*)argument;
   int64_t code = EXIT_UNKNOWN;
@@ -751,20 +760,12 @@ static void* waiter_main(void* argument) {
     do result = waitid((idtype_t)P_PIDFD, (id_t)c->pidfd, &info, WEXITED | WNOWAIT);
     while (result < 0 && errno == EINTR);
     const int by_pidfd = !(result < 0 && errno == EINVAL);
-    if (!by_pidfd) {
-      do result = waitid(P_PID, (id_t)c->pid, &info, WEXITED | WNOWAIT);
-      while (result < 0 && errno == EINTR);
-    }
     if (result == 0) code = exit_code(&info);
     pthread_mutex_lock(&c->lock);
     c->exited = 1;
     pthread_mutex_unlock(&c->lock);
     if (by_pidfd) {
       while (waitid((idtype_t)P_PIDFD, (id_t)c->pidfd, &info, WEXITED) < 0 && errno == EINTR) {
-      }
-    } else {
-      int status;
-      while (waitpid(c->pid, &status, 0) < 0 && errno == EINTR) {
       }
     }
   } else if (c->lost) {
@@ -796,6 +797,7 @@ static void* waiter_main(void* argument) {
     }
   }
   pthread_mutex_unlock(&c->lock);
+  c->exit_code = code;
   c->callback(c->token, EVENT_EXITED, NULL, 0, code);
   return NULL;
 }
@@ -815,11 +817,10 @@ static void* waiter_main(void* argument) {
 // may already belong to another process, perhaps another child of the
 // launcher. A pidfd fixes its process once opened, so the check after the open
 // is sound: the host is the process whose descriptor 3 is the launcher's
-// socket (`socket_inode`). Where /proc does not let the launcher read its
-// child's descriptors (ptrace_scope 2 or 3), the process's parent is checked
-// instead, which is weaker. Returns the pidfd; else -1 with *lost set when the
-// host's identity cannot be had (it is then never signalled or waited for by
-// its id), or clear when the kernel has no pidfd at all (Linux before 5.3).
+// socket (`socket_inode`). Returns the pidfd; else -1 with *lost set when the
+// host's identity cannot be had, also where /proc hides a child's descriptors
+// (ptrace_scope 2 or 3): it is then never signalled or waited for by its id.
+// *lost stays clear when the kernel has no pidfd at all (Linux before 5.3).
 static int open_pidfd(pid_t pid, unsigned long socket_inode, int* lost) {
   *lost = 0;
   int fd = (int)syscall(SYS_pidfd_open, pid, 0);
@@ -837,20 +838,6 @@ static int open_pidfd(pid_t pid, unsigned long socket_inode, int* lost) {
   if (length > 0) {
     target[length] = 0;
     if (strcmp(target, expected) == 0) return fd;
-  } else if (errno == EACCES || errno == EPERM) {
-    snprintf(path, sizeof path, "/proc/%ld/stat", (long)pid);
-    long parent = -1;
-    FILE* stat = fopen(path, "re");
-    if (stat) {
-      char text[512];
-      size_t read = fread(text, 1, sizeof text - 1, stat);
-      fclose(stat);
-      text[read] = 0;
-      const char* after = strrchr(text, ')');
-      char state = 0;
-      if (after) sscanf(after + 1, " %c %ld", &state, &parent);
-    }
-    if (parent == (long)getpid()) return fd;
   }
   close(fd);
   *lost = 1;
@@ -1007,6 +994,8 @@ static void signal_host(pid_t pid, int pidfd, int lost) {
     syscall(SYS_pidfd_send_signal, pidfd, SIGKILL, NULL, 0);
     return;
   }
+#else
+  (void)pidfd;
 #endif
   if (!lost) kill(pid, SIGKILL);
 }
@@ -1100,6 +1089,7 @@ ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const
     signal_host(pid, pidfd, lost);
     shutdown(c->socket, SHUT_RDWR);
     pthread_mutex_lock(&c->lock);
+    if (!(c->threads & 2)) c->reader_done = 1;
     c->closing = 1;
     pthread_cond_broadcast(&c->wake);
     pthread_mutex_unlock(&c->lock);
@@ -1134,7 +1124,9 @@ ANYPS5_EXPORT int64_t anyps5_rh_write_age_ms(void* handle) {
   return started ? now_ms() - started : 0;
 }
 
-ANYPS5_EXPORT void anyps5_rh_close(void* handle) {
+// Gives the host's exit code as EVENT_EXITED does, since that event may still be
+// on its way to Dart when the callback is closed.
+ANYPS5_EXPORT int64_t anyps5_rh_close(void* handle) {
   Connection* c = (Connection*)handle;
   anyps5_rh_kill(c);
   shutdown(c->socket, SHUT_RDWR);
@@ -1154,7 +1146,9 @@ ANYPS5_EXPORT void anyps5_rh_close(void* handle) {
   if (c->pidfd >= 0) close(c->pidfd);
   pthread_mutex_destroy(&c->lock);
   pthread_cond_destroy(&c->wake);
+  const int64_t code = c->exit_code;
   free(c);
+  return code;
 }
 
 static int queue(Connection* c, const uint8_t* data, int32_t length) {

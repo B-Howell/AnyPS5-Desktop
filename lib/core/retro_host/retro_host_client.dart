@@ -693,14 +693,19 @@ class RetroHostClient {
     }
     if (!_ready.isCompleted) _ready.completeError(RetroHostGone(end));
     _ended.complete(end);
+    if (kill) unawaited(_release());
   }
 
   Future<void> _release() async {
     if (_closing || _connection == nullptr) return;
     _closing = true;
     final address = _connection.address;
-    await Isolate.run(() => retroHostClose(Pointer<Void>.fromAddress(address)));
+    final code = await Isolate.run(() => retroHostClose(Pointer<Void>.fromAddress(address)));
     _connection = nullptr;
+    if (!_exited.isCompleted) {
+      _exitCode = code;
+      _exited.complete(code);
+    }
     _callback.close();
     _previousRing?.unmap();
     _ring?.unmap();
