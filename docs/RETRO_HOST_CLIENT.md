@@ -67,9 +67,12 @@ code belongs to this client.
     process given the same id.
 
   With glibc 2.39 or later, `pidfd_spawn` makes the pidfd together with the
-  process. With older glibc it is opened just after the start with
-  `pidfd_open`; in principle that can meet a reused id, if the host ended at
-  once and the VM reaped it first. On Linux 5.3, which has `pidfd_open` but not
+  process. Where it is missing, or the kernel cannot do it, the host is started
+  with `posix_spawn` and its pidfd is opened just after. A pidfd fixes its
+  process once opened, so the client then checks in `/proc` that the process is
+  its own child (or has already ended), and drops the pidfd otherwise. That
+  covers a host that ended at once, was reaped by the VM, and had its id given
+  to another process in between. On Linux 5.3, which has `pidfd_open` but not
   `waitid(P_PIDFD)`, the pid is waited for instead.
 
 **The exit code is not always known.** If the VM reaps the host before the
@@ -100,7 +103,7 @@ requires.
 | A reply to each call | 5 s | The host is killed: `hostHung` |
 | A `pong` to each ping (pings every 2 s) | 5 s | The host is killed: `hostHung` |
 | A write in progress | 5 s | The host is killed: `hostHung` |
-| The game ends after `stopGame()` sends `stop`, counted from the send | 10 s | The host is killed: `hostHung` |
+| The game ends after `stopGame()` sends `stop`, counted from the send, also while `start` is still waiting | 10 s | The host is killed: `hostHung` |
 | The host exits after `shutdown()` | 15 s | The host is killed: `hostHung` |
 
 `stopGame()` asks for `status` until the game has ended, because the client

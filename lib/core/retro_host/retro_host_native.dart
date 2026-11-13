@@ -22,10 +22,12 @@ abstract final class RetroHostEvent {
   static const framing = 2;
 
   /// The host process ended; `extra` is its exit code, minus the signal that ended it, or
-  /// [exitUnknown]. It comes after every message the host wrote before it ended.
+  /// [exitUnknown]. It comes after every message the host wrote before it ended, unless something
+  /// else still holds the host's end of the stream: then it comes 2 seconds after the exit.
   static const exited = 3;
 
-  /// The exit code could not be read: on Linux without pidfd, the Dart VM reaped the host first.
+  /// The exit code could not be read: on Linux, the Dart VM reaped the host before the client read
+  /// it (docs/RETRO_HOST_CLIENT.md).
   static const exitUnknown = -9223372036854775808;
 }
 

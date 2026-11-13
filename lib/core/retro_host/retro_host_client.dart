@@ -42,7 +42,8 @@ class RetroHostGone implements Exception {
 /// A `frame` message, after the client pinned and checked the newest frame. [frame] is null when
 /// the ring had no frame to pin; [drawn] says whether the frame belongs to the current game, which
 /// is the only kind the renderer may show. A frame that is not drawn may be read only until the
-/// next message; a drawn one stays readable as [RetroHostClient.frame] until another replaces it.
+/// next message; a drawn one stays readable as [RetroHostClient.frame] while that getter still
+/// gives it.
 class RetroFrameEvent {
   const RetroFrameEvent(this.frame, {required this.drawn});
 
@@ -295,11 +296,14 @@ class RetroHostClient {
   /// game has not ended 10 seconds after `stop` (protocol.md "Timeouts"), and the status then is the
   /// failure report. Null when no game was loaded.
   Future<RetroStatus?> stopGame() async {
-    if (_gameLoaded && !_ended.isCompleted) _stopDeadline ??= DateTime.now().add(stopLimit);
+    if (!_ended.isCompleted) _stopDeadline ??= DateTime.now().add(stopLimit);
     await _send('stop', null);
     while (true) {
       final current = await status();
-      if (current == null || current.ended) return current;
+      if (current == null || current.ended) {
+        _stopDeadline = null;
+        return current;
+      }
       await Future<void>.delayed(_stopPoll);
     }
   }
@@ -511,7 +515,6 @@ class RetroHostClient {
         _epoch = epoch;
         _gameLoaded = true;
         _lastStatusEnded = false;
-        _stopDeadline = null;
         _setFrame(null, null);
       case 'status':
         if (result != null) {

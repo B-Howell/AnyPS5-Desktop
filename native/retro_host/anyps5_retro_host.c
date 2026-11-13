@@ -798,9 +798,40 @@ static void* waiter_main(void* argument) {
 // on Linux every descriptor of the launcher's is close-on-exec, and the host
 // closes any above 3 itself. `host_end` is never 3 (see anyps5_rh_start).
 // Linux also gives the host's pidfd: made with the process by pidfd_spawn
-// (glibc 2.39 and later), or opened just after it with pidfd_open, which can
-// in principle meet a reused id if the VM has already reaped a host that ended
-// at once.
+// (glibc 2.39 and later, when the kernel has what it needs), or opened just
+// after it with pidfd_open and kept only if its process is this launcher's
+// child (open_pidfd).
+#if defined(__linux__)
+// Opens a pidfd for `pid` just after posix_spawn, and keeps it only if it is
+// this launcher's child: if the host had already ended and been reaped by the
+// VM, the id could belong to another process by now. A pidfd fixes its process
+// once opened, so its parent is checked through /proc after the open. A host
+// that has ended by then is kept too: signalling it does nothing.
+static int open_pidfd(pid_t pid) {
+  int fd = (int)syscall(SYS_pidfd_open, pid, 0);
+  if (fd < 0) return -1;
+  fcntl(fd, F_SETFD, FD_CLOEXEC);
+  char path[64];
+  snprintf(path, sizeof path, "/proc/%ld/stat", (long)pid);
+  long parent = -1;
+  FILE* stat = fopen(path, "re");
+  if (stat) {
+    char text[512];
+    size_t length = fread(text, 1, sizeof text - 1, stat);
+    fclose(stat);
+    text[length] = 0;
+    const char* after = strrchr(text, ')');
+    char state = 0;
+    if (after) sscanf(after + 1, " %c %ld", &state, &parent);
+  }
+  struct pollfd ended = {fd, POLLIN, 0};
+  const int gone = poll(&ended, 1, 0) > 0;
+  if (parent == (long)getpid() || gone) return fd;
+  close(fd);
+  return -1;
+}
+#endif
+
 static int spawn_now(char* const* argv, char* const* envp, int host_end, pid_t* pid, int* pidfd) {
   posix_spawn_file_actions_t actions;
   posix_spawnattr_t attributes;
@@ -827,18 +858,26 @@ static int spawn_now(char* const* argv, char* const* envp, int host_end, pid_t* 
   typedef pid_t (*pidfd_getpid_t)(int);
   pidfd_spawn_t pidfd_spawn_call = (pidfd_spawn_t)dlsym(RTLD_DEFAULT, "pidfd_spawn");
   pidfd_getpid_t pidfd_getpid_call = (pidfd_getpid_t)dlsym(RTLD_DEFAULT, "pidfd_getpid");
+  failure = ENOSYS;
   if (pidfd_spawn_call && pidfd_getpid_call) {
     failure = pidfd_spawn_call(pidfd, argv[0], &actions, &attributes, argv, envp);
     if (!failure) {
-      *pid = pidfd_getpid_call(*pidfd);
       fcntl(*pidfd, F_SETFD, FD_CLOEXEC);
+      *pid = pidfd_getpid_call(*pidfd);
+      if (*pid <= 0) {
+        failure = errno ? errno : ESRCH;
+        siginfo_t info;
+        syscall(SYS_pidfd_send_signal, *pidfd, SIGKILL, NULL, 0);
+        while (waitid((idtype_t)P_PIDFD, (id_t)*pidfd, &info, WEXITED) < 0 && errno == EINTR) {
+        }
+        close(*pidfd);
+        *pidfd = -1;
+      }
     }
-  } else {
+  }
+  if (failure == ENOSYS || failure == EINVAL) {
     failure = posix_spawn(pid, argv[0], &actions, &attributes, argv, envp);
-    if (!failure) {
-      *pidfd = (int)syscall(SYS_pidfd_open, *pid, 0);
-      if (*pidfd >= 0) fcntl(*pidfd, F_SETFD, FD_CLOEXEC);
-    }
+    if (!failure) *pidfd = open_pidfd(*pid);
   }
 #else
   failure = posix_spawn(pid, argv[0], &actions, &attributes, argv, envp);
