@@ -134,6 +134,7 @@ class RetroHostClient {
 
   bool _gameLoaded = false;
   bool _lastStatusEnded = false;
+  bool _releaseUnseen = false;
   bool _paused = false;
   bool _inputFocus = true;
   int _ports = 1;
@@ -519,6 +520,7 @@ class RetroHostClient {
     if (hasResult == hasError) throw const RetroProtocolError('A reply needs exactly one of result and error.');
     final pending = _calls.first;
     final before = _expectedRumble();
+    _releaseUnseen = false;
     if (hasError) {
       final error = f.object('error');
       final failure = RetroCallError(error.string('code'), error.string('message'));
@@ -563,6 +565,8 @@ class RetroHostClient {
           _gameLoaded = false;
           _epoch = null;
           _stopDeadline = null;
+        } else {
+          _releaseUnseen = _gameLoaded;
         }
       case 'connectedPorts' || 'changeDisc' || 'option':
         if (result is! bool) throw RetroProtocolError('The result of $method must be a boolean.');
@@ -748,12 +752,19 @@ class RetroHostClient {
   /// The reason the client gave up on the host, for logs.
   String? failureReason;
 
+  /// Ends the connection. A host that exits right after answering `release`, with no other reply
+  /// between, did what protocol.md "release" allows for a game whose core is stuck: no game is
+  /// loaded then, so no failed game is reported.
   void _finish(RetroHostEnd end, {String? errorCode, bool kill = false, String? reason}) {
     if (_ended.isCompleted) return;
     _endValue = end;
     failureReason = reason;
     _timer?.cancel();
     if (kill && _connection != nullptr) retroHostKill(_connection);
+    if (_releaseUnseen && errorCode == RetroErrorCode.hostExited) {
+      _gameLoaded = false;
+      _epoch = null;
+    }
     if (_gameLoaded) _zeroRumble();
     if (end != RetroHostEnd.clean && end != RetroHostEnd.unsupported && _gameLoaded && errorCode != null) {
       _failedStatus = RetroStatus.failed(

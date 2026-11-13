@@ -362,6 +362,22 @@ void main() {
     ),
     timeout: const Timeout(Duration(seconds: 90)),
   );
+  test(
+    'a host that exits right after release reports no game',
+    () => _playOwn(
+      checkout,
+      python,
+      'release answered before any status showed the end, then the host exits, as after a stuck core.',
+      'hostFailure',
+      [
+        ..._startCall(checkout),
+        ..._call('release', null, null, id: 3),
+        {'hostExits': 0},
+      ],
+      check: (session) => expectLater(session.client.status(), throwsA(isA<RetroHostGone>())),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
 }
 
 Matcher _zero(int port) => isA<RetroRumble>()

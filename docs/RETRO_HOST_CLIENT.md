@@ -177,8 +177,11 @@ The client counts a game as loaded from `start`'s reply until `release` is
 answered for a game a `status` showed ended, or until a `status` returns null,
 which means no game is loaded. `release` does nothing while the game still
 runs, so a `release` answered before the end was seen leaves the game loaded
-until a `status` says otherwise. A host failure reports a failed game (see
-above) only while a game is loaded.
+until a `status` says otherwise. The protocol lets a host whose game's core is
+stuck answer `release` and exit, with no game loaded; so when the host exits
+right after a `release` was answered, with no other reply between, the client
+counts no game as loaded. A host failure reports a failed game (see above)
+only while a game is loaded.
 
 ## Resets
 
