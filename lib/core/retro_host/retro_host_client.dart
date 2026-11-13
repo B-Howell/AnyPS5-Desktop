@@ -484,9 +484,7 @@ class RetroHostClient {
     f.strings('pixelFormats');
     _unsupportedSeen = true;
     _timer?.cancel();
-    _unsupportedKill = Timer(welcomeLimit, () {
-      if (_connection != nullptr) retroHostKill(_connection);
-    });
+    _unsupportedKill = Timer(welcomeLimit, () => _finish(RetroHostEnd.unsupported, kill: true));
   }
 
   void _onReply(RetroFields f) {
@@ -696,8 +694,13 @@ class RetroHostClient {
     if (kill) unawaited(_release());
   }
 
-  Future<void> _release() async {
-    if (_closing || _connection == nullptr) return;
+  Future<void>? _releasing;
+
+  /// Frees the connection once; every caller waits for the same release to finish.
+  Future<void> _release() => _releasing ??= _releaseNow();
+
+  Future<void> _releaseNow() async {
+    if (_connection == nullptr) return;
     _closing = true;
     final address = _connection.address;
     final code = await Isolate.run(() => retroHostClose(Pointer<Void>.fromAddress(address)));

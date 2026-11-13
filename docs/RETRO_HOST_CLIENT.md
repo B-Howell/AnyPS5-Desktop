@@ -95,14 +95,15 @@ reported only after the reader has passed on everything the host wrote, so a
 reply sent just before the host exits is not overtaken. The exception is when
 something else still holds the host's end of the stream: the reader then
 cannot see the stream end, and the exit is reported after 2 seconds anyway.
-(Without a checked pidfd, the end of the stream is the exit, so there is no
-such limit.)
+(In lost mode, where a Linux host's identity could not be checked, the end of
+the stream is the exit, so there is no such limit.)
 
 ## Threads and the UI
 
 The control stream is read and written only by the native threads. Messages
 reach Dart through a `NativeCallable.listener`, which never blocks them.
-`close()` waits for the host and the threads inside `Isolate.run`. Nothing on
+`close()` waits, inside `Isolate.run`, for the host and the threads; when the
+client gave up on the host itself, `close()` waits for that same release. Nothing on
 the UI isolate ever waits on the host, as the protocol's "Timeouts" section
 requires.
 
