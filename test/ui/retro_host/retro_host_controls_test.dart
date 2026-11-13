@@ -214,8 +214,19 @@ void main() {
     motors.vibrating.add('a');
     controls.poll();
     session.sendRumble(0, 0xFFFF, 0);
-    await game.shutdown();
+    final shutting = game.shutdown();
     expect(motors.orders.last, ('a', 0.0, 0.0, Duration.zero));
+    session.sendRumble(0, 0xFFFF, 0);
+    await shutting;
+    expect(motors.orders.last, ('a', 0.0, 0.0, Duration.zero));
+  });
+
+  test('dispose lets go of what the controllers held in a game that goes on', () async {
+    await started();
+    pads.connect('a', const PadState(pressed: {PadButton.south}, leftX: 1));
+    controls.poll();
+    controls.dispose();
+    expect(session.inputStates.where((sent) => sent.$1 == 0).last.$2, RetroPadInput.idle);
   });
 
   test('dispose stops a motor the game left running', () async {

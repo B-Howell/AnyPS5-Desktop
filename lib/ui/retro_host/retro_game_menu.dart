@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../core/retro_host/retro_host_protocol.dart';
@@ -175,9 +177,15 @@ class RetroGameMenu extends ChangeNotifier {
 
   Future<void> toggleMute() => game.setVolume(muted: !game.muted);
 
+  /// A menu that goes away while open gives the game back its controllers and resumes it.
   @override
   void dispose() {
     game.removeListener(notifyListeners);
+    if (_open) {
+      _open = false;
+      controls?.suspended = false;
+      unawaited(game.pause(false));
+    }
     super.dispose();
   }
 }

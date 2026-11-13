@@ -164,8 +164,11 @@ class RetroHostControls {
     }
   }
 
+  /// The core's vibration for a port, kept and given to the controller there. Nothing once no
+  /// game is loaded: a `rumble` still coming while the host shuts down must not start the motors
+  /// that stopped with the game.
   void _onRumble(RetroRumble event) {
-    if (_disposed) return;
+    if (_disposed || !game.loaded) return;
     _levels[event.port] = (event.strong, event.weak);
     final pad = seats.at(event.port);
     if (pad != null) _setMotors(pad, event.strong, event.weak);
@@ -195,9 +198,14 @@ class RetroHostControls {
     }
   }
 
-  /// Stops reading the controllers and stops any motor the game left running.
+  /// Stops reading the controllers, lets go of what they held in a game that goes on, and stops
+  /// any motor the game left running.
   void dispose() {
     if (_disposed) return;
+    for (var port = 0; port < RetroSeats.portCount; port++) {
+      final sent = _sent[port];
+      if (sent != null && sent != RetroPadInput.idle) game.input(port, 0);
+    }
     _poll.cancel();
     _rumbleRefresh.cancel();
     game.removeListener(_onGameChanged);

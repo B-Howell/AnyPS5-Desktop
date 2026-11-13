@@ -201,8 +201,11 @@ client already gives zeros for both ports when the game starts, pauses, ends
 or loses focus, and gives nothing while paused or without focus. The controls
 add the protocol's last case, "when a controller leaves its port": its motors
 stop. They also stop every motor once no game is loaded, because a host that
-is shut down sends no `rumble` and the client gives no zeros for a clean end. Setting `vibration` to false stops the motors and keeps later rumble
-away. `dispose` stops any motor the game left running.
+is shut down sends no `rumble` and the client gives no zeros for a clean end.
+From then on they ignore any `rumble` that still comes. Setting `vibration`
+to false stops the motors and keeps later rumble away. `dispose` stops any
+motor the game left running. It also sends idle for a port whose controller
+held something, so a game that goes on is not left with a held button.
 
 ## The in-game menu: `RetroGameMenu`
 
@@ -230,7 +233,8 @@ the game. `close()` gives the controllers back at once, so a button still
 held from the menu reaches the game only once it is pressed again, then
 resumes the game. Neither does anything after waiting for the host, so
 opening the menu again while a close still waits for its reply keeps the
-controllers out. A game that is not loaded has no menu to open.
+controllers out. A menu disposed while open closes the same way. A game that
+is not loaded has no menu to open.
 
 ## Tests
 
@@ -273,15 +277,17 @@ native memory as a real ring slot would be, so no host is started.
     and back between two reads;
   - `suspended`, and a button held when it ends kept out until pressed again;
   - vibration sent to the controller at its port, a leaving controller's
-    motors stopped, motors stopped when the host is shut down, vibration
-    turned off, and `dispose`;
+    motors stopped, motors stopped when the host is shut down (also against a
+    late `rumble`), vibration turned off, and `dispose`, which also lets go
+    of held buttons;
   - a button kept out after the menu closed that is let go and pressed again
     while the window has no focus.
 - [`retro_game_menu_test.dart`](../test/ui/retro_host/retro_game_menu_test.dart)
   builds the rows from the protocol's status example. It checks disc changes,
   option steps, volume steps and mute, volume set before `welcome`, and that
   opening the menu pauses the game and suspends the controls, also when it is
-  opened again while closing still waits for the host.
+  opened again while closing still waits for the host, and that a menu
+  disposed while open gives the controllers back.
 - [`retro_pad_test.dart`](../test/core/retro_host/retro_pad_test.dart) checks
   every button against the protocol's bit table, the triggers, both ends of
   the stick range and the dead zone.

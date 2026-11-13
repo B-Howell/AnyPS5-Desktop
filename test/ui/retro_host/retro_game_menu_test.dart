@@ -187,4 +187,20 @@ void main() {
     expect(game.paused, isTrue);
     expect(controls.suspended, isTrue);
   });
+
+  test('disposing an open menu gives the game back its controllers', () async {
+    final controls = RetroHostControls(
+      game,
+      pads: RetroPadReader(pads: () => const [], state: (_) => null),
+      every: const Duration(hours: 1),
+    );
+    addTearDown(controls.dispose);
+    final withControls = RetroGameMenu(game, controls: controls);
+    await started();
+    await withControls.open();
+    withControls.dispose();
+    await pumpEventQueue();
+    expect(controls.suspended, isFalse);
+    expect(game.paused, isFalse);
+  });
 }
