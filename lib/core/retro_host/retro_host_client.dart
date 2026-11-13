@@ -264,14 +264,20 @@ class RetroHostClient {
       return Future.error(const RetroCallError(RetroCallError.argument, 'A string cannot be sent as UTF-8.'));
     }
     if (_nextCallId > RetroFields.maxId) throw StateError('This host has used every call id.');
+    final Uint8List body;
+    try {
+      body = _encode({'type': 'call', 'id': _nextCallId, 'method': method, 'args': args});
+    } on Object catch (error) {
+      return Future.error(RetroCallError(RetroCallError.argument, 'The call cannot be sent: $error'));
+    }
     final pending = _Pending(_nextCallId++, method, DateTime.now().add(replyLimit));
     _calls.add(pending);
     if (method == 'start' || method == 'release') _zeroRumble();
-    if (method == 'pause' && args is bool) {
+    if (method == 'pause' && args is bool && _gameLoaded) {
       _paused = args;
       if (args) _zeroRumble();
     }
-    _sendObject({'type': 'call', 'id': pending.id, 'method': method, 'args': args});
+    _write(body);
     return pending.completer.future;
   }
 
@@ -515,6 +521,7 @@ class RetroHostClient {
         final epoch = RetroFields(_object(result, 'start'), 'start').integer('epoch', 1, RetroFields.maxId);
         _epoch = epoch;
         _gameLoaded = true;
+        _paused = false;
         _lastStatusEnded = false;
         _setFrame(null, null);
       case 'status':
@@ -719,10 +726,17 @@ class RetroHostClient {
     await _rumble.close();
   }
 
-  void _sendObject(Map<String, Object?> message) {
-    if (_connection == nullptr) return;
+  void _sendObject(Map<String, Object?> message) => _write(_encode(message));
+
+  /// A message's body, or throws when it cannot be sent: not JSON, or larger than 1 MiB.
+  static Uint8List _encode(Map<String, Object?> message) {
     final body = utf8.encode(jsonEncode(message));
     if (body.length > 1048576) throw ArgumentError('A message is larger than 1 MiB.');
+    return body;
+  }
+
+  void _write(Uint8List body) {
+    if (_connection == nullptr) return;
     final framed = calloc<Uint8>(body.length + 4);
     try {
       final view = framed.asTypedList(body.length + 4);

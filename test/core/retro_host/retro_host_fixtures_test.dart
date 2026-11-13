@@ -64,6 +64,107 @@ void main() {
       directory.deleteSync(recursive: true);
     }
   }, timeout: const Timeout(Duration(seconds: 90)));
+  test(
+    'a call refused before it is sent leaves the next call in order',
+    () => _playOwn(
+      checkout,
+      python,
+      'A call too large to send, then a status call that must still be answered in order.',
+      'clean',
+      [
+        {
+          'from': 'launcher',
+          'message': {'type': 'call', 'id': 2, 'method': 'status', 'args': null},
+          'anyValueFor': ['id'],
+        },
+        {
+          'from': 'host',
+          'message': {'type': 'reply', 'id': 2, 'result': null},
+          'anyValueFor': ['id'],
+        },
+      ],
+      afterReady: (client) => expectLater(
+        client.call('option', {'key': 'k', 'value': 'x' * 1100000}),
+        throwsA(isA<RetroCallError>().having((e) => e.code, 'code', RetroCallError.argument)),
+      ),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'a pause with no game does not silence the rumble of the next game',
+    () => _playOwn(
+      checkout,
+      python,
+      'pause with no game loaded, then start, then rumble that must be forwarded.',
+      'clean',
+      [
+        {
+          'from': 'launcher',
+          'message': {'type': 'call', 'id': 2, 'method': 'pause', 'args': true},
+          'anyValueFor': ['id'],
+        },
+        {
+          'from': 'host',
+          'message': {'type': 'reply', 'id': 2, 'result': null},
+          'anyValueFor': ['id'],
+        },
+        {
+          'from': 'launcher',
+          'message': {
+            'type': 'call',
+            'id': 3,
+            'method': 'start',
+            'args': {'core': r'${core}', 'disc': r'${disc}', 'system': r'${system}', 'saves': r'${saves}'},
+          },
+          'anyValueFor': ['id'],
+        },
+        {
+          'from': 'host',
+          'message': {
+            'type': 'reply',
+            'id': 3,
+            'result': {'epoch': 1},
+          },
+          'anyValueFor': ['id'],
+        },
+        {
+          'from': 'host',
+          'message': {'type': 'rumble', 'port': 0, 'strong': 1000, 'weak': 0},
+        },
+        {
+          'from': 'launcher',
+          'message': {'type': 'shutdown'},
+        },
+        {'hostExits': 0},
+      ],
+      check: (session) => expect(session.rumbles.any((r) => r.strong == 1000), isTrue, reason: 'rumble forwarded'),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+}
+
+Future<void> _playOwn(
+  String checkout,
+  String python,
+  String name,
+  String outcome,
+  List<Map<String, Object?>> steps, {
+  Future<void> Function(RetroHostClient client)? afterReady,
+  void Function(_Session session)? check,
+}) async {
+  final directory = Directory.systemTemp.createTempSync('retro-host-own-');
+  try {
+    final session = <String, Object?>{
+      'description': name,
+      'tests': ['launcher'],
+      'outcome': outcome,
+      'steps': [..._greeting, ...steps],
+    };
+    final file = File(p.join(directory.path, 'own.json'))..writeAsStringSync(jsonEncode(session));
+    await _Session(checkout, python, file, session, afterReady: afterReady, check: check).play();
+  } finally {
+    directory.deleteSync(recursive: true);
+  }
 }
 
 /// The start of a session: hello, welcome and the first volume call.
@@ -127,7 +228,14 @@ bool _runsHere(String? os) => switch (os) {
 };
 
 class _Session {
-  _Session(this.checkout, this.python, this.file, this.session);
+  _Session(this.checkout, this.python, this.file, this.session, {this.afterReady, this.check});
+
+  /// Runs once the first `volume` call is answered, before the session's next call.
+  final Future<void> Function(RetroHostClient client)? afterReady;
+
+  /// Runs once the host has exited, before the outcome is checked.
+  final void Function(_Session session)? check;
+  final rumbles = <RetroRumble>[];
 
   final String checkout;
   final String python;
@@ -164,10 +272,12 @@ class _Session {
         ],
       );
       client.frames.listen(frames.add);
+      client.rumble.listen(rumbles.add);
       unawaited(client.ready.then((_) {}, onError: (_) {}));
       await _steps(report);
       final end = await client.ended.timeout(const Duration(seconds: 40));
       await client.exited.timeout(const Duration(seconds: 20));
+      check?.call(this);
       expect(end.name, session['outcome'], reason: 'outcome (${client.failureReason ?? 'no reason'})');
       // Nothing else in this test reaps children, so the host's exit code must be known: on Linux
       // that shows the client kept the host's pidfd (docs/RETRO_HOST_CLIENT.md).
@@ -230,7 +340,12 @@ class _Session {
             final method = message['method']! as String;
             if (method == 'volume' && !welcomed) {
               welcomed = true;
-              calls.add(client.ready.then((_) => null));
+              calls.add(
+                client.ready.then((_) async {
+                  await afterReady?.call(client);
+                  return null;
+                }),
+              );
             } else if (method == 'stop') {
               stopping = client.stopGame();
               calls.add(Future.value());
