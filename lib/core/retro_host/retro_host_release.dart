@@ -141,15 +141,17 @@ abstract final class RetroHostRelease {
   /// Names a host for debug builds to run without any check.
   static const debugVariable = 'ANYPS5_RETRO_HOST';
 
-  static const _release = bool.fromEnvironment('dart.vm.product');
+  /// Whether this is a debug build: neither release (`dart.vm.product`) nor profile
+  /// (`dart.vm.profile`), as Flutter's kDebugMode.
+  static const debugBuild = !bool.fromEnvironment('dart.vm.product') && !bool.fromEnvironment('dart.vm.profile');
 
   /// The folder of [folderName] beside this launcher's executable (GetModuleFileNameW or
   /// /proc/self/exe, as Dart resolves it).
   static Directory get folder => Directory(p.join(p.dirname(Platform.resolvedExecutable), folderName));
 
   /// What to start: in a debug build the host ANYPS5_RETRO_HOST names, unchecked, when it is set;
-  /// otherwise the host in [folder], checked by [checkBeforeStart]. Release builds ignore the
-  /// variable.
+  /// otherwise the host in [folder], checked by [checkBeforeStart]. Release and profile builds
+  /// ignore the variable whatever [debug] says; [debug] false makes a debug build ignore it too.
   static Future<RetroHostLaunch> locate({
     Map<String, String>? environment,
     bool? debug,
@@ -159,7 +161,7 @@ abstract final class RetroHostRelease {
     RetroHostVersion minimum = minimumVersion,
   }) async {
     final override = (environment ?? Platform.environment)[debugVariable];
-    if ((debug ?? !_release) && override != null && override.isNotEmpty) {
+    if (debugBuild && (debug ?? true) && override != null && override.isNotEmpty) {
       return RetroHostLaunch(command: [File(override).absolute.path]);
     }
     final checked = await checkBeforeStart(from ?? folder, keys: keys, system: system, minimum: minimum);

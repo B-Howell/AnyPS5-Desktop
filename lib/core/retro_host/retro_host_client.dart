@@ -148,6 +148,9 @@ class RetroHostClient {
   FrameRing? _frameRing;
   RetroHostChecked? _checked;
 
+  /// The SwanStation of the checked release: the only core `start` may name for a checked host.
+  String? _releaseCore;
+
   void _releaseChecked() {
     final checked = _checked;
     _checked = null;
@@ -169,7 +172,14 @@ class RetroHostClient {
     bool muted = false,
     List<String> pixelFormats = const [RetroPixelFormat.rgba8, RetroPixelFormat.bgra8],
   }) {
-    if (command.isEmpty) throw ArgumentError.value(command, 'command', 'names no program');
+    if (command.isEmpty) {
+      checked?.release();
+      throw ArgumentError.value(command, 'command', 'names no program');
+    }
+    if (checked != null && command.first != checked.executable) {
+      checked.release();
+      throw ArgumentError.value(command.first, 'command', 'is not the checked host ${checked.executable}');
+    }
     final client = RetroHostClient._(volume, muted, pixelFormats);
     final token = _nextToken++;
     client._callback = NativeCallable<RetroHostCallbackNative>.listener(client._onEvent);
@@ -181,6 +191,7 @@ class RetroHostClient {
     final envp = _strings(env);
     final program = checked?.program?.toNativeUtf8() ?? nullptr;
     client._checked = checked;
+    client._releaseCore = checked?.core;
     try {
       client._connection = retroHostStart(
         program,
@@ -289,6 +300,15 @@ class RetroHostClient {
   }
 
   Future<Object?> _send(String method, Object? args) {
+    final core = _releaseCore;
+    if (method == 'start' && core != null && (args is! Map || args['core'] != core)) {
+      return Future.error(
+        RetroCallError(
+          RetroCallError.argument,
+          'A release host only runs the SwanStation it was released with ($core).',
+        ),
+      );
+    }
     if (_ended.isCompleted) return Future.value(_afterFailure(method));
     if (!_greeted) throw StateError('No call may be sent before welcome.');
     if (method != 'volume' && !_capabilities.contains(retroCapabilityPs1)) {

@@ -155,13 +155,17 @@ where the maintainers sign.
     that runs, even if the path is replaced in between. SwanStation is checked
     by path, as the protocol allows on Linux.
   - `RetroHostClient.start(checked: ...)` releases the files at the first such
-    `status`, or when the connection ends, whichever is first.
+    `status`, or when the connection ends, whichever is first. It refuses a
+    command whose program is not the checked executable, and for the whole
+    life of that host it refuses any `start` whose `core` is not the release's
+    SwanStation, so a checked host never loads another core.
 - **When a check fails.** `RetroHostReleaseFailure` is thrown and the host is
   not started. The UI should then say that the emulator needs to be downloaded
   again.
 - **Debug builds.** `RetroHostRelease.locate()` runs the host that
   `ANYPS5_RETRO_HOST` names, without checks, and leaves the core to the caller.
-  Release builds (`dart.vm.product`) ignore the variable. A release launcher
+  Release and profile builds (`dart.vm.product`, `dart.vm.profile`) ignore the
+  variable; the `debug` argument can only turn it off, never on. A release launcher
   only ever runs the SwanStation of the checked release
   (`RetroHostLaunch.core`).
 

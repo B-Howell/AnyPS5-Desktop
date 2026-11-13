@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:anyps5_desktop/core/retro_host/retro_host_client.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_release.dart';
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
@@ -262,6 +263,41 @@ void main() {
       expect(client.pid, greaterThan(0));
     }
   }, skip: Platform.isLinux || Platform.isWindows ? null : 'Linux and Windows');
+
+  test('a checked host is started only as the checked executable, and only with its SwanStation', () async {
+    final host = await _realProgram(temp);
+    final folder = signedRelease(temp, host.program, key);
+    final out = p.join(temp.path, 'out.txt');
+
+    final empty = await RetroHostRelease.checkBeforeStart(folder, keys: keys, system: _current);
+    expect(() => RetroHostClient.start(command: const [], checked: empty), throwsArgumentError);
+    expect(empty.held, isFalse);
+
+    final other = await RetroHostRelease.checkBeforeStart(folder, keys: keys, system: _current);
+    expect(
+      () => RetroHostClient.start(command: [host.program, ...host.arguments(out)], checked: other),
+      throwsArgumentError,
+    );
+    expect(other.held, isFalse);
+
+    final checked = await RetroHostRelease.checkBeforeStart(folder, keys: keys, system: _current);
+    final client = RetroHostClient.start(command: [checked.executable, ...host.arguments(out)], checked: checked);
+    unawaited(client.ready.then((_) {}, onError: (_) {}));
+    await expectLater(
+      client.call('start', {'core': p.join(temp.path, 'other_core'), 'disc': 'x'}),
+      throwsA(isA<RetroCallError>().having((error) => error.code, 'code', RetroCallError.argument)),
+    );
+    await client.ended.timeout(const Duration(seconds: 20));
+    await expectLater(
+      client.call('start', {'core': p.join(temp.path, 'other_core'), 'disc': 'x'}),
+      throwsA(isA<RetroCallError>()),
+    );
+    await client.close();
+  }, skip: Platform.isLinux || Platform.isWindows ? null : 'Linux and Windows');
+
+  test('the host override is for debug builds only', () {
+    expect(RetroHostRelease.debugBuild, isTrue, reason: 'tests run as a debug build');
+  });
 
   group('locate', () {
     test('a debug build runs the host ANYPS5_RETRO_HOST names, unchecked, with any core', () async {
