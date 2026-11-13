@@ -147,7 +147,9 @@ answered the same way, and never left waiting.
 - **How long a frame stays readable.** A ring stays mapped while the frame
   being shown is in it, but the client never maps more than two rings. So
   `frame` stays readable until another frame replaces it, or until a second
-  newer ring arrives first; then `frame` becomes null. Read `frame` again after
+  newer ring arrives first, or until a `frame` message moves the pin without
+  pinning a newer frame of this game (the host may then write the old slot);
+  in the last two cases `frame` becomes null. Read `frame` again after
   each message. A frame that was not drawn can be read only until the next
   message.
 
@@ -178,7 +180,9 @@ is the launcher's conformance test.
   result still answers its call.
 
 [`test/core/retro_host/strict_json_test.dart`](../test/core/retro_host/strict_json_test.dart)
-covers the JSON rules.
+covers the JSON rules, and
+[`test/core/retro_host/frame_ring_test.dart`](../test/core/retro_host/frame_ring_test.dart)
+covers pinning, including three tries that all miss.
 
 To run the fixture test, point `ANYPS5_RETRO_HOST_CHECKOUT` at a checkout of
 the host repository. Python 3 must be on `PATH`:

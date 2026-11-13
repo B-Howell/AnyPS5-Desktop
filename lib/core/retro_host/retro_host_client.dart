@@ -609,7 +609,11 @@ class RetroHostClient {
     if (ring == null) throw const RetroProtocolError('A frame came before any ring.');
     final pinned = ring.pin();
     final drawn = pinned != null && _gameLoaded && pinned.epoch == _epoch;
-    if (drawn) _setFrame(pinned, ring);
+    if (drawn) {
+      _setFrame(pinned, ring);
+    } else if (ring.gaveUpPin && identical(_frameRing, ring)) {
+      _setFrame(null, null);
+    }
     _frames.add(RetroFrameEvent(pinned, drawn: drawn));
   }
 

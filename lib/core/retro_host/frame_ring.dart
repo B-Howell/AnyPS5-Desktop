@@ -34,7 +34,7 @@ class PinnedFrame {
 /// The shared memory a `ring` message announces, mapped and checked as protocol.md "Checks the
 /// launcher makes" says. The header's geometry is read once, here; later reads use only the copies.
 class FrameRing {
-  FrameRing._(this._base, this.bytes, this.slotBytes, this.pixelFormat);
+  FrameRing._(this._base, this.bytes, this.slotBytes, this.pixelFormat, this._load, this._store);
 
   Pointer<Void> _at(int offset) => (_base.cast<Uint8>() + offset).cast();
 
@@ -48,7 +48,14 @@ class FrameRing {
   final int bytes;
   final int slotBytes;
   final String pixelFormat;
+  final int Function(Pointer<Void>) _load;
+  final void Function(Pointer<Void>, int) _store;
   bool _unmapped = false;
+
+  /// Whether the last [pin] stored a slot in `reading`, which gives up the pin held before it,
+  /// whether or not it pinned a new frame.
+  bool get gaveUpPin => _gaveUpPin;
+  bool _gaveUpPin = false;
 
   /// Checks the mapped header at [base] against the `ring` message's [bytes], the pixel format
   /// `welcome` agreed and, when there is one, the [current] ring the new one must outgrow. Throws
@@ -58,6 +65,8 @@ class FrameRing {
     required int bytes,
     required String pixelFormat,
     FrameRing? current,
+    int Function(Pointer<Void>) load = retroHostLoad,
+    void Function(Pointer<Void>, int) store = retroHostStore,
   }) {
     final header = base.cast<Uint32>();
     if (header[0] != _magic) throw const RetroProtocolError('The ring\'s magic is wrong.');
@@ -81,22 +90,25 @@ class FrameRing {
         throw const RetroProtocolError('A new ring is not at least twice as large as the last.');
       }
     }
-    return FrameRing._(base, bytes, slotBytes, pixelFormat);
+    return FrameRing._(base, bytes, slotBytes, pixelFormat, load, store);
   }
 
-  /// Pins the newest frame: null when there is none, or when `latest` kept moving for three tries
-  /// (the caller keeps showing what it showed). Throws [RetroProtocolError] for a `latest` outside
+  /// Pins the newest frame: null when there is none, or when `latest` kept moving for three tries.
+  /// In that second case the frame pinned before is given up too ([gaveUpPin]), so the caller must
+  /// stop showing it. Throws [RetroProtocolError] for a `latest` outside
   /// 0 to 2 or a slot whose size breaks the rules.
   PinnedFrame? pin() {
     final latestAddress = _at(24);
     final readingAddress = _at(28);
     int? slot;
+    _gaveUpPin = false;
     for (var attempt = 0; attempt < 3; attempt++) {
-      final latest = retroHostLoad(latestAddress);
+      final latest = _load(latestAddress);
       if (latest == _none) return null;
       if (latest > 2) throw RetroProtocolError('The ring\'s latest is $latest.');
-      retroHostStore(readingAddress, latest);
-      if (retroHostLoad(latestAddress) == latest) {
+      _store(readingAddress, latest);
+      _gaveUpPin = true;
+      if (_load(latestAddress) == latest) {
         slot = latest;
         break;
       }
