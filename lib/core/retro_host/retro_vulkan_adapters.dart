@@ -28,6 +28,7 @@ class VulkanDevice {
     required this.vendorId,
     required this.deviceId,
     required this.heaps,
+    this.uuid,
   });
 
   /// A device as [toJson] writes it; null when anything in it is not as it should be.
@@ -39,6 +40,8 @@ class VulkanDevice {
       'deviceId': final int deviceId,
       'heaps': final List<Object?> entries,
     }) {
+      final uuid = json['uuid'];
+      if (uuid != null && (uuid is! String || !RegExp(r'^[0-9a-f]{32}$').hasMatch(uuid))) return null;
       final heaps = <VulkanHeap>[];
       for (final entry in entries) {
         if (entry case {'size': final int size, 'flags': final int flags}) {
@@ -47,7 +50,14 @@ class VulkanDevice {
           return null;
         }
       }
-      return VulkanDevice(name: name, type: type, vendorId: vendorId, deviceId: deviceId, heaps: heaps);
+      return VulkanDevice(
+        name: name,
+        type: type,
+        vendorId: vendorId,
+        deviceId: deviceId,
+        heaps: heaps,
+        uuid: uuid as String?,
+      );
     }
     return null;
   }
@@ -60,6 +70,10 @@ class VulkanDevice {
   final int deviceId;
   final List<VulkanHeap> heaps;
 
+  /// `VkPhysicalDeviceIDProperties.deviceUUID` in lowercase hex: the same for one device across
+  /// drivers and processes. Null on a Vulkan 1.0 loader or device, which has none.
+  final String? uuid;
+
   Map<String, Object?> toJson() => {
     'name': name,
     'type': type,
@@ -68,6 +82,7 @@ class VulkanDevice {
     'heaps': [
       for (final heap in heaps) {'size': heap.size, 'flags': heap.flags},
     ],
+    'uuid': ?uuid,
   };
 }
 
@@ -82,16 +97,15 @@ abstract final class RetroVulkanAdapters {
 
   /// The adapters as the Auto Optimizer reads them, as Windows' DXGI list has them: without the
   /// CPU's (software) devices, each with its video memory of its own (a discrete device's largest
-  /// heap on the device, 0 for any other, which shares the system's memory), and a device two
-  /// drivers both list (RADV and AMDVLK) once.
+  /// heap on the device, 0 for any other, which shares the system's memory). A device two drivers
+  /// both list (RADV and AMDVLK) counts once when both give its device UUID; without one, two
+  /// entries stay two, so that two cards alike are never taken for one.
   static List<RetroAdapter> adapters(List<VulkanDevice> devices) {
-    final seen = <(int, int, int)>{};
+    final seen = <String>{};
     return [
       for (final device in devices)
-        if (device.type != _cpu && device.name.trim().isNotEmpty)
-          if (RetroAdapter(name: device.name.trim(), dedicatedBytes: dedicatedBytes(device)) case final adapter
-              when seen.add((device.vendorId, device.deviceId, adapter.dedicatedBytes)))
-            adapter,
+        if (device.type != _cpu && device.name.trim().isNotEmpty && (device.uuid == null || seen.add(device.uuid!)))
+          RetroAdapter(name: device.name.trim(), dedicatedBytes: dedicatedBytes(device)),
     ];
   }
 
@@ -143,6 +157,45 @@ final class _InstanceCreateInfo extends Struct {
   @Uint32()
   external int extensionCount;
   external Pointer<Pointer<Utf8>> extensions;
+}
+
+final class _ApplicationInfo extends Struct {
+  @Int32()
+  external int sType;
+  external Pointer<Void> next;
+  external Pointer<Utf8> applicationName;
+  @Uint32()
+  external int applicationVersion;
+  external Pointer<Utf8> engineName;
+  @Uint32()
+  external int engineVersion;
+  @Uint32()
+  external int apiVersion;
+}
+
+/// `VkPhysicalDeviceIDProperties`, chained to `VkPhysicalDeviceProperties2`.
+final class _IdProperties extends Struct {
+  @Int32()
+  external int sType;
+  external Pointer<Void> next;
+  @Array(16)
+  external Array<Uint8> deviceUuid;
+  @Array(16)
+  external Array<Uint8> driverUuid;
+  @Array(8)
+  external Array<Uint8> deviceLuid;
+  @Uint32()
+  external int deviceNodeMask;
+  @Uint32()
+  external int deviceLuidValid;
+}
+
+/// The start of `VkPhysicalDeviceProperties2`: its `VkPhysicalDeviceProperties` (824 bytes)
+/// follow.
+final class _Properties2Head extends Struct {
+  @Int32()
+  external int sType;
+  external Pointer<Void> next;
 }
 
 final class _ExtensionProperties extends Struct {
@@ -204,8 +257,12 @@ typedef _EnumerateDevicesC = Int32 Function(Pointer<Void>, Pointer<Uint32>, Poin
 typedef _EnumerateDevices = int Function(Pointer<Void>, Pointer<Uint32>, Pointer<Pointer<Void>>);
 typedef _DevicePropertiesC = Void Function(Pointer<Void>, Pointer<Uint8>);
 typedef _DeviceQuery = void Function(Pointer<Void>, Pointer<Uint8>);
+typedef _InstanceVersionC = Int32 Function(Pointer<Uint32>);
+typedef _InstanceVersion = int Function(Pointer<Uint32>);
+typedef _ProcAddressC = Pointer<NativeFunction<Void Function()>> Function(Pointer<Void>, Pointer<Utf8>);
 
-/// Vulkan 1.0's own calls, which every loader (and MoltenVK) exports by name.
+/// Vulkan 1.0's own calls, which every loader (and MoltenVK) exports by name, and from Vulkan 1.1
+/// the device UUID (`vkGetPhysicalDeviceProperties2`), asked of the instance.
 class _VulkanList {
   _VulkanList(DynamicLibrary library)
     : _enumerateExtensions = library.lookupFunction<_EnumerateExtensionsC, _EnumerateExtensions>(
@@ -215,7 +272,11 @@ class _VulkanList {
       _destroyInstance = library.lookupFunction<_DestroyInstanceC, _DestroyInstance>('vkDestroyInstance'),
       _enumerateDevices = library.lookupFunction<_EnumerateDevicesC, _EnumerateDevices>('vkEnumeratePhysicalDevices'),
       _properties = library.lookupFunction<_DevicePropertiesC, _DeviceQuery>('vkGetPhysicalDeviceProperties'),
-      _memory = library.lookupFunction<_DevicePropertiesC, _DeviceQuery>('vkGetPhysicalDeviceMemoryProperties');
+      _memory = library.lookupFunction<_DevicePropertiesC, _DeviceQuery>('vkGetPhysicalDeviceMemoryProperties'),
+      _procAddress = library.lookupFunction<_ProcAddressC, _ProcAddressC>('vkGetInstanceProcAddr'),
+      _instanceVersion = library.providesSymbol('vkEnumerateInstanceVersion')
+          ? library.lookupFunction<_InstanceVersionC, _InstanceVersion>('vkEnumerateInstanceVersion')
+          : null;
 
   static const _success = 0;
   static const _incompatibleDriver = -9;
@@ -223,6 +284,10 @@ class _VulkanList {
   static const _portabilityEnumeration = 'VK_KHR_portability_enumeration';
   static const _enumeratePortability = 1;
   static const _propertiesBytes = 1024;
+  static const _applicationInfo = 0;
+  static const _properties2 = 1000059001;
+  static const _idProperties = 1000071004;
+  static const _version11 = (1 << 22) | (1 << 12);
 
   final _EnumerateExtensions _enumerateExtensions;
   final _CreateInstance _createInstance;
@@ -230,15 +295,28 @@ class _VulkanList {
   final _EnumerateDevices _enumerateDevices;
   final _DeviceQuery _properties;
   final _DeviceQuery _memory;
+  final _ProcAddressC _procAddress;
+  final _InstanceVersion? _instanceVersion;
 
   List<VulkanDevice>? devices() => using((arena) {
     final portability = _hasExtension(arena, _portabilityEnumeration);
     if (portability == null) return null;
+    final version11 = _loaderVersion(arena) >= _version11;
     final info = arena<_InstanceCreateInfo>()
       ..ref.sType = _instanceCreateInfo
       ..ref.next = nullptr
       ..ref.flags = portability ? _enumeratePortability : 0
-      ..ref.applicationInfo = nullptr
+      ..ref.applicationInfo = version11
+          ? (arena<_ApplicationInfo>()
+                  ..ref.sType = _applicationInfo
+                  ..ref.next = nullptr
+                  ..ref.applicationName = nullptr
+                  ..ref.applicationVersion = 0
+                  ..ref.engineName = nullptr
+                  ..ref.engineVersion = 0
+                  ..ref.apiVersion = _version11)
+                .cast()
+          : nullptr
       ..ref.layerCount = 0
       ..ref.layers = nullptr
       ..ref.extensionCount = portability ? 1 : 0
@@ -250,11 +328,17 @@ class _VulkanList {
     if (created == _incompatibleDriver) return const <VulkanDevice>[];
     if (created != _success) return null;
     try {
-      return _list(arena, instance.value);
+      return _list(arena, instance.value, version11);
     } finally {
       _destroyInstance(instance.value, nullptr);
     }
   });
+
+  int _loaderVersion(Arena arena) {
+    final version = arena<Uint32>();
+    final enumerate = _instanceVersion;
+    return enumerate != null && enumerate(version) == _success ? version.value : 0;
+  }
 
   bool? _hasExtension(Arena arena, String wanted) {
     final count = arena<Uint32>();
@@ -268,7 +352,7 @@ class _VulkanList {
     return false;
   }
 
-  List<VulkanDevice>? _list(Arena arena, Pointer<Void> instance) {
+  List<VulkanDevice>? _list(Arena arena, Pointer<Void> instance, bool version11) {
     final count = arena<Uint32>();
     if (_enumerateDevices(instance, count, nullptr) != _success) return null;
     if (count.value == 0) return const [];
@@ -276,13 +360,39 @@ class _VulkanList {
     if (_enumerateDevices(instance, count, handles) != _success) return null;
     final bytes = arena<Uint8>(_propertiesBytes);
     final memory = arena<_MemoryProperties>();
-    return [for (var index = 0; index < count.value; index++) _device(handles[index], bytes, memory)];
+    final address = version11
+        ? _procAddress(instance, 'vkGetPhysicalDeviceProperties2'.toNativeUtf8(allocator: arena))
+        : nullptr;
+    final ids = address == nullptr
+        ? null
+        : (
+            query: address.cast<NativeFunction<_DevicePropertiesC>>().asFunction<_DeviceQuery>(),
+            head: arena<Uint8>(sizeOf<_Properties2Head>() + _propertiesBytes),
+            id: arena<_IdProperties>(),
+          );
+    return [for (var index = 0; index < count.value; index++) _device(handles[index], bytes, memory, ids)];
   }
 
-  VulkanDevice _device(Pointer<Void> handle, Pointer<Uint8> bytes, Pointer<_MemoryProperties> memory) {
+  VulkanDevice _device(
+    Pointer<Void> handle,
+    Pointer<Uint8> bytes,
+    Pointer<_MemoryProperties> memory,
+    ({_DeviceQuery query, Pointer<Uint8> head, Pointer<_IdProperties> id})? ids,
+  ) {
     _properties(handle, bytes);
     _memory(handle, memory.cast());
     final properties = bytes.cast<_DeviceProperties>().ref;
+    String? uuid;
+    if (ids != null && properties.apiVersion >= _version11) {
+      ids.id
+        ..ref.sType = _idProperties
+        ..ref.next = nullptr;
+      ids.head.cast<_Properties2Head>()
+        ..ref.sType = _properties2
+        ..ref.next = ids.id.cast();
+      ids.query(handle, ids.head);
+      uuid = [for (var at = 0; at < 16; at++) ids.id.ref.deviceUuid[at].toRadixString(16).padLeft(2, '0')].join();
+    }
     final heaps = memory.ref.heaps;
     return VulkanDevice(
       name: _text(properties.deviceName, 256),
@@ -293,6 +403,7 @@ class _VulkanList {
         for (var index = 0; index < math.min(memory.ref.heapCount, 16); index++)
           VulkanHeap(size: heaps[index].size, flags: heaps[index].flags),
       ],
+      uuid: uuid,
     );
   }
 

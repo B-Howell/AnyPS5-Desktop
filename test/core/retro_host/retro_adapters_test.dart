@@ -64,16 +64,28 @@ void main() {
     expect(_advise(const []).blocked, RetroOptimizeBlock.noAdapter);
   });
 
-  test('a device two drivers both list counts once', () {
+  test('a device two drivers both list counts once, by its device UUID', () {
     final rtx = _devices('vulkan_devices_windows_rtx4080super_radeon.json').first;
-    final again = VulkanDevice(
+    VulkanDevice twin({String? uuid}) => VulkanDevice(
       name: '${rtx.name} (second driver)',
       type: rtx.type,
       vendorId: rtx.vendorId,
       deviceId: rtx.deviceId,
       heaps: rtx.heaps,
+      uuid: uuid,
     );
-    expect(RetroVulkanAdapters.adapters([rtx, again]), [_rtx]);
+    expect(RetroVulkanAdapters.adapters([rtx, twin(uuid: rtx.uuid)]), [_rtx]);
+    final alike = RetroVulkanAdapters.adapters([rtx, twin(uuid: '${rtx.uuid!.substring(0, 31)}f')]);
+    expect(alike, hasLength(2), reason: 'two cards alike stay two');
+    expect(_advise(alike).blocked, RetroOptimizeBlock.noAdapter);
+    final noUuid = VulkanDevice(
+      name: rtx.name,
+      type: rtx.type,
+      vendorId: rtx.vendorId,
+      deviceId: rtx.deviceId,
+      heaps: rtx.heaps,
+    );
+    expect(RetroVulkanAdapters.adapters([noUuid, noUuid]), hasLength(2), reason: 'without a UUID nothing is merged');
   });
 
   test('a discrete device\'s memory is its largest heap on the device, not their sum', () {
@@ -103,6 +115,10 @@ void main() {
           {'size': 1},
         ],
       }),
+      isNull,
+    );
+    expect(
+      VulkanDevice.fromJson({'name': 'Card', 'type': 2, 'vendorId': 1, 'deviceId': 2, 'heaps': [], 'uuid': 'not hex'}),
       isNull,
     );
   });

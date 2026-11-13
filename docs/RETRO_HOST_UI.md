@@ -25,7 +25,7 @@ the launcher plays a PS1 disc from its emulator library through all of them
 | [`lib/core/retro_host/retro_graphics_catalog.dart`](../lib/core/retro_host/retro_graphics_catalog.dart) | `RetroGraphicsCatalog`: SwanStation's picture settings as the Graphics page shows them, the presets' values, and how a wanted value is matched to one the host offers. |
 | [`lib/core/retro_host/retro_hardware.dart`](../lib/core/retro_host/retro_hardware.dart) | `RetroHardware` and `RetroAdapter`: what the Auto Optimizer reads of the computer. |
 | [`lib/core/retro_host/retro_vulkan_adapters.dart`](../lib/core/retro_host/retro_vulkan_adapters.dart) | `RetroVulkanAdapters`: the graphics adapters on Linux, read from the Vulkan driver, and the rules that make them match Windows' DXGI list. |
-| [`windows/runner/retro_adapters.cpp`](../windows/runner/retro_adapters.cpp) | `RetroAdapters()`: the graphics adapters on Windows, read through DXGI, for the runner's `retroAdapters`. |
+| [`windows/runner/retro_adapters.h`](../windows/runner/retro_adapters.h), [`windows/runner/retro_adapters.cpp`](../windows/runner/retro_adapters.cpp) | `RetroAdapters()`: the graphics adapters on Windows, read through DXGI, for the runner's `retroAdapters`. |
 | [`lib/core/retro_host/retro_graphics_optimizer.dart`](../lib/core/retro_host/retro_graphics_optimizer.dart) | `RetroGraphicsOptimizer`: the Auto Optimizer's suggestion for one game, and one notch down. |
 | [`lib/core/retro_host/retro_graphics_profile.dart`](../lib/core/retro_host/retro_graphics_profile.dart) | `RetroGraphicsProfile`: one game's kept picture settings and what the Auto Optimizer changed, for Undo. |
 | [`lib/core/retro_host/retro_frame_rate.dart`](../lib/core/retro_host/retro_frame_rate.dart) | `RetroFrameRate`: frames per second over a window of frame times. |
@@ -374,12 +374,15 @@ height of the display the launcher is on, the graphics adapters and
   only, and opens no device. The kernel has no single place for this:
   `/sys/class/drm` gives an AMD card's video memory (`mem_info_vram_total`)
   but not NVIDIA's own driver's, and no names. Vulkan names every vendor's
-  device, which is how games and emulators list them. The rules make the
-  list match DXGI's. The CPU's device (Mesa's lavapipe) is left out. A
+  device, which is how games and emulators list them. The rules bring the
+  list close to DXGI's. The CPU's device (Mesa's lavapipe) is left out. A
   discrete device's memory is its largest heap on the device; the heaps are
   not added up, as a Resizable BAR heap is part of the same memory. Any other
   device counts 0, since its device heap is shared system memory. A device
-  two drivers both list (RADV and AMDVLK) counts once. No Vulkan loader, or a
+  two drivers both list (RADV and AMDVLK) counts once when both give the same
+  device UUID (`VkPhysicalDeviceIDProperties`, Vulkan 1.1). Without a UUID
+  nothing is merged, so two cards alike stay two and the Auto Optimizer does
+  not guess between them. No Vulkan loader, or a
   list that cannot be read whole, gives no adapters. The same code finds
   MoltenVK on a Mac (`libvulkan.1.dylib`, `libMoltenVK.dylib`), but the Mac
   has no host to optimize yet.
@@ -663,11 +666,13 @@ native memory as a real ring slot would be, so no host is started.
     `RetroVulkanAdapters.readDevices()` on the same PC. The RTX's device heap
     is the same 16,824,401,920 bytes DXGI gives. The iGPU's device heap is
     33,975,631,872 bytes of shared memory, so it counts 0, and the advice is
-    the same.
+    the same. The RTX's device UUID is replaced with a stand-in, as it
+    identifies that card.
   - `vulkan_devices_linux_lavapipe.json` is the same reader on Linux (WSL
     with Mesa's lavapipe), which is left out as a software device.
 
-  The tests also check that a device two drivers list counts once, that heaps
+  The tests also check that a device two drivers list counts once by its
+  UUID while two cards alike, or devices without one, stay apart, that heaps
   are not added up, that a recording that is not whole is refused, and that
   the computer running the tests is read without failing. The same reader in
   WSL gave an empty list with a loader and no driver, and none with no
