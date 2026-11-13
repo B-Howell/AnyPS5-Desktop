@@ -285,6 +285,43 @@ void main() {
     ),
     timeout: const Timeout(Duration(seconds: 90)),
   );
+  test(
+    'a start refused with busy does not undo a pause',
+    () => _playOwn(
+      checkout,
+      python,
+      'A paused game, a second start, then rumble before its busy reply.',
+      'clean',
+      [
+        ..._startCall(checkout),
+        ..._call('pause', true, null, id: 3),
+        _secondStart(checkout, 4),
+        _rumbleStep(0, 1000),
+        {
+          'from': 'host',
+          'message': {
+            'type': 'reply',
+            'id': 4,
+            'error': {'code': 'busy', 'message': 'A game is loaded.'},
+          },
+          'anyValueFor': ['id'],
+        },
+        _rumbleStep(0, 2000),
+        ..._call('status', null, null, id: 5),
+        {
+          'from': 'launcher',
+          'message': {'type': 'shutdown'},
+        },
+        {'hostExits': 0},
+      ],
+      check: (session) {
+        final strong = [for (final r in session.rumbles) r.strong];
+        expect(strong, isNot(contains(1000)), reason: 'no rumble while start was waiting');
+        expect(strong, isNot(contains(2000)), reason: 'no rumble after the busy reply');
+      },
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
 }
 
 Matcher _zero(int port) => isA<RetroRumble>()
@@ -311,6 +348,15 @@ List<Map<String, Object?>> _call(String method, Object? args, Object? result, {i
     'anyValueFor': ['id'],
   },
 ];
+
+/// The `start` call of ring-grows again, as the session's call [id].
+Map<String, Object?> _secondStart(String checkout, int id) {
+  final step = _startCall(checkout)[0];
+  return {
+    ...step,
+    'message': {...step['message']! as Map<String, Object?>, 'id': id},
+  };
+}
 
 /// Steps 4 and 5 of ring-grows: `start` and its reply.
 List<Map<String, Object?>> _startCall(String checkout) => _startedGame(checkout).sublist(0, 2);

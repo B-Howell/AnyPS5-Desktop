@@ -1201,7 +1201,9 @@ static int queue(Connection* c, const uint8_t* data, int32_t length) {
   if (c->last) c->last->next = item;
   else c->first = item;
   c->last = item;
-  pthread_cond_signal(&c->wake);
+  // The exit watcher waits on the same condition in lost mode, so a signal
+  // could wake it instead of the writer.
+  pthread_cond_broadcast(&c->wake);
   pthread_mutex_unlock(&c->lock);
   return 1;
 }

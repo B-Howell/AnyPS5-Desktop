@@ -113,7 +113,11 @@ the stream is the exit, so there is no such limit.)
 ## Threads and the UI
 
 The control stream is read and written only by the native threads. Messages
-reach Dart through a `NativeCallable.listener`, which never blocks them.
+reach Dart through a `NativeCallable.listener`, which never blocks them. On
+Linux and macOS the writer and the exit watcher wait on one condition variable
+(the watcher from the start in lost mode), so queueing a message wakes every
+waiter: waking only one could wake the watcher and leave the message unsent.
+
 `close()` waits, inside `Isolate.run`, for the host and the threads; when the
 client gave up on the host itself, `close()` waits for that same release. Nothing on
 the UI isolate ever waits on the host, as the protocol's "Timeouts" section
@@ -183,7 +187,10 @@ answered the same way, and never left waiting.
   call sent so far: what the replies confirmed, then each call still waiting as
   if it succeeds. A `pause(true)` or `connectedPorts(1)` stops rumble as soon
   as it is sent, a `pause` or `connectedPorts` sent before an earlier `start`
-  was answered still counts, and a call the host refuses changes nothing.
+  was answered still counts, and a call the host refuses changes nothing. A
+  `start` sent while a game is loaded counts for nothing, since the host
+  refuses it with `busy`. When a reply leaves rumble stricter than before (a
+  refused resume, say), the motors are zeroed again.
 - **Rumble events** come asynchronously, so a listener may call anything on the
   client, `close()` included. Frame events stay synchronous because a frame
   that is not drawn can be read only until the next message.

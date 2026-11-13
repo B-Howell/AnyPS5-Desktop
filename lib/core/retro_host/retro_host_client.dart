@@ -288,9 +288,10 @@ class RetroHostClient {
     final pending = _Pending(_nextCallId++, method, args, DateTime.now().add(replyLimit));
     final before = _expectedRumble();
     _calls.add(pending);
-    final after = _expectedRumble();
-    if (method == 'start' || method == 'release' || (after.paused && !before.paused) || after.ports < before.ports) {
+    if (method == 'start' || method == 'release') {
       _zeroRumble();
+    } else {
+      _zeroIfStricter(before);
     }
     _write(body);
     return pending.completer.future;
@@ -517,15 +518,18 @@ class RetroHostClient {
     final hasError = f.has('error');
     if (hasResult == hasError) throw const RetroProtocolError('A reply needs exactly one of result and error.');
     final pending = _calls.first;
+    final before = _expectedRumble();
     if (hasError) {
       final error = f.object('error');
       final failure = RetroCallError(error.string('code'), error.string('message'));
       _calls.removeFirst();
+      _zeroIfStricter(before);
       pending.completer.completeError(failure);
       return;
     }
     final result = _checkResult(pending, f.map['result']);
     _calls.removeFirst();
+    _zeroIfStricter(before);
     pending.completer.complete(result);
     if (pending.method == 'start') _zeroInput();
   }
@@ -656,10 +660,18 @@ class RetroHostClient {
     _rumble.add(event);
   }
 
+  /// Zeroes the motors when the state rumble follows has become stricter than [before]: paused, or
+  /// fewer ports with a controller.
+  void _zeroIfStricter(({bool paused, int ports}) before) {
+    final after = _expectedRumble();
+    if ((after.paused && !before.paused) || after.ports < before.ports) _zeroRumble();
+  }
+
   /// Whether the game is paused and how many ports have a controller once the host has taken every
   /// call sent so far, as the host takes them in order: what the replies confirmed, then each call
-  /// still waiting as if it succeeds. Rumble follows this, so it stops as soon as a pause or a
-  /// controller leaving is sent, and a call sent before an earlier `start` was answered still counts.
+  /// still waiting as if it succeeds, except a `start` while a game is loaded, which the host
+  /// refuses with `busy`. Rumble follows this, so it stops as soon as a pause or a controller
+  /// leaving is sent, and a call sent before an earlier `start` was answered still counts.
   ({bool paused, int ports}) _expectedRumble() {
     var loaded = _gameLoaded;
     var paused = _paused;
@@ -667,10 +679,12 @@ class RetroHostClient {
     for (final call in _calls) {
       final args = call.args;
       switch (call.method) {
-        case 'start':
+        case 'start' when !loaded:
           loaded = true;
           paused = false;
           ports = 1;
+        case 'release' when _lastStatusEnded:
+          loaded = false;
         case 'pause' when loaded && args is bool:
           paused = args;
         case 'connectedPorts' when loaded && args is int && (args == 1 || args == 2):
