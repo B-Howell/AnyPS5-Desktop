@@ -413,7 +413,7 @@ class RetroHostClient {
         _protocolError('The control stream broke a framing rule (length $length).');
       case RetroHostEvent.end:
         if (!_ended.isCompleted && !_unsupportedSeen && !_shutdownSent) {
-          _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostExited, kill: true);
+          _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostExited, kill: true, hostLeft: true);
         }
       case RetroHostEvent.exited:
         _exitCode = extra;
@@ -424,7 +424,7 @@ class RetroHostClient {
         } else if (_shutdownSent && (extra == 0 || extra == RetroHostEvent.exitUnknown) && _calls.isEmpty) {
           _finish(RetroHostEnd.clean);
         } else {
-          _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostExited);
+          _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostExited, hostLeft: true);
         }
         unawaited(_release());
     }
@@ -438,6 +438,7 @@ class RetroHostClient {
       retroHostCloseDescriptor(descriptor);
       rethrow;
     }
+    _releaseUnseen = false;
     final type = message['type'];
     if (type is! String) {
       retroHostCloseDescriptor(descriptor);
@@ -520,7 +521,6 @@ class RetroHostClient {
     if (hasResult == hasError) throw const RetroProtocolError('A reply needs exactly one of result and error.');
     final pending = _calls.first;
     final before = _expectedRumble();
-    _releaseUnseen = false;
     if (hasError) {
       final error = f.object('error');
       final failure = RetroCallError(error.string('code'), error.string('message'));
@@ -752,20 +752,21 @@ class RetroHostClient {
   /// The reason the client gave up on the host, for logs.
   String? failureReason;
 
-  /// Ends the connection. A host that exits right after answering `release`, with no other reply
-  /// between, did what protocol.md "release" allows for a game whose core is stuck: no game is
-  /// loaded then, so no failed game is reported.
-  void _finish(RetroHostEnd end, {String? errorCode, bool kill = false, String? reason}) {
+  /// Ends the connection. [hostLeft] says the host's process or stream ended on its own. A host that
+  /// does so right after answering `release`, with no other message between, did what protocol.md
+  /// "release" allows for a game whose core is stuck: no game is loaded then, so no failed game is
+  /// reported. The motors are zeroed either way.
+  void _finish(RetroHostEnd end, {String? errorCode, bool kill = false, String? reason, bool hostLeft = false}) {
     if (_ended.isCompleted) return;
     _endValue = end;
     failureReason = reason;
     _timer?.cancel();
     if (kill && _connection != nullptr) retroHostKill(_connection);
-    if (_releaseUnseen && errorCode == RetroErrorCode.hostExited) {
+    if (_gameLoaded) _zeroRumble();
+    if (_releaseUnseen && hostLeft) {
       _gameLoaded = false;
       _epoch = null;
     }
-    if (_gameLoaded) _zeroRumble();
     if (end != RetroHostEnd.clean && end != RetroHostEnd.unsupported && _gameLoaded && errorCode != null) {
       _failedStatus = RetroStatus.failed(
         error: errorCode == RetroErrorCode.hostHung

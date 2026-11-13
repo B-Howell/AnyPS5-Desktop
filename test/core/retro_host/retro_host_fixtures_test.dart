@@ -378,7 +378,53 @@ void main() {
     ),
     timeout: const Timeout(Duration(seconds: 90)),
   );
+  test(
+    'release of a running game does not hide a later protocol error',
+    () => _playOwn(
+      checkout,
+      python,
+      'release answered while the game runs, then a rumble for a port that does not exist.',
+      'protocolError',
+      [
+        ..._startCall(checkout),
+        ..._call('release', null, null, id: 3),
+        {
+          'from': 'host',
+          'message': {'type': 'rumble', 'port': 2, 'strong': 1000, 'weak': 0},
+          'invalid': 'port is 0 or 1',
+        },
+      ],
+      check: (session) => expectLater(session.client.status(), completion(_failedGame)),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'a host that plays on after release and then exits reports the game failed and stops the motors',
+    () => _playOwn(
+      checkout,
+      python,
+      'release answered while the game runs, rumble, then the host exits unasked.',
+      'hostFailure',
+      [
+        ..._startCall(checkout),
+        ..._call('release', null, null, id: 3),
+        _rumbleStep(0, 1000),
+        {'hostExits': 1},
+      ],
+      check: (session) {
+        final strong = [for (final r in session.rumbles) r.strong];
+        expect(strong, contains(1000), reason: 'rumble forwarded');
+        expect(session.rumbles.last, _zero(1), reason: 'motors zeroed at the end');
+        expectLater(session.client.status(), completion(_failedGame));
+      },
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
 }
+
+final _failedGame = isA<RetroStatus>()
+    .having((s) => s.ended, 'ended', isTrue)
+    .having((s) => s.errorCode, 'errorCode', RetroErrorCode.hostExited);
 
 Matcher _zero(int port) => isA<RetroRumble>()
     .having((r) => r.port, 'port', port)
