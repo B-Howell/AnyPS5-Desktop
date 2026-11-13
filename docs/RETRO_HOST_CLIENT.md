@@ -37,7 +37,14 @@ The client adds the protocol's own arguments after the command it is given:
 **The environment.** The host inherits the launcher's environment, with any
 variables the caller adds on top. On Windows names that differ only in case are
 one variable, so an added `Path` replaces the inherited `PATH` instead of
-sitting beside it, where the host would read whichever came first.
+sitting beside it, where the host would read whichever came first. When the
+caller adds variables on Windows, the native code builds the block for
+`CreateProcessW` itself:
+
+- it adds the launcher's hidden entries whose names start with `=`, such as
+  the drives' current directories (`=C:`), which `Platform.environment` leaves
+  out and `CreateProcessW` does not add to a block it is given;
+- it sorts the entries by name without regard to case, as Windows requires.
 
 **Windows.**
 
@@ -107,7 +114,11 @@ the stream is the exit, so there is no such limit.)
 ## Threads and the UI
 
 The control stream is read and written only by the native threads. Messages
-reach Dart through a `NativeCallable.listener`, which never blocks them.
+reach Dart through a `NativeCallable.listener`, which never blocks them. On
+Linux and macOS the writer and the exit watcher wait on one condition variable
+(the watcher from the start in lost mode), so queueing a message wakes every
+waiter: waking only one could wake the watcher and leave the message unsent.
+
 `close()` waits, inside `Isolate.run`, for the host and the threads; when the
 client gave up on the host itself, `close()` waits for that same release. Nothing on
 the UI isolate ever waits on the host, as the protocol's "Timeouts" section
@@ -130,7 +141,10 @@ the connection, so a host it could not signal sees its stream end and exits.
 
 `stopGame()` asks for `status` until the game has ended, because the client
 has to see the end to enforce the stop limit. So `call('stop')` is refused:
-`stop` goes only through `stopGame()`.
+`stop` goes only through `stopGame()`. Only a reply to a call sent after
+that `stop` can lift the limit: a `status` sent before it, still answered
+null or ended for an earlier state, does not. `failureReason` names the limit
+that was missed.
 
 If the host breaks a rule, exits unasked or misses a limit while a game is
 loaded:
@@ -151,13 +165,29 @@ answered the same way, and never left waiting.
 - **Which frames are drawn.** Only a frame of the current game (its `epoch` is
   the one `start` returned) is drawn and kept as `frame`.
 - **How long a frame stays readable.** A ring stays mapped while the frame
-  being shown is in it, but the client never maps more than two rings. So
+  being shown is in it, but the client never maps more than two rings: when a
+  third arrives, it lets go of the oldest, and the frame shown from it, before
+  mapping the new one. So
   `frame` stays readable until another frame replaces it, or until a second
   newer ring arrives first, or until a `frame` message moves the pin without
   pinning a newer frame of this game (the host may then write the old slot);
   in the last two cases `frame` becomes null. Read `frame` again after
   each message. A frame that was not drawn can be read only until the next
   message.
+
+## Which game is loaded
+
+The client counts a game as loaded from `start`'s reply until `release` is
+answered for a game a `status` showed ended, or until a `status` returns null,
+which means no game is loaded. `release` does nothing while the game still
+runs, and its reply is null either way, so a `release` answered before the end
+was seen leaves the game loaded. The protocol has the launcher call `release`
+for an ended game, so the client relies on a `status` showing the end first:
+the host may then answer `release` and exit with no game loaded (a stuck
+core), which reports no failed game, while a host that exits after a
+`release` of a running game reports the game failed. A host failure reports a
+failed game (see above) only while a game is loaded, and zeroes the motors
+whenever one is.
 
 ## Resets
 
@@ -167,7 +197,28 @@ answered the same way, and never left waiting.
   - on `start`, `release` and `pause(true)`;
   - when a `status` first shows the game ended;
   - when input focus is lost;
+  - when `connectedPorts(1)` takes the controller out of port 2. Rumble for a
+    port without a controller (port 2 until `connectedPorts(2)`, and again
+    after `connectedPorts(1)`) is not forwarded;
+  - when the connection ends with a game loaded, a clean shutdown included;
   - on a host failure.
+- **Which rumble is forwarded.** Only rumble of a running game: none while no
+  game is loaded, and none once a `status` showed the game ended, until the
+  next `start` is answered. The host takes calls in order, so the client
+  judges each `rumble` by the state the host will have once it has taken every
+  call sent so far: what the replies confirmed, then each call still waiting as
+  if it succeeds. A `pause(true)` or `connectedPorts(1)` stops rumble as soon
+  as it is sent, a `pause` or `connectedPorts` sent before an earlier `start`
+  was answered still counts, and a call the host refuses changes nothing. A
+  `start` sent while a game is loaded counts for nothing, since the host
+  refuses it with `busy`. When a reply leaves rumble stricter than before (a
+  refused resume, say), the motors are zeroed again.
+- **Rumble events** come asynchronously, so a listener may call anything on the
+  client, `close()` included. Frame events stay synchronous because a frame
+  that is not drawn can be read only until the next message.
+- **After the end.** Once the connection has ended, a change of input focus is
+  ignored: there is no host to send input to, no rumble comes, and after
+  `close()` the rumble stream is closed.
 
 ## Tests
 
@@ -182,8 +233,12 @@ is the launcher's conformance test.
   `shutdown` and `stopGame()`, reading frames, and `status()` after a failure.
 - **What it checks.** The outcome, and the fake host's report of every message
   the client sent.
-- **Extra session.** One session of its own checks that a reply with a wrong
-  result still answers its call.
+- **Extra sessions.** Sessions of its own check that a reply with a wrong
+  result still answers its call, that a frame of another game takes away the
+  frame shown, that a refused call keeps the calls in order, that a pause with
+  no game does not silence the next game's rumble, and that the motors are
+  zeroed when a rumble listener closes the client, when `connectedPorts(1)`
+  takes away port 2, and on a clean shutdown.
 
 [`test/core/retro_host/retro_host_real_test.dart`](../test/core/retro_host/retro_host_real_test.dart)
 runs the client against the real host and the real SwanStation core, as the
@@ -202,7 +257,9 @@ host repository's `tests/real_core.py` does:
   Without the variable the test is skipped, so CI skips it.
 
 [`test/core/retro_host/retro_host_environment_test.dart`](../test/core/retro_host/retro_host_environment_test.dart)
-covers how the host's environment is put together.
+covers how the host's environment is put together, and
+[`test/core/retro_host/retro_host_close_test.dart`](../test/core/retro_host/retro_host_close_test.dart)
+checks that a focus change after `close()` is ignored.
 
 [`test/core/retro_host/strict_json_test.dart`](../test/core/retro_host/strict_json_test.dart)
 covers the JSON rules, and

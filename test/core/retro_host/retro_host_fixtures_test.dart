@@ -163,7 +163,412 @@ void main() {
     ),
     timeout: const Timeout(Duration(seconds: 90)),
   );
+  test(
+    'a rumble listener may close the client',
+    () => _playOwn(
+      checkout,
+      python,
+      'A game rumbles and the launcher closes the client from its rumble listener.',
+      'hostFailure',
+      [
+        ..._startCall(checkout),
+        {
+          'from': 'host',
+          'message': {'type': 'rumble', 'port': 0, 'strong': 1000, 'weak': 0},
+        },
+      ],
+      afterReady: (client) async => client.rumble.listen((rumble) {
+        if (rumble.strong == 1000) unawaited(client.close());
+      }),
+      check: (session) => expect(session.rumbles.last, _zero(1), reason: 'motors zeroed on close'),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'rumble reaches only ports with a controller, and leaving port 2 stops the motors',
+    () => _playOwn(
+      checkout,
+      python,
+      'Port 2 rumbles before a controller joins it, while one is in it, and after it left.',
+      'clean',
+      [
+        ..._startCall(checkout),
+        _rumbleStep(1, 3000),
+        ..._status(checkout, 3, ended: false),
+        ..._call('connectedPorts', 2, true, id: 4),
+        _rumbleStep(1, 1000),
+        ..._status(checkout, 5, ended: false),
+        ..._call('connectedPorts', 1, true, id: 6),
+        _rumbleStep(1, 2000),
+        ..._status(checkout, 7, ended: false),
+        {
+          'from': 'launcher',
+          'message': {'type': 'shutdown'},
+        },
+        {'hostExits': 0},
+      ],
+      check: (session) {
+        final strong = [for (final r in session.rumbles) r.strong];
+        expect(strong, isNot(contains(3000)), reason: 'no rumble before a controller joined port 2');
+        expect(strong, isNot(contains(2000)), reason: 'no rumble after the controller left port 2');
+        final forwarded = strong.indexOf(1000);
+        expect(forwarded, isNot(-1), reason: 'rumble forwarded while port 2 had a controller');
+        final zeros = session.rumbles.skip(forwarded + 1).where((r) => r.port == 1 && r.strong == 0 && r.weak == 0);
+        expect(zeros.length, 2, reason: 'port 2 zeroed when its controller left, and again at the end');
+      },
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'shutting down a game that rumbles stops the motors',
+    () => _playOwn(checkout, python, 'A game rumbles, then the launcher shuts the host down.', 'clean', [
+      ..._startCall(checkout),
+      {
+        'from': 'host',
+        'message': {'type': 'rumble', 'port': 0, 'strong': 1000, 'weak': 0},
+      },
+      {
+        'from': 'launcher',
+        'message': {'type': 'shutdown'},
+      },
+      {'hostExits': 0},
+    ], check: (session) => expect(session.rumbles.last, _zero(1), reason: 'motors zeroed at the end')),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'connectedPorts sent before the start reply still counts',
+    () => _playOwn(
+      checkout,
+      python,
+      'start and connectedPorts(2) sent together, then rumble on port 2.',
+      'clean',
+      [
+        _startCall(checkout)[0],
+        _call('connectedPorts', 2, true, id: 3)[0],
+        _startCall(checkout)[1],
+        _call('connectedPorts', 2, true, id: 3)[1],
+        _rumbleStep(1, 1000),
+        ..._status(checkout, 4, ended: false),
+        {
+          'from': 'launcher',
+          'message': {'type': 'shutdown'},
+        },
+        {'hostExits': 0},
+      ],
+      check: (session) =>
+          expect([for (final r in session.rumbles) r.strong], contains(1000), reason: 'rumble on port 2 forwarded'),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'a pause sent before the start reply still silences rumble',
+    () => _playOwn(
+      checkout,
+      python,
+      'start and pause(true) sent together, then rumble.',
+      'clean',
+      [
+        _startCall(checkout)[0],
+        _call('pause', true, null, id: 3)[0],
+        _startCall(checkout)[1],
+        _call('pause', true, null, id: 3)[1],
+        _rumbleStep(0, 1000),
+        ..._status(checkout, 4, ended: false),
+        {
+          'from': 'launcher',
+          'message': {'type': 'shutdown'},
+        },
+        {'hostExits': 0},
+      ],
+      check: (session) =>
+          expect([for (final r in session.rumbles) r.strong], isNot(contains(1000)), reason: 'no rumble while paused'),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'a start refused with busy does not undo a pause',
+    () => _playOwn(
+      checkout,
+      python,
+      'A paused game, a second start, then rumble before its busy reply.',
+      'clean',
+      [
+        ..._startCall(checkout),
+        ..._call('pause', true, null, id: 3),
+        _secondStart(checkout, 4),
+        _rumbleStep(0, 1000),
+        {
+          'from': 'host',
+          'message': {
+            'type': 'reply',
+            'id': 4,
+            'error': {'code': 'busy', 'message': 'A game is loaded.'},
+          },
+          'anyValueFor': ['id'],
+        },
+        _rumbleStep(0, 2000),
+        ..._status(checkout, 5, ended: false),
+        {
+          'from': 'launcher',
+          'message': {'type': 'shutdown'},
+        },
+        {'hostExits': 0},
+      ],
+      check: (session) {
+        final strong = [for (final r in session.rumbles) r.strong];
+        expect(strong, isNot(contains(1000)), reason: 'no rumble while start was waiting');
+        expect(strong, isNot(contains(2000)), reason: 'no rumble after the busy reply');
+      },
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'rumble after the game ended is not forwarded',
+    () => _playOwn(
+      checkout,
+      python,
+      'status shows the game ended, then a late rumble, then status again.',
+      'clean',
+      [
+        ..._startCall(checkout),
+        ..._status(checkout, 3, ended: true),
+        _rumbleStep(0, 1000),
+        ..._status(checkout, 4, ended: true),
+        {
+          'from': 'launcher',
+          'message': {'type': 'shutdown'},
+        },
+        {'hostExits': 0},
+      ],
+      check: (session) =>
+          expect([for (final r in session.rumbles) r.strong], isNot(contains(1000)), reason: 'no rumble after the end'),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'a status of null forgets a game released before its end was seen',
+    () => _playOwn(
+      checkout,
+      python,
+      'release answered before any status showed the end, status null, then the host exits unasked.',
+      'hostFailure',
+      [
+        ..._startCall(checkout),
+        ..._call('release', null, null, id: 3),
+        ..._call('status', null, null, id: 4),
+        {'hostExits': 1},
+      ],
+      check: (session) => expectLater(session.client.status(), throwsA(isA<RetroHostGone>())),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'a host that exits right after releasing an ended game reports no game',
+    () => _playOwn(
+      checkout,
+      python,
+      'status shows the game ended, release is answered, then the host exits, as after a stuck core.',
+      'hostFailure',
+      [
+        ..._startCall(checkout),
+        ..._status(checkout, 3, ended: true),
+        ..._call('release', null, null, id: 4),
+        {'hostExits': 0},
+      ],
+      check: (session) => expectLater(session.client.status(), throwsA(isA<RetroHostGone>())),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'release of a running game does not hide a later protocol error',
+    () => _playOwn(
+      checkout,
+      python,
+      'release answered while the game runs, then a rumble for a port that does not exist.',
+      'protocolError',
+      [
+        ..._startCall(checkout),
+        ..._call('release', null, null, id: 3),
+        {
+          'from': 'host',
+          'message': {'type': 'rumble', 'port': 2, 'strong': 1000, 'weak': 0},
+          'invalid': 'port is 0 or 1',
+        },
+      ],
+      check: (session) => expectLater(session.client.status(), completion(_failedGame)),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'a host that plays on after release and then exits reports the game failed and stops the motors',
+    () => _playOwn(
+      checkout,
+      python,
+      'release answered while the game runs, rumble, then the host exits unasked.',
+      'hostFailure',
+      [
+        ..._startCall(checkout),
+        ..._call('release', null, null, id: 3),
+        _rumbleStep(0, 1000),
+        {'hostExits': 1},
+      ],
+      check: (session) {
+        final strong = [for (final r in session.rumbles) r.strong];
+        expect(strong, contains(1000), reason: 'rumble forwarded');
+        expect(session.rumbles.last, _zero(1), reason: 'motors zeroed at the end');
+        expectLater(session.client.status(), completion(_failedGame));
+      },
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'the end of a game zeroes the motors even with the next start waiting',
+    () => _playOwn(
+      checkout,
+      python,
+      'status, release and the next start sent together; the old game rumbles before status shows its end.',
+      'clean',
+      [
+        ..._startCall(checkout),
+        _status(checkout, 3, ended: true)[0],
+        _call('release', null, null, id: 4)[0],
+        _secondStart(checkout, 5),
+        _rumbleStep(0, 1000),
+        _status(checkout, 3, ended: true)[1],
+        _rumbleStep(0, 3000),
+        _call('release', null, null, id: 4)[1],
+        {
+          'from': 'host',
+          'message': {
+            'type': 'reply',
+            'id': 5,
+            'result': {'epoch': 2},
+          },
+          'anyValueFor': ['id'],
+        },
+        {
+          'from': 'launcher',
+          'message': {'type': 'shutdown'},
+        },
+        {'hostExits': 0},
+      ],
+      check: (session) {
+        final forwarded = session.rumbles.indexWhere((r) => r.strong == 1000);
+        expect(forwarded, isNot(-1), reason: 'rumble of the old game forwarded while it ran');
+        final zeros = session.rumbles.skip(forwarded + 1).where((r) => r.strong == 0 && r.weak == 0);
+        expect(zeros.length, 4, reason: 'zeroed when the game ended, and again at the end');
+        expect([for (final r in session.rumbles) r.strong], isNot(contains(3000)), reason: 'no rumble after the end');
+      },
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'a host that exits right after releasing a running game reports the game failed',
+    () => _playOwn(
+      checkout,
+      python,
+      'release answered while the game runs, which does nothing, then the host exits unasked.',
+      'hostFailure',
+      [
+        ..._startCall(checkout),
+        ..._call('release', null, null, id: 3),
+        {'hostExits': 1},
+      ],
+      check: (session) => expectLater(session.client.status(), completion(_failedGame)),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test('a status answered before stop does not lift the stop time limit', () async {
+    final fixture =
+        (jsonDecode(File(p.join(checkout, 'fixtures', 'v1', 'sessions', 'stop-deadline.json')).readAsStringSync())
+                as Map<String, Object?>)['steps']!
+            as List<Object?>;
+    final steps = fixture.cast<Map<String, Object?>>();
+    Map<String, Object?> withId(Map<String, Object?> step, int id) => {
+      ...step,
+      'message': {...step['message']! as Map<String, Object?>, 'id': id},
+    };
+    await _playOwn(
+      checkout,
+      python,
+      'status, start and stop sent together with no game loaded; the game then never ends.',
+      'hostFailure',
+      [
+        _call('status', null, null, id: 2)[0],
+        withId(steps[4], 3),
+        withId(steps[8], 4),
+        _call('status', null, null, id: 2)[1],
+        withId(steps[5], 3),
+        withId(steps[9], 4),
+        ...steps.sublist(10),
+      ],
+      check: (session) =>
+          expect(session.client.failureReason, contains('after stop'), reason: 'killed by the stop limit'),
+    );
+  }, timeout: const Timeout(Duration(seconds: 90)));
 }
+
+final _failedGame = isA<RetroStatus>()
+    .having((s) => s.ended, 'ended', isTrue)
+    .having((s) => s.errorCode, 'errorCode', RetroErrorCode.hostExited);
+
+Matcher _zero(int port) => isA<RetroRumble>()
+    .having((r) => r.port, 'port', port)
+    .having((r) => r.strong, 'strong', 0)
+    .having((r) => r.weak, 'weak', 0);
+
+Map<String, Object?> _rumbleStep(int port, int strong) => {
+  'from': 'host',
+  'message': {'type': 'rumble', 'port': port, 'strong': strong, 'weak': 0},
+};
+
+/// A call the launcher sends and the host's reply; [id] is the session's id for the call, which the
+/// fake host maps to the id the client used.
+List<Map<String, Object?>> _call(String method, Object? args, Object? result, {int id = 2}) => [
+  {
+    'from': 'launcher',
+    'message': {'type': 'call', 'id': id, 'method': method, 'args': args},
+    'anyValueFor': ['id'],
+  },
+  {
+    'from': 'host',
+    'message': {'type': 'reply', 'id': id, 'result': result},
+    'anyValueFor': ['id'],
+  },
+];
+
+/// The `start` call of ring-grows again, as the session's call [id].
+Map<String, Object?> _secondStart(String checkout, int id) {
+  final step = _startCall(checkout)[0];
+  return {
+    ...step,
+    'message': {...step['message']! as Map<String, Object?>, 'id': id},
+  };
+}
+
+/// A `status` call, as the session's call [id], whose reply is play-and-quit's status of its game,
+/// running or [ended].
+List<Map<String, Object?>> _status(String checkout, int id, {required bool ended}) {
+  final steps =
+      (jsonDecode(File(p.join(checkout, 'fixtures', 'v1', 'sessions', 'play-and-quit.json')).readAsStringSync())
+              as Map<String, Object?>)['steps']!
+          as List<Object?>;
+  final reply = steps.cast<Map<String, Object?>>().firstWhere((step) {
+    final message = step['message'] as Map<String, Object?>?;
+    final result = message?['result'];
+    return message?['type'] == 'reply' && result is Map && result['ended'] == ended;
+  });
+  return [
+    _call('status', null, null, id: id)[0],
+    {
+      ...reply,
+      'message': {...reply['message']! as Map<String, Object?>, 'id': id},
+    },
+  ];
+}
+
+/// Steps 4 and 5 of ring-grows: `start` and its reply.
+List<Map<String, Object?>> _startCall(String checkout) => _startedGame(checkout).sublist(0, 2);
 
 Future<void> _playOwn(
   String checkout,

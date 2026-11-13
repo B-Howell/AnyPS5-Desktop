@@ -64,6 +64,7 @@ class RetroRumble {
 /// The host's environment as `NAME=value` entries: [base] with [added] on top. Windows treats
 /// names that differ only in case as one variable, and `Platform.environment` gives them in upper
 /// case there, so an added `Path` must replace the inherited `PATH` rather than sit beside it.
+/// On Windows native/retro_host adds the hidden `=` entries and sorts the block.
 List<String> retroHostEnvironment(Map<String, String> base, Map<String, String> added, {required bool windows}) {
   final merged = <String, MapEntry<String, String>>{};
   for (final entry in [...base.entries, ...added.entries]) {
@@ -73,10 +74,11 @@ List<String> retroHostEnvironment(Map<String, String> base, Map<String, String> 
 }
 
 class _Pending {
-  _Pending(this.id, this.method, this.deadline);
+  _Pending(this.id, this.method, this.args, this.deadline);
 
   final int id;
   final String method;
+  final Object? args;
   final DateTime deadline;
   final completer = Completer<Object?>();
 }
@@ -112,13 +114,14 @@ class RetroHostClient implements RetroHostSession {
   final _exited = Completer<int>();
   Timer? _unsupportedKill;
   final _frames = StreamController<RetroFrameEvent>.broadcast(sync: true);
-  final _rumble = StreamController<RetroRumble>.broadcast(sync: true);
+  final _rumble = StreamController<RetroRumble>.broadcast();
   final _calls = Queue<_Pending>();
   final _pings = Queue<(int, DateTime)>();
 
   late DateTime _welcomeDeadline;
   DateTime? _nextPing;
   DateTime? _stopDeadline;
+  int _stopId = 0;
   DateTime? _shutdownDeadline;
   int _nextCallId = 1;
   int _nextPingId = 1;
@@ -135,6 +138,7 @@ class RetroHostClient implements RetroHostSession {
   bool _lastStatusEnded = false;
   bool _paused = false;
   bool _inputFocus = true;
+  int _ports = 1;
   int? _epoch;
   RetroStatus? _failedStatus;
 
@@ -239,15 +243,18 @@ class RetroHostClient implements RetroHostSession {
   @override
   PinnedFrame? get frame => _frame;
 
-  /// Vibration to forward to the controller at a port; nothing while paused or without input focus.
+  /// Vibration to forward to the controller at a port; nothing while paused, without input focus, or
+  /// for a port that `connectedPorts` left without a controller.
+  /// Events come asynchronously, so a listener may call anything on the client, [close] included.
   @override
   Stream<RetroRumble> get rumble => _rumble.stream;
 
   /// Whether the launcher's window has input focus; losing it zeroes the controllers' input and
-  /// their motors (protocol.md "input" and "rumble").
+  /// their motors (protocol.md "input" and "rumble"). Once the connection has ended there is no
+  /// input to zero and no rumble to forward, so a change is ignored.
   @override
   set inputFocus(bool focused) {
-    if (_inputFocus == focused) return;
+    if (_ended.isCompleted || _inputFocus == focused) return;
     _inputFocus = focused;
     if (!focused) {
       _zeroInput();
@@ -287,12 +294,13 @@ class RetroHostClient implements RetroHostSession {
     } on Object catch (error) {
       return Future.error(RetroCallError(RetroCallError.argument, 'The call cannot be sent: $error'));
     }
-    final pending = _Pending(_nextCallId++, method, DateTime.now().add(replyLimit));
+    final pending = _Pending(_nextCallId++, method, args, DateTime.now().add(replyLimit));
+    final before = _expectedRumble();
     _calls.add(pending);
-    if (method == 'start' || method == 'release') _zeroRumble();
-    if (method == 'pause' && args is bool && _gameLoaded) {
-      _paused = args;
-      if (args) _zeroRumble();
+    if (method == 'start' || method == 'release') {
+      _zeroRumble();
+    } else {
+      _zeroIfStricter(before);
     }
     _write(body);
     return pending.completer.future;
@@ -324,7 +332,10 @@ class RetroHostClient implements RetroHostSession {
   Future<RetroStatus?> stopGame() async {
     if (!_ended.isCompleted) {
       if (!_greeted) throw StateError('No call may be sent before welcome.');
-      _stopDeadline ??= DateTime.now().add(stopLimit);
+      if (_stopDeadline == null) {
+        _stopDeadline = DateTime.now().add(stopLimit);
+        _stopId = _nextCallId;
+      }
     }
     await _send('stop', null);
     while (true) {
@@ -525,46 +536,61 @@ class RetroHostClient implements RetroHostSession {
     final hasError = f.has('error');
     if (hasResult == hasError) throw const RetroProtocolError('A reply needs exactly one of result and error.');
     final pending = _calls.first;
+    final before = _expectedRumble();
     if (hasError) {
       final error = f.object('error');
       final failure = RetroCallError(error.string('code'), error.string('message'));
       _calls.removeFirst();
+      _zeroIfStricter(before);
       pending.completer.completeError(failure);
       return;
     }
-    final result = _checkResult(pending.method, f.map['result']);
+    final result = _checkResult(pending, f.map['result']);
     _calls.removeFirst();
+    _zeroIfStricter(before);
     pending.completer.complete(result);
     if (pending.method == 'start') _zeroInput();
   }
 
-  Object? _checkResult(String method, Object? result) {
+  Object? _checkResult(_Pending pending, Object? result) {
+    final method = pending.method;
+    final args = pending.args;
+    final afterStop = pending.id > _stopId;
     switch (method) {
       case 'start':
         final epoch = RetroFields(_object(result, 'start'), 'start').integer('epoch', 1, RetroFields.maxId);
         _epoch = epoch;
         _gameLoaded = true;
         _paused = false;
+        _ports = 1;
         _lastStatusEnded = false;
         _setFrame(null, null);
       case 'status':
-        if (result != null) {
+        if (result == null) {
+          if (_gameLoaded) _zeroRumble();
+          _gameLoaded = false;
+          _epoch = null;
+          _lastStatusEnded = false;
+          if (afterStop) _stopDeadline = null;
+        } else {
           final status = RetroStatus.parse(_object(result, 'status'));
           if (status.ended && !_lastStatusEnded) _zeroRumble();
           _lastStatusEnded = status.ended;
-          if (status.ended) _stopDeadline = null;
+          if (status.ended && afterStop) _stopDeadline = null;
         }
       case 'release':
         _expectNull(method, result);
         if (_lastStatusEnded) {
           _gameLoaded = false;
           _epoch = null;
-          _stopDeadline = null;
+          if (afterStop) _stopDeadline = null;
         }
       case 'connectedPorts' || 'changeDisc' || 'option':
         if (result is! bool) throw RetroProtocolError('The result of $method must be a boolean.');
+        if (method == 'connectedPorts' && result && args is int) _ports = args;
       case 'pause':
         _expectNull(method, result);
+        if (_gameLoaded && args is bool) _paused = args;
       case 'volume' || 'stop':
         _expectNull(method, result);
     }
@@ -586,6 +612,8 @@ class RetroHostClient implements RetroHostSession {
     _pings.removeFirst();
   }
 
+  /// Maps a new ring. The oldest ring, and the frame shown from it, are let go first, so no more
+  /// than two rings are ever mapped (protocol.md "Memory objects").
   void _onRing(RetroFields f, int descriptor) {
     final int bytes;
     final int memory;
@@ -601,6 +629,15 @@ class RetroHostClient implements RetroHostSession {
       retroHostCloseDescriptor(descriptor);
       rethrow;
     }
+    final previous = _previousRing;
+    if (previous != null) {
+      if (identical(_frameRing, previous)) {
+        _frame = null;
+        _frameRing = null;
+      }
+      previous.unmap();
+      _previousRing = null;
+    }
     final error = calloc<Uint8>(256).cast<Utf8>();
     try {
       final base = retroHostMapRing(_connection, memory, bytes, error, 256);
@@ -611,14 +648,6 @@ class RetroHostClient implements RetroHostSession {
       } on Object {
         retroHostUnmapRing(base, bytes);
         rethrow;
-      }
-      final previous = _previousRing;
-      if (previous != null) {
-        if (identical(_frameRing, previous)) {
-          _frame = null;
-          _frameRing = null;
-        }
-        previous.unmap();
       }
       _previousRing = _ring;
       _ring = ring;
@@ -654,8 +683,48 @@ class RetroHostClient implements RetroHostSession {
 
   void _onRumble(RetroFields f) {
     final event = RetroRumble(f.integer('port', 0, 1), f.integer('strong', 0, 0xFFFF), f.integer('weak', 0, 0xFFFF));
-    if (_paused || !_inputFocus) return;
+    final expected = _expectedRumble();
+    if (!expected.live || expected.paused || !_inputFocus || event.port >= expected.ports) return;
     _rumble.add(event);
+  }
+
+  /// Zeroes the motors when the state rumble follows has become stricter than [before]: paused, or
+  /// fewer ports with a controller. The end of a game zeroes them where a `status` shows it, since
+  /// a next `start` still waiting would hide the end here.
+  void _zeroIfStricter(({bool live, bool paused, int ports}) before) {
+    final after = _expectedRumble();
+    if ((after.paused && !before.paused) || after.ports < before.ports) _zeroRumble();
+  }
+
+  /// Whether a game runs (its `start` answered and its end not seen), whether it is paused and how
+  /// many ports have a controller once the host has taken every call sent so far, as the host takes
+  /// them in order: what the replies confirmed, then each call still waiting as if it succeeds,
+  /// except a `start` while a game is loaded, which the host refuses with `busy`. A `start` still
+  /// waiting makes no game run, since its game loads only after the reply. Rumble follows this, so
+  /// it stops as soon as a pause or a controller leaving is sent, and a call sent before an earlier
+  /// `start` was answered still counts.
+  ({bool live, bool paused, int ports}) _expectedRumble() {
+    var loaded = _gameLoaded;
+    var live = _gameLoaded && !_lastStatusEnded;
+    var paused = _paused;
+    var ports = _ports;
+    for (final call in _calls) {
+      final args = call.args;
+      switch (call.method) {
+        case 'start' when !loaded:
+          loaded = true;
+          live = false;
+          paused = false;
+          ports = 1;
+        case 'release' when _lastStatusEnded:
+          loaded = false;
+        case 'pause' when loaded && args is bool:
+          paused = args;
+        case 'connectedPorts' when loaded && args is int && (args == 1 || args == 2):
+          ports = args;
+      }
+    }
+    return (live: live, paused: paused, ports: ports);
   }
 
   void _zeroRumble() {
@@ -672,15 +741,21 @@ class RetroHostClient implements RetroHostSession {
       _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostExited, kill: true);
       return;
     }
-    final hung =
-        writeAge > writeLimit.inMilliseconds ||
-        (!_greeted && !_unsupportedSeen && now.isAfter(_welcomeDeadline)) ||
-        (_calls.isNotEmpty && now.isAfter(_calls.first.deadline)) ||
-        (_pings.isNotEmpty && now.isAfter(_pings.first.$2)) ||
-        (_stopDeadline != null && now.isAfter(_stopDeadline!)) ||
-        (_shutdownDeadline != null && now.isAfter(_shutdownDeadline!));
-    if (hung) {
-      _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostHung, kill: true);
+    final missed = switch (now) {
+      _ when writeAge > writeLimit.inMilliseconds => 'A write to the host took longer than ${writeLimit.inSeconds} s.',
+      _ when !_greeted && !_unsupportedSeen && now.isAfter(_welcomeDeadline) =>
+        'No welcome within ${welcomeLimit.inSeconds} s.',
+      _ when _calls.isNotEmpty && now.isAfter(_calls.first.deadline) =>
+        'No reply to ${_calls.first.method} within ${replyLimit.inSeconds} s.',
+      _ when _pings.isNotEmpty && now.isAfter(_pings.first.$2) => 'No pong within ${replyLimit.inSeconds} s.',
+      _ when _stopDeadline != null && now.isAfter(_stopDeadline!) =>
+        'The game had not ended ${stopLimit.inSeconds} s after stop.',
+      _ when _shutdownDeadline != null && now.isAfter(_shutdownDeadline!) =>
+        'The host had not exited ${shutdownLimit.inSeconds} s after shutdown.',
+      _ => null,
+    };
+    if (missed != null) {
+      _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostHung, kill: true, reason: missed);
       return;
     }
     final next = _nextPing;
@@ -706,6 +781,7 @@ class RetroHostClient implements RetroHostSession {
     failureReason = reason;
     _timer?.cancel();
     if (kill && _connection != nullptr) retroHostKill(_connection);
+    if (_gameLoaded) _zeroRumble();
     if (end != RetroHostEnd.clean && end != RetroHostEnd.unsupported && _gameLoaded && errorCode != null) {
       _failedStatus = RetroStatus.failed(
         error: errorCode == RetroErrorCode.hostHung
@@ -713,7 +789,6 @@ class RetroHostClient implements RetroHostSession {
             : 'The emulator closed unexpectedly.',
         errorCode: errorCode,
       );
-      _zeroRumble();
     }
     while (_calls.isNotEmpty) {
       final pending = _calls.removeFirst();
@@ -763,7 +838,7 @@ class RetroHostClient implements RetroHostSession {
   }
 
   void _write(Uint8List body) {
-    if (_connection == nullptr) return;
+    if (_connection == nullptr || _closing) return;
     final framed = calloc<Uint8>(body.length + 4);
     try {
       final view = framed.asTypedList(body.length + 4);
