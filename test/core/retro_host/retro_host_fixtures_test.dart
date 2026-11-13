@@ -169,6 +169,9 @@ class _Session {
       final end = await client.ended.timeout(const Duration(seconds: 40));
       await client.exited.timeout(const Duration(seconds: 20), onTimeout: () => -1);
       expect(end.name, session['outcome'], reason: 'outcome (${client.failureReason ?? 'no reason'})');
+      // Nothing else in this test reaps children, so the host's exit code must be known: on Linux
+      // that shows the client kept the host's pidfd (docs/RETRO_HOST_CLIENT.md).
+      if (session['outcome'] == 'clean') expect(client.exitCode, 0, reason: 'exit code');
       await client.close();
       final result = jsonDecode(report.readAsStringSync()) as Map<String, Object?>;
       expect(result['failures'], isEmpty, reason: 'the fake host\'s report');

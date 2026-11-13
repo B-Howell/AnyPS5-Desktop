@@ -69,11 +69,18 @@ code belongs to this client.
   With glibc 2.39 or later, `pidfd_spawn` makes the pidfd together with the
   process. Where it is missing, or the kernel cannot do it, the host is started
   with `posix_spawn` and its pidfd is opened just after. A pidfd fixes its
-  process once opened, so the client then checks in `/proc` that the process is
-  its own child (or has already ended), and drops the pidfd otherwise. That
-  covers a host that ended at once, was reaped by the VM, and had its id given
-  to another process in between. On Linux 5.3, which has `pidfd_open` but not
-  `waitid(P_PIDFD)`, the pid is waited for instead.
+  process once opened, so the client then checks that the process is the host:
+  its descriptor 3 must be the launcher's own socket (`/proc/<pid>/fd/3`).
+  This guards against a host that ended at once, was reaped by the VM, and had
+  its id given to another process, even another child of the launcher.
+  - Where `/proc` hides a child's descriptors (`ptrace_scope` 2 or 3), only the
+    process's parent can be checked, which is weaker.
+  - If the check fails, the client never signals or waits for that id, and takes
+    the end of the control stream as the host's exit.
+  - On Linux 5.3, which has `pidfd_open` but not `waitid(P_PIDFD)`, the pid is
+    waited for instead.
+  - Before 5.3 there is no pidfd, and the client kills and waits by id, as
+    programs did before pidfd existed.
 
 **The exit code is not always known.** If the VM reaps the host before the
 client reads its exit code, the code is lost. That can happen on any Linux

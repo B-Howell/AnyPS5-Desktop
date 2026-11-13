@@ -296,7 +296,10 @@ class RetroHostClient {
   /// game has not ended 10 seconds after `stop` (protocol.md "Timeouts"), and the status then is the
   /// failure report. Null when no game was loaded.
   Future<RetroStatus?> stopGame() async {
-    if (!_ended.isCompleted) _stopDeadline ??= DateTime.now().add(stopLimit);
+    if (!_ended.isCompleted) {
+      if (!_greeted) throw StateError('No call may be sent before welcome.');
+      _stopDeadline ??= DateTime.now().add(stopLimit);
+    }
     await _send('stop', null);
     while (true) {
       final current = await status();

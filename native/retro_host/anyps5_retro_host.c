@@ -536,6 +536,7 @@ typedef struct Connection {
   int exited;
   int reader_done;
   int pidfd;
+  int lost;
   int64_t write_started;
 } Connection;
 
@@ -766,6 +767,9 @@ static void* waiter_main(void* argument) {
       while (waitpid(c->pid, &status, 0) < 0 && errno == EINTR) {
       }
     }
+  } else if (c->lost) {
+    // Its end of the stream is all there is to go by: the reader's end of
+    // stream, waited for below without a limit, stands for its exit.
   } else
 #endif
   {
@@ -785,7 +789,11 @@ static void* waiter_main(void* argument) {
   until.tv_sec += 2;
   pthread_mutex_lock(&c->lock);
   while (!c->reader_done) {
-    if (pthread_cond_timedwait(&c->wake, &c->lock, &until) == ETIMEDOUT) break;
+    if (c->lost) {
+      pthread_cond_wait(&c->wake, &c->lock);
+    } else if (pthread_cond_timedwait(&c->wake, &c->lock, &until) == ETIMEDOUT) {
+      break;
+    }
   }
   pthread_mutex_unlock(&c->lock);
   c->callback(c->token, EVENT_EXITED, NULL, 0, code);
@@ -802,37 +810,55 @@ static void* waiter_main(void* argument) {
 // after it with pidfd_open and kept only if its process is this launcher's
 // child (open_pidfd).
 #if defined(__linux__)
-// Opens a pidfd for `pid` just after posix_spawn, and keeps it only if it is
-// this launcher's child: if the host had already ended and been reaped by the
-// VM, the id could belong to another process by now. A pidfd fixes its process
-// once opened, so its parent is checked through /proc after the open. A host
-// that has ended by then is kept too: signalling it does nothing.
-static int open_pidfd(pid_t pid) {
+// Opens a pidfd for `pid` just after posix_spawn, and keeps it only if its
+// process is the host. If the host ended at once and the VM reaped it, the id
+// may already belong to another process, perhaps another child of the
+// launcher. A pidfd fixes its process once opened, so the check after the open
+// is sound: the host is the process whose descriptor 3 is the launcher's
+// socket (`socket_inode`). Where /proc does not let the launcher read its
+// child's descriptors (ptrace_scope 2 or 3), the process's parent is checked
+// instead, which is weaker. Returns the pidfd; else -1 with *lost set when the
+// host's identity cannot be had (it is then never signalled or waited for by
+// its id), or clear when the kernel has no pidfd at all (Linux before 5.3).
+static int open_pidfd(pid_t pid, unsigned long socket_inode, int* lost) {
+  *lost = 0;
   int fd = (int)syscall(SYS_pidfd_open, pid, 0);
-  if (fd < 0) return -1;
+  if (fd < 0) {
+    *lost = errno != ENOSYS;
+    return -1;
+  }
   fcntl(fd, F_SETFD, FD_CLOEXEC);
   char path[64];
-  snprintf(path, sizeof path, "/proc/%ld/stat", (long)pid);
-  long parent = -1;
-  FILE* stat = fopen(path, "re");
-  if (stat) {
-    char text[512];
-    size_t length = fread(text, 1, sizeof text - 1, stat);
-    fclose(stat);
-    text[length] = 0;
-    const char* after = strrchr(text, ')');
-    char state = 0;
-    if (after) sscanf(after + 1, " %c %ld", &state, &parent);
+  char target[64];
+  char expected[64];
+  snprintf(path, sizeof path, "/proc/%ld/fd/3", (long)pid);
+  snprintf(expected, sizeof expected, "socket:[%lu]", socket_inode);
+  ssize_t length = readlink(path, target, sizeof target - 1);
+  if (length > 0) {
+    target[length] = 0;
+    if (strcmp(target, expected) == 0) return fd;
+  } else if (errno == EACCES || errno == EPERM) {
+    snprintf(path, sizeof path, "/proc/%ld/stat", (long)pid);
+    long parent = -1;
+    FILE* stat = fopen(path, "re");
+    if (stat) {
+      char text[512];
+      size_t read = fread(text, 1, sizeof text - 1, stat);
+      fclose(stat);
+      text[read] = 0;
+      const char* after = strrchr(text, ')');
+      char state = 0;
+      if (after) sscanf(after + 1, " %c %ld", &state, &parent);
+    }
+    if (parent == (long)getpid()) return fd;
   }
-  struct pollfd ended = {fd, POLLIN, 0};
-  const int gone = poll(&ended, 1, 0) > 0;
-  if (parent == (long)getpid() || gone) return fd;
   close(fd);
+  *lost = 1;
   return -1;
 }
 #endif
 
-static int spawn_now(char* const* argv, char* const* envp, int host_end, pid_t* pid, int* pidfd) {
+static int spawn_now(char* const* argv, char* const* envp, int host_end, pid_t* pid, int* pidfd, int* lost) {
   posix_spawn_file_actions_t actions;
   posix_spawnattr_t attributes;
   posix_spawn_file_actions_init(&actions);
@@ -852,6 +878,7 @@ static int spawn_now(char* const* argv, char* const* envp, int host_end, pid_t* 
   posix_spawnattr_setflags(&attributes, flags);
   int failure;
   *pidfd = -1;
+  *lost = 0;
 #if defined(__linux__)
   typedef int (*pidfd_spawn_t)(int*, const char*, const posix_spawn_file_actions_t*, const posix_spawnattr_t*,
                                char* const*, char* const*);
@@ -877,7 +904,11 @@ static int spawn_now(char* const* argv, char* const* envp, int host_end, pid_t* 
   }
   if (failure == ENOSYS || failure == EINVAL) {
     failure = posix_spawn(pid, argv[0], &actions, &attributes, argv, envp);
-    if (!failure) *pidfd = open_pidfd(*pid);
+    if (!failure) {
+      struct stat socket_info;
+      unsigned long inode = fstat(host_end, &socket_info) == 0 ? (unsigned long)socket_info.st_ino : 0;
+      *pidfd = open_pidfd(*pid, inode, lost);
+    }
   }
 #else
   failure = posix_spawn(pid, argv[0], &actions, &attributes, argv, envp);
@@ -899,6 +930,7 @@ typedef struct Spawn {
   int host_end;
   pid_t pid;
   int pidfd;
+  int lost;
   int failure;
   int done;
 } Spawn;
@@ -916,7 +948,7 @@ static void* spawner_main(void* argument) {
     while (!g_spawn_job) pthread_cond_wait(&g_spawn_wake, &g_spawn_lock);
     Spawn* job = g_spawn_job;
     pthread_mutex_unlock(&g_spawn_lock);
-    job->failure = spawn_now(job->argv, job->envp, job->host_end, &job->pid, &job->pidfd);
+    job->failure = spawn_now(job->argv, job->envp, job->host_end, &job->pid, &job->pidfd, &job->lost);
     pthread_mutex_lock(&g_spawn_lock);
     job->done = 1;
     g_spawn_job = NULL;
@@ -934,7 +966,7 @@ static void start_spawner(void) {
   pthread_attr_destroy(&attributes);
 }
 
-static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int* failure, int* pidfd) {
+static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int* failure, int* pidfd, int* lost) {
   pthread_once(&g_spawner_once, start_spawner);
   if (!g_spawner_ready) {
     *failure = EAGAIN;
@@ -953,18 +985,31 @@ static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int*
   pthread_mutex_unlock(&g_spawn_lock);
   *failure = job.failure;
   *pidfd = job.pidfd;
+  *lost = job.lost;
   return job.failure ? -1 : job.pid;
 }
 
 #else
 
-static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int* failure, int* pidfd) {
+static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int* failure, int* pidfd, int* lost) {
   pid_t pid = -1;
-  *failure = spawn_now(argv, envp, host_end, &pid, pidfd);
+  *failure = spawn_now(argv, envp, host_end, &pid, pidfd, lost);
   return *failure ? -1 : pid;
 }
 
 #endif
+
+// Kills the host: through its pidfd where there is one, never by id when its
+// identity was lost, and by id only where the kernel has no pidfd.
+static void signal_host(pid_t pid, int pidfd, int lost) {
+#if defined(__linux__)
+  if (pidfd >= 0) {
+    syscall(SYS_pidfd_send_signal, pidfd, SIGKILL, NULL, 0);
+    return;
+  }
+#endif
+  if (!lost) kill(pid, SIGKILL);
+}
 
 ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const char* const* env, int32_t envc,
                                     int64_t token, anyps5_rh_callback callback, char* error, int32_t error_size) {
@@ -1019,7 +1064,8 @@ ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const
   char* const* envp = envc > 0 ? (char* const*)environment : environ;
   int failure = 0;
   int pidfd = -1;
-  pid_t pid = spawn_host((char* const*)arguments, envp, ends[1], &failure, &pidfd);
+  int lost = 0;
+  pid_t pid = spawn_host((char* const*)arguments, envp, ends[1], &failure, &pidfd, &lost);
   free(arguments);
   free(environment);
   close(ends[1]);
@@ -1032,7 +1078,7 @@ ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const
   }
   Connection* c = (Connection*)calloc(1, sizeof(Connection));
   if (!c) {
-    kill(pid, SIGKILL);
+    signal_host(pid, pidfd, lost);
     if (pidfd >= 0) close(pidfd);
     close(ends[0]);
     set_error(error, error_size, "Out of memory.");
@@ -1043,6 +1089,7 @@ ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const
   c->pid = pid;
   c->socket = ends[0];
   c->pidfd = pidfd;
+  c->lost = lost;
   pthread_mutex_init(&c->lock, NULL);
   pthread_cond_init(&c->wake, NULL);
   if (pthread_create(&c->waiter, NULL, waiter_main, c) == 0) c->threads |= 1;
@@ -1050,7 +1097,7 @@ ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const
   if (pthread_create(&c->writer, NULL, writer_main, c) == 0) c->threads |= 4;
   if (c->threads != 7) {
     set_error(error, error_size, "The host's threads could not be started.");
-    kill(pid, SIGKILL);
+    signal_host(pid, pidfd, lost);
     shutdown(c->socket, SHUT_RDWR);
     pthread_mutex_lock(&c->lock);
     c->closing = 1;
@@ -1073,14 +1120,8 @@ ANYPS5_EXPORT int64_t anyps5_rh_pid(void* handle) { return (int64_t)((Connection
 
 ANYPS5_EXPORT void anyps5_rh_kill(void* handle) {
   Connection* c = (Connection*)handle;
-#if defined(__linux__)
-  if (c->pidfd >= 0) {
-    syscall(SYS_pidfd_send_signal, c->pidfd, SIGKILL, NULL, 0);
-    return;
-  }
-#endif
   pthread_mutex_lock(&c->lock);
-  if (!c->exited) kill(c->pid, SIGKILL);
+  if (!c->exited) signal_host(c->pid, c->pidfd, c->lost);
   pthread_mutex_unlock(&c->lock);
 }
 
@@ -1096,8 +1137,8 @@ ANYPS5_EXPORT int64_t anyps5_rh_write_age_ms(void* handle) {
 ANYPS5_EXPORT void anyps5_rh_close(void* handle) {
   Connection* c = (Connection*)handle;
   anyps5_rh_kill(c);
-  pthread_join(c->waiter, NULL);
   shutdown(c->socket, SHUT_RDWR);
+  pthread_join(c->waiter, NULL);
   pthread_mutex_lock(&c->lock);
   c->closing = 1;
   pthread_cond_broadcast(&c->wake);
