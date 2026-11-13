@@ -36,7 +36,9 @@ The client adds the protocol's own arguments after the command it is given:
 **The environment.** The host inherits the launcher's environment, with any
 variables the caller adds on top. On Windows names that differ only in case are
 one variable, so an added `Path` replaces the inherited `PATH` instead of
-sitting beside it, where the host would read whichever came first.
+sitting beside it, where the host would read whichever came first. Windows also
+requires the environment block to be sorted by name without regard to case, so
+the entries are passed in that order there.
 
 **Windows.**
 
@@ -166,7 +168,12 @@ answered the same way, and never left waiting.
   - on `start`, `release` and `pause(true)`;
   - when a `status` first shows the game ended;
   - when input focus is lost;
+  - when `connectedPorts(1)` takes the controller out of port 2;
+  - when the connection ends with a game loaded, a clean shutdown included;
   - on a host failure.
+- **Rumble events** come asynchronously, so a listener may call anything on the
+  client, `close()` included. Frame events stay synchronous because a frame
+  that is not drawn can be read only until the next message.
 - **After the end.** Once the connection has ended, a change of input focus is
   ignored: there is no host to send input to, no rumble comes, and after
   `close()` the rumble stream is closed.
@@ -184,8 +191,12 @@ is the launcher's conformance test.
   `shutdown` and `stopGame()`, reading frames, and `status()` after a failure.
 - **What it checks.** The outcome, and the fake host's report of every message
   the client sent.
-- **Extra session.** One session of its own checks that a reply with a wrong
-  result still answers its call.
+- **Extra sessions.** Sessions of its own check that a reply with a wrong
+  result still answers its call, that a frame of another game takes away the
+  frame shown, that a refused call keeps the calls in order, that a pause with
+  no game does not silence the next game's rumble, and that the motors are
+  zeroed when a rumble listener closes the client, when `connectedPorts(1)`
+  takes away port 2, and on a clean shutdown.
 
 [`test/core/retro_host/retro_host_real_test.dart`](../test/core/retro_host/retro_host_real_test.dart)
 runs the client against the real host and the real SwanStation core, as the

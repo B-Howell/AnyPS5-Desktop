@@ -63,12 +63,16 @@ class RetroRumble {
 /// The host's environment as `NAME=value` entries: [base] with [added] on top. Windows treats
 /// names that differ only in case as one variable, and `Platform.environment` gives them in upper
 /// case there, so an added `Path` must replace the inherited `PATH` rather than sit beside it.
+/// Windows also requires the block `CreateProcessW` takes to be sorted by name without regard to
+/// case, so there the entries come in that order.
 List<String> retroHostEnvironment(Map<String, String> base, Map<String, String> added, {required bool windows}) {
   final merged = <String, MapEntry<String, String>>{};
   for (final entry in [...base.entries, ...added.entries]) {
     merged[windows ? entry.key.toUpperCase() : entry.key] = entry;
   }
-  return [for (final entry in merged.values) '${entry.key}=${entry.value}'];
+  final names = merged.keys.toList();
+  if (windows) names.sort();
+  return [for (final name in names) '${merged[name]!.key}=${merged[name]!.value}'];
 }
 
 class _Pending {
@@ -111,7 +115,7 @@ class RetroHostClient {
   final _exited = Completer<int>();
   Timer? _unsupportedKill;
   final _frames = StreamController<RetroFrameEvent>.broadcast(sync: true);
-  final _rumble = StreamController<RetroRumble>.broadcast(sync: true);
+  final _rumble = StreamController<RetroRumble>.broadcast();
   final _calls = Queue<_Pending>();
   final _pings = Queue<(int, DateTime)>();
 
@@ -235,6 +239,7 @@ class RetroHostClient {
   PinnedFrame? get frame => _frame;
 
   /// Vibration to forward to the controller at a port; nothing while paused or without input focus.
+  /// Events come asynchronously, so a listener may call anything on the client, [close] included.
   Stream<RetroRumble> get rumble => _rumble.stream;
 
   /// Whether the launcher's window has input focus; losing it zeroes the controllers' input and
@@ -282,7 +287,7 @@ class RetroHostClient {
     }
     final pending = _Pending(_nextCallId++, method, DateTime.now().add(replyLimit));
     _calls.add(pending);
-    if (method == 'start' || method == 'release') _zeroRumble();
+    if (method == 'start' || method == 'release' || (method == 'connectedPorts' && args == 1)) _zeroRumble();
     if (method == 'pause' && args is bool && _gameLoaded) {
       _paused = args;
       if (args) _zeroRumble();
@@ -693,6 +698,7 @@ class RetroHostClient {
     failureReason = reason;
     _timer?.cancel();
     if (kill && _connection != nullptr) retroHostKill(_connection);
+    if (_gameLoaded) _zeroRumble();
     if (end != RetroHostEnd.clean && end != RetroHostEnd.unsupported && _gameLoaded && errorCode != null) {
       _failedStatus = RetroStatus.failed(
         error: errorCode == RetroErrorCode.hostHung
@@ -700,7 +706,6 @@ class RetroHostClient {
             : 'The emulator closed unexpectedly.',
         errorCode: errorCode,
       );
-      _zeroRumble();
     }
     while (_calls.isNotEmpty) {
       final pending = _calls.removeFirst();
@@ -750,7 +755,7 @@ class RetroHostClient {
   }
 
   void _write(Uint8List body) {
-    if (_connection == nullptr) return;
+    if (_connection == nullptr || _closing) return;
     final framed = calloc<Uint8>(body.length + 4);
     try {
       final view = framed.asTypedList(body.length + 4);

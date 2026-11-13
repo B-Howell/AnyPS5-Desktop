@@ -15,6 +15,13 @@ void main() {
     ]);
   });
 
+  test('on Windows the entries are sorted by name without regard to case', () {
+    expect(
+      retroHostEnvironment({'PATH': r'C:\p', 'TEMP': r'C:	'}, {'aaa': '1', 'Zed': '2', 'Path': r'C:\q'}, windows: true),
+      ['aaa=1', r'Path=C:\q', r'TEMP=C:	', 'Zed=2'],
+    );
+  });
+
   test('elsewhere names that differ in case are different variables', () {
     expect(
       retroHostEnvironment({'PATH': '/old'}, {'Path': '/new'}, windows: false),
