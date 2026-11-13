@@ -183,8 +183,6 @@ class RetroGraphics extends ChangeNotifier {
     final changes = advice.changesFrom(options);
     if (changes.isEmpty) return false;
     final baseline = monitor?.steadyRate;
-    final generation = ++_generation;
-    _check = null;
     final changed = await _exclusive(() async {
       final record = <String, RetroOptimizedValue>{...?profile.optimized};
       var any = false;
@@ -206,8 +204,12 @@ class RetroGraphics extends ChangeNotifier {
       }
       return any;
     });
-    if (changed && monitor != null && generation == _generation) unawaited(_checkSpeed(generation, baseline));
-    return changed;
+    if (!changed) return false;
+    final generation = ++_generation;
+    _check = null;
+    _checking = false;
+    if (monitor != null) unawaited(_checkSpeed(generation, baseline));
+    return true;
   }
 
   /// The game's speed is being measured after Apply.
@@ -232,7 +234,7 @@ class RetroGraphics extends ChangeNotifier {
       _notify();
       return;
     }
-    final target = baseline ?? standardRate(rate);
+    final target = standardRate(baseline == null ? rate : (baseline > rate ? baseline : rate));
     if (rate >= target * tolerance) {
       _finishCheck(RetroSpeedCheck(rate: rate, target: target, held: true));
       return;
@@ -267,15 +269,19 @@ class RetroGraphics extends ChangeNotifier {
     onChecked?.call(check);
   }
 
-  /// The PS1's own frame rate nearest above [rate], for a check with no rate measured before
-  /// Apply: about 60 (NTSC) or 50 (PAL) frames a second.
-  static double standardRate(double rate) => rate >= 54.9 ? 59.94 : 50;
+  /// The PS1's own frame rate a game showing [rate] runs at: about 60 frames a second (NTSC), or
+  /// 50 (PAL) for a rate no faster than PAL's. The host reports no rate, so the faster of the
+  /// rates before and after Apply tells them apart: a game that ran faster than 50.5 before or
+  /// after is NTSC, however slow it is now.
+  static double standardRate(double rate) => rate > 50.5 ? 59.94 : 50;
 
   /// Whether Undo has something to put back.
   bool get canUndo => profile.optimized != null;
 
   /// Puts back what the Auto Optimizer changed, when every one of its settings still has the value
-  /// it gave; otherwise Undo is forgotten and false returned.
+  /// it gave; otherwise Undo is forgotten and false returned. A value the host no longer offers
+  /// is matched to one it does, as presets are; a setting the host refuses stays in Undo, and
+  /// false is returned.
   Future<bool> undo() async {
     final record = profile.optimized;
     if (record == null || _busy || !game.loaded) return false;
@@ -294,17 +300,25 @@ class RetroGraphics extends ChangeNotifier {
       return false;
     }
     return _exclusive(() async {
+      final failed = <String, RetroOptimizedValue>{};
       for (final MapEntry(:key, :value) in record.entries) {
-        if (options[key] != null) await game.setOption(key, value.before);
-        if (value.saved case final String saved) {
+        final option = options[key];
+        final back = option == null ? value.before : RetroGraphicsCatalog.fit(option, value.before);
+        if (back == null || (option != null && !await game.setOption(key, back))) {
+          failed[key] = value;
+          continue;
+        }
+        if (back != value.before) {
+          profile.options[key] = back;
+        } else if (value.saved case final String saved) {
           profile.options[key] = saved;
         } else {
           profile.options.remove(key);
         }
       }
-      profile.optimized = null;
+      profile.optimized = failed.isEmpty ? null : failed;
       save();
-      return true;
+      return failed.isEmpty;
     });
   }
 

@@ -283,4 +283,83 @@ void main() {
     expect(playing.graphics.checking, isFalse);
     expect(playing.graphics.lastCheck, isNull);
   });
+
+  test('a game slowed below 60 with no rate before Apply is still an NTSC game, and stepped down', () async {
+    expect(RetroGraphics.standardRate(52), 59.94);
+    expect(RetroGraphics.standardRate(49.8), 50);
+    final playing = _Playing(
+      offered: {
+        RetroGraphicsCatalog.resolution: ['1', '2', '3', '4'],
+      },
+    );
+    addTearDown(playing.dispose);
+    await playing.start();
+    final checks = <RetroSpeedCheck>[];
+    playing.graphics.onChecked = checks.add;
+    await playing.graphics.preview();
+    await playing.graphics.apply();
+    playing.play(4.2, 52);
+    await pumpEventQueue();
+    expect(checks.single.target, 59.94);
+    expect(checks.single.lowered?.key, RetroGraphicsCatalog.resolution);
+  });
+
+  test('a game already slow before Apply is held against its own console\'s rate', () async {
+    final playing = _Playing(
+      offered: {
+        RetroGraphicsCatalog.resolution: ['1', '2', '3', '4'],
+      },
+    );
+    addTearDown(playing.dispose);
+    await playing.start();
+    final checks = <RetroSpeedCheck>[];
+    playing.graphics.onChecked = checks.add;
+    playing.play(3, 52);
+    await playing.graphics.preview();
+    await playing.graphics.apply();
+    playing.play(4.2, 50);
+    await pumpEventQueue();
+    expect(checks.single.target, 59.94, reason: 'faster than PAL before Apply: an NTSC game');
+    expect(checks.single.held, isFalse);
+  });
+
+  test('Apply again with every change refused leaves the running check as it was', () async {
+    final playing = _Playing();
+    addTearDown(playing.dispose);
+    await playing.start();
+    final checks = <RetroSpeedCheck>[];
+    playing.graphics.onChecked = checks.add;
+    playing.session.refused[RetroGraphicsCatalog.antialiasing] = {'2'};
+    await playing.graphics.preview();
+    expect(await playing.graphics.apply(), isTrue, reason: 'the host took the rest');
+    expect(playing.graphics.proposed.keys, [RetroGraphicsCatalog.antialiasing]);
+    expect(await playing.graphics.apply(), isFalse);
+    expect(playing.graphics.checking, isTrue);
+    playing.play(4.2, 59.94);
+    await pumpEventQueue();
+    expect(checks, hasLength(1));
+    expect(playing.graphics.checking, isFalse);
+  });
+
+  test('Undo matches a value the host no longer offers, and keeps what the host refused', () async {
+    final playing = _Playing(
+      offered: {
+        RetroGraphicsCatalog.resolution: ['1', '2', '3', '4'],
+      },
+    );
+    addTearDown(playing.dispose);
+    await playing.start();
+    final graphics = playing.graphics;
+    playing.profile.optimized = {
+      RetroGraphicsCatalog.resolution: (before: '8', saved: '8', applied: '1'),
+      RetroGraphicsCatalog.trueColor: (before: 'true', saved: null, applied: 'false'),
+    };
+    playing.session.refused[RetroGraphicsCatalog.trueColor] = {'true'};
+    expect(await graphics.undo(), isFalse);
+    expect(playing.session.chosen(RetroGraphicsCatalog.resolution), '4', reason: 'the largest offered below 8x');
+    expect(playing.profile.options[RetroGraphicsCatalog.resolution], '4');
+    expect(playing.profile.optimized?.keys, [RetroGraphicsCatalog.trueColor]);
+    expect(graphics.canUndo, isTrue);
+    expect(playing.session.options.map((option) => option.$2), isNot(contains('8')));
+  });
 }

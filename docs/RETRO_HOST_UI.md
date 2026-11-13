@@ -333,8 +333,10 @@ and `Platform.numberOfProcessors`. `RetroGraphicsOptimizer.recommend` then:
 The page shows each change as "from → to". Apply sends them and keeps, for
 each, the value the game had and what the player had saved, so Undo puts both
 back. Undo works only while every setting still has the value Apply gave;
-otherwise it is forgotten. Any change by hand on the page, a preset too,
-forgets Undo.
+otherwise it is forgotten. A value the host no longer offers is matched to
+one it does, as a preset's is, and a setting the host refuses stays in Undo.
+Any change by hand on the page, a preset too, forgets Undo. Apply again,
+with every change refused, leaves a speed check that is running as it was.
 
 **The speed check.** After Apply, `RetroFrameMonitor` measures the game's
 frame rate from the client's `frames` events (only those marked drawn), while
@@ -342,10 +344,14 @@ the game plays, is not paused and has no `graphicsPending`. The host
 publishes a frame for each `retro_run` and paces `retro_run` to the core's
 own rate, and SwanStation's hardware renderers hand over a frame on every
 run, so a lower rate means the computer could not keep up. The check skips a
-second (the renderer is remade), measures three, and holds that against the
-rate the game had before Apply (its last two seconds of steady play). With no
-rate from before, it uses the PS1's own rate nearest above what it measured:
-about 60 or 50 frames a second. Below 93 % of it, the resolution goes down
+second (the renderer is remade) and counts every frame of the next three, so
+a stall inside them lowers the rate. It holds the rate against the PS1's own:
+about 60 frames a second, or 50 for a PAL game. The host reports no rate, so
+a game that ran faster than 50.5 frames a second before Apply (its last two
+seconds of steady play) or after it counts as NTSC, however slow it is now.
+An NTSC game that slows to between 46.5 and 50.5 with no rate from before
+cannot be told from a PAL game, and is taken as one. Below 93 % of the rate,
+the resolution goes down
 one notch the host offers (at 1x, the multisample count), Undo still puts
 back what the game had before Apply, and a toast tells the player. A rate
 that holds says so in a toast too. The page shows what the check found.
@@ -504,12 +510,14 @@ native memory as a real ring slot would be, so no host is started.
   host's ([`fake_option_session.dart`](../test/ui/retro_host/fake_option_session.dart)):
   presets with a limited resolution list and the PGXP options that appear,
   a refused value, preview, Apply and Undo, Undo forgotten by a change by
-  hand or elsewhere, nothing to apply without the computer or the OpenGL
-  renderer, and the speed check holding, stepping down, stopped by a change
-  by hand, and ending with the game.
+  hand or elsewhere, Undo with a value no longer offered or refused, nothing
+  to apply without the computer or the OpenGL renderer, and the speed check
+  holding, stepping down (also with no rate before Apply, or a game already
+  slow), stopped by a change by hand, left alone by an Apply refused, and
+  ending with the game.
   [`retro_frame_monitor_test.dart`](../test/ui/retro_host/retro_frame_monitor_test.dart)
-  covers the steady rate across a pause, a measure's warm-up and wait, and
-  frames not drawn.
+  covers the steady rate across a pause, a measure's warm-up and wait,
+  frames not drawn, and a stall while the game runs.
 - [`retro_graphics_catalog_test.dart`](../test/core/retro_host/retro_graphics_catalog_test.dart),
   [`retro_graphics_optimizer_test.dart`](../test/core/retro_host/retro_graphics_optimizer_test.dart)
   and [`retro_graphics_profile_test.dart`](../test/core/retro_host/retro_graphics_profile_test.dart)

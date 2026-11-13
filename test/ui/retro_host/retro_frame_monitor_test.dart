@@ -85,4 +85,13 @@ void main() {
     expect(await measured, isNull);
     expect(await monitor.measure(warmup: Duration.zero, span: const Duration(seconds: 1)), isNull);
   });
+
+  test('a stall while the game runs lowers the measured rate', () async {
+    final measured = monitor.measure(warmup: const Duration(seconds: 1), span: const Duration(seconds: 3));
+    play(1.5, 60);
+    now += const Duration(milliseconds: 4500);
+    play(0.05, 60);
+    final rate = await measured;
+    expect(rate, lessThan(10), reason: 'half a second of frames over five seconds');
+  });
 }

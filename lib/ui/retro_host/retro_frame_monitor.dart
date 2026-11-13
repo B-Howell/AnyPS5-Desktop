@@ -93,19 +93,23 @@ class RetroFrameMonitor {
   }
 }
 
+/// One measure: every frame from the end of its warm-up to the end of its span is counted, none
+/// dropped, so a stall inside the span lowers the rate.
 class _Measure {
-  _Measure(this.warmup, this.span, this.ready) : rate = RetroFrameRate(window: span + const Duration(seconds: 1));
+  _Measure(this.warmup, this.span, this.ready);
 
   final Duration warmup;
   final Duration span;
   final bool Function() ready;
-  final RetroFrameRate rate;
   final done = Completer<double?>();
   Duration? _start;
+  Duration? _first;
+  var _frames = 0;
 
   void restart() {
     _start = null;
-    rate.reset();
+    _first = null;
+    _frames = 0;
   }
 
   /// A frame at [now]: the rate once [span] after [warmup] has been measured, otherwise null.
@@ -116,8 +120,9 @@ class _Measure {
     }
     final start = _start ??= now;
     if (now - start < warmup) return null;
-    rate.add(now);
-    if (now - start >= warmup + span) return rate.rate;
-    return null;
+    final first = _first ??= now;
+    _frames++;
+    if (now - start < warmup + span || now == first) return null;
+    return (_frames - 1) * Duration.microsecondsPerSecond / (now - first).inMicroseconds;
   }
 }
