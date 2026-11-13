@@ -93,8 +93,8 @@ class RetroFrameMonitor {
   }
 }
 
-/// One measure: every frame from the end of its warm-up to the end of its span is counted, none
-/// dropped, so a stall inside the span lowers the rate.
+/// One measure: the frames that come from the end of its warm-up until its span has passed, over
+/// the time since the warm-up ended, so a stall anywhere after the warm-up lowers the rate.
 class _Measure {
   _Measure(this.warmup, this.span, this.ready);
 
@@ -103,12 +103,10 @@ class _Measure {
   final bool Function() ready;
   final done = Completer<double?>();
   Duration? _start;
-  Duration? _first;
   var _frames = 0;
 
   void restart() {
     _start = null;
-    _first = null;
     _frames = 0;
   }
 
@@ -118,11 +116,10 @@ class _Measure {
       restart();
       return null;
     }
-    final start = _start ??= now;
-    if (now - start < warmup) return null;
-    final first = _first ??= now;
+    final from = (_start ??= now) + warmup;
+    if (now <= from) return null;
     _frames++;
-    if (now - start < warmup + span || now == first) return null;
-    return (_frames - 1) * Duration.microsecondsPerSecond / (now - first).inMicroseconds;
+    if (now - from < span) return null;
+    return _frames * Duration.microsecondsPerSecond / (now - from).inMicroseconds;
   }
 }

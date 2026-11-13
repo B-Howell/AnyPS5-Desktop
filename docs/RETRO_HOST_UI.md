@@ -344,8 +344,9 @@ the game plays, is not paused and has no `graphicsPending`. The host
 publishes a frame for each `retro_run` and paces `retro_run` to the core's
 own rate, and SwanStation's hardware renderers hand over a frame on every
 run, so a lower rate means the computer could not keep up. The check skips a
-second (the renderer is remade) and counts every frame of the next three, so
-a stall inside them lowers the rate. It holds the rate against the PS1's own:
+second (the renderer is remade) and counts the frames of the next three over
+the time since the skipped second ended, so a stall anywhere in them lowers
+the rate. It holds the rate against the PS1's own:
 about 60 frames a second, or 50 for a PAL game. The host reports no rate, so
 a game that ran faster than 50.5 frames a second before Apply (its last two
 seconds of steady play) or after it counts as NTSC, however slow it is now.
@@ -600,8 +601,8 @@ rate is measured, Enhanced is chosen through `RetroGraphics`, every value is
 checked as the core's `activeValue` (the PGXP options showed up), and the
 frames must still come at more than 54 a second. It passed on Windows on
 13 November 2026 with the host and SwanStation from `.local/workspace/Latest`
-(the `gpu` branch's resolution limits): 60.01 frames a second before and
-60.04 after, at 4x.
+(the `gpu` branch's resolution limits): 60.15 frames a second before and
+60.07 after, at 4x.
 
 [`retro_host_app_real_test.dart`](../test/ui/retro_host/retro_host_app_real_test.dart)
 reads the same file and runs the whole launcher against the real host: the

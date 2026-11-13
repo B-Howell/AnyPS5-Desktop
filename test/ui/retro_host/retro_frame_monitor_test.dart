@@ -94,4 +94,12 @@ void main() {
     final rate = await measured;
     expect(rate, lessThan(10), reason: 'half a second of frames over five seconds');
   });
+
+  test('a stall across the end of the warm-up counts too', () async {
+    final measured = monitor.measure(warmup: const Duration(seconds: 1), span: const Duration(seconds: 3));
+    play(0.9, 60);
+    now += const Duration(milliseconds: 4500);
+    play(0.05, 60);
+    expect(await measured, lessThan(1), reason: 'three frames in more than four seconds after the warm-up');
+  });
 }
