@@ -71,7 +71,8 @@ class VulkanDevice {
   final List<VulkanHeap> heaps;
 
   /// `VkPhysicalDeviceIDProperties.deviceUUID` in lowercase hex: the same for one device across
-  /// drivers and processes. Null on a Vulkan 1.0 loader or device, which has none.
+  /// drivers and processes. Null when the loader or the device is older than Vulkan 1.1, where it
+  /// is not asked for.
   final String? uuid;
 
   Map<String, Object?> toJson() => {
