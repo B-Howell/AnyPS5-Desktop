@@ -547,7 +547,12 @@ class RetroHostClient {
         _lastStatusEnded = false;
         _setFrame(null, null);
       case 'status':
-        if (result != null) {
+        if (result == null) {
+          _gameLoaded = false;
+          _epoch = null;
+          _lastStatusEnded = false;
+          _stopDeadline = null;
+        } else {
           final status = RetroStatus.parse(_object(result, 'status'));
           _lastStatusEnded = status.ended;
           if (status.ended) _stopDeadline = null;
@@ -586,6 +591,8 @@ class RetroHostClient {
     _pings.removeFirst();
   }
 
+  /// Maps a new ring. The oldest ring, and the frame shown from it, are let go first, so no more
+  /// than two rings are ever mapped (protocol.md "Memory objects").
   void _onRing(RetroFields f, int descriptor) {
     final int bytes;
     final int memory;
@@ -601,6 +608,15 @@ class RetroHostClient {
       retroHostCloseDescriptor(descriptor);
       rethrow;
     }
+    final previous = _previousRing;
+    if (previous != null) {
+      if (identical(_frameRing, previous)) {
+        _frame = null;
+        _frameRing = null;
+      }
+      previous.unmap();
+      _previousRing = null;
+    }
     final error = calloc<Uint8>(256).cast<Utf8>();
     try {
       final base = retroHostMapRing(_connection, memory, bytes, error, 256);
@@ -611,14 +627,6 @@ class RetroHostClient {
       } on Object {
         retroHostUnmapRing(base, bytes);
         rethrow;
-      }
-      final previous = _previousRing;
-      if (previous != null) {
-        if (identical(_frameRing, previous)) {
-          _frame = null;
-          _frameRing = null;
-        }
-        previous.unmap();
       }
       _previousRing = _ring;
       _ring = ring;

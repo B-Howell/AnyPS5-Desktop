@@ -194,13 +194,13 @@ void main() {
       [
         ..._startCall(checkout),
         _rumbleStep(1, 3000),
-        ..._call('status', null, null),
-        ..._call('connectedPorts', 2, true),
+        ..._status(checkout, 3, ended: false),
+        ..._call('connectedPorts', 2, true, id: 4),
         _rumbleStep(1, 1000),
-        ..._call('status', null, null),
-        ..._call('connectedPorts', 1, true),
+        ..._status(checkout, 5, ended: false),
+        ..._call('connectedPorts', 1, true, id: 6),
         _rumbleStep(1, 2000),
-        ..._call('status', null, null),
+        ..._status(checkout, 7, ended: false),
         {
           'from': 'launcher',
           'message': {'type': 'shutdown'},
@@ -248,7 +248,7 @@ void main() {
         _startCall(checkout)[1],
         _call('connectedPorts', 2, true, id: 3)[1],
         _rumbleStep(1, 1000),
-        ..._call('status', null, null),
+        ..._status(checkout, 4, ended: false),
         {
           'from': 'launcher',
           'message': {'type': 'shutdown'},
@@ -273,7 +273,7 @@ void main() {
         _startCall(checkout)[1],
         _call('pause', true, null, id: 3)[1],
         _rumbleStep(0, 1000),
-        ..._call('status', null, null),
+        ..._status(checkout, 4, ended: false),
         {
           'from': 'launcher',
           'message': {'type': 'shutdown'},
@@ -307,7 +307,7 @@ void main() {
           'anyValueFor': ['id'],
         },
         _rumbleStep(0, 2000),
-        ..._call('status', null, null, id: 5),
+        ..._status(checkout, 5, ended: false),
         {
           'from': 'launcher',
           'message': {'type': 'shutdown'},
@@ -331,9 +331,9 @@ void main() {
       'clean',
       [
         ..._startCall(checkout),
-        ..._endedStatus(checkout, 3),
+        ..._status(checkout, 3, ended: true),
         _rumbleStep(0, 1000),
-        ..._endedStatus(checkout, 4),
+        ..._status(checkout, 4, ended: true),
         {
           'from': 'launcher',
           'message': {'type': 'shutdown'},
@@ -342,6 +342,23 @@ void main() {
       ],
       check: (session) =>
           expect([for (final r in session.rumbles) r.strong], isNot(contains(1000)), reason: 'no rumble after the end'),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'a status of null forgets a game released before its end was seen',
+    () => _playOwn(
+      checkout,
+      python,
+      'release answered before any status showed the end, status null, then the host exits unasked.',
+      'hostFailure',
+      [
+        ..._startCall(checkout),
+        ..._call('release', null, null, id: 3),
+        ..._call('status', null, null, id: 4),
+        {'hostExits': 1},
+      ],
+      check: (session) => expectLater(session.client.status(), throwsA(isA<RetroHostGone>())),
     ),
     timeout: const Timeout(Duration(seconds: 90)),
   );
@@ -381,9 +398,9 @@ Map<String, Object?> _secondStart(String checkout, int id) {
   };
 }
 
-/// A `status` call, as the session's call [id], whose reply is play-and-quit's status of the ended
-/// game.
-List<Map<String, Object?>> _endedStatus(String checkout, int id) {
+/// A `status` call, as the session's call [id], whose reply is play-and-quit's status of its game,
+/// running or [ended].
+List<Map<String, Object?>> _status(String checkout, int id, {required bool ended}) {
   final steps =
       (jsonDecode(File(p.join(checkout, 'fixtures', 'v1', 'sessions', 'play-and-quit.json')).readAsStringSync())
               as Map<String, Object?>)['steps']!
@@ -391,7 +408,7 @@ List<Map<String, Object?>> _endedStatus(String checkout, int id) {
   final reply = steps.cast<Map<String, Object?>>().firstWhere((step) {
     final message = step['message'] as Map<String, Object?>?;
     final result = message?['result'];
-    return message?['type'] == 'reply' && result is Map && result['ended'] == true;
+    return message?['type'] == 'reply' && result is Map && result['ended'] == ended;
   });
   return [
     _call('status', null, null, id: id)[0],

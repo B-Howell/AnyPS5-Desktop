@@ -161,13 +161,24 @@ answered the same way, and never left waiting.
 - **Which frames are drawn.** Only a frame of the current game (its `epoch` is
   the one `start` returned) is drawn and kept as `frame`.
 - **How long a frame stays readable.** A ring stays mapped while the frame
-  being shown is in it, but the client never maps more than two rings. So
+  being shown is in it, but the client never maps more than two rings: when a
+  third arrives, it lets go of the oldest, and the frame shown from it, before
+  mapping the new one. So
   `frame` stays readable until another frame replaces it, or until a second
   newer ring arrives first, or until a `frame` message moves the pin without
   pinning a newer frame of this game (the host may then write the old slot);
   in the last two cases `frame` becomes null. Read `frame` again after
   each message. A frame that was not drawn can be read only until the next
   message.
+
+## Which game is loaded
+
+The client counts a game as loaded from `start`'s reply until `release` is
+answered for a game a `status` showed ended, or until a `status` returns null,
+which means no game is loaded. `release` does nothing while the game still
+runs, so a `release` answered before the end was seen leaves the game loaded
+until a `status` says otherwise. A host failure reports a failed game (see
+above) only while a game is loaded.
 
 ## Resets
 
