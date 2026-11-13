@@ -34,6 +34,11 @@ The client adds the protocol's own arguments after the command it is given:
 - `--ipc-fd 3 --parent-pid <pid>` on Linux and macOS;
 - `--ipc-read <h> --ipc-write <h> --parent-pid <pid>` on Windows.
 
+**The environment.** The host inherits the launcher's environment, with any
+variables the caller adds on top. On Windows names that differ only in case are
+one variable, so an added `Path` replaces the inherited `PATH` instead of
+sitting beside it, where the host would read whichever came first.
+
 **Windows.**
 
 - The host gets two anonymous pipes. Their host ends are made inheritable only
@@ -179,6 +184,25 @@ is the launcher's conformance test.
   the client sent.
 - **Extra session.** One session of its own checks that a reply with a wrong
   result still answers its call.
+
+[`test/core/retro_host/retro_host_real_test.dart`](../test/core/retro_host/retro_host_real_test.dart)
+runs the client against the real host and the real SwanStation core, as the
+host repository's `tests/real_core.py` does:
+
+- **What it plays.** The free OpenBIOS boots a small PS-EXE that the host
+  repository's `tests/make_test_disc.py` puts on a disc image.
+- **What it checks.** `start` with the BIOS options, `status` until `ready`, at
+  least 100 drawn frames in 10 seconds, two pinned frames that are not black
+  and differ, then `stopGame()`, `release` and `shutdown`, ending `clean` with
+  exit code 0.
+- **How to run it.** Set `ANYPS5_RETRO_HOST_REAL` to a JSON file naming
+  `host`, `core`, `bios`, `program` and `discBuilder` (the path of
+  `make_test_disc.py`), with an optional `environment` for the host, such as
+  a `PATH` that has the host's runtime libraries. Python 3 must be on `PATH`.
+  Without the variable the test is skipped, so CI skips it.
+
+[`test/core/retro_host/retro_host_environment_test.dart`](../test/core/retro_host/retro_host_environment_test.dart)
+covers how the host's environment is put together.
 
 [`test/core/retro_host/strict_json_test.dart`](../test/core/retro_host/strict_json_test.dart)
 covers the JSON rules, and

@@ -61,6 +61,17 @@ class RetroRumble {
   final int weak;
 }
 
+/// The host's environment as `NAME=value` entries: [base] with [added] on top. Windows treats
+/// names that differ only in case as one variable, and `Platform.environment` gives them in upper
+/// case there, so an added `Path` must replace the inherited `PATH` rather than sit beside it.
+List<String> retroHostEnvironment(Map<String, String> base, Map<String, String> added, {required bool windows}) {
+  final merged = <String, MapEntry<String, String>>{};
+  for (final entry in [...base.entries, ...added.entries]) {
+    merged[windows ? entry.key.toUpperCase() : entry.key] = entry;
+  }
+  return [for (final entry in merged.values) '${entry.key}=${entry.value}'];
+}
+
 class _Pending {
   _Pending(this.id, this.method, this.deadline);
 
@@ -148,9 +159,7 @@ class RetroHostClient implements RetroHostSession {
     client._callback = NativeCallable<RetroHostCallbackNative>.listener(client._onEvent);
     final env = environment == null
         ? const <String>[]
-        : [
-            for (final e in {...Platform.environment, ...environment}.entries) '${e.key}=${e.value}',
-          ];
+        : retroHostEnvironment(Platform.environment, environment, windows: Platform.isWindows);
     final error = calloc<Uint8>(512).cast<Utf8>();
     final argv = _strings(command);
     final envp = _strings(env);
