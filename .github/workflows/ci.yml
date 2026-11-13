@@ -40,7 +40,7 @@ env:
   # The emulator host's fixture sessions and fake host, which test/core/retro_host plays against
   # the launcher's client (anyps5-retro-host docs/protocol.md "Fixtures").
   RETRO_HOST_REPOSITORY: https://github.com/B-Howell/anyps5-retro-host.git
-  RETRO_HOST_COMMIT: f1b357abe53b14eaf8ef1b5d05f0dc2bc1d7b95e
+  RETRO_HOST_COMMIT: d91fd36c2597a36edd4d04799e193c836ae18849
   # libpulse-dev: flutter_webrtc's Linux loopback capture (share play's Opus track) builds only
   # with it; the bundle then needs libpulse0, which PulseAudio and PipeWire systems have.
   LINUX_PACKAGES: clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libsdl2-2.0-0 libpulse-dev file
