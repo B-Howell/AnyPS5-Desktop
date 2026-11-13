@@ -33,8 +33,14 @@ enum RetroHostGamePhase {
 /// input focus, following its `status`, stopping it, and shutting the host down. It owns its
 /// [session] and the [picture] of its frames.
 class RetroHostGame extends ChangeNotifier {
-  RetroHostGame(this.session, {this.statusEvery = const Duration(milliseconds: 500)})
-    : picture = RetroFrameImage(session.frames)..accepting = false {
+  RetroHostGame(
+    this.session, {
+    this.statusEvery = const Duration(milliseconds: 500),
+    double volume = 1,
+    bool muted = false,
+  }) : picture = RetroFrameImage(session.frames)..accepting = false,
+       _level = volume,
+       _isMuted = muted {
     session.ready.ignore();
     unawaited(
       session.ended.then((_) {
@@ -50,7 +56,11 @@ class RetroHostGame extends ChangeNotifier {
     Map<String, String>? environment,
     double volume = 1,
     bool muted = false,
-  }) => RetroHostGame(RetroHostClient.start(command: command, environment: environment, volume: volume, muted: muted));
+  }) => RetroHostGame(
+    RetroHostClient.start(command: command, environment: environment, volume: volume, muted: muted),
+    volume: volume,
+    muted: muted,
+  );
 
   final RetroHostSession session;
 
@@ -82,6 +92,26 @@ class RetroHostGame extends ChangeNotifier {
 
   /// The status the game ended with, once [phase] is [RetroHostGamePhase.ended].
   RetroStatus? get endStatus => _phase == RetroHostGamePhase.ended ? _status : null;
+
+  /// The host's output volume, 0 to 1, as the player set it.
+  double get volume => _level;
+  double _level;
+
+  /// Whether the host's output is muted.
+  bool get muted => _isMuted;
+  bool _isMuted;
+
+  /// The core's vibration for each controller port (protocol.md "rumble"). The client gives
+  /// nothing while the game is paused or the window has no focus, and gives zeros for both ports
+  /// when the game starts, pauses, ends or loses focus.
+  Stream<RetroRumble> get rumble => session.rumble;
+
+  /// Whether a game is loaded: [phase] is [RetroHostGamePhase.loading] or
+  /// [RetroHostGamePhase.playing].
+  bool get loaded => _gameLive;
+
+  /// Whether [input] reaches the host now: a game is loaded and the window has input focus.
+  bool get acceptsInput => _gameLive && _focused;
 
   /// Why the game could not be started or followed, for logs, when no status says it.
   String? get failure => _failure;
@@ -161,6 +191,56 @@ class RetroHostGame extends ChangeNotifier {
   void input(int port, int buttons, {int leftX = 0, int leftY = 0, int rightX = 0, int rightY = 0}) {
     if (!_gameLive || !_focused) return;
     session.input(port, buttons, leftX: leftX, leftY: leftY, rightX: rightX, rightY: rightY);
+  }
+
+  /// `connectedPorts`: how many controller ports, from port 1, have a controller in (1 or 2).
+  /// False when no game is loaded, the host did not take it, or the call failed; a host failure
+  /// is then seen by the next status.
+  Future<bool> connectedPorts(int count) {
+    if (count < 1 || count > 2) throw RangeError.range(count, 1, 2, 'count');
+    return _gameCall('connectedPorts', count);
+  }
+
+  /// `changeDisc`: inserts the disc at [index] of `status.discs.labels`. True when the change
+  /// started; the next status shows its progress, and it is asked at once.
+  Future<bool> changeDisc(int index) async {
+    if (index < 0 || index > 127) throw RangeError.range(index, 0, 127, 'index');
+    final started = await _gameCall('changeDisc', index);
+    if (started) await refresh();
+    return started;
+  }
+
+  /// `option`: sets a core option the status lists to one of its values. True when the host
+  /// took it; the status is asked at once, so the option shows its new choice.
+  Future<bool> setOption(String key, String value) async {
+    final taken = await _gameCall('option', {'key': key, 'value': value});
+    if (taken) await refresh();
+    return taken;
+  }
+
+  /// `volume`: the host's output volume for this and every later game. Sent once the host has
+  /// greeted the launcher; only kept when the host has ended or never greeted it.
+  Future<void> setVolume({double? level, bool? muted}) async {
+    if (level != null && (level.isNaN || level < 0 || level > 1)) throw RangeError.value(level, 'level');
+    _level = level ?? _level;
+    _isMuted = muted ?? _isMuted;
+    _notify();
+    try {
+      await session.ready;
+      if (_hostEnded || _phase == RetroHostGamePhase.closed) return;
+      await session.call('volume', {'level': _level, 'muted': _isMuted});
+    } on Object {
+      return;
+    }
+  }
+
+  Future<bool> _gameCall(String method, Object? args) async {
+    if (!_gameLive) return false;
+    try {
+      return await session.call(method, args) == true;
+    } on Object {
+      return false;
+    }
   }
 
   /// Pauses or resumes the game for the player. A game paused by losing focus stays paused until

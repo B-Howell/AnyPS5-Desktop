@@ -1,7 +1,11 @@
 import 'dart:ui' as ui;
 
+import 'package:anyps5_desktop/core/controllers/pad_info.dart';
+import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_session.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_pad.dart';
 import 'package:anyps5_desktop/ui/retro_host/retro_frame_view.dart';
+import 'package:anyps5_desktop/ui/retro_host/retro_host_controls.dart';
 import 'package:anyps5_desktop/ui/retro_host/retro_host_game.dart';
 import 'package:anyps5_desktop/ui/retro_host/retro_host_game_view.dart';
 import 'package:flutter/widgets.dart';
@@ -103,5 +107,45 @@ void main() {
       await pumpEventQueue();
     });
     expect(session.closed, isTrue);
+  });
+
+  testWidgets('a controller held while the window loses focus reaches the game again when it comes back', (
+    tester,
+  ) async {
+    final session = FakeRetroHostSession();
+    final game = RetroHostGame(session, statusEvery: const Duration(hours: 1));
+    var state = const PadState(pressed: {PadButton.south});
+    final controls = RetroHostControls(
+      game,
+      pads: RetroPadReader(pads: () => const ['pad'], state: (_) => state),
+    );
+    await tester.pumpWidget(_framed(RetroHostGameView(game: game)));
+    session.readyCompleter.complete();
+    session.nextStatus = fakeStatus();
+    await tester.runAsync(() => game.start(_request));
+    await tester.pump(const Duration(milliseconds: 20));
+    final cross = RetroPadInput(buttons: RetroPadButton.cross.mask);
+    expect(session.inputStates, [(0, cross), (1, RetroPadInput.idle)]);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    state = const PadState(pressed: {PadButton.south, PadButton.start});
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(session.inputStates, hasLength(2));
+    expect(session.focusChanges, [false]);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(session.inputStates.skip(2), [
+      (0, RetroPadInput(buttons: RetroPadButton.cross.mask | RetroPadButton.start.mask)),
+      (1, RetroPadInput.idle),
+    ]);
+
+    controls.dispose();
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(() async {
+      game.dispose();
+      await pumpEventQueue();
+    });
   });
 }
