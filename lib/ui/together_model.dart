@@ -81,7 +81,7 @@ part 'together_captures.dart';
 part 'together_calls.dart';
 
 /// The launcher's version, as AnyTogether hears it.
-const launcherVersion = '0.1.22';
+const launcherVersion = '0.1.23';
 
 /// AnyTogether in the launcher: the account and how it signs in (an email code, a code approved
 /// on the website, or the paired phone), the server it uses, and the rows the settings show for
@@ -614,7 +614,8 @@ class TogetherModel {
   void _followGame() {
     family.followGame();
     followGameSession();
-    final running = app.running;
+    // An emulator game is not an AnyTogether title: friends see the user online, as with none.
+    final running = app.running?.$1.retro == null ? app.running : null;
     final since = running == null ? null : DateTime.tryParse(app.preferences.lastPlayed[running.$1.id] ?? '');
     hub.socket.presence = running == null
         ? const PresenceOnline()
