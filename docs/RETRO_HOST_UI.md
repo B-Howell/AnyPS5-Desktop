@@ -21,6 +21,14 @@ the launcher plays a PS1 disc from its emulator library through all of them
 | [`lib/core/retro_host/retro_seats.dart`](../lib/core/retro_host/retro_seats.dart) | `RetroSeats`: which controller sits at each of the PS1's two ports. |
 | [`lib/ui/retro_host/retro_host_controls.dart`](../lib/ui/retro_host/retro_host_controls.dart) | `RetroHostControls`: plays a `RetroHostGame` with the launcher's controllers, connects port 2 and forwards vibration. `RetroPadReader` is how it reads the controllers. |
 | [`lib/ui/retro_host/retro_game_menu.dart`](../lib/ui/retro_host/retro_game_menu.dart) | `RetroGameMenu`: the in-game menu's rows (discs, core options, volume) and what choosing them does. |
+| [`lib/core/retro_host/retro_graphics_catalog.dart`](../lib/core/retro_host/retro_graphics_catalog.dart) | `RetroGraphicsCatalog`: SwanStation's picture settings as the Graphics page shows them, the presets' values, and how a wanted value is matched to one the host offers. |
+| [`lib/core/retro_host/retro_hardware.dart`](../lib/core/retro_host/retro_hardware.dart) | `RetroHardware` and `RetroAdapter`: what the Auto Optimizer reads of the computer. |
+| [`lib/core/retro_host/retro_graphics_optimizer.dart`](../lib/core/retro_host/retro_graphics_optimizer.dart) | `RetroGraphicsOptimizer`: the Auto Optimizer's suggestion for one game, and one notch down. |
+| [`lib/core/retro_host/retro_graphics_profile.dart`](../lib/core/retro_host/retro_graphics_profile.dart) | `RetroGraphicsProfile`: one game's kept picture settings and what the Auto Optimizer changed, for Undo. |
+| [`lib/core/retro_host/retro_frame_rate.dart`](../lib/core/retro_host/retro_frame_rate.dart) | `RetroFrameRate`: frames per second over a window of frame times. |
+| [`lib/ui/retro_host/retro_frame_monitor.dart`](../lib/ui/retro_host/retro_frame_monitor.dart) | `RetroFrameMonitor`: counts a game's frames from the client's frame events while it plays. |
+| [`lib/ui/retro_host/retro_graphics.dart`](../lib/ui/retro_host/retro_graphics.dart) | `RetroGraphics`: the Graphics page's logic for one game: settings, presets, preview, Apply, Undo and the speed check. |
+| [`lib/ui/retro_host_graphics.dart`](../lib/ui/retro_host_graphics.dart) | The `RetroHostGraphicsPage` part of `AppModel`: the Graphics page's rows, its keys, and the toast after a speed check. |
 | [`lib/core/retro_host/retro_host_install.dart`](../lib/core/retro_host/retro_host_install.dart) | `RetroHostInstall`: the host and SwanStation library a build may run. |
 | [`lib/core/retro_host/retro_keyboard.dart`](../lib/core/retro_host/retro_keyboard.dart) | `RetroKeyboard`: the keyboard as a PS1 controller, with the keys of a game's Controls. |
 | [`lib/ui/retro_host_play.dart`](../lib/ui/retro_host_play.dart) | `RetroPlay` and the `RetroHostPlaying` part of `AppModel`: the setting, starting a disc in the host, the commands while it plays, the menu's panel rows, closing. |
@@ -247,6 +255,101 @@ opening the menu again while a close still waits for its reply keeps the
 controllers out. A menu disposed while open closes the same way. A game that
 is not loaded has no menu to open.
 
+## The Graphics page: `RetroGraphics`
+
+`RetroGraphics` is the Graphics page of one game. Like `RetroGameMenu` it
+shows no widget. It follows the game's `status`, sends `option` through
+`RetroHostGame.setOption`, and keeps what the host took in a
+`RetroGraphicsProfile`, calling `save` after each change.
+
+**The settings.** `RetroGraphicsCatalog.settings` lists the SwanStation
+options the page shows, in its order, each with a plain name and one line
+(keys in `assets/l10n`). The keys and values come from SwanStation's
+`src/libretro/libretro_core_options.h`:
+
+| Option | On the page |
+| --- | --- |
+| `swanstation_GPU_ResolutionScale` | Resolution |
+| `swanstation_GPU_TextureFilter` | Texture smoothing (Nearest, Bilinear, JINC2, xBR, each with or without edge blending) |
+| `swanstation_GPU_MSAA` | Edge smoothing (multisample counts and SSAA) |
+| `swanstation_GPU_PGXPEnable` | Steady 3D shapes |
+| `swanstation_GPU_PGXPTextureCorrection`, `_PGXPCulling`, `_PGXPColorCorrection`, `_PGXPDepthBuffer` | Straight textures, Fewer gaps, Even shading, Depth sorting |
+| `swanstation_GPU_TrueColor`, `_ScaledDithering`, `_ChromaSmoothing24Bit` | True colour, Fine dither pattern, Smooth videos |
+| `swanstation_GPU_DisableInterlacing`, `_DownsampleMode`, `_WidescreenHack` | No interlacing, Downsampling, Widescreen |
+
+The page lists only what `status.options` lists. A real host's status
+(recorded in `test/fixtures/retro_host`) shows that SwanStation lists its
+other PGXP options only while geometry correction is on. PGXP's tuning
+options (CPU mode, vertex cache, tolerance) stay in the game's menu with the
+core's other options. SwanStation's `Enabled` and `Disabled` show as On and
+Off, and the texture filters get plain names. Every other label is the
+host's.
+
+**When a change takes effect.** A setting whose option has `restart: true`
+says "Takes effect when the game is started again." after its line, as the
+host reports it (the host's docs/host.md, "Options": "The host reports
+`restart: true` for the options a core marks "(Restart)" at the end of their
+text, as libretro cores do", and for a few SwanStation applies only at boot). A
+setting whose chosen value is not yet its `activeValue` says it takes effect
+in a moment.
+
+**Presets.** Original is SwanStation's own defaults (1x, no smoothing, no
+PGXP). Enhanced asks for 4x, bilinear textures, PGXP with straight textures
+and fewer gaps, and smooth videos. Maximum asks for 8x, xBR, 4x MSAA, PGXP
+and true colour. None of them changes Widescreen, which breaks 2D games, so
+it is left to the player. A preset sends only values the host offers
+(`RetroGraphicsCatalog.fit`): a number it does not offer becomes the largest
+one below it, since protocol.md's `status` section says the host lists "only
+the whole-number scales whose largest frame the host can pass on". Any other
+value it does not offer is left out. A preset is sent in two passes, so the
+PGXP options that appear once geometry correction is on get the preset's
+values too. The preset row shows the preset the settings match, or Custom.
+
+**Per game.** What the host took is kept in
+`Preferences.retroHostGraphics[game.id]` and given at `start` over
+`Preferences.retroHostOptions`, the options every game gets. Other games keep
+theirs.
+
+**The Auto Optimizer.** It is the launcher's Auto Optimizer
+(`RetroOptimizer` and `RetroLaunchOptimizer` on `claude/integrated-0.1.22`)
+for the host path. Check this PC reads `LauncherServices.retroHardware`: on
+Windows the height of the display the launcher is on, the graphics adapters
+the runner's `retroAdapters` lists through DXGI (without software adapters),
+and `Platform.numberOfProcessors`. `RetroGraphicsOptimizer.recommend` then:
+
+- picks the adapter as before: the only one with memory of its own, or the
+  only one with at least 2 GiB;
+- says why it has nothing to suggest when the computer cannot be read, no
+  adapter can be told apart, or `status.hardware` is false (SwanStation's
+  software renderer, where the resolution does nothing);
+- suggests the resolution as the launcher's Balanced profile did: the
+  display's height over 240, rounded up, no more than 4x, and no more than
+  the adapter's memory allows (1x under 2 GiB, 2x from 2, 3x from 4, 4x from
+  8 GiB);
+- suggests bilinear textures without edge blending and smooth videos above
+  1x, 2x MSAA from 8 GiB, PGXP from 4 CPU threads, and fine dithering;
+- matches every value to one the host offers.
+
+The page shows each change as "from → to". Apply sends them and keeps, for
+each, the value the game had and what the player had saved, so Undo puts both
+back. Undo works only while every setting still has the value Apply gave;
+otherwise it is forgotten. Any change by hand on the page, a preset too,
+forgets Undo.
+
+**The speed check.** After Apply, `RetroFrameMonitor` measures the game's
+frame rate from the client's `frames` events (only those marked drawn), while
+the game plays, is not paused and has no `graphicsPending`. The host
+publishes a frame for each `retro_run` and paces `retro_run` to the core's
+own rate, and SwanStation's hardware renderers hand over a frame on every
+run, so a lower rate means the computer could not keep up. The check skips a
+second (the renderer is remade), measures three, and holds that against the
+rate the game had before Apply (its last two seconds of steady play). With no
+rate from before, it uses the PS1's own rate nearest above what it measured:
+about 60 or 50 frames a second. Below 93 % of it, the resolution goes down
+one notch the host offers (at 1x, the multisample count), Undo still puts
+back what the game had before Apply, and a toast tells the player. A rate
+that holds says so in a toast too. The page shows what the check found.
+
 ## In the launcher
 
 **The setting.** Settings › Emulators › **Run PS1 games in the separate
@@ -274,7 +377,8 @@ player's volume, and sends `start` with:
   settings folder, where protocol.md's `start` example keeps it;
 - `saves`: `AppPaths.retroSaves`, `retro/saves/ps1` beside it;
 - `options`: the SwanStation options the player chose in the menu before
-  (`Preferences.retroHostOptions`).
+  (`Preferences.retroHostOptions`), with that game's Graphics page settings
+  over them (`Preferences.retroHostGraphics`).
 
 The family play-time watcher follows the game as it follows any game
 (`FamilyGate.followGame`), and a family limit that closes games closes it
@@ -316,13 +420,17 @@ While the game loads, PS or Esc gives the start up.
 **The menu.** `Layer.retroMenu` is a panel styled as the quick menu
 ("Paused", the game's icon and name). Its rows come from `RetroGameMenu`:
 Resume, each disc of a multi-disc game ("In the console." under the inserted
-one), each SwanStation option as a choice of its labels, Volume (a bar in
-tenths), Mute, and Close game. Opening it pauses the game and keeps the
+one), Graphics, each other SwanStation option as a choice of its labels,
+Volume (a bar in tenths), Mute, and Close game. Graphics opens
+`Layer.retroGraphics`, the Graphics page with two sections, Picture and Auto
+Optimizer. The game stays paused there. Back returns to the menu on
+Graphics, and PS to the game. Opening it pauses the game and keeps the
 controllers out of it. PS, Back or Resume close it. Any other layer over the
 game (a family notice) pauses it the same way, and the game's own screen back
 in front resumes it. The game's play time is counted for the family rules
 until it ends, not until its error screen is left. A chosen option is kept in
-`Preferences.retroHostOptions` once the host took it, and the volume and mute
+`Preferences.retroHostOptions` once the host took it (a Graphics page
+setting in that game's `Preferences.retroHostGraphics`), and the volume and mute
 in `Preferences.retroHostVolume` and `retroHostMuted`, so the next game starts
 with them.
 
@@ -391,6 +499,24 @@ native memory as a real ring slot would be, so no host is started.
   opening the menu pauses the game and suspends the controls, also when it is
   opened again while closing still waits for the host, and that a menu
   disposed while open gives the controllers back.
+- [`retro_graphics_test.dart`](../test/ui/retro_host/retro_graphics_test.dart)
+  runs `RetroGraphics` on a fake host whose options behave as the recorded
+  host's ([`fake_option_session.dart`](../test/ui/retro_host/fake_option_session.dart)):
+  presets with a limited resolution list and the PGXP options that appear,
+  a refused value, preview, Apply and Undo, Undo forgotten by a change by
+  hand or elsewhere, nothing to apply without the computer or the OpenGL
+  renderer, and the speed check holding, stepping down, stopped by a change
+  by hand, and ending with the game.
+  [`retro_frame_monitor_test.dart`](../test/ui/retro_host/retro_frame_monitor_test.dart)
+  covers the steady rate across a pause, a measure's warm-up and wait, and
+  frames not drawn.
+- [`retro_graphics_catalog_test.dart`](../test/core/retro_host/retro_graphics_catalog_test.dart),
+  [`retro_graphics_optimizer_test.dart`](../test/core/retro_host/retro_graphics_optimizer_test.dart)
+  and [`retro_graphics_profile_test.dart`](../test/core/retro_host/retro_graphics_profile_test.dart)
+  replay the recorded status: the page's order, preset values the host has,
+  matching to offered values, the suggestion for several computers, the
+  adapter choice, one notch down, the kept profile in the preferences file,
+  and the frame rate.
 - [`retro_pad_test.dart`](../test/core/retro_host/retro_pad_test.dart) checks
   every button against the protocol's bit table, the triggers, both ends of
   the stick range and the dead zone.
@@ -406,10 +532,14 @@ native memory as a real ring slot would be, so no host is started.
   player's paths, volume and options, the controller kept from the launcher
   on the game's screen, PS opening and closing the menu, the menu's rows and
   what they keep, Close game, an error screen, a clean end, an outdated host,
-  and a start given up.
+  and a start given up. It also opens the Graphics page: its names, a preset
+  kept for that game only, Custom, Back to the menu, PS to the game, a game
+  started with its own graphics, and the Auto Optimizer's rows, its toast and
+  Undo.
 - [`retro_host_play_golden_test.dart`](../test/ui/retro_host_play_golden_test.dart)
   draws the loading screen, the error screen, the game's picture, the menu
-  over it, and Settings › Emulators with the host's rows.
+  over it, the Graphics page with Enhanced chosen, the Auto Optimizer's
+  suggestion, and Settings › Emulators with the host's rows.
 - [`retro_keyboard_test.dart`](../test/core/retro_host/retro_keyboard_test.dart)
   checks the keyboard layout as a PS1 pad, a moved key, the stick modifier
   and the keys joining a controller.
@@ -456,6 +586,15 @@ Both cases passed on Windows on 13 November 2026, with the host built from
 the host repository's `stage2-gpu` branch (bde086e) with WinLibs GCC 15.2,
 and SwanStation built for Windows.
 
+[`retro_graphics_real_test.dart`](../test/ui/retro_host/retro_graphics_real_test.dart)
+reads the same file. SwanStation runs the OpenBIOS test program, its frame
+rate is measured, Enhanced is chosen through `RetroGraphics`, every value is
+checked as the core's `activeValue` (the PGXP options showed up), and the
+frames must still come at more than 54 a second. It passed on Windows on
+13 November 2026 with the host and SwanStation from `.local/workspace/Latest`
+(the `gpu` branch's resolution limits): 60.01 frames a second before and
+60.04 after, at 4x.
+
 [`retro_host_app_real_test.dart`](../test/ui/retro_host/retro_host_app_real_test.dart)
 reads the same file and runs the whole launcher against the real host: the
 host and SwanStation are copied into one folder that `ANYPS5_RETRO_HOST`
@@ -463,8 +602,8 @@ names, the PS-EXE is put on a disc in a games folder, OpenBIOS goes in the
 PS1 BIOS folder, and `AppModel.play` starts the disc with the setting on. The
 game reaches `playing` and shows two pictures that differ. A second
 controller in the app's controller reader connects port 2. PS opens the menu
-(the host takes `pause`), the internal resolution is changed and kept, the
-volume is set and kept, PS resumes, and Close game ends with the host's clean
+(the host takes `pause`), Graphics opens and the resolution is changed and
+kept for that game, Back returns to the menu, the volume is set and kept, PS resumes, and Close game ends with the host's clean
 exit and a memory card written. Its helpers, shared with the test above, are
 in [`real_host_support.dart`](../test/ui/retro_host/real_host_support.dart).
 It passed on Windows on 13 November 2026 with the same host and SwanStation
@@ -487,8 +626,13 @@ it, so WinLibs' `bin` folder has to be on `PATH` there.
   screen is in front.
 - **No mouse.** The mouse buttons and the wheel in a game's Controls are not
   read for a PS1 game.
-- **Long menus.** The menu lists every option SwanStation offers (about fifty
-  for a PS1 game), in the host's order.
+- **Long menus.** The menu lists every option SwanStation offers that is not
+  on the Graphics page (about forty for a PS1 game), in the host's order.
+- **The Auto Optimizer on Linux.** Only Windows reads the graphics adapters
+  (DXGI), so on Linux Check this PC says the computer could not be read.
+- **One step down.** The speed check lowers one notch once. It does not
+  measure again after that, and it does not change the PGXP or smoothing
+  settings.
 - **One copy per frame.** Each frame is copied once and uploaded through
   `decodeImageFromPixels`. A texture that shares the ring with the GPU would
   avoid the copy. That is worth doing only if a trace shows the copy costs
