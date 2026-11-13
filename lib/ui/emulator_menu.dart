@@ -53,21 +53,94 @@ class _EmulatorMenu {
   final _parents = <({PanelCategory Function() page, String? row})>[];
   PanelCategory Function()? _page;
 
+  final _advancedDraft = <String, int>{};
+  bool _applyingAdvanced = false;
+
+  void openAdvanced(PanelCategory Function() page) {
+    _advancedDraft.clear();
+    openPage(page);
+  }
+
+  ChoiceRow advancedChoice(String key, List<String> labels, int current) =>
+      ChoiceRow(labels, _advancedDraft[key] ?? current, (index) {
+        if (_applyingAdvanced) return;
+        if (index == current) {
+          _advancedDraft.remove(key);
+        } else {
+          _advancedDraft[key] = index;
+        }
+        app._changed();
+      });
+
+  List<PanelRow> advancedActions(EmbeddedRetroGame session) => [
+    PanelRow(
+      id: 'embedded-apply-advanced',
+      title: 'Apply changes',
+      pinToBottom: true,
+      kind: _advancedDraft.isEmpty || _applyingAdvanced
+          ? InfoRow(_applyingAdvanced ? 'Applying…' : 'Choose a setting to change.')
+          : ActionRow(() => unawaited(_applyAdvanced(session))),
+    ),
+    if (_advancedDraft.isNotEmpty && !_applyingAdvanced)
+      PanelRow(
+        id: 'embedded-discard-advanced',
+        title: 'Discard changes',
+        kind: ActionRow(() {
+          _advancedDraft.clear();
+          app._changed();
+        }),
+      ),
+  ];
+
+  Future<void> _applyAdvanced(EmbeddedRetroGame session) async {
+    if (_applyingAdvanced || app.embeddedGame != session) return;
+    _applyingAdvanced = true;
+    app._changed();
+    try {
+      for (final entry in _advancedDraft.entries.toList()) {
+        if (app.embeddedGame != session) break;
+        final key = entry.key;
+        final index = entry.value;
+        if (key == 'embedded-filter' || key == 'embedded-framing') {
+          if (key == 'embedded-filter') {
+            session.filter = index;
+          } else {
+            session.framing = index;
+          }
+          if (app.running case (final game, _)) app._clearRetroAutoOptimize(game.id);
+          _advancedDraft.remove(key);
+          continue;
+        }
+        final option = session.options[key];
+        if (option == null || index >= option.values.length || !await session.setOption(key, option.values[index])) {
+          app.show('A graphics setting could not be applied. Review the remaining changes.');
+          break;
+        }
+        _advancedDraft.remove(key);
+      }
+      if (_advancedDraft.isEmpty) app.show('Graphics changes applied.');
+    } finally {
+      _applyingAdvanced = false;
+      if (!app._disposed) app._changed();
+    }
+  }
+
   PanelCategory get entry => PanelCategory(
     id: 'emulators',
     title: 'Emulators',
     rows: [
       for (final platform in RetroPlatform.values)
-        PanelRow(
-          id: 'emulators-${platform.name}',
-          title: ManagedRetro.platformName(platform),
-          detail: switch (platform) {
-            RetroPlatform.ps1 => app.retroSettings.program(platform) == null ? 'SwanStation' : platform.emulator,
-            RetroPlatform.ps2 => app.retroSettings.program(platform) == null ? 'LRPS2' : platform.emulator,
-            RetroPlatform.ps3 => 'RPCS3',
-          },
-          kind: ActionRow(() => openConsole(platform)),
-        ),
+        if (app.system == HostSystem.windows || app.supportsManagedRetro(platform) || platform == RetroPlatform.ps2)
+          PanelRow(
+            id: 'emulators-${platform.name}',
+            title: ManagedRetro.platformName(platform),
+            detail: switch (platform) {
+              RetroPlatform.ps1 => app.retroSettings.program(platform) == null ? 'SwanStation' : platform.emulator,
+              RetroPlatform.ps2 => app.retroSettings.program(platform) == null ? 'LRPS2' : platform.emulator,
+              RetroPlatform.ps3 => 'RPCS3',
+            },
+            kind: ActionRow(() => openConsole(platform)),
+          ),
       PanelRow(
         id: 'emulators-show-folders',
         title: 'Show as folders',
@@ -78,6 +151,7 @@ class _EmulatorMenu {
   );
 
   bool get fromGraphics => _origin?.layer == Layer.retroGraphics;
+  bool get fromQuickMenu => _origin?.layer == Layer.quickMenu;
 
   List<PanelCategory> get categories => [if (_page case final page?) page()];
 
@@ -150,6 +224,11 @@ class _EmulatorMenu {
       _originGameId = null;
       _page = null;
       if (origin == null) return false;
+      if (origin.layer == Layer.quickMenu && app.running == null && app.starting == null) return false;
+      if (origin.layer == Layer.friendOptions && app.together.chosen == null) {
+        app.open(Layer.friends, cue: Cue.back);
+        return true;
+      }
       if (gameId != null) {
         final index = app.games.indexWhere((game) => game.id == gameId);
         if (index < 0) return false;
@@ -169,7 +248,16 @@ class _EmulatorMenu {
     final groups = <_EmulatorGroup, List<PanelCategory>>{};
     for (final section in app.retroSettings.categories(platform, game: game)) {
       if (section.id == prefix) {
-        final setup = section.rows.where((row) => row.id != '$prefix-add').toList();
+        final setup = [
+          ...section.rows.where((row) => row.id != '$prefix-add'),
+          if (platform == RetroPlatform.ps2 && game == null && app.together.ps2LanSetupEnabled)
+            PanelRow(
+              id: 'ps2-lan-setup',
+              title: T.text('ps2LanSetupTitle'),
+              detail: T.text('ps2LanSetupDetail'),
+              kind: ActionRow(() => _push(_ps2LanSetupPage)),
+            ),
+        ];
         final custom = section.rows.where((row) => row.id == '$prefix-add').toList();
         if (setup.isNotEmpty) {
           (groups[_EmulatorGroup.setup] ??= []).add(PanelCategory(id: section.id, title: 'Setup', rows: setup));
@@ -185,6 +273,64 @@ class _EmulatorMenu {
       (groups[_EmulatorGroup.forSection(source)] ??= []).add(section);
     }
     return groups;
+  }
+
+  PanelCategory _ps2LanSetupPage({VoidCallback? onReady}) {
+    final game = app._ps2LanSetupTitle;
+    final available = app.together.ps2LanSetupAvailable;
+    final installed = app.ps2LanCoreInstalled;
+    final hasBios = app.ps2LanBiosPath != null;
+    final blocker = !available
+        ? 'ps2LanBusy'
+        : !installed
+        ? 'ps2LanCore'
+        : !hasBios
+        ? 'ps2LanBios'
+        : null;
+    return PanelCategory(
+      id: 'ps2-lan-network-setup',
+      title: T.text('ps2LanSetupTitle'),
+      rows: [
+        if (!installed)
+          PanelRow(
+            id: 'ps2-lan-setup-install',
+            title: T.text('ps2LanPackageInstall'),
+            detail: T.text(app._ps2LanPackageAvailable ? 'ps2LanBundledPackageDetail' : 'ps2LanPackageDetail'),
+            kind: available
+                ? ActionRow(() => unawaited(app._preparePs2LanMedia(bios: false)))
+                : InfoRow(T.text('ps2LanBusy')),
+          ),
+        if (!hasBios)
+          PanelRow(
+            id: 'ps2-lan-setup-bios',
+            title: T.text('ps2LanBiosImport'),
+            kind: available
+                ? ActionRow(() => unawaited(app._preparePs2LanMedia(bios: true)))
+                : InfoRow(T.text('ps2LanBusy')),
+          ),
+        if (game == null)
+          PanelRow(
+            id: 'ps2-lan-setup-media',
+            title: T.text('ps2LanSetupMediaTitle'),
+            detail: T.text('ps2LanSetupMedia'),
+            kind: const InfoRow(''),
+          )
+        else
+          PanelRow(
+            id: 'ps2-lan-setup-launch',
+            title: T.format('ps2LanSetupOpen', [game.name]),
+            detail: T.text('ps2LanSetupInstructions'),
+            kind: blocker == null ? ActionRow(() => unawaited(app._configurePs2Lan(game))) : InfoRow(T.text(blocker)),
+          ),
+        if (onReady != null)
+          PanelRow(
+            id: 'ps2-lan-setup-continue',
+            title: T.text('ps2LanSetupContinue'),
+            detail: T.text('ps2LanUseGameMenu'),
+            kind: blocker == null ? ActionRow(onReady) : InfoRow(T.text(blocker)),
+          ),
+      ],
+    );
   }
 
   String _consoleTitle(RetroPlatform platform, Game? game) {
@@ -215,11 +361,44 @@ class _EmulatorMenu {
     );
   }
 
+  void openChild(PanelCategory Function() page) {
+    if (app.overlay == Layer.emulatorMenu && _page != null) {
+      _push(page);
+    } else {
+      openPage(page);
+    }
+  }
+
+  PanelRow autoOptimizeLink(Game game, [EmbeddedRetroGame? session]) => PanelRow(
+    id: 'emulator-auto-optimize',
+    title: 'Auto Optimize${app.preferences.retroAutoOptimized.contains(game.id) ? ' ✓' : ''}',
+    detail: session == null
+        ? 'Detect your PC and review settings for the next launch.'
+        : 'Review recommended settings for this game and your PC.',
+    kind: session != null && (session.isPs2Lan || session.isNetplay || session.isPs3Online)
+        ? const InfoRow('Available outside an online session.')
+        : ActionRow(() {
+            final panel = RetroAutoOptimizePanel(
+              gameName: game.name,
+              platform: game.retro!.platform,
+              readHardware: app.services.retroHardware,
+              prepare: (hardware) => session == null
+                  ? app._prepareLaunchOptimization(game, hardware)
+                  : liveRetroOptimizePlan(session, game.retro!, hardware),
+              refresh: () {
+                if (!app._disposed) app._changed();
+              },
+            );
+            openChild(panel.build);
+            unawaited(panel.detect());
+          }),
+  );
+
   PanelRow tuningLink(EmbeddedRetroGame session) => PanelRow(
     id: 'emulator-tune-game',
-    title: 'Tune This Game',
+    title: 'Compare gameplay performance',
     detail: 'Compare two samples of the same gameplay segment.',
-    kind: ActionRow(() => openPage(() => _tuningPage(session))),
+    kind: ActionRow(() => openChild(() => _tuningPage(session))),
   );
 
   PanelCategory _tuningPage(EmbeddedRetroGame session) {
@@ -240,7 +419,9 @@ class _EmulatorMenu {
       resume: () {
         if (app.embeddedGame == session && app.spot?.category == 'emulator-tune-game') app.resumeGame();
       },
-      openRestartTrials: () => _push(() => app._retroRestartTrials.page(game, session)),
+      openRestartTrials: session.isPs2Lan || session.isPs3Online
+          ? null
+          : () => _push(() => app._retroRestartTrials.page(game, session)),
     );
   }
 
@@ -253,23 +434,18 @@ class _EmulatorMenu {
         id: 'emulator-group',
         title: title,
         rows: [
-          if (session != null)
-            PanelRow(
-              id: 'emulator-tune-game',
-              title: 'Tune This Game',
-              detail: 'Compare two samples of the same gameplay segment.',
-              kind: ActionRow(() => _push(() => _tuningPage(session))),
-            )
+          if (session != null || app._canOptimizeBeforeLaunch(game))
+            autoOptimizeLink(game, session)
           else
             const PanelRow(
-              id: 'emulator-tune-game',
-              title: 'Tune This Game',
+              id: 'emulator-auto-optimize',
+              title: 'Auto Optimize',
               kind: InfoRow('Start the game and open Graphics from the Quick Menu.'),
             ),
           for (final section in sections)
             PanelRow(
               id: section.id,
-              title: 'Quick Optimize',
+              title: 'Optimize standalone emulator',
               detail: 'Shared console settings',
               kind: ActionRow(() => _push(() => _section(platform, game, group, section.id))),
             ),

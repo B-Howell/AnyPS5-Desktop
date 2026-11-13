@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
@@ -7,26 +8,216 @@ import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/managed_retro.dart';
 import 'package:anyps5_desktop/core/retro_settings.dart';
 import 'package:anyps5_desktop/core/host.dart';
+import 'package:anyps5_desktop/core/toolkit_download.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/home.dart';
+import 'package:anyps5_desktop/ui/together_model.dart';
+import 'package:archive/archive.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import '../support/ui_support.dart';
+import '../support/fixtures.dart' show writePs2IdentityIso;
 
-Directory _installFixtureCore(AppModel model, RetroPlatform platform) {
-  final header = ByteData(96)
+Directory _installFixtureCore(AppModel model, RetroPlatform platform, {bool lan = false}) {
+  final header = ByteData(lan ? 1024 : 96)
     ..setUint16(0, 0x5a4d, Endian.little)
     ..setUint32(60, 64, Endian.little)
     ..setUint32(64, 0x4550, Endian.little)
     ..setUint16(68, 0x8664, Endian.little)
     ..setUint16(86, 0x2000, Endian.little);
+  if (lan) {
+    const optional = 88;
+    const section = 208;
+    const raw = 512;
+    const rva = 0x1000;
+    header
+      ..setUint16(70, 1, Endian.little)
+      ..setUint16(84, 120, Endian.little)
+      ..setUint16(optional, 0x20b, Endian.little);
+    for (final (offset, value) in [
+      (optional + 108, 1),
+      (optional + 112, rva),
+      (optional + 116, 128),
+      (section + 12, rva),
+      (section + 16, 512),
+      (section + 20, raw),
+      (section + 36, 0x20000000),
+      (raw + 20, 1),
+      (raw + 24, 1),
+      (raw + 28, rva + 40),
+      (raw + 32, rva + 44),
+      (raw + 36, rva + 48),
+      (raw + 40, rva + 128),
+      (raw + 44, rva + 52),
+    ]) {
+      header.setUint32(offset, value, Endian.little);
+    }
+    header.buffer.asUint8List().setAll(raw + 52, 'retro_anyps5_dev9_bind_v1'.codeUnits);
+  }
   final emulator = Directory(p.join(p.dirname(model.paths.toolkits), 'Emulators'))..createSync(recursive: true);
-  File(p.join(emulator.path, ManagedRetro.libraryName(platform))).writeAsBytesSync(header.buffer.asUint8List());
+  File(p.join(emulator.path, EmbeddedCoreHost.windowsX64.libraryName(platform)))
+      .writeAsBytesSync(header.buffer.asUint8List());
   return emulator;
 }
 
 void main() {
+  test('PS2 LAN setup can boot the verified title and exchange frames without signing in', () async {
+    String? selectedMedia;
+    final picks = <List<String>>[];
+    final environment = {'ANYPS5_PS2_LAN': '1', 'ANYPS5_PS1_NETPLAY': '1'};
+    final fixture = makeFixture(
+      system: HostSystem.windows,
+      environment: environment,
+      pickFile: (_, extensions) async {
+        picks.add(extensions);
+        return selectedMedia;
+      },
+    );
+    final model = fixture.model;
+    addTearDown(() {
+      model.dispose();
+      fixture.dispose();
+    });
+    model.openSettingsCategory('emulators');
+    final ps2 = model
+        .panelCategories()
+        .expand((category) => category.rows)
+        .singleWhere((row) => row.id == 'emulators-ps2');
+    (ps2.kind as ActionRow).run();
+    final setup = model.panelCategories().single.rows.singleWhere((row) => row.id == 'emulator-group-setup');
+    (setup.kind as ActionRow).run();
+    final lan = model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps2-lan-setup');
+    (lan.kind as ActionRow).run();
+    PanelRow setupRow(String name) =>
+        model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps2-lan-setup-$name');
+    expect(setupRow('media').kind, isA<InfoRow>());
+    expect(setupRow('media').detail, contains('Gran Turismo 4'));
+    final readyUpdates = <bool>[];
+    model.addListener(() => readyUpdates.add(model.managedSetupConsole == null));
+    Future<void> choose(String action) async {
+      (setupRow(action).kind as ActionRow).run();
+      for (var i = 0; i < 100 && model.managedSetupConsole != null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(model.managedSetupConsole, isNull);
+      expect(readyUpdates.last, isTrue, reason: 'The page must refresh after the picker releases its busy state.');
+    }
+
+    await choose('install');
+    expect(picks.single, ['zip']);
+    final invalid = File(p.join(fixture.temp.path, 'invalid.zip'))..writeAsBytesSync([1, 2, 3]);
+    selectedMedia = invalid.path;
+    await choose('install');
+    expect(picks.last, ['zip']);
+    expect(model.toast, contains('did not pass verification'));
+    expect(model.ps2LanCoreInstalled, isFalse);
+    final iso = File(p.join(fixture.temp.path, 'gt4.iso'))..createSync();
+    model.games.add(
+      Game(
+        folder: fixture.temp.path,
+        titleId: 'PS2-GT4',
+        name: 'Gran Turismo 4',
+        names: const {},
+        defaultLanguage: 'en',
+        version: '2.00',
+        executable: ExecutableKind.disc,
+        retro: (platform: RetroPlatform.ps2, path: iso.path),
+        retroSerial: 'SCUS97328',
+      ),
+    );
+    PanelRow launch() => setupRow('launch');
+    expect(launch().title, 'Open Gran Turismo 4 for setup');
+    expect(launch().kind, isA<InfoRow>());
+    final core = _installFixtureCore(model, RetroPlatform.ps2, lan: true);
+    final offline = File(p.join(core.path, 'pcsx2_libretro.dll'));
+    final patchedBytes = await offline.readAsBytes();
+    final package = File(p.join(fixture.temp.path, 'pcsx2_libretro.dll.zip'))
+      ..writeAsBytesSync(
+        ZipEncoder().encode(Archive()..addFile(ArchiveFile('pcsx2_libretro.dll', patchedBytes.length, patchedBytes))),
+      );
+    final archiveDigest = await AssetDownload.sha256Of(package.path);
+    final libraryDigest = await AssetDownload.sha256Of(offline.path);
+    environment['ANYPS5_PS2_LAN_CORE_DIGESTS'] = '$archiveDigest:$libraryDigest';
+    _installFixtureCore(model, RetroPlatform.ps2);
+    final originalCore = await offline.readAsBytes();
+    selectedMedia = package.path;
+    await choose('install');
+    expect(model.ps2LanCoreInstalled, isTrue);
+    expect(await offline.readAsBytes(), originalCore);
+    final bios = File(p.join(fixture.temp.path, 'bios.bin'))..writeAsBytesSync(Uint8List(4 * 1024 * 1024)..[0] = 7);
+    selectedMedia = bios.path;
+    await choose('bios');
+    expect(picks.last, contains('bin'));
+    expect(model.ps2LanBiosPath, isNotNull);
+    expect(model.ps2LanCoreInstalled, isTrue);
+
+    const channel = MethodChannel('anyps5/retro_core');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    var exchanged = Completer<void>();
+    var starts = 0;
+    var stopped = false;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'start':
+          starts++;
+          expect(call.arguments['disc'], iso.path);
+          expect(call.arguments['core'], p.join(core.path, 'PS2-LAN', 'pcsx2_libretro.dll'));
+          expect(call.arguments['ps2LanMac'], [2, 0, 0, 0, 0, 1]);
+          return 7;
+        case 'status':
+          return {'presented': true, 'ended': stopped};
+        case 'ps2LanExchange':
+          if (!exchanged.isCompleted) exchanged.complete();
+          return <Uint8List>[];
+        case 'stop':
+          stopped = true;
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    (launch().kind as ActionRow).run();
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(starts, 0, reason: 'Cached library metadata cannot authorize a changed disc.');
+    } finally {
+      final game = model.embeddedGame;
+      await game?.close();
+      await game?.exitCode.timeout(const Duration(seconds: 3));
+    }
+    writePs2IdentityIso(iso, bootSerial: 'SCUS_973.28', revision: '2.00');
+    exchanged = Completer<void>();
+    final ps1 = Game(
+      folder: fixture.temp.path,
+      titleId: 'PS1-CTR',
+      name: 'Crash Team Racing',
+      names: const {},
+      defaultLanguage: 'en',
+      version: '1.00',
+      executable: ExecutableKind.disc,
+      retro: (platform: RetroPlatform.ps1, path: 'ctr.cue'),
+      retroSerial: 'SCUS94426',
+    );
+    expect(model.together.ps1LocalLaunchRows(ps1), isNotEmpty);
+    (launch().kind as ActionRow).run();
+    expect(model.starting, isNull, reason: 'The profile lease is still being acquired.');
+    expect(model.together.ps1LocalLaunchRows(ps1), isEmpty);
+    try {
+      await exchanged.future.timeout(const Duration(seconds: 3));
+      expect(model.ps2LanSetupActive, isTrue);
+      expect(model.embeddedGame?.isPs2Lan, isTrue);
+    } finally {
+      final game = model.embeddedGame;
+      await game?.close();
+      await game?.exitCode.timeout(const Duration(seconds: 3));
+    }
+    for (var i = 0; i < 50 && model.ps2LanSetupActive; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(model.ps2LanSetupActive, isFalse);
+  }, skip: Abi.current() != Abi.windowsX64);
+
   test('Windows onboarding can reach Home with no library or PS5 toolkit', () {
     final fixture = makeFixture(onboarded: false, withToolkit: false, system: HostSystem.windows);
     final model = fixture.model;

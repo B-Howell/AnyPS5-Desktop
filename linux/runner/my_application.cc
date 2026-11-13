@@ -1,4 +1,5 @@
 #include "my_application.h"
+#include "retro_core_host_linux.h"
 
 #include <cstring>
 
@@ -8,6 +9,7 @@
 #endif
 
 #include "flutter/generated_plugin_registrant.h"
+#include "layer_overlay.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -174,6 +176,10 @@ static void my_application_activate(GApplication* application) {
     rgba = TRUE;
   }
 
+  // Under Wayland, whether cards can go over the game (layer shell): said in the environment
+  // before Flutter starts, as ANYPS5_RGBA_VISUAL is.
+  layer_overlay_probe();
+
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
       project, self->dart_entrypoint_arguments);
@@ -193,6 +199,16 @@ static void my_application_activate(GApplication* application) {
   gtk_widget_realize(GTK_WIDGET(view));
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+  g_autoptr(FlPluginRegistrar) retro_registrar =
+      fl_plugin_registry_get_registrar_for_plugin(FL_PLUGIN_REGISTRY(view), "AnyPS5RetroCore");
+  auto* retro_core = new RetroCoreHostLinux(retro_registrar);
+  // Stop notifications before the view's disposal releases its engine.
+  g_signal_connect(view, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer host) {
+    static_cast<RetroCoreHostLinux*>(host)->Shutdown();
+  }), retro_core);
+  // Retain the texture owner until the view's engine has quiesced its renderer.
+  g_object_set_data_full(G_OBJECT(view), "anyps5-retro-core", retro_core,
+                         [](gpointer host) { delete static_cast<RetroCoreHostLinux*>(host); });
 
   g_autoptr(FlPluginRegistrar) window_registrar =
       fl_plugin_registry_get_registrar_for_plugin(FL_PLUGIN_REGISTRY(view),
@@ -207,6 +223,7 @@ static void my_application_activate(GApplication* application) {
                                             window_method_cb, self, nullptr);
   g_signal_connect(window, "window-state-event", G_CALLBACK(window_state_cb),
                    self);
+  layer_overlay_register(fl_plugin_registrar_get_messenger(window_registrar));
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }

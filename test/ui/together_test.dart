@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:anyps5_desktop/core/game_library.dart';
+import 'package:anyps5_desktop/core/game_process.dart';
 import 'package:anyps5_desktop/core/installer.dart';
 import 'package:anyps5_desktop/core/online/online_identity.dart';
 import 'package:anyps5_desktop/core/online/online_wire.dart';
+import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
 import 'package:anyps5_desktop/core/together/account.dart';
 import 'package:anyps5_desktop/core/together/messages.dart';
 import 'package:anyps5_desktop/core/together/people.dart';
@@ -1892,6 +1895,65 @@ void main() {
       (model.panelCategories().single.rows[6].kind as ActionRow).run();
       await until(() => server.callsTo('game-sessions/gs-ana/decline').isNotEmpty);
       expect(model.together.hub.badge, 0);
+    });
+
+    test('a PS1 netplay invite does not join through the PS5 path', () async {
+      final invite = {
+        'sessionId': 'ps1-ana',
+        'from': ana,
+        'titleId': 'SCUS94426',
+        'gameVersion': '1',
+        'engineBuild': RetroOnlineMode.synchronized.protocol,
+      };
+      server.gameInvites.add(invite);
+      server.push('game_session.invite', invite);
+      await until(() => model.together.hub.games.invites.isNotEmpty);
+      // This title is absent from the local library. Names come from game
+      // metadata; an uninstalled title falls back to its stable identifier.
+      expect(model.toast, 'Ana invites you to SCUS94426');
+      model.open(Layer.friends);
+      final accept = model.panelCategories().single.rows.singleWhere((row) => row.id == 'game-accept-ps1-ana');
+      (accept.kind as ActionRow).run();
+      expect(model.toast, contains('enabled x64 build'));
+      expect(server.callsTo('game-sessions/ps1-ana/join'), isEmpty);
+      expect(model.running, isNull);
+    });
+
+    test('a PS2 LAN invite stays separate from PS5 game sessions on builds without LAN play', () async {
+      final invite = {
+        'sessionId': 'ps2-ana',
+        'from': ana,
+        'titleId': 'SLUS21148',
+        'gameVersion': '1.00',
+        'engineBuild': RetroOnlineMode.lan.protocol,
+      };
+      server.gameInvites.add(invite);
+      server.push('game_session.invite', invite);
+      await until(() => model.together.hub.games.invites.isNotEmpty);
+      model.open(Layer.friends);
+      final accept = model.panelCategories().single.rows.singleWhere((row) => row.id == 'game-accept-ps2-ana');
+      (accept.kind as ActionRow).run();
+      expect(model.toast, 'This build does not support the game\'s online mode.');
+      expect(server.callsTo('game-sessions/ps2-ana/join'), isEmpty);
+      expect(model.running, isNull);
+    });
+
+    test('enabling friend join while a retro game runs does not open a PS5 session', () async {
+      final game = Game(
+        folder: fixture.temp.path,
+        titleId: 'SCUS94426',
+        name: 'Crash Team Racing',
+        names: const {},
+        defaultLanguage: 'en',
+        version: '1',
+        executable: ExecutableKind.disc,
+        retro: (platform: RetroPlatform.ps1, path: 'game.cue'),
+      );
+      model.running = (game, RunningGame.embedded(Future.value(0), DateTime.now()));
+      await model.together.setFriendsJoin(true);
+      expect(model.together.openingSession, isFalse);
+      expect(server.callsTo('game-sessions'), isEmpty);
+      model.running = null;
     });
   });
 }

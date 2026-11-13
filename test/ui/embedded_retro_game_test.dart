@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
+import 'package:anyps5_desktop/core/host.dart';
+import 'package:anyps5_desktop/core/online/ps2_lan_profile.dart';
+import 'package:anyps5_desktop/core/retro_optimizer.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/components.dart';
 import 'package:anyps5_desktop/ui/console_badge.dart';
@@ -17,6 +21,243 @@ import 'desktop_features_test.dart' show FakePads;
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('anyps5/retro_core');
+
+  testWidgets('PS1 picker boots chosen media and tracks only played discs through Quick Menu', (tester) async {
+    final env = <String, String>{};
+    final fixture = makeFixture(environment: env);
+    final model = fixture.model;
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(channel, null);
+      model.dispose();
+      fixture.dispose();
+    });
+    env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
+    File(p.join(fixture.temp.path, model.embeddedCoreHost.libraryName(RetroPlatform.ps1))).createSync();
+    final folder = Directory(p.join(model.root!, 'Multi'))..createSync();
+    final playlist = File(p.join(folder.path, 'multi.m3u'))..writeAsStringSync('One.cue\nTwo.cue\n');
+    for (final name in ['One.cue', 'Two.cue']) {
+      File(p.join(folder.path, name)).createSync();
+    }
+    File(
+      p.join(folder.path, 'retro.json'),
+    ).writeAsStringSync(jsonEncode({'platform': 'ps1', 'titleId': 'MULTI12345', 'name': 'Multi', 'disc': 'multi.m3u'}));
+    final calls = <MethodCall>[];
+    var ended = false;
+    var inserted = 1;
+    var played = 'Two.cue';
+    const resolution = 'swanstation_GPU_ResolutionScale';
+    const filtering = 'swanstation_GPU_TextureFilter';
+    const resolutions = ['1', '2', '3', '4'];
+    const filters = ['Nearest', 'BilinearBinAlpha'];
+    var scale = '1';
+    var filter = 'Nearest';
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      switch (call.method) {
+        case 'start':
+          return 123;
+        case 'status':
+          return {
+            'presented': true,
+            'ended': ended,
+            'hardware': true,
+            'options': {
+              resolution: {'values': resolutions, 'selected': resolutions.indexOf(scale), 'activeValue': scale},
+              filtering: {'values': filters, 'selected': filters.indexOf(filter), 'activeValue': filter},
+            },
+            'discs': {
+              'labels': ['Disc One', 'Disc Two'],
+              'inserted': inserted,
+              'insertedDiscPath': p.join(folder.path, inserted == 1 ? 'Two.cue' : 'One.cue'),
+              'playedDiscPath': played.isEmpty ? '' : p.join(folder.path, played),
+            },
+          };
+        case 'option':
+          final key = call.arguments['key'];
+          if (key == resolution) scale = call.arguments['value'] as String;
+          return true;
+        case 'tuningOptions':
+          final values = call.arguments['values'] as Map;
+          scale = values[resolution] as String? ?? scale;
+          filter = values[filtering] as String? ?? filter;
+          return true;
+        case 'changeDisc':
+          inserted = 0;
+          played = '';
+          return true;
+        case 'stop':
+          ended = true;
+      }
+      return null;
+    });
+    model.rescan();
+    final game = model.games.singleWhere((game) => game.name == 'Multi');
+    final play = model.play(game);
+    await tester.pump();
+    expect(model.overlay, Layer.retroStartDisc);
+    expect(calls, isEmpty);
+    (model.panelCategories().single.rows[1].kind as ActionRow).run();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    final start = calls.singleWhere((call) => call.method == 'start');
+    expect(start.arguments['disc'], playlist.path);
+    expect(start.arguments['initialDiscIndex'], 1);
+    expect(start.arguments['initialDiscPath'], p.join(folder.path, 'Two.cue'));
+    expect(calls.where((call) => call.method == 'status'), isNotEmpty, reason: model.toast);
+    expect(model.preferences.retroLastDisc[game.id], 'Two.cue');
+
+    model.open(Layer.quickMenu);
+    final rows = model.panelCategories().single.rows;
+    expect(rows.any((row) => row.id == 'retroGraphics'), isTrue);
+    (rows.singleWhere((row) => row.id == 'retro-disc-menu').kind as ActionRow).run();
+    expect(model.overlay, Layer.retroDiscs);
+    (model.panelCategories().single.rows.first.kind as ActionRow).run();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(calls.singleWhere((call) => call.method == 'changeDisc').arguments, 0);
+    expect(model.preferences.retroLastDisc[game.id], 'Two.cue');
+    model.closeOverlay();
+    expect(model.overlay, Layer.quickMenu);
+    model.resumeGame();
+    played = 'One.cue';
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(model.preferences.retroLastDisc[game.id], 'One.cue');
+    expect(calls.where((call) => call.method == 'start'), hasLength(1));
+
+    ended = true;
+    await tester.pump(const Duration(milliseconds: 150));
+    await play;
+    final next = model.play(game);
+    await tester.pump();
+    expect(model.panelCategories().single.rows.first.detail, 'Last played');
+    model.closeOverlay();
+    await next;
+    await tester.pump(const Duration(seconds: 5));
+    expect(calls.where((call) => call.method == 'start'), hasLength(1));
+  });
+
+  test('PS2 LAN keeps a private network memory card and saves across rooms', () async {
+    final environment = <String, String>{};
+    final fixture = makeFixture(system: HostSystem.windows, environment: environment);
+    addTearDown(fixture.dispose);
+    final app = fixture.model;
+    final home = fixture.temp.path;
+    environment['ANYPS5_LIBRETRO_HOME'] = home;
+    final core = File(p.join(home, 'pcsx2_libretro.dll'))..createSync();
+    final disc = File(p.join(home, 'test.iso'))..createSync();
+    final bios = File(p.join(home, 'system', 'pcsx2', 'bios', 'anyps5-imported.bin'))
+      ..createSync(recursive: true)
+      ..writeAsBytesSync(Uint8List(4 * 1024 * 1024)..[0] = 7);
+    final original = File(p.join(home, 'bios-source.bin'))..writeAsBytesSync([1, 2, 3]);
+    app.preferences.retroBiosSources['ps2'] = original.path;
+    final game = Game(
+      folder: home,
+      titleId: 'PS2-SLUS21148',
+      name: 'LAN fixture',
+      names: const {},
+      defaultLanguage: 'en',
+      version: '1.00',
+      executable: ExecutableKind.disc,
+      retro: (platform: RetroPlatform.ps2, path: disc.path),
+    );
+    Map<Object?, Object?>? start;
+    var stopped = false;
+    Completer<void>? stopRequested;
+    final frame = Uint8List(14)..[0] = 255;
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'start':
+          stopped = false;
+          start = call.arguments as Map<Object?, Object?>;
+          return 7;
+        case 'status':
+          return {'presented': true, 'ended': stopped};
+        case 'ps2LanExchange':
+          expect(call.arguments['texture'], 7);
+          expect(call.arguments['frames'], [frame]);
+          return [frame];
+        case 'stop':
+          if (stopRequested case final pending?) {
+            pending.complete();
+          } else {
+            stopped = true;
+          }
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    final offlineCard = File(p.join(home, 'system', 'pcsx2', 'memcards', 'Mcd001.ps2'))
+      ..createSync(recursive: true)
+      ..writeAsBytesSync([9]);
+    final mac = Uint8List.fromList([2, 0, 0, 0, 0, 1]);
+    final session = await app.preparePs2Lan(game, mac, canBoot: () => true);
+    final args = start!;
+    final system = args['system']! as String;
+    final saves = args['saves']! as String;
+    final networkCard = File(p.join(system, 'pcsx2', 'memcards', 'Mcd001.ps2'));
+    final gameSave = File(p.join(saves, 'fixture.sav'));
+    try {
+      expect(args['core'], core.path);
+      expect(args['disc'], disc.path);
+      expect(args['ps2LanMac'], mac);
+      expect(system, isNot(p.join(home, 'system')));
+      final isolatedBios = File(p.join(system, 'pcsx2', 'bios', 'anyps5-imported.bin'));
+      expect(isolatedBios.readAsBytesSync().first, 7);
+      expect(isolatedBios.lengthSync(), bios.lengthSync());
+      expect(Directory(saves).listSync(), isEmpty);
+      expect(app.embeddedGame?.isPs2Lan, isTrue);
+      expect(await session.exchange([frame]), [frame]);
+      networkCard.createSync(recursive: true);
+      networkCard.writeAsBytesSync([4, 5, 6]);
+      gameSave.writeAsBytesSync([8]);
+    } finally {
+      await session.close();
+      await session.done.timeout(const Duration(seconds: 4));
+    }
+    final nextMac = Uint8List.fromList([2, 0, 0, 0, 0, 2]);
+    final rejoined = await app.preparePs2Lan(game, nextMac, canBoot: () => true);
+    try {
+      expect(start!['system'], system);
+      expect(start!['saves'], saves);
+      expect(start!['ps2LanMac'], nextMac);
+      expect(networkCard.readAsBytesSync(), [4, 5, 6]);
+      expect(gameSave.readAsBytesSync(), [8]);
+    } finally {
+      await rejoined.close();
+      await rejoined.done.timeout(const Duration(seconds: 4));
+    }
+    expect(offlineCard.readAsBytesSync(), [9]);
+    expect(bios.readAsBytesSync().first, 7);
+    expect(original.readAsBytesSync(), [1, 2, 3]);
+
+    start = null;
+    final stopping = stopRequested = Completer<void>();
+    final failed = expectLater(
+      app.preparePs2Lan(
+        game,
+        mac,
+        canBoot: () {
+          if (start != null) throw StateError('Launch interrupted after native startup');
+          return true;
+        },
+      ),
+      throwsStateError,
+    );
+    try {
+      await stopping.future.timeout(const Duration(seconds: 3));
+      await expectLater(app.preparePs2Lan(game, mac, canBoot: () => true), throwsA(isA<Ps2LanProfileInUse>()));
+    } finally {
+      stopRequested = null;
+      stopped = true;
+      await failed;
+      await app.embeddedGame?.exitCode.timeout(const Duration(seconds: 3));
+    }
+    expect(app.embeddedGame, isNull);
+    expect(networkCard.readAsBytesSync(), [4, 5, 6]);
+  }, skip: !Platform.isWindows);
 
   test('PS3 graphics preferences keep separate choices for each title', () {
     final temp = Directory.systemTemp.createTempSync('anyps5-ps3-preferences-');
@@ -47,8 +288,9 @@ void main() {
           home: Center(child: ConsoleBadge(console: expected)),
         ),
       );
-      final badge = tester.widget<Text>(find.text(expected.name.toUpperCase()));
-      expect(badge.semanticsLabel, expected.label);
+      final badge = tester.widget<Image>(find.byType(Image));
+      expect(badge.semanticLabel, expected.label);
+      expect((badge.image as AssetImage).assetName, 'assets/retro/console-${expected.name}.png');
     }
   });
 
@@ -62,7 +304,7 @@ void main() {
     });
     final folder = fixture.temp.path;
     env['ANYPS5_LIBRETRO_HOME'] = folder;
-    File(p.join(folder, 'swanstation_libretro.dll')).createSync();
+    File(p.join(folder, model.embeddedCoreHost.libraryName(RetroPlatform.ps1))).createSync();
     final disc = File(p.join(folder, 'boot.cue'))..createSync();
     final icon = File(p.join(folder, 'cover.png'))..writeAsBytesSync(iconArt(0x102030, 0x304050));
     final game = Game(
@@ -99,9 +341,22 @@ void main() {
     final coverRect = tester.getRect(cover);
     final barRect = tester.getRect(bar);
 
-    status = {'presented': true, 'progressLabel': 'Compiling PPU modules', 'progressPercent': 43};
+    status = {'presented': true, 'startupVisible': false};
     await tester.pump(const Duration(milliseconds: 150));
-    expect(model.starting, isNull);
+    expect(model.starting, game);
+    expect(bar, findsOneWidget);
+    expect(tester.widget<LinearProgressIndicator>(bar).value, isNull);
+    expect(tester.getRect(cover), coverRect);
+    expect(tester.getRect(bar), barRect);
+
+    status = {
+      'presented': true,
+      'startupVisible': false,
+      'progressLabel': 'Compiling PPU modules',
+      'progressPercent': 43,
+    };
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(model.starting, game);
     expect(bar, findsOneWidget);
     expect(tester.widget<LinearProgressIndicator>(bar).value, 0.43);
     expect(find.text('43%'), findsOneWidget);
@@ -113,11 +368,16 @@ void main() {
     expect(find.text('72%'), findsOneWidget);
     expect(tester.getRect(cover), coverRect);
 
-    status = {'presented': true};
+    status = {'presented': true, 'startupVisible': true};
     await tester.pump(const Duration(milliseconds: 150));
+    expect(model.starting, isNull);
     expect(cover, findsNothing);
     expect(bar, findsNothing);
     expect(find.byType(Texture), findsOneWidget);
+
+    status = {'presented': true, 'startupVisible': false};
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(bar, findsNothing);
 
     status = {'ended': true};
     await tester.pump(const Duration(milliseconds: 150));
@@ -130,7 +390,14 @@ void main() {
     ) async {
       final env = <String, String>{};
       final pads = FakePads();
-      final fixture = makeFixture(environment: env, pads: () => pads);
+      final fixture = makeFixture(
+        environment: env,
+        pads: () => pads,
+        retroHardware: () async => const RetroHardware(
+          displayHeight: 720,
+          adapters: [RetroAdapter(name: 'Test GPU', dedicatedBytes: 4 << 30)],
+        ),
+      );
       final model = fixture.model;
       model.startPads();
       addTearDown(() {
@@ -138,7 +405,7 @@ void main() {
         fixture.dispose();
       });
       env['ANYPS5_LIBRETRO_HOME'] = fixture.temp.path;
-      final core = platform == RetroPlatform.ps1 ? 'swanstation_libretro.dll' : 'pcsx2_libretro.dll';
+      final core = model.embeddedCoreHost.libraryName(platform);
       File(p.join(fixture.temp.path, core)).createSync();
       final folder = Directory(p.join(model.root!, 'Embedded'))..createSync();
       final disc = platform == RetroPlatform.ps1 ? 'game.cue' : 'game.iso';
@@ -174,6 +441,7 @@ void main() {
               'presented': true,
               'ended': ended,
               'aspect': 4 / 3,
+              'hardware': true,
               'error': ended ? saveError : '',
               if (progress != null) 'progressLabel': 'Compiling modules',
               'progressPercent': ?progress,
@@ -192,6 +460,9 @@ void main() {
             graphicsPending = true;
             selected = 1;
             return true;
+          case 'tuningOptions':
+            selected = scales.indexOf(call.arguments['values'][resolution] as String);
+            return selected >= 0;
           case 'stop':
             ended = true;
         }
@@ -225,23 +496,48 @@ void main() {
       model.setActive(true);
       final graphics = model.panelCategories().single.rows.singleWhere((row) => row.id == 'retroGraphics');
       (graphics.kind as ActionRow).run();
+      expect(model.panelCategories().single.rows.map((row) => row.title), ['Auto Optimize', 'Advanced']);
+      PanelRow row(String id) => model.panelCategories().single.rows.singleWhere((row) => row.id == id);
+      void choose(String id) => (row(id).kind as ActionRow).run();
+      choose('emulator-auto-optimize');
+      await tester.pump();
+      expect(row('auto-setting-$resolution').kind, isA<InfoRow>());
+      expect(calls.where((call) => call.method == 'tuningOptions'), isEmpty);
+      expect(model.preferences.retroInternalResolution, isEmpty);
+      model.handle(Command.back);
+      if (isPs1) {
+        choose('emulator-auto-optimize');
+        await tester.pump();
+        choose('tuning-preset-apply');
+        await tester.pump(const Duration(milliseconds: 150));
+        expect(model.preferences.retroInternalResolution[title.id], '3');
+        expect(Preferences.fromJson(model.preferences.toJson()).retroAutoOptimized, contains(title.id));
+        model.handle(Command.back);
+        expect(row('emulator-auto-optimize').title, 'Auto Optimize ✓');
+      }
+      choose('embedded-graphics-advanced');
+      choose('emulator-tune-game');
+      model.handle(Command.back);
+      expect(row('embedded-apply-advanced').kind, isA<InfoRow>());
       final filter = model.panelCategories().single.rows.first.kind as ChoiceRow;
       filter.set(1);
-      expect(model.embeddedGame?.filter, 1);
+      expect(model.embeddedGame?.filter, 0);
       final internalResolution = model.panelCategories().single.rows.singleWhere((row) => row.id == resolution);
       expect(internalResolution.title, 'Internal resolution');
       final choice = internalResolution.kind as ChoiceRow;
       expect(choice.options[1], '2x');
+      if (isPs1) expect(choice.selected, 2);
       choice.set(1);
+      choose('embedded-apply-advanced');
       await tester.pump();
-      expect(model.preferences.retroInternalResolution, isEmpty);
+      expect(model.preferences.retroInternalResolution[title.id], isPs1 ? '3' : null);
       graphicsPending = false;
       await tester.pump(const Duration(milliseconds: 150));
       expect(model.embeddedGame?.options[resolution]?.selected, 1);
-      choice.set(scales.length - 1);
-      await tester.pump();
+      expect(model.embeddedGame?.filter, 1);
       expect(model.preferences.retroInternalResolution, {title.id: scales[1]});
-      model.closeOverlay();
+      expect(model.preferences.retroAutoOptimized, isNot(contains(title.id)));
+      model.resumeGame();
       await tester.pump();
       expect(model.overlay, isNull);
       expect(calls.where((call) => call.method == 'pause').last.arguments, false);

@@ -215,13 +215,14 @@ class _FallbackPainter extends CustomPainter {
 
 /// pic0.png behind the home screen, drifting slowly, darkened where the text sits.
 class GameArtwork extends StatefulWidget {
-  const GameArtwork({super.key, required this.path, this.animated = true});
+  const GameArtwork({super.key, required this.path, this.animated = true, this.asset = false});
 
   /// The width backgrounds are decoded at.
   static const cacheWidth = 1920;
 
   final String path;
   final bool animated;
+  final bool asset;
 
   @override
   State<GameArtwork> createState() => _GameArtworkState();
@@ -262,7 +263,7 @@ class _GameArtworkState extends State<GameArtwork> with SingleTickerProviderStat
             alignment: Alignment.topRight,
             child: child,
           ),
-          child: ArtworkImage(path: widget.path, cacheWidth: GameArtwork.cacheWidth),
+          child: _image(GameArtwork.cacheWidth),
         ),
         const DecoratedBox(
           decoration: BoxDecoration(
@@ -286,6 +287,10 @@ class _GameArtworkState extends State<GameArtwork> with SingleTickerProviderStat
     );
   }
 
+  Widget _image(int cacheWidth) => widget.asset
+      ? Image.asset(widget.path, fit: BoxFit.cover, cacheWidth: cacheWidth, excludeFromSemantics: true)
+      : ArtworkImage(path: widget.path, cacheWidth: cacheWidth);
+
   /// Glass: the picture frosted behind the ice. Decoded small and blurred hard, cooled, kept
   /// under a ceiling of brightness, under the navy veil; it stays still (drifting, a blur this
   /// soft only costs frames and shows nothing).
@@ -307,7 +312,7 @@ class _GameArtworkState extends State<GameArtwork> with SingleTickerProviderStat
                 children: [
                   ColorFiltered(
                     colorFilter: ColorFilter.matrix(GlassRecipe.saturation),
-                    child: ArtworkImage(path: widget.path, cacheWidth: GlassRecipe.artworkWidth),
+                    child: _image(GlassRecipe.artworkWidth),
                   ),
                   const CustomPaint(painter: _IceTint()),
                 ],

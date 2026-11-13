@@ -37,8 +37,14 @@ class Backdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final game = model.homePreviewGame;
-    final background = game?.background;
-    final backgroundKey = ValueKey(game?.id);
+    final folderArtwork = switch (model.selectedHomeFolder) {
+      RetroPlatform.ps1 => 'assets/retro/folder-wallpaper-ps1.png',
+      RetroPlatform.ps2 => 'assets/retro/folder-wallpaper-ps2.png',
+      RetroPlatform.ps3 => 'assets/retro/folder-wallpaper-ps3.png',
+      null => null,
+    };
+    final background = folderArtwork ?? game?.background;
+    final backgroundKey = ValueKey(folderArtwork ?? game?.id);
     final artwork =
         model.preferences.onboarded &&
         model.preferences.gameArtwork &&
@@ -70,7 +76,7 @@ class Backdrop extends StatelessWidget {
               ? Opacity(
                   key: backgroundKey,
                   opacity: 0.72,
-                  child: GameArtwork(path: background, animated: false),
+                  child: GameArtwork(path: background, animated: false, asset: folderArtwork != null),
                 )
               : const SizedBox.expand(),
         ),
@@ -124,7 +130,9 @@ class Backdrop extends StatelessWidget {
                 ? GameArtwork(
                     key: backgroundKey,
                     path: background,
+                    asset: folderArtwork != null,
                     animated:
+                        folderArtwork == null &&
                         !model.preferences.reducedMotion &&
                         time == null &&
                         !covered &&

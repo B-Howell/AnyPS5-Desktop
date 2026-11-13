@@ -20,6 +20,79 @@ Map<String, Object> telemetry(int millis, int frames, {int slowFrames = 0}) => {
 };
 
 void main() {
+  test('quick optimization applies advertised resolution and filtering without a gameplay trial', () async {
+    const cpu = 'swanstation_CPU_ExecutionMode';
+    final options = {
+      scale: option(['1', '2', '3', '4'], 0),
+      filter: option(['Nearest', 'BilinearBinAlpha'], 0),
+      cpu: (
+        values: ['Interpreter', 'Recompiler'],
+        labels: ['Interpreter', 'Recompiler'],
+        title: 'CPU mode',
+        restart: true,
+        selected: 0,
+      ),
+    };
+    final persisted = <Map<String, String>>[];
+    final tuning = RetroGameTuning(
+      platform: RetroPlatform.ps1,
+      options: options,
+      ready: () => true,
+      writeOptions: (expected, values) async {
+        expect(values, isNot(contains(cpu)), reason: 'Startup-only settings stay out of the running core.');
+        for (final entry in expected.entries) {
+          expect(options[entry.key]!.values[options[entry.key]!.selected], entry.value);
+        }
+        for (final entry in values.entries) {
+          final previous = options[entry.key]!;
+          options[entry.key] = option(previous.values, previous.values.indexOf(entry.value));
+        }
+        return true;
+      },
+      persist: (_, values, {required undo}) => persisted.add(values),
+      changed: () {},
+    );
+
+    final preview = tuning.previewPreset(4, quality: true);
+    expect(preview, {scale: '4', filter: 'BilinearBinAlpha', cpu: 'Recompiler'});
+    expect(persisted, isEmpty);
+    expect(await tuning.applyPreset({scale: '1', filter: 'Nearest', cpu: 'Interpreter'}, preview), isTrue);
+    expect(tuning.effectiveOption(cpu, options[cpu]!).selected, 1);
+    expect(options[scale]?.selected, 3);
+    expect(persisted.single, preview);
+    expect(tuning.status, 'Applied to this game.');
+    await tuning.undo();
+    expect(persisted.last, {scale: '1', filter: 'Nearest', cpu: 'Interpreter'});
+  });
+
+  test('a software session can queue a renderer change without touching the live core', () async {
+    const renderer = 'swanstation_GPU_Renderer';
+    final tuning = RetroGameTuning(
+      platform: RetroPlatform.ps1,
+      options: {
+        renderer: (
+          values: ['Software', 'D3D11'],
+          labels: ['Software', 'D3D11'],
+          title: 'Renderer',
+          restart: true,
+          selected: 0,
+        ),
+      },
+      ready: () => false,
+      queueReady: () => true,
+      writeOptions: (_, _) async => fail('The running renderer must not change.'),
+      persist: (_, _, {required undo}) {},
+      changed: () {},
+    );
+    final proposed = tuning.previewPreset(4, quality: true);
+    expect(proposed, {renderer: 'D3D11'});
+    expect(await tuning.applyPreset({renderer: 'Software'}, proposed), isTrue);
+    expect(tuning.selectedValue(renderer), 'D3D11');
+    expect(tuning.canUndo, isTrue);
+    await tuning.undo();
+    expect(tuning.selectedValue(renderer), 'Software');
+  });
+
   test('records paired gameplay samples, restores the baseline before review and applies both values', () async {
     final options = {
       scale: option(['1', '2', '3'], 0),

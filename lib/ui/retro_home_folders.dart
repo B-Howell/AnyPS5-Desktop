@@ -6,9 +6,11 @@ extension RetroHomeFolders on AppModel {
   bool _groupsHomePlatform(RetroPlatform platform) {
     if (!preferences.showRetroFolders) return false;
     final override = retroCoreOverride;
-    if (platform != RetroPlatform.ps3 && override != null) return ManagedRetro(override).isInstalled(platform);
+    if (platform != RetroPlatform.ps3 && override != null) {
+      return ManagedRetro(override, host: embeddedCoreHost).isInstalled(platform);
+    }
     if (retroSettings.program(platform) case final program? when File(program).existsSync()) return true;
-    return managedRetroAvailable && _managedRetro.isInstalled(platform);
+    return supportsManagedRetro(platform) && _managedRetro.isInstalled(platform);
   }
 
   RetroPlatform? get activeHomeRetroFolder {

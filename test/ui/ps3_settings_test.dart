@@ -1,12 +1,890 @@
-import 'package:anyps5_desktop/core/game_library.dart';
-import 'package:anyps5_desktop/core/host.dart';
-import 'package:anyps5_desktop/ui/app_model.dart';
-import 'package:anyps5_desktop/ui/ps3_settings_model.dart';
-import 'package:flutter_test/flutter_test.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:ffi' show Abi;
+import 'dart:io';
 
+import 'package:anyps5_desktop/core/game_library.dart';
+import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
+import 'package:anyps5_desktop/core/host.dart';
+import 'package:anyps5_desktop/core/online/retro_online_rooms.dart';
+import 'package:anyps5_desktop/core/ps3_online_profile.dart';
+import 'package:anyps5_desktop/core/ps3_update_import.dart';
+import 'package:anyps5_desktop/ui/app_model.dart';
+import 'package:anyps5_desktop/ui/panels.dart';
+import 'package:anyps5_desktop/ui/ps3_settings_model.dart';
+import 'package:anyps5_desktop/ui/strings.dart';
+import 'package:anyps5_desktop/ui/together_model.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:crypto/crypto.dart';
+import 'package:path/path.dart' as p;
+
+import '../support/fixtures.dart' show ps3FixtureSfo;
+import '../support/fake_together.dart';
 import '../support/ui_support.dart';
 
+class _LoopbackHttpOverrides extends HttpOverrides {}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(T.load);
+  final abi = Abi.current();
+  final windows = abi == Abi.windowsX64;
+  final supportsOnlineFixture = windows || abi == Abi.linuxX64;
+
+  Future<void> verifySetup(String mode) async {
+    final dashboardHost = mode == 'dashboard-host';
+    final inviteTimeout = mode == 'host-invite-timeout';
+    final occupied = mode == 'host-occupied';
+    final host = mode == 'host' || dashboardHost || mode == 'host-cancel-invite' || inviteTimeout || occupied;
+    final quickHost = mode == 'solo-quick-host';
+    final quickGuest = mode == 'solo-quick-guest';
+    const title = 'BCUS98208';
+    const ppu = 'PPU-545c1abbf1c562d60fca7435401f020beab76b53';
+    const patch =
+        'Version: 1.2\n$ppu:\n  Protection:\n    Games:\n      Fixture:\n'
+        '        $title: [01.30]\n    Patch:\n      - [be32, 0x10000, 0x60000000]\n';
+    final releases = <Ps3OnlineRelease>[];
+    final server = mode == 'solo' ? null : await FakeTogether.start();
+    if (server != null) addTearDown(server.close);
+    String? selectedPatch;
+    final fixture = makeFixture(
+      system: windows ? HostSystem.windows : HostSystem.linux,
+      together: server?.base,
+      ps3OnlineReleases: releases,
+      pickFile: (_, _) async => selectedPatch,
+    );
+    final model = fixture.model;
+    addTearDown(() {
+      model.dispose();
+      fixture.dispose();
+    });
+    File write(String path, List<int> bytes) => File(path)
+      ..createSync(recursive: true)
+      ..writeAsBytesSync(bytes);
+    final folder = p.join(fixture.temp.path, 'ps3-online-disc');
+    final disc = write(p.join(folder, 'PS3_DISC.SFB'), [0]).path;
+    write(p.join(folder, 'PS3_GAME', 'USRDIR', 'EBOOT.BIN'), [0]);
+    write(p.join(folder, 'PS3_GAME', 'PARAM.SFO'), ps3FixtureSfo({'TITLE_ID': title, 'APP_VER': '01.18'}));
+    final managed = p.join(p.dirname(model.paths.toolkits), 'Emulators');
+    write(p.join(managed, model.embeddedCoreHost.libraryName(RetroPlatform.ps3)), [windows ? 1 : 6]);
+    Directory(p.join(managed, 'system')).createSync();
+    final profile = p.join(managed, 'OnlineProfiles', 'fixture', title);
+    final rpcs3 = p.join(profile, 'system', 'rpcs3');
+    final update = p.join(rpcs3, 'dev_hdd0', 'game', title);
+    write(p.join(update, 'PARAM.SFO'), ps3FixtureSfo({'TITLE_ID': title, 'APP_VER': '01.30', 'CATEGORY': 'GD'}));
+    write(p.join(update, 'USRDIR', 'EBOOT.BIN'), [2]);
+    write(p.join(rpcs3, 'dev_flash', 'vsh', 'module', 'vsh.self'), [3]);
+    write(p.join(rpcs3, 'dev_flash', 'sys', 'external', 'liblv2.sprx'), [3]);
+    final installedPatch = write(p.join(rpcs3, 'patches', '${title}_patch.yml'), [1]);
+    final invalidPatch = write(p.join(fixture.temp.path, 'invalid.yml'), [2]);
+    final reviewedPatch = write(p.join(fixture.temp.path, 'reviewed.yml'), utf8.encode(patch));
+    Directory(p.join(rpcs3, 'config')).createSync();
+    releases.add(
+      Ps3OnlineRelease(
+        provider: 'fixture',
+        titleId: title,
+        updateVersion: '01.30',
+        updateTreeDigest: await ps3UpdateTreeDigest(Directory(await Directory(update).resolveSymbolicLinks())),
+        coreSha256: sha256.convert([1]).toString(),
+        linuxCoreSha256: sha256.convert([6]).toString(),
+        executableSha256: sha256.convert([2]).toString(),
+        protection: Ps3YamlProtection(
+          sha256: sha256.convert(utf8.encode(patch)).toString(),
+          ppuHash: ppu,
+          patches: const {'Protection': 1},
+        ),
+        rpcnHost: 'rpcn.example.invalid',
+        rpcnCertificateSha256: 'bfc408d6304fe3a43bd19a259cd9dc28f40496f30ce9729a8964919198a5b80c',
+        providerFiles: const {},
+        xfloat: Ps3Xfloat.accurate,
+        dns: Ps3Dns.cloudflare,
+        upnp: false,
+      ),
+    );
+    final game = Game(
+      folder: folder,
+      titleId: 'PS3-$title',
+      name: 'Online fixture',
+      names: const {},
+      defaultLanguage: 'en',
+      version: '01.18',
+      executable: ExecutableKind.disc,
+      retro: (platform: RetroPlatform.ps3, path: disc),
+    );
+    model.games = [game];
+    model.selected = 0;
+    model.open(Layer.gameSettings);
+    void activate(String id) {
+      final rows = model.panelCategories().single.rows;
+      final index = rows.indexWhere((row) => row.id == id);
+      expect(index, isNonNegative);
+      model.activateRow(index);
+    }
+
+    if (!windows) {
+      final release = releases.removeLast();
+      expect(model.panelCategories().single.rows.any((row) => row.id == 'ps3-online-readiness'), isFalse);
+      releases.add(release);
+    }
+    activate('ps3-online-readiness');
+    const channel = MethodChannel('anyps5/retro_core');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final start = Completer<Map<Object?, Object?>>();
+    final bootReply = Completer<void>();
+    final cancelBeforeWorker = mode == 'guest-boot-cancel';
+    final cancelBeforeFrame = mode == 'guest-first-frame-cancel';
+    final providerFailsDuringBoot = mode == 'guest-provider-boot-failed';
+    final calls = <MethodCall>[];
+    var stopped = false;
+    var providerStatus = 2;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      if (call.method == 'start') {
+        start.complete(call.arguments as Map<Object?, Object?>);
+        if (cancelBeforeWorker) await bootReply.future;
+        return 7;
+      }
+      if (call.method == 'stop') stopped = true;
+      return call.method == 'status'
+          ? {
+              'ended': stopped,
+              'presented': !cancelBeforeFrame && !providerFailsDuringBoot,
+              'ps3ProviderStatus': providerStatus,
+            }
+          : null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    Future<void> waitFor(bool Function() settled, {Duration timeout = const Duration(seconds: 5)}) async {
+      await Future.doWhile(() async {
+        if (settled()) return false;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        return true;
+      }).timeout(
+        timeout,
+        onTimeout: () => throw StateError(
+          '$mode did not settle: ${model.toast}, socket ${model.together.hub.socket.status.name}, '
+          '${server?.calls.map((call) => call.path).toList()}',
+        ),
+      );
+    }
+
+    if (cancelBeforeWorker || cancelBeforeFrame || providerFailsDuringBoot) {
+      addTearDown(() async {
+        if (!bootReply.isCompleted) {
+          final cancel = model.together.cancelPs3PartyAndWait();
+          bootReply.complete();
+          await cancel;
+        }
+        if (model.running != null) await model.stopRunningGame();
+        await waitFor(() => model.starting == null && model.running == null);
+      });
+    }
+
+    String? patchStatus() =>
+        model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-online-import-patch').detail;
+    String? playStatus() =>
+        model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-online-play').detail;
+    activate('ps3-online-firmware');
+    await waitFor(
+      () =>
+          model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-online-firmware').detail ==
+          'Firmware ready.',
+    );
+    expect(start.isCompleted, isFalse);
+    activate('ps3-online-play');
+    await waitFor(() => playStatus()?.contains('Import Protection Patch') == true);
+    selectedPatch = invalidPatch.path;
+    activate('ps3-online-import-patch');
+    await waitFor(() => patchStatus()?.contains('does not match') == true);
+    expect(installedPatch.readAsBytesSync(), [1]);
+    selectedPatch = reviewedPatch.path;
+    activate('ps3-online-import-patch');
+    await waitFor(() => patchStatus() == 'Reviewed patch installed.');
+    expect(installedPatch.readAsStringSync(), patch);
+    expect(playStatus(), contains("game's online menu"));
+    expect(start.isCompleted, isFalse);
+
+    activate('ps3-online-play');
+    await waitFor(() => playStatus()?.contains('Import Provider Account') == true);
+    expect(start.isCompleted, isFalse);
+    const account = 'Version: 2\nHost: rpcn.example.invalid\nNPID: fixture\nPassword: test-only\nToken: fake-token\n';
+    final installedAccount = File(p.joinAll([rpcs3, if (windows) 'config', 'rpcn.yml']));
+    String? accountStatus() =>
+        model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-online-import-account').detail;
+    final wrongAccount = write(
+      p.join(fixture.temp.path, 'wrong-provider.yml'),
+      utf8.encode(account.replaceFirst('rpcn.example.invalid', 'different.example.invalid')),
+    );
+    selectedPatch = wrongAccount.path;
+    activate('ps3-online-import-account');
+    await waitFor(() => accountStatus()?.contains('does not match') == true);
+    expect(installedAccount.existsSync(), isFalse);
+    selectedPatch = write(
+      p.join(fixture.temp.path, 'account-without-token.yml'),
+      utf8.encode(account.replaceFirst('Token: fake-token\n', '')),
+    ).path;
+    activate('ps3-online-import-account');
+    await waitFor(() => accountStatus() == 'Provider account imported.');
+    expect(jsonDecode(installedAccount.readAsStringSync()), containsPair('Token', ''));
+    selectedPatch = write(p.join(fixture.temp.path, 'account.yml'), utf8.encode('${account}Hosts: ignored\n')).path;
+    activate('ps3-online-import-account');
+    await waitFor(() => accountStatus() == 'Provider account imported.');
+    expect(installedAccount.readAsStringSync(), contains('fake-token'));
+    expect(installedAccount.readAsStringSync(), isNot(contains('ignored')));
+    selectedPatch = wrongAccount.path;
+    activate('ps3-online-import-account');
+    await waitFor(() => accountStatus()?.contains('does not match') == true);
+    expect(installedAccount.readAsStringSync(), contains('fake-token'));
+    expect(start.isCompleted, isFalse);
+
+    const roomId = '12345678-1234-4234-8234-123456789abc';
+    const localId = '12345678-1234-4234-8234-123456789ab1';
+    const friendId = '12345678-1234-4234-8234-123456789ab2';
+    final protocol = RetroOnlineMode.nativeOnline.protocol;
+    if (server != null) {
+      server.me['id'] = localId;
+      server.friend(friendId, 'ana', 'Ana', presence: {'state': 'online'});
+      model.together.email = 'fixture@example.invalid';
+      await model.together.sendCode();
+      model.together.code = '123456';
+      await model.together.verify();
+      await waitFor(() => model.together.hub.friends.loaded && model.together.hub.socket.status.name == 'ready');
+      final friend = model.together.hub.friends.friends.single;
+      final room = {
+        'id': roomId,
+        'host': {'userId': host || quickHost ? localId : friendId},
+        'kind': 'online',
+        'titleId': title,
+        'gameVersion': '01.30',
+        'engineBuild': protocol,
+        'capacity': 2,
+        'joinable': false,
+        'properties': {'protocol': protocol, 'profileSha256': releases.single.partyFingerprint},
+        'members': [
+          {'userId': localId},
+          if (!host && !quickHost)
+            {
+              'userId': friendId,
+              'device': '12345678-1234-4234-8234-123456789ab3',
+              'properties': {'protocol': protocol},
+            },
+        ],
+      };
+      server.answers.addAll({
+        'POST game-sessions': (201, room),
+        'GET game-sessions/$roomId': (200, room),
+        'PUT game-sessions/$roomId/members/me': (200, room),
+        'POST game-sessions/$roomId/invites': (204, null),
+        'POST game-sessions/$roomId/join': (204, null),
+        'POST game-sessions/$roomId/leave': (204, null),
+        'DELETE game-sessions/$roomId': (204, null),
+      });
+      if (host) {
+        if (dashboardHost) {
+          model.closeOverlay();
+          expect(model.overlay, Layer.gameSettings);
+          activate('ps3-party-dashboard-invite');
+          expect(model.panelCategories().single.title, 'Invite a friend');
+          activate('ps3-party-dashboard-$friendId');
+          expect(model.panelCategories().single.rows.any((row) => row.id == 'ps3-online-play'), isTrue);
+          model.closeOverlay();
+          expect(model.spot?.row, 'ps3-party-dashboard-$friendId');
+          model.closeOverlay();
+          expect(model.spot?.row, 'ps3-party-dashboard-invite');
+          activate('ps3-party-dashboard-invite');
+          activate('ps3-party-dashboard-$friendId');
+          expect(model.running, isNull);
+          expect(calls.where((call) => call.method == 'start'), isEmpty);
+        } else {
+          model.together.openFriend(friend);
+          activate('ps3-party-invite');
+        }
+        expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
+      } else if (!quickHost && !quickGuest) {
+        final invite = {
+          'sessionId': roomId,
+          'from': server.person(friendId, 'ana', 'Ana'),
+          'titleId': title,
+          'gameVersion': '01.30',
+          'engineBuild': protocol,
+        };
+        server.gameInvites.add(invite);
+        await model.together.hub.games.refresh();
+        model.open(Layer.friends);
+        activate('game-accept-$roomId');
+        expect(server.callsTo('game-sessions/$roomId/join'), isEmpty);
+        if (mode == 'guest' || mode == 'guest-room-timeout') {
+          const path = 'game-sessions/$roomId';
+          final answer = server.answers.remove('GET $path')!;
+          final requested = Completer<void>();
+          final reply = Completer<void>();
+          server.handlers.add((call) async {
+            if (call.method != 'GET' || call.path != path) return null;
+            if (!requested.isCompleted) requested.complete();
+            await reply.future;
+            return answer;
+          });
+          addTearDown(() {
+            if (!reply.isCompleted) reply.complete();
+          });
+          activate('ps3-online-play');
+          await requested.future.timeout(const Duration(seconds: 5));
+          expect(model.overlay, Layer.friends);
+          expect(model.spot?.row, 'ps3-party-leave');
+          if (mode == 'guest-room-timeout') {
+            await Future<void>.delayed(const Duration(seconds: 12));
+            await waitFor(() => model.together.ps3PartyRows().isEmpty);
+            expect(model.toast, 'The room took too long to respond. Try accepting the invite again.');
+          } else {
+            activate('ps3-party-leave');
+            await waitFor(() => model.together.ps3PartyRows().isEmpty);
+          }
+          expect(server.callsTo('$path/join'), isEmpty);
+          expect(start.isCompleted, isFalse);
+          server.answers['GET $path'] = answer;
+          model.open(Layer.friends);
+          activate('game-accept-$roomId');
+          unawaited(
+            start.future.then((_) {
+              if (!reply.isCompleted) reply.complete();
+            }),
+          );
+        }
+        final properties = room['properties'] as Map<String, String>;
+        properties['profileSha256'] = '0' * 64;
+        final lookups = server.callsTo('game-sessions/$roomId', method: 'GET').length;
+        activate('ps3-online-play');
+        await waitFor(() => server.callsTo('game-sessions/$roomId', method: 'GET').length > lookups);
+        await waitFor(() => model.together.ps3PartyRows().isEmpty);
+        expect(server.callsTo('game-sessions/$roomId/join'), isEmpty);
+        expect(start.isCompleted, isFalse);
+        properties['profileSha256'] = releases.single.partyFingerprint;
+        model.open(Layer.friends);
+        activate('game-accept-$roomId');
+      }
+    }
+    if (occupied) {
+      server!.answers['GET me/game-session'] = (
+        200,
+        {
+          'session': {'id': roomId},
+        },
+      );
+      activate('ps3-online-play');
+      await waitFor(() => model.toast == 'Leave your current AnyTogether game before trying again.');
+      await waitFor(() => model.together.ps3PartyRows().isEmpty);
+      expect(server.callsTo('game-sessions', method: 'POST'), isEmpty);
+      expect(server.callsTo('game-sessions/$roomId', method: 'DELETE'), isEmpty);
+      expect(start.isCompleted, isFalse);
+      return;
+    }
+    if (mode == 'host-cancel-invite' || inviteTimeout) {
+      const path = 'game-sessions/$roomId';
+      final sending = Completer<void>();
+      final reply = Completer<void>();
+      final responding = Completer<void>();
+      final deleting = Completer<void>();
+      final deleted = Completer<void>();
+      server!.answers.remove('POST $path/invites');
+      server.answers.remove('DELETE $path');
+      server.handlers.add((call) async {
+        if (call.method == 'POST' && call.path == '$path/invites') {
+          sending.complete();
+          await reply.future;
+          responding.complete();
+          return (500, {'code': 'late_invite_failure'});
+        }
+        if (call.method == 'DELETE' && call.path == path) {
+          deleting.complete();
+          await deleted.future;
+          return (204, null);
+        }
+        return null;
+      });
+      addTearDown(() {
+        if (!reply.isCompleted) reply.complete();
+        if (!deleted.isCompleted) deleted.complete();
+      });
+      activate('ps3-online-play');
+      await sending.future.timeout(const Duration(seconds: 5));
+      expect(model.spot?.row, 'ps3-party-leave');
+      if (!inviteTimeout) activate('ps3-party-leave');
+      await deleting.future.timeout(
+        Duration(seconds: inviteTimeout ? 16 : 5),
+        onTimeout: () => fail('The launcher never released the room while the invite response was held.'),
+      );
+      if (inviteTimeout) {
+        expect(model.toast, 'Could not confirm the invitation. Try inviting your friend again.');
+      }
+      expect(model.together.ps3PartyRows().single.title, 'Closing the AnyTogether room…');
+      expect(start.isCompleted, isFalse);
+      deleted.complete();
+      await waitFor(() => model.together.ps3PartyRows().isEmpty);
+      final toastBeforeReply = model.toast;
+      reply.complete();
+      await responding.future.timeout(const Duration(seconds: 5));
+      await Future<void>.delayed(Duration.zero);
+      expect(model.together.ps3PartyRows(), isEmpty);
+      expect(server.callsTo(path, method: 'DELETE'), hasLength(1));
+      expect(calls.where((call) => call.method == 'start'), isEmpty);
+      expect(model.toast, toastBeforeReply);
+      return;
+    }
+    activate('ps3-online-play');
+    final launch = await start.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () =>
+          throw StateError('$mode launch timed out: ${model.toast}, ${server?.calls.map((call) => call.path)}'),
+    );
+    expect(launch['core'], p.join(managed, model.embeddedCoreHost.libraryName(RetroPlatform.ps3)));
+    if (providerFailsDuringBoot) {
+      await waitFor(() => model.running != null);
+      expect(model.embeddedGame?.startupVisible, isFalse);
+      providerStatus = 4;
+      await waitFor(() => model.starting == null && model.running == null && model.together.ps3PartyRows().isEmpty);
+      expect(server!.callsTo('game-sessions/$roomId/leave'), hasLength(1));
+      expect(model.toast, contains('Could not connect to the provider'));
+      expect(stopped, isTrue);
+      return;
+    }
+    if (cancelBeforeWorker || cancelBeforeFrame) {
+      if (cancelBeforeFrame) {
+        await waitFor(() => model.running != null && calls.any((call) => call.method == 'status'));
+        expect(model.embeddedGame?.startupVisible, isFalse);
+      } else {
+        expect(model.running, isNull);
+      }
+      expect(model.starting, same(game));
+      model.padCommand(PadCommand.home);
+      expect(model.overlay, Layer.quickMenu);
+      PanelRow cancelRow() => model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-party-leave');
+      expect(cancelRow().title, 'Cancel PS3 invite');
+      expect(cancelRow().detail, 'Starting the PS3 online game…');
+      activate('ps3-party-leave');
+      await waitFor(() => server!.callsTo('game-sessions/$roomId/leave').isNotEmpty);
+      if (cancelBeforeWorker) {
+        expect(cancelRow().kind, isA<InfoRow>());
+        bootReply.complete();
+      }
+      await waitFor(() => model.starting == null && model.running == null && model.together.ps3PartyRows().isEmpty);
+      expect(stopped, isTrue);
+      expect(server!.callsTo('game-sessions/$roomId/leave'), hasLength(1));
+      return;
+    }
+    expect(launch['system'], await Directory(p.join(profile, 'system')).resolveSymbolicLinks());
+    expect(launch['saves'], await Directory(p.join(profile, 'saves')).resolveSymbolicLinks());
+    expect(launch['ps3Online'], contains('patchProtection'));
+    expect((launch['ps3Online'] as Map<Object?, Object?>)['rpcnIdentity'], {
+      'host': 'rpcn.example.invalid',
+      'certificateSha256': 'bfc408d6304fe3a43bd19a259cd9dc28f40496f30ce9729a8964919198a5b80c',
+    });
+    expect(launch.toString(), isNot(contains('fake-token')));
+    expect(launch.toString(), isNot(contains('test-only')));
+    if (server != null && !quickHost && !quickGuest) {
+      final action = host ? 'invites' : 'join';
+      expect(server.callsTo('game-sessions/$roomId/$action', method: 'POST'), hasLength(1));
+      if (host) {
+        final invitation = server.callsTo('game-sessions/$roomId/invites', method: 'POST').single.body;
+        expect(invitation['userIds'], [friendId]);
+        final sent = server.callsTo('game-sessions', method: 'POST').single.body;
+        expect(sent['properties'], {'protocol': protocol, 'profileSha256': releases.single.partyFingerprint});
+        expect(sent.toString(), isNot(contains('fake-token')));
+      }
+    }
+    expect(Directory(p.join(managed, 'system')).listSync(), isEmpty);
+    await waitFor(() => model.embeddedGame?.presented == true);
+    try {
+      model.open(Layer.quickMenu);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        model.panelCategories().expand((category) => category.rows).any((row) => row.id == 'retroGraphics'),
+        isFalse,
+      );
+      expect(calls.any((call) => call.method == 'pause'), isFalse);
+      if (quickGuest) {
+        final worker = model.embeddedGame;
+        providerStatus = 3;
+        await waitFor(() => worker?.ps3ProviderStatus?.name == 'ready');
+        const path = 'game-sessions/$roomId';
+        final valid = server!.answers['GET $path']!;
+        final room = valid.$2 as Map<String, dynamic>;
+        server.gameInvites.add({
+          'sessionId': roomId,
+          'from': server.person(friendId, 'ana', 'Ana'),
+          'titleId': title,
+          'gameVersion': '01.30',
+          'engineBuild': protocol,
+        });
+        const unrelatedRoom = '12345678-1234-4234-8234-123456789abe';
+        server.gameInvites.add({...server.gameInvites.last, 'sessionId': unrelatedRoom, 'gameVersion': '01.29'});
+        await model.together.hub.games.refresh();
+        model.open(Layer.quickMenu);
+        expect(model.panelCategories().single.rows.any((row) => row.id == 'game-accept-$unrelatedRoom'), isFalse);
+        final accept = model.panelCategories().single.rows.singleWhere((row) => row.id == 'game-accept-$roomId');
+        final originalInvite = server.gameInvites.removeAt(0);
+        await model.together.hub.games.refresh();
+        (accept.kind as ActionRow).run();
+        expect(model.toast, contains('no longer active'));
+        expect(server.callsTo(path, method: 'GET'), isEmpty);
+        server.gameInvites.insert(0, originalInvite);
+        await model.together.hub.games.refresh();
+        server.answers['GET $path'] = (
+          200,
+          {
+            ...room,
+            'properties': {'protocol': protocol, 'profileSha256': '0' * 64},
+          },
+        );
+        activate('game-accept-$roomId');
+        await waitFor(() => server.callsTo(path, method: 'GET').isNotEmpty);
+        await waitFor(() => model.together.ps3PartyRows().isEmpty);
+        expect(server.callsTo('$path/join'), isEmpty);
+        expect(model.embeddedGame, same(worker));
+        expect(model.overlay, Layer.quickMenu);
+        expect(model.toast, contains('same online profile'));
+        server.answers['GET $path'] = valid;
+        activate('game-accept-$roomId');
+        await waitFor(() => server.callsTo('$path/join', method: 'POST').length == 1 && model.overlay == null);
+        expect(model.embeddedGame, same(worker));
+        expect(calls.where((call) => call.method == 'start'), hasLength(1));
+        model.open(Layer.quickMenu);
+        activate('ps3-party-leave');
+        await waitFor(() => model.together.ps3PartyRows().isEmpty);
+        expect(server.callsTo('$path/leave'), hasLength(1));
+        expect(model.embeddedGame, same(worker));
+        expect(stopped, isFalse);
+      }
+      if (quickHost) {
+        final worker = model.embeddedGame;
+        expect(model.panelCategories().single.rows.any((row) => row.id == 'ps3-party-invite-from-game'), isFalse);
+        providerStatus = 3;
+        await waitFor(() => worker?.ps3ProviderStatus?.name == 'ready');
+        activate('ps3-party-invite-from-game');
+        expect(model.overlay, Layer.retroOnlineFriends);
+        activate('retro-invite-back');
+        expect(model.overlay, Layer.quickMenu);
+        activate('ps3-party-invite-from-game');
+        activate('ps3-party-invite-$friendId');
+        expect(model.overlay, isNull);
+        const path = 'game-sessions/$roomId';
+        await waitFor(() => server!.callsTo('$path/invites', method: 'POST').length == 1);
+        PanelRow? leaveRow() => model.together.ps3PartyRows().where((row) => row.id == 'ps3-party-leave').singleOrNull;
+        await waitFor(() => leaveRow()?.title == 'Leave AnyTogether Room');
+        const waiting = 'Waiting for your friend to join the AnyTogether room.';
+        const gameMenu = "Use the game's online menu to meet your friend.";
+        String? roomDetail() => leaveRow()?.detail;
+        await waitFor(() => roomDetail() == waiting);
+        final validRoom = server!.answers['GET $path']!.$2 as Map<String, dynamic>;
+        server.answers['GET $path'] = (
+          200,
+          {
+            ...validRoom,
+            'members': [
+              {'userId': localId},
+              {'userId': friendId},
+            ],
+          },
+        );
+        server.push('game_session.member_joined', {'sessionId': '12345678-1234-4234-8234-123456789fff'});
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        expect(roomDetail(), waiting);
+        server.push('game_session.member_joined', {'sessionId': roomId});
+        await waitFor(() => roomDetail() == gameMenu);
+        server.answers['GET $path'] = (200, validRoom);
+        server.push('game_session.member_left', {'sessionId': roomId});
+        await waitFor(() => roomDetail() == waiting);
+        server.answers['GET $path'] = (
+          200,
+          {
+            ...validRoom,
+            'members': [
+              {'userId': localId},
+              {'userId': '12345678-1234-4234-8234-123456789ab4'},
+            ],
+          },
+        );
+        server.push('game_session.updated', {'id': roomId, 'titleId': title});
+        await waitFor(() => roomDetail() == 'Could not confirm who is in the AnyTogether room.');
+        final stalledRead = Completer<void>();
+        final lateReply = Completer<void>();
+        addTearDown(() {
+          if (!lateReply.isCompleted) lateReply.complete();
+        });
+        server.answers.remove('GET $path');
+        server.handlers.add((call) async {
+          if (call.method != 'GET' || call.path != path || stalledRead.isCompleted) return null;
+          stalledRead.complete();
+          await lateReply.future;
+          return (
+            200,
+            {
+              ...validRoom,
+              'members': [
+                {'userId': localId},
+                {'userId': friendId},
+              ],
+            },
+          );
+        });
+        model.open(Layer.quickMenu);
+        activate('ps3-party-refresh');
+        await stalledRead.future.timeout(const Duration(seconds: 5));
+        expect(roomDetail(), contains('Checking'));
+        expect(model.spot?.row, 'ps3-party-refresh');
+        model.handle(Command.select);
+        expect(model.overlay, Layer.quickMenu);
+        await waitFor(
+          () => roomDetail() == 'Could not confirm who is in the AnyTogether room.',
+          timeout: const Duration(seconds: 15),
+        );
+        server.answers['GET $path'] = (200, validRoom);
+        activate('ps3-party-refresh');
+        await waitFor(() => roomDetail() == waiting);
+        lateReply.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        expect(roomDetail(), waiting);
+        expect(model.embeddedGame, same(worker));
+        expect(model.spot?.row, 'ps3-party-refresh');
+        final sent = server.callsTo('game-sessions', method: 'POST').single.body;
+        expect(sent['properties'], {'protocol': protocol, 'profileSha256': releases.single.partyFingerprint});
+        expect(sent.toString(), isNot(contains('fake-token')));
+        model.open(Layer.quickMenu);
+        activate('ps3-party-leave');
+        await waitFor(() => model.together.ps3PartyRows().isEmpty);
+        expect(server.callsTo(path, method: 'DELETE'), hasLength(1));
+        expect(model.embeddedGame, same(worker));
+        expect(stopped, isFalse);
+        activate('ps3-party-invite-from-game');
+        activate('ps3-party-invite-$friendId');
+        await waitFor(() => server.callsTo('$path/invites', method: 'POST').length == 2);
+        await model.stopRunningGame();
+        await waitFor(() => model.together.ps3PartyRows().isEmpty);
+        expect(server.callsTo(path, method: 'DELETE'), hasLength(2));
+        expect(calls.where((call) => call.method == 'start'), hasLength(1));
+      }
+      if (mode.startsWith('guest')) {
+        if (mode == 'guest') {
+          PanelRow partyRow() => model.panelCategories().single.rows.singleWhere((row) => row.id == 'ps3-party-leave');
+          expect(partyRow().title, 'Leave AnyTogether Room');
+          expect(partyRow().detail, 'Checking the connection for multiplayer.');
+          providerStatus = 3;
+          await waitFor(() => model.embeddedGame?.ps3ProviderStatus?.name == 'ready');
+          expect(partyRow().detail, "Use the game's online menu to meet your friend.");
+          providerStatus = 6;
+          await waitFor(() => model.embeddedGame?.ps3ProviderStatus?.name == 'signalingFailed');
+          expect(partyRow().detail, 'Signed in, but multiplayer signaling did not respond.');
+          expect(server!.callsTo('game-sessions/$roomId/leave'), isEmpty);
+        }
+        if (mode == 'guest-provider-rejected') {
+          expect(server!.callsTo('game-sessions/$roomId/leave'), isEmpty);
+          providerStatus = 5;
+          await waitFor(() => model.together.ps3PartyRows().isEmpty);
+          expect(server.callsTo('game-sessions/$roomId/leave'), hasLength(1));
+          expect(model.toast, contains('Sign-in was rejected'));
+          expect(stopped, isFalse);
+          final release = releases.single;
+          releases.add(
+            Ps3OnlineRelease(
+              provider: 'other-provider',
+              titleId: release.titleId,
+              updateVersion: '01.29',
+              updateTreeDigest: release.updateTreeDigest,
+              coreSha256: release.coreSha256,
+              linuxCoreSha256: release.linuxCoreSha256,
+              executableSha256: release.executableSha256,
+              protection: release.protection,
+              rpcnHost: 'other.example.invalid',
+              rpcnCertificateSha256: release.rpcnCertificateSha256,
+              providerFiles: const {},
+              xfloat: release.xfloat,
+              dns: release.dns,
+              upnp: false,
+            ),
+          );
+          final worker = model.embeddedGame;
+          activate('ps3ProviderStatus');
+          expect(model.overlay, Layer.emulatorMenu);
+          expect(model.panelCategories().single.rows.any((row) => row.id == 'ps3-online-import-account'), isFalse);
+          expect(model.embeddedGame, same(worker));
+          model.closeOverlay();
+          expect(model.overlay, Layer.quickMenu);
+          expect(stopped, isFalse);
+          activate('ps3ProviderStatus');
+          activate('ps3-online-close-for-repair');
+          expect(model.panelCategories().single.rows.any((row) => row.id == 'ps3-online-import-account'), isFalse);
+          await waitFor(() => model.running == null && stopped);
+          await waitFor(() => model.panelCategories().single.rows.any((row) => row.id == 'ps3-online-import-account'));
+          expect(model.overlay, Layer.emulatorMenu);
+          expect(model.spot?.row, 'ps3-online-import-account');
+          expect(server.callsTo('game-sessions/$roomId/leave'), hasLength(1));
+          selectedPatch = write(
+            p.join(fixture.temp.path, 'replacement-account.yml'),
+            utf8.encode(account.replaceFirst('fake-token', 'replacement-test-token')),
+          ).path;
+          model.activateRow(model.panelRow);
+          await waitFor(() => accountStatus() == 'Provider account imported.');
+          expect(jsonDecode(installedAccount.readAsStringSync()), containsPair('Token', 'replacement-test-token'));
+          model.closeOverlay();
+          expect(model.overlay, isNull);
+          return;
+        } else if (mode == 'guest-ended') {
+          server!.push('game_session.ended', {'sessionId': roomId});
+          await waitFor(() => model.together.ps3PartyRows().isEmpty);
+          expect(server.callsTo('game-sessions/$roomId/leave'), isEmpty);
+        } else {
+          final leave = model
+              .panelCategories()
+              .expand((category) => category.rows)
+              .singleWhere((row) => row.id == 'ps3-party-leave');
+          (leave.kind as ActionRow).run();
+          await waitFor(() => server!.callsTo('game-sessions/$roomId/leave').isNotEmpty);
+          await waitFor(() => model.together.ps3PartyRows().isEmpty);
+        }
+        expect(model.together.ps3PartyRows(), isEmpty);
+        expect(model.embeddedGame?.isPs3Online, isTrue);
+      }
+    } finally {
+      if (host) {
+        expect(await model.prepareToQuit(), isTrue);
+        expect(server!.callsTo('game-sessions/$roomId', method: 'DELETE'), hasLength(1));
+      } else {
+        await model.stopRunningGame();
+      }
+      await waitFor(() => model.running == null && model.starting == null);
+      if (mode == 'guest-room-timeout') {
+        expect(server!.callsTo('game-sessions/$roomId/join', method: 'POST'), hasLength(1));
+        expect(calls.where((call) => call.method == 'start'), hasLength(1));
+      }
+    }
+  }
+
+  for (final mode in [
+    'solo',
+    'solo-quick-host',
+    'solo-quick-guest',
+    'host',
+    'dashboard-host',
+    'host-cancel-invite',
+    'host-invite-timeout',
+    'host-occupied',
+    'guest',
+    'guest-room-timeout',
+    'guest-ended',
+    'guest-boot-cancel',
+    'guest-first-frame-cancel',
+    'guest-provider-rejected',
+    'guest-provider-boot-failed',
+  ]) {
+    test(
+      'PS3 $mode verifies setup and launches only the isolated profile',
+      () => HttpOverrides.runWithHttpOverrides(() => verifySetup(mode), _LoopbackHttpOverrides()),
+      skip: !supportsOnlineFixture,
+    );
+  }
+
+  testWidgets('PS3 game settings show local online readiness and can recheck an installed update', (tester) async {
+    final fixture = makeFixture(
+      system: HostSystem.windows,
+      environment: {'ANYPS5_PS3_CORE_DIGESTS': '${'0' * 64}:${'1' * 64}'},
+      pickFolder: (_) async => null,
+    );
+    final model = fixture.model;
+    addTearDown(() {
+      model.dispose();
+      fixture.dispose();
+    });
+    final folder = p.join(fixture.temp.path, 'PS3 fixture');
+    File write(String relative, List<int> bytes) => File(p.join(folder, relative))
+      ..createSync(recursive: true)
+      ..writeAsBytesSync(bytes);
+    final disc = write('PS3_DISC.SFB', [0]);
+    write('PS3_GAME/USRDIR/EBOOT.BIN', [0]);
+    write('PS3_GAME/PARAM.SFO', ps3FixtureSfo({'TITLE_ID': 'BCUS98208', 'APP_VER': '01.18'}));
+    final game = Game(
+      folder: folder,
+      titleId: 'BCUS98208',
+      name: 'LittleBigPlanet fixture',
+      names: const {},
+      defaultLanguage: 'en',
+      version: '99.99',
+      executable: ExecutableKind.disc,
+      retro: (platform: RetroPlatform.ps3, path: disc.path),
+    );
+    model.games = [game];
+    model.selected = 0;
+    model.open(Layer.gameSettings);
+    final gameRows = model.panelCategories().single.rows;
+    expect(gameRows.any((row) => row.id == 'ps3-party-dashboard-invite'), isFalse);
+    final entry = gameRows.indexWhere((row) => row.id == 'ps3-online-readiness');
+    expect(entry, isNonNegative);
+    expect(gameRows[entry].title, 'Online Readiness');
+    model.activateRow(entry);
+    PanelRow row(String id) => model.panelCategories().single.rows.singleWhere((row) => row.id == id);
+    String info(String id) => (row(id).kind as InfoRow).text;
+    expect(info('ps3-online-title-id'), 'BCUS98208');
+    expect(info('ps3-online-disc-version'), '01.18');
+    expect(info('ps3-online-managed-update'), 'None detected');
+    expect(row('ps3-online-status').title, 'No verified provider');
+    expect(row('ps3-online-status').detail, contains('play offline'));
+    expect(model.panelCategories().single.rows.any((item) => item.id == 'ps3-online-play'), isFalse);
+    expect(model.running, isNull);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1600, 1000);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    Widget panel() => MaterialApp(
+      home: Scaffold(body: PanelView(model: model)),
+    );
+    await tester.pumpWidget(panel());
+    expect(find.text('No verified provider'), findsOneWidget);
+    expect(find.textContaining('You can still play offline'), findsOneWidget);
+    expect(find.text('BCUS98208'), findsOneWidget);
+    model.activateRow(model.panelCategories().single.rows.indexWhere((item) => item.id == 'ps3-update-prepare'));
+    await tester.pumpWidget(panel());
+    expect(find.text('Update 01.30 · 11 packages'), findsOneWidget);
+    expect(find.text('Choose Update Folder'), findsOneWidget);
+    expect(find.text('Install Update'), findsNothing);
+    model.panelCommand(Command.back);
+    expect(model.spot?.row, 'ps3-update-prepare');
+    model.panelCommand(Command.up);
+    await tester.pumpWidget(const SizedBox.shrink());
+
+    final update = p.join(
+      p.dirname(model.paths.toolkits),
+      'Emulators',
+      'system',
+      'rpcs3',
+      'dev_hdd0',
+      'game',
+      'BCUS98208',
+    );
+    File(p.join(update, 'PARAM.SFO'))
+      ..createSync(recursive: true)
+      ..writeAsBytesSync(ps3FixtureSfo({'TITLE_ID': 'BCUS98208', 'APP_VER': '01.30'}));
+    File(p.join(update, 'USRDIR', 'EBOOT.BIN'))
+      ..createSync(recursive: true)
+      ..writeAsBytesSync([0]);
+    expect(model.spot?.row, 'ps3-online-recheck');
+    model.panelCommand(Command.select);
+    expect(info('ps3-online-managed-update'), '01.30');
+    expect(row('ps3-online-status').title, 'No verified provider');
+    disc.deleteSync();
+    model.panelCommand(Command.select);
+    expect(row('ps3-online-status').title, 'Disc unavailable');
+    expect(model.running, isNull);
+    expect(model.spot?.row, 'ps3-online-recheck');
+    write('PS3_DISC.SFB', [0]);
+    model.panelCommand(Command.select);
+    expect(row('ps3-online-status').title, 'No verified provider');
+    expect(model.spot?.row, 'ps3-online-recheck');
+    model.panelCommand(Command.back);
+    expect(model.overlay, Layer.gameSettings);
+    expect(model.selectedGame, game);
+    expect(model.spot?.row, 'ps3-online-readiness');
+  }, skip: Abi.current() != Abi.windowsX64);
+
   test('PS3 exposes validated graphics, CPU, I/O and audio options before first Play', () {
     final fixture = makeFixture(system: HostSystem.windows);
     final model = fixture.model;

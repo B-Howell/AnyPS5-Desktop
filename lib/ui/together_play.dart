@@ -33,6 +33,8 @@ extension TogetherPlay on TogetherModel {
   /// The host's Play Together: a LAN session in the party, then the game with online play on.
   Future<void> startPlayTogether(Game game) async {
     if (!signedIn || hub.parties.party == null) return;
+    if (_ps1Match != null) return app.show(T.text('retroOnlineBusy'));
+    if (game.retro != null) return _unsupportedRetroInvite();
     final running = app.running;
     if (running != null) return app.show(T.format('togetherCloseFirst', [running.$1.name]));
     if (app.stateOf(game) is! Installed) return app.show(T.format('gameUnlockFirst', [game.name]));
@@ -79,6 +81,7 @@ extension TogetherPlay on TogetherModel {
   /// Join from the party or the offer: the check first, then the game in the same session. After
   /// Try anyway the check looks past the game version (never the engine).
   Future<void> joinPlayTogether(PlayTogetherOffer offer, {bool afterUnlock = false}) async {
+    if (_ps1Match != null) return app.show(T.text('retroOnlineBusy'));
     final verdict = PlayTogetherCheck.verdict(
       offer,
       signedIn: signedIn,
@@ -143,6 +146,7 @@ extension TogetherPlay on TogetherModel {
         );
 
   Future<void> _joinTogether(PlayTogetherOffer offer, Game game) async {
+    if (game.retro != null) return _unsupportedRetroInvite();
     final anyway = togetherTryAnyway.contains(offer.sessionId);
     app.show(
       anyway ? T.format('togetherTryingAnyway', [game.name]) : T.format('togetherJoining', [offer.hostName, game.name]),

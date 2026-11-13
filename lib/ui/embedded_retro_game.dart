@@ -1,30 +1,95 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
+import '../core/retro_button_map.dart';
 import '../core/controllers/pad_info.dart';
 import '../core/game_library.dart';
 import '../core/game_process.dart';
 import '../core/managed_retro.dart';
+import '../core/ps3_online_profile.dart';
+import '../core/toolkit_download.dart';
 import '../core/gamepad/pad_navigation.dart';
+import '../core/online/ps1_checkpoint_transfer.dart';
+import '../core/online/ps1_netplay_media.dart';
+import '../core/online/ps1_netplay_session.dart';
+import '../core/online/ps1_netplay_wire.dart';
 
+import 'retro_core_channel.dart';
 import 'retro_game_tuning.dart';
 
 export 'retro_game_tuning.dart' show EmbeddedOption, RetroTuningPersist;
 
+enum Ps3ProviderStatus {
+  unavailable('ps3ProviderUnavailable'),
+  waiting('ps3ProviderWaiting'),
+  connecting('ps3ProviderConnecting'),
+  signaling('ps3ProviderSignaling'),
+  ready('ps3ProviderReady'),
+  connectionFailed('ps3ProviderConnectionFailed'),
+  loginRejected('ps3ProviderLoginRejected'),
+  signalingFailed('ps3ProviderSignalingFailed');
+
+  const Ps3ProviderStatus(this.detailKey);
+
+  final String detailKey;
+  bool get failed => this == connectionFailed || this == loginRejected || this == signalingFailed;
+
+  static Ps3ProviderStatus fromNative(Object? code) => switch (code) {
+    0 => waiting,
+    1 => connecting,
+    2 => signaling,
+    3 => ready,
+    4 => connectionFailed,
+    5 => loginRejected,
+    6 => signalingFailed,
+    _ => unavailable,
+  };
+}
+
+typedef EmbeddedDiscs = ({List<String> labels, int? inserted, String? path, bool busy, bool failed});
+
+enum _DiscRequest { sending, queued }
+
 class EmbeddedRetroGame extends RunningGame {
-  EmbeddedRetroGame._(this.textureId, this._finished, this._onResolutionSelected, this._onGraphicsSelected)
-    : super.embedded(_finished.future, DateTime.now());
+  EmbeddedRetroGame._(
+    this._native,
+    this._finished,
+    this._onResolutionSelected,
+    this._onGraphicsSelected,
+    this._netplayMedia,
+    this.localNetplayStaging,
+    this._ps2Lan,
+    this._localPs2LanSetup,
+    this.ps3OnlineRelease,
+    this._sourcePaths,
+    this._ordinaryRecovery,
+  ) : super.embedded(_finished.future, DateTime.now());
 
   static const _channel = MethodChannel('anyps5/retro_core');
   static const ps3Resolution = 'rpcs3_resolution_scale';
-  final int textureId;
+  final RetroCoreChannel _native;
+  int get textureId => _native.texture;
   final Completer<int> _finished;
+  final Ps3OnlineRelease? ps3OnlineRelease;
   final void Function(String) _onResolutionSelected;
   final void Function(String, String) _onGraphicsSelected;
   final _ready = Completer<bool>();
+  final _netplayReady = Completer<bool>();
+  final _initialProviderFailure = Completer<Ps3ProviderStatus?>();
+  final Ps1NetplayMedia? _netplayMedia;
+  final ({String core, String disc, String system}) _sourcePaths;
+  int? _ordinaryRecovery;
+  bool _recoveryRestored = false;
+  bool get _awaitingRecoveryRestore => _ordinaryRecovery != null && !_recoveryRestored;
+  final bool _ps2Lan;
+  final bool _localPs2LanSetup;
+  bool get _netplay => _netplayMedia != null;
+  bool get pausesForOverlay =>
+      !_netplay && !isPs3Online && (!_ps2Lan || _localPs2LanSetup) && !_awaitingRecoveryRestore;
   late final Timer _watch;
   late final Timer _input;
   bool _reading = false;
@@ -32,10 +97,23 @@ class EmbeddedRetroGame extends RunningGame {
   bool _acceptsInput = true;
   bool _closing = false;
   bool _awaitNeutral = true;
+  RetroButtonMap _buttonMap = RetroButtonMap.standard;
+  List<RetroButtonMap> _seatMaps = const [RetroButtonMap.standard, RetroButtonMap.standard, RetroButtonMap.standard];
+  bool _portableCheckpoint = false;
+  int? _ordinaryCheckpointSource;
   String error = '';
   String resolutionError = '';
   bool hardwareRendering = false;
   bool presented = false;
+  EmbeddedDiscs? _discs;
+  EmbeddedDiscs? get discs => _discs;
+  _DiscRequest? _discRequest;
+  String? _lastPlayedDisc;
+  bool get changingDisc => _discRequest != null || _discs?.busy == true;
+
+  void Function()? _onManualOptionAccepted;
+  bool _startupVisible = false;
+  bool get startupVisible => _startupVisible;
   ({String label, int? percent})? progress;
   double aspect = 4 / 3;
   int filter = 0;
@@ -45,8 +123,38 @@ class EmbeddedRetroGame extends RunningGame {
   late final RetroGameTuning tuning;
   final _keys = <PadButton>{};
   List<int> _lastInput = const [];
+  final List<List<int>> _seatInputs = [];
 
   Future<bool> get ready => _ready.future;
+  Future<bool> get netplayReady => _netplayReady.future;
+  bool get isNetplay => _netplay;
+  String get corePath => _sourcePaths.core;
+  String get sourceHome => p.dirname(_sourcePaths.system);
+  bool get canParkOrdinaryPs1 =>
+      _ordinaryCheckpointSource != null &&
+      !_closing &&
+      !_finished.isCompleted &&
+      activeOptions['swanstation_CPU_ExecutionMode'] == Ps1NetplayExecution.ordinaryHandoff.cpu;
+  bool continuedFromPs1Match = false;
+
+  Future<String?> ordinaryMatchBios() async {
+    if (!canParkOrdinaryPs1) return null;
+    String? candidate;
+    await for (final entry in Directory(_sourcePaths.system).list(followLinks: false)) {
+      if (entry is! File || !const {0x80000, 0x400000, 0x3e66f0}.contains(await entry.length())) continue;
+      if (candidate != null) return null;
+      candidate = entry.path;
+    }
+    return candidate;
+  }
+
+  bool get isPs2Lan => _ps2Lan;
+  bool get isPs3Online => ps3OnlineRelease != null;
+  Ps3ProviderStatus? _ps3ProviderStatus;
+  Ps3ProviderStatus? get ps3ProviderStatus => isPs3Online ? _ps3ProviderStatus ?? Ps3ProviderStatus.unavailable : null;
+  Future<Ps3ProviderStatus?> get initialProviderFailure => _initialProviderFailure.future;
+  final bool localNetplayStaging;
+  Ps1NetplayMedia? get stagedNetplayMedia => localNetplayStaging && _portableCheckpoint ? _netplayMedia : null;
   double? get displayAspect => switch (framing) {
     0 => aspect,
     1 => 4 / 3,
@@ -57,34 +165,124 @@ class EmbeddedRetroGame extends RunningGame {
   static Future<EmbeddedRetroGame> start(
     String folder,
     RetroDisc disc, {
+    required EmbeddedCoreHost coreHost,
     required String? internalResolution,
     required void Function(String) onResolutionSelected,
     required Map<String, String> graphics,
     required void Function(String, String) onGraphicsSelected,
     RetroTuningPersist? onTuningApplied,
+    RetroTuningPersist? onAutoOptimizeApplied,
+    void Function()? onManualOptionAccepted,
     required PadState Function() readPad,
+    List<PadState> Function()? readSeats,
     required void Function() changed,
+    ({int index, String path})? initialDisc,
+    void Function(String)? onDiscPlayed,
+    RetroButtonMap buttonMap = RetroButtonMap.standard,
+    List<RetroButtonMap> seatButtonMaps = const [],
+    ({Ps1NetplayMedia media, int seat})? netplay,
+    bool localNetplayStaging = false,
+    ({Uint8List mac, String system, String saves})? ps2Lan,
+    bool localPs2LanSetup = false,
+    Ps3OnlineProfile? onlineProfile,
+    int? ordinaryRecovery,
+    String? ordinaryCore,
   }) async {
-    final core = p.join(folder, ManagedRetro.libraryName(disc.platform));
-    if (!File(core).existsSync()) throw FileSystemException('The embedded emulator core is missing', core);
-    final saveRoot = Directory(p.join(folder, 'saves', disc.platform.name))..createSync(recursive: true);
-    final id = await _channel.invokeMethod<int>('start', {
-      'core': core,
-      'disc': disc.path,
-      'system': p.join(folder, 'system'),
-      'saves': saveRoot.path,
-      'internalResolution': ?internalResolution,
-      if (graphics.isNotEmpty) 'graphics': graphics,
-    });
-    if (id == null || id < 0) throw StateError('The game surface could not start.');
-    final session = EmbeddedRetroGame._(id, Completer<int>(), onResolutionSelected, onGraphicsSelected);
+    if (ps2Lan != null && (disc.platform != RetroPlatform.ps2 || ps2Lan.mac.length != 6 || netplay != null)) {
+      throw ArgumentError('A private PS2 LAN session needs a PS2 game and a six-byte MAC.');
+    }
+    if (localNetplayStaging && netplay?.seat != 0) {
+      throw ArgumentError('Local PS1 hosting requires verified host media.');
+    }
+    if (netplay != null && (disc.platform != RetroPlatform.ps1 || p.absolute(disc.path) != netplay.media.disc)) {
+      throw ArgumentError('Netplay must use the verified PS1 disc.');
+    }
+    final core = netplay?.media.core ?? ordinaryCore ?? p.join(folder, coreHost.libraryName(disc.platform));
+    if (onlineProfile != null) {
+      if (disc.platform != RetroPlatform.ps3 ||
+          !p.equals(p.absolute(core), onlineProfile.core) ||
+          !p.equals(p.absolute(disc.path), onlineProfile.disc)) {
+        throw Ps3OnlineIssue.unqualified;
+      }
+      await onlineProfile.revalidate();
+    }
+    if (ordinaryRecovery == null && !File(core).existsSync()) {
+      throw FileSystemException('The embedded emulator core is missing', core);
+    }
+    final saveRoot =
+        ps2Lan?.saves ??
+        (netplay == null
+            ? (Directory(
+                onlineProfile?.saveRoot ?? p.join(folder, 'saves', disc.platform.name),
+              )..createSync(recursive: true)).path
+            : Directory.systemTemp.path);
+    final startResult = ordinaryRecovery != null
+        ? await _channel.invokeMethod<Object>('ps1LocalCheckpointReopen', ordinaryRecovery)
+        : await _channel.invokeMethod<Object>('start', {
+            'core': core,
+            'disc': netplay?.media.disc ?? onlineProfile?.disc ?? disc.path,
+            if (initialDisc != null) 'initialDiscIndex': initialDisc.index,
+            if (initialDisc != null) 'initialDiscPath': initialDisc.path,
+            'system': ps2Lan?.system ?? onlineProfile?.systemRoot ?? p.join(folder, 'system'),
+            'saves': saveRoot,
+            if (ps2Lan != null) 'ps2LanMac': ps2Lan.mac,
+            if (onlineProfile != null) 'ps3Online': onlineProfile.networkArguments,
+            if (netplay == null) ...{
+              'internalResolution': ?internalResolution,
+              if (graphics.isNotEmpty) 'graphics': graphics,
+            } else ...{
+              'ps1NetplaySeat': netplay.seat,
+              'ps1NetplayBios': netplay.media.bios,
+              if (netplay.media.execution.usesDualShock) 'ps1NetplayDualShock': true,
+              if (netplay.media.execution.usesRecompiler) 'ps1NetplayCpu': netplay.media.execution.cpu,
+              if (netplay.media.execution == Ps1NetplayExecution.mixedRollback) 'ps1NetplayRollback': true,
+              if (netplay.media.execution.usesPresentationCore)
+                'ps1PresentationCore': Ps1NetplayMedia.presentationCorePath(core),
+              if (localNetplayStaging) 'ps1LocalStaging': true,
+            },
+          });
+    final RetroCoreChannel native;
+    try {
+      native = RetroCoreChannel.fromStart(startResult);
+    } on FormatException {
+      throw StateError('The game surface could not start.');
+    }
+    final session = EmbeddedRetroGame._(
+      native,
+      Completer<int>(),
+      onResolutionSelected,
+      onGraphicsSelected,
+      netplay?.media,
+      localNetplayStaging,
+      ps2Lan != null,
+      localPs2LanSetup,
+      onlineProfile?.release,
+      (core: core, disc: p.absolute(disc.path), system: p.join(folder, 'system')),
+      ordinaryRecovery,
+    );
+    session._buttonMap = buttonMap;
+    for (var index = 0; index < seatButtonMaps.length && index < 3; index++) {
+      session.setSeatButtonMap(index + 2, seatButtonMaps[index]);
+    }
+    session._onManualOptionAccepted = onManualOptionAccepted;
     session.tuning = RetroGameTuning(
       platform: disc.platform,
       options: session.options,
-      ready: () => session.presented && session.hardwareRendering && !session._closing,
+      ready: () =>
+          !session.isPs3Online &&
+          !session._netplay &&
+          !session._ps2Lan &&
+          session.presented &&
+          session.hardwareRendering &&
+          !session._closing,
+      queueReady: () =>
+          !session.isPs3Online && !session._netplay && !session._ps2Lan && session.presented && !session._closing,
       writeOptions: (expected, values) async {
-        if (session._closing) return false;
-        final accepted = await _channel.invokeMethod<bool>('tuningOptions', {'expected': expected, 'values': values});
+        if (onlineProfile != null || session._closing) return false;
+        final accepted = await session._native.invokeMethod<bool>('tuningOptions', {
+          'expected': expected,
+          'values': values,
+        });
         return accepted == true &&
             (!values.keys.any(_usesGraphicsCheckpoint) || await session._waitForGraphics(values));
       },
@@ -99,35 +297,74 @@ class EmbeddedRetroGame extends RunningGame {
               }
             }
           },
+      persistAuto: onAutoOptimizeApplied,
       changed: changed,
     );
-    session._watch = Timer.periodic(const Duration(milliseconds: 125), (_) => unawaited(session._poll(changed)));
+    session._watch = Timer.periodic(
+      const Duration(milliseconds: 125),
+      (_) => unawaited(session._poll(changed, onDiscPlayed)),
+    );
     session._input = Timer.periodic(const Duration(milliseconds: 16), (_) {
-      if (session._acceptsInput && !session._closing) session._sendInput(readPad());
+      if (session._acceptsInput && !session._closing && session._ordinaryRecovery == null) {
+        session._sendInput(readPad());
+        if (!session._netplay && readSeats != null) session._sendSeats(readSeats());
+      }
     });
     return session;
   }
 
-  Future<void> _poll(void Function() changed) async {
+  Future<void> _poll(void Function() changed, void Function(String)? onDiscPlayed) async {
     if (_reading) return;
     _reading = true;
+    final acknowledgeDiscRequest = _discRequest == _DiscRequest.queued;
     try {
-      final status = await _channel.invokeMapMethod<String, Object?>('status');
+      final status = await _native.invokeMapMethod<String, Object?>('status');
+      if (_finished.isCompleted) return;
       if (status == null || status['ended'] == true) {
         final nativeError = status?['error'] as String?;
         if (nativeError != null && nativeError.isNotEmpty) error = nativeError;
-        await _channel.invokeMethod<void>('release');
-        _watch.cancel();
-        _input.cancel();
-        tuning.endSession();
-        if (!_ready.isCompleted) _ready.complete(false);
-        _finished.complete(error.isEmpty ? 0 : 1);
+        await _native.invokeMethod<void>('release');
+        _finish(error.isEmpty ? 0 : 1);
         return;
       }
+      if (_awaitingRecoveryRestore && status['ps1RecoveredSource'] == _ordinaryRecovery) {
+        _recoveryRestored = true;
+        if (_playing && !_closing) await _native.invokeMethod<void>('pause', false);
+      }
       final updatedAspect = status['aspect'];
-      var updated = false;
-      if (!presented && status['presented'] == true) {
+      if (acknowledgeDiscRequest) _discRequest = null;
+      var updated = acknowledgeDiscRequest;
+      if (isPs3Online) {
+        final providerStatus = Ps3ProviderStatus.fromNative(status['ps3ProviderStatus']);
+        if (!_initialProviderFailure.isCompleted &&
+            (providerStatus == Ps3ProviderStatus.ready || providerStatus.failed)) {
+          _initialProviderFailure.complete(providerStatus.failed ? providerStatus : null);
+        }
+        if (providerStatus != ps3ProviderStatus) {
+          _ps3ProviderStatus = providerStatus;
+          updated = true;
+        }
+      }
+      _portableCheckpoint = status['portableCheckpoint'] == true;
+      continuedFromPs1Match = status['ps1ContinuedFromMatch'] == true;
+      final source = status['localBlankCardCheckpoint'];
+      final sourceToken = !_netplay && source is int && source > 0 ? source : null;
+      if (_ordinaryCheckpointSource != sourceToken) {
+        _ordinaryCheckpointSource = sourceToken;
+        updated = true;
+      }
+      if (status['netplayReady'] == true && !_netplayReady.isCompleted) {
+        _netplayReady.complete(true);
+      }
+      if (!_awaitingRecoveryRestore && !presented && status['presented'] == true) {
         presented = true;
+        updated = true;
+      }
+      if (!_awaitingRecoveryRestore &&
+          !_closing &&
+          !_startupVisible &&
+          (status['startupVisible'] as bool? ?? presented)) {
+        _startupVisible = true;
         _ready.complete(true);
         updated = true;
       }
@@ -152,6 +389,21 @@ class EmbeddedRetroGame extends RunningGame {
       if (updatedAspect is double && updatedAspect != aspect) {
         aspect = updatedAspect;
         updated = true;
+      }
+      final discStatus = status['discs'];
+      final newDiscs = _readDiscs(discStatus);
+      if (!listEquals(_discs?.labels, newDiscs?.labels) ||
+          _discs?.inserted != newDiscs?.inserted ||
+          _discs?.path != newDiscs?.path ||
+          _discs?.busy != newDiscs?.busy ||
+          _discs?.failed != newDiscs?.failed) {
+        _discs = newDiscs;
+        updated = true;
+      }
+      final played = discStatus is Map ? discStatus['playedDiscPath'] : null;
+      if (presented && played is String && played.isNotEmpty && played != _lastPlayedDisc) {
+        _lastPlayedDisc = played;
+        onDiscPlayed?.call(played);
       }
       final values = status['options'];
       if (values is Map) {
@@ -201,11 +453,28 @@ class EmbeddedRetroGame extends RunningGame {
     }
   }
 
+  Future<bool> acceptOrdinaryRecovery(int source) async {
+    if (_ordinaryRecovery != source || !_startupVisible || _closing || _finished.isCompleted) return false;
+    final accepted = await _native.invokeMethod<bool>('ps1LocalCheckpointAccept', {
+      'source': source,
+      'texture': textureId,
+    });
+    if (accepted == true) _ordinaryRecovery = null;
+    return accepted == true;
+  }
+
+  Future<void> preserveConfirmedPs1Progress(int source) async {
+    if (_netplayMedia?.execution != Ps1NetplayExecution.rollbackHandoff || _closing || _finished.isCompleted) return;
+    await _exchangeCheckpoint('ps1LocalCheckpointContinue', {'texture': textureId, 'source': source});
+  }
+
   void playback({required bool playing, required bool focused}) {
     if (_closing) return;
     if (_playing != playing) {
       _playing = playing;
-      unawaited(_channel.invokeMethod<void>('pause', !playing));
+      if (pausesForOverlay) {
+        unawaited(_native.invokeMethod<void>('pause', !playing));
+      }
     }
     final acceptsInput = playing && focused;
     if (_acceptsInput == acceptsInput) return;
@@ -214,22 +483,34 @@ class EmbeddedRetroGame extends RunningGame {
     _lastInput = const [];
     _awaitNeutral = true;
     if (!acceptsInput) {
-      unawaited(_channel.invokeMethod<void>('input', const [0, 0, 0, 0, 0]));
+      unawaited(_native.invokeMethod<void>('input', const [0, 0, 0, 0, 0]));
       unawaited(tuning.interrupt());
     }
   }
 
-  Future<void> setOption(String key, String value) async {
-    if (_closing || tuning.updating) return;
+  Future<bool> setOption(String key, String value) async {
+    if (isPs3Online || _netplay || _closing || tuning.updating) return false;
     if (tuning.canCancel) await tuning.cancel();
-    if (_closing || tuning.updating) return;
-    final accepted = await _channel.invokeMethod<bool>('option', {'key': key, 'value': value});
+    if (_closing || tuning.updating) return false;
+    final changed = tuning.selectedValue(key) != value;
+    final bool? accepted;
+    try {
+      accepted = await _native.invokeMethod<bool>('option', {'key': key, 'value': value});
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
     if (accepted == true && _usesGraphicsCheckpoint(key) && !await _waitForGraphics({key: value})) {
-      return;
+      return false;
+    }
+    if (accepted == true && changed) {
+      tuning.manualSelection(key);
+      _onManualOptionAccepted?.call();
     }
     if (accepted == true && (key == 'swanstation_GPU_ResolutionScale' || key == 'pcsx2_upscale_multiplier')) {
       _onResolutionSelected(value);
-      return;
+      return true;
     }
     if (accepted == true &&
         (options[key]?.restart == true ||
@@ -242,6 +523,225 @@ class EmbeddedRetroGame extends RunningGame {
             }.contains(key))) {
       _onGraphicsSelected(key, value);
     }
+    return accepted == true;
+  }
+
+  Future<void> startNetplayFrames() async {
+    if (!_netplay || _closing || await _native.invokeMethod<bool>('netplayStart') != true) {
+      throw StateError('The PS1 netplay runner could not start.');
+    }
+  }
+
+  /// Returns null until the core has loaded and the private queues are available.
+  Future<List<Uint8List>?> exchangePs2LanFrames(List<Uint8List> input) async {
+    if (!_ps2Lan || _closing || _finished.isCompleted) return null;
+    return _native.invokeListMethod<Uint8List>('ps2LanExchange', {'texture': textureId, 'frames': input});
+  }
+
+  Future<bool> resetPs2LanFrames() async {
+    if (!_ps2Lan || _closing || _finished.isCompleted) return false;
+    return await _native.invokeMethod<bool>('ps2LanReset', textureId) == true;
+  }
+
+  /// Captures the state immediately before the returned emulation frame.
+  Future<Ps1CheckpointSnapshot> captureNetplayCheckpoint() async {
+    final result = await _exchangeCheckpoint('ps1CheckpointExport', {'discHash': _checkpointDiscHash()});
+    if (result is Map && result['frame'] is int && result['state'] is Uint8List) {
+      return (frame: result['frame'] as int, state: result['state'] as Uint8List);
+    }
+    throw StateError('The emulator could not capture the checkpoint.');
+  }
+
+  /// Captures the ordinary session through its blank-card exporter.
+  Future<Ps1CheckpointSnapshot> captureOrdinaryNetplayCheckpoint(Ps1NetplayMedia media, {bool park = false}) async {
+    final source = _ordinaryCheckpointSource;
+    bool available() =>
+        _ordinaryCheckpointSource == source &&
+        !_closing &&
+        !_finished.isCompleted &&
+        activeOptions['swanstation_CPU_ExecutionMode'] == Ps1NetplayExecution.ordinaryHandoff.cpu;
+    bool handoffCore(String digest) => switch (media.execution) {
+      Ps1NetplayExecution.ordinaryHandoff => digest == Ps1NetplayMedia.ordinaryHandoffCorePin,
+      Ps1NetplayExecution.mixedRollback => media.execution.verifiedCoreIdentity(EmbeddedCoreHost.current, digest) != null,
+      _ => false,
+    };
+    if (source == null || !p.equals(_sourcePaths.disc, media.disc) || !available()) {
+      throw StateError('The ordinary PS1 session cannot share a match checkpoint.');
+    }
+    if (!handoffCore(await AssetDownload.sha256Of(_sourcePaths.core)) || !available()) {
+      throw StateError('The ordinary PS1 session cannot share a match checkpoint.');
+    }
+    final result = await _exchangeCheckpoint(park ? 'ps1LocalCheckpointPark' : 'ps1LocalCheckpointExport', {
+      'texture': textureId,
+      'source': source,
+      'discHash': _decodeCheckpointDigest(media.discDigest),
+    });
+    if (available() && result is Map && result['frame'] is int && result['state'] is Uint8List) {
+      return (frame: result['frame'] as int, state: result['state'] as Uint8List);
+    }
+    throw StateError('The emulator could not capture the match checkpoint.');
+  }
+
+  Future<int> detachOrdinaryCheckpoint() async {
+    final source = _ordinaryCheckpointSource;
+    if (source == null || _closing || _finished.isCompleted) throw StateError('The original PS1 game is unavailable.');
+    _closing = true;
+    try {
+      final ticket = await _native.invokeMethod<int>('ps1LocalCheckpointDetach', {
+        'texture': textureId,
+        'source': source,
+      });
+      if (ticket != source) throw StateError('The original PS1 checkpoint was not detached.');
+      _finish(0);
+      return source;
+    } on Object {
+      _closing = false;
+      rethrow;
+    }
+  }
+
+  Future<void> resumeOrdinaryCheckpoint() async {
+    final source = _ordinaryCheckpointSource;
+    if (source == null || _closing || _finished.isCompleted) throw StateError('The original PS1 game is unavailable.');
+    final resumed = await _exchangeCheckpoint('ps1LocalCheckpointResume', {'texture': textureId, 'source': source});
+    if (resumed != true) throw StateError('The original PS1 checkpoint could not be restored.');
+  }
+
+  void _finish(int code) {
+    if (_finished.isCompleted) return;
+    _watch.cancel();
+    _input.cancel();
+    tuning.endSession();
+    if (!_ready.isCompleted) _ready.complete(false);
+    if (!_netplayReady.isCompleted) _netplayReady.complete(false);
+    if (!_initialProviderFailure.isCompleted) _initialProviderFailure.complete(null);
+    _finished.complete(code);
+  }
+
+  /// Restores into the isolated guest before starting its input timeline.
+  Future<void> restoreNetplayCheckpoint(Ps1CheckpointSnapshot snapshot) async {
+    if (await _exchangeCheckpoint('ps1CheckpointImport', {
+          'discHash': _checkpointDiscHash(),
+          'frame': snapshot.frame,
+          'state': snapshot.state,
+        }) !=
+        true) {
+      throw StateError('The emulator rejected the checkpoint.');
+    }
+  }
+
+  /// Holds at a committed frame so the guest can replay a stable input range.
+  Future<int> holdNetplayForCutover() async {
+    _requirePortableCheckpoint();
+    final timer = Stopwatch()..start();
+    while (!_closing && !_finished.isCompleted && timer.elapsed < const Duration(seconds: 3)) {
+      final frame = await _native.invokeMethod<int>('ps1CheckpointHold');
+      if (frame != null) return frame;
+      await Future<void>.delayed(const Duration(milliseconds: 8));
+    }
+    throw StateError('The emulator could not hold the online timeline.');
+  }
+
+  /// Releases the local host if the invitation is cancelled before cutover.
+  Future<void> resumeLocalNetplay() async {
+    _requirePortableCheckpoint();
+    if (await _native.invokeMethod<bool>('ps1ResumeLocal') != true) {
+      throw StateError('The emulator could not resume local play.');
+    }
+  }
+
+  Future<({int nextFrame, List<Ps1FrameInputs> frames})> readNetplayHistory(int firstFrame) async {
+    _requirePortableCheckpoint();
+    final reply = await _native.invokeMapMethod<String, Object?>('ps1CheckpointHistory', firstFrame);
+    if (reply == null) throw StateError('The emulator could not read confirmed inputs.');
+    return (
+      nextFrame: reply['nextFrame'] as int,
+      frames: [
+        for (final frame in (reply['frames'] as List<Object?>).cast<List<Object?>>())
+          (_decodePad(frame[0] as List<Object?>), _decodePad(frame[1] as List<Object?>)),
+      ],
+    );
+  }
+
+  Future<void> replayNetplayHistory(int firstFrame, List<Ps1FrameInputs> frames) async {
+    _requirePortableCheckpoint();
+    final result = await _exchangeCheckpoint('ps1CheckpointReplay', {
+      'frame': firstFrame,
+      'frames': [
+        for (final (first, second) in frames) [_encodePad(first), _encodePad(second)],
+      ],
+    });
+    if (result != true) throw StateError('The emulator rejected the catch-up batch.');
+  }
+
+  static Ps1PadInput _decodePad(List<Object?> values, [int offset = 0]) => (
+    buttons: values[offset] as int,
+    leftX: values[offset + 1] as int,
+    leftY: values[offset + 2] as int,
+    rightX: values[offset + 3] as int,
+    rightY: values[offset + 4] as int,
+  );
+
+  static List<int> _encodePad(Ps1PadInput pad) => [pad.buttons, pad.leftX, pad.leftY, pad.rightX, pad.rightY];
+
+  Ps1NetplayMedia _requirePortableCheckpoint() {
+    final media = _netplayMedia;
+    if (media == null || !_portableCheckpoint || _closing || _finished.isCompleted) {
+      throw StateError('The emulator cannot exchange portable checkpoints.');
+    }
+    return media;
+  }
+
+  Uint8List _checkpointDiscHash() => _decodeCheckpointDigest(_requirePortableCheckpoint().discDigest);
+
+  static Uint8List _decodeCheckpointDigest(String digest) => Uint8List.fromList([
+    for (var offset = 0; offset < digest.length; offset += 2)
+      int.parse(digest.substring(offset, offset + 2), radix: 16),
+  ]);
+
+  Future<Object> _exchangeCheckpoint(String method, Map<String, Object> arguments) async {
+    final id = await _native.invokeMethod<int>(method, arguments);
+    if (id == null) throw StateError('The emulator did not accept the checkpoint request.');
+    final timer = Stopwatch()..start();
+    var consumed = false;
+    try {
+      while (!_closing && !_finished.isCompleted && timer.elapsed < const Duration(seconds: 3)) {
+        final result = await _native.invokeMethod<Object>('ps1CheckpointResult', id);
+        if (result != null) {
+          consumed = true;
+          return result;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 8));
+      }
+      throw StateError('The checkpoint operation did not finish.');
+    } finally {
+      if (!consumed) await _native.invokeMethod<void>('ps1CheckpointCancel', id);
+    }
+  }
+
+  Future<Ps1NetplayTick> exchangeNetplayFrames(List<Ps1NetplayFrame> remote, int? acknowledgedFrame) async {
+    if (!_netplay || _closing) throw StateError('The PS1 netplay runner is closed.');
+    final reply = await _native.invokeMapMethod<String, Object?>('netplaySync', {
+      'remote': [
+        for (final sample in remote) [sample.frame, ..._encodePad(sample.input)],
+      ],
+      'acknowledgedFrame': acknowledgedFrame,
+    });
+    if (reply == null) throw StateError('The PS1 netplay runner returned no frames.');
+    return (
+      frame: reply['frame'] as int,
+      confirmedFrame: reply['confirmedFrame'] as int?,
+      receivedFrame: reply['receivedFrame'] as int?,
+      waiting: reply['waiting'] as bool,
+      fingerprints: {
+        for (final sample in (reply['fingerprints'] as List<Object?>).cast<List<Object?>>())
+          sample[0] as int: sample[1] as String,
+      },
+      local: [
+        for (final sample in (reply['local'] as List<Object?>).cast<List<Object?>>())
+          (frame: sample[0] as int, input: _decodePad(sample, 1)),
+      ],
+    );
   }
 
   static bool _usesGraphicsCheckpoint(String key) => const {
@@ -253,7 +753,7 @@ class EmbeddedRetroGame extends RunningGame {
   Future<bool> _waitForGraphics(Map<String, String> requested) async {
     final deadline = Stopwatch()..start();
     while (!_closing && deadline.elapsed < const Duration(seconds: 20)) {
-      final status = await _channel.invokeMapMethod<String, Object?>('status');
+      final status = await _native.invokeMapMethod<String, Object?>('status');
       if (status == null || status['ended'] == true || _closing) return false;
       if (status['graphicsPending'] != true) {
         final active = status['options'] as Map?;
@@ -264,8 +764,64 @@ class EmbeddedRetroGame extends RunningGame {
     return false;
   }
 
+  static EmbeddedDiscs? _readDiscs(Object? value) {
+    if (value is! Map || value['labels'] is! List) return null;
+    final labels = value['labels'] as List;
+    if (labels.length < 2 || labels.any((label) => label is! String)) return null;
+    final index = value['inserted'];
+    return (
+      labels: List<String>.unmodifiable(labels),
+      inserted: index is int && index >= 0 && index < labels.length ? index : null,
+      path: value['insertedDiscPath'] as String?,
+      busy: value['busy'] == true,
+      failed: value['failed'] == true,
+    );
+  }
+
+  Future<bool> changeDisc(int index) async {
+    final current = discs;
+    if (_closing ||
+        current == null ||
+        changingDisc ||
+        index == current.inserted ||
+        index < 0 ||
+        index >= current.labels.length) {
+      return false;
+    }
+    _discRequest = _DiscRequest.sending;
+    var accepted = false;
+    try {
+      accepted = await _native.invokeMethod<bool>('changeDisc', index) == true;
+      return accepted;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    } finally {
+      _discRequest = accepted ? _DiscRequest.queued : null;
+    }
+  }
+
+  RetroButtonMap get buttonMap => _buttonMap;
+
+  /// Players 2 to 4 on this computer each keep their own layout.
+  void setSeatButtonMap(int player, RetroButtonMap map) {
+    final index = player - 2;
+    if (index < 0 || index >= _seatMaps.length || _seatMaps[index] == map) return;
+    _seatMaps = [..._seatMaps]..[index] = map;
+  }
+
+  void setButtonMap(RetroButtonMap map) {
+    if (_closing || _buttonMap == map) return;
+    _buttonMap = map;
+    _keys.clear();
+    _awaitNeutral = true;
+    _lastInput = const [];
+    if (_acceptsInput) unawaited(_native.invokeMethod<void>('input', const [0, 0, 0, 0, 0]));
+  }
+
   void key(PadButton button, bool down) {
-    if (!_acceptsInput) return;
+    if (!_acceptsInput || _ordinaryRecovery != null) return;
     if (down) {
       _keys.add(button);
     } else {
@@ -279,21 +835,43 @@ class EmbeddedRetroGame extends RunningGame {
       if (held.isNotEmpty || [pad.leftX, pad.leftY, pad.rightX, pad.rightY].any((axis) => axis.abs() > 0.2)) return;
       _awaitNeutral = false;
     }
+    final input = _encode({...held, ..._keys}, pad, _buttonMap);
+    if (_same(_lastInput, input)) return;
+    _lastInput = input;
+    unawaited(_native.invokeMethod<void>('input', input));
+  }
+
+  List<int> _encode(Set<PadButton> held, PadState pad, RetroButtonMap layout) {
     var mask = 0;
-    for (final button in {...held, ..._keys}) {
+    for (final button in layout.map(held)) {
       final bit = _buttonCodes[button];
       if (bit != null) mask |= 1 << bit;
     }
-    final input = [
-      mask,
-      for (final axis in [pad.leftX, pad.leftY, pad.rightX, pad.rightY]) (axis.clamp(-1, 1) * 32767).round(),
-    ];
-    if (_lastInput.length == input.length &&
-        List.generate(input.length, (i) => _lastInput[i] == input[i]).every((e) => e)) {
-      return;
+    final sticks = layout.swapSticks
+        ? [pad.rightX, pad.rightY, pad.leftX, pad.leftY]
+        : [pad.leftX, pad.leftY, pad.rightX, pad.rightY];
+    return [mask, for (final axis in sticks) (axis.clamp(-1, 1) * 32767).round()];
+  }
+
+  static bool _same(List<int> a, List<int> b) =>
+      a.length == b.length && List.generate(a.length, (i) => a[i] == b[i]).every((e) => e);
+
+  /// Players 2 to 4 on this computer: each seated controller drives its own port.
+  void _sendSeats(List<PadState> seats) {
+    const neutral = [0, 0, 0, 0, 0];
+    for (var index = 0; index < 3; index++) {
+      final pad = index < seats.length ? seats[index] : null;
+      final input = pad == null
+          ? neutral
+          : _encode(pad.pressed.where((button) => _buttonCodes.containsKey(button)).toSet(), pad, _seatMaps[index]);
+      final last = index < _seatInputs.length ? _seatInputs[index] : neutral;
+      if (_same(last, input)) continue;
+      while (_seatInputs.length <= index) {
+        _seatInputs.add(neutral);
+      }
+      _seatInputs[index] = input;
+      unawaited(_native.invokeMethod<void>('input', [index + 1, ...input]));
     }
-    _lastInput = input;
-    unawaited(_channel.invokeMethod<void>('input', input));
   }
 
   static const _buttonCodes = {
@@ -320,7 +898,7 @@ class EmbeddedRetroGame extends RunningGame {
     if (_closing || _finished.isCompleted) return;
     _closing = true;
     try {
-      await _channel.invokeMethod<void>('stop');
+      await _native.invokeMethod<void>('stop');
     } on PlatformException {
       _closing = false;
       rethrow;

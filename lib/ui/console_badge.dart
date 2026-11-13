@@ -62,16 +62,14 @@ class ConsoleLogo extends StatelessWidget {
   final double height;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
+  Widget build(BuildContext context) => Image.asset(
+    'assets/retro/console-${console.name}.png',
+    semanticLabel: console.label,
     width: width,
     height: height,
-    child: FittedBox(
-      fit: BoxFit.scaleDown,
-      child: Text(
-        console.name.toUpperCase(),
-        semanticsLabel: console.label,
-        style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w700),
-      ),
-    ),
+    fit: BoxFit.contain,
+    filterQuality: FilterQuality.medium,
+    color: console.index >= PlayStationConsole.ps3.index ? Colors.white : null,
+    colorBlendMode: BlendMode.srcIn,
   );
 }

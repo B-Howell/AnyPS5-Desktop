@@ -16,9 +16,12 @@ import 'package:anyps5_desktop/core/font_download.dart';
 import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/gamepad/pad_navigation.dart';
 import 'package:anyps5_desktop/core/host.dart';
+import 'package:anyps5_desktop/core/online/online_peer_mesh.dart' show GameLinks;
 import 'package:anyps5_desktop/core/power.dart';
+import 'package:anyps5_desktop/core/ps3_online_profile.dart';
 import 'package:anyps5_desktop/core/release_signing.dart';
 import 'package:anyps5_desktop/core/replay_buffer.dart';
+import 'package:anyps5_desktop/core/retro_optimizer.dart';
 import 'package:anyps5_desktop/core/trophies.dart';
 import 'package:anyps5_desktop/core/installer.dart';
 import 'package:anyps5_desktop/core/toolkit_download.dart';
@@ -45,6 +48,12 @@ import 'fake_sfu.dart';
 import 'fake_voice.dart';
 import 'fixtures.dart';
 import 'trophy_fixture.dart';
+
+/// Allows launcher tests to use a fake gateway on a local HTTP socket.
+class LoopbackTestBinding extends AutomatedTestWidgetsFlutterBinding {
+  @override
+  bool get overrideHttpClient => false;
+}
 
 bool _fontsLoaded = false;
 
@@ -146,6 +155,7 @@ Fixture makeFixture({
   TokenStore Function(String profile)? togetherStoreFor,
   VoiceEngine Function()? voice,
   SfuRoom Function()? sfuRoom,
+  GameLinks Function()? gameLinks,
   KeyStateReader? keys,
   Uri? engine,
   Uri? armEngine,
@@ -163,11 +173,13 @@ Fixture makeFixture({
   Future<String?> Function(String suggestedName, String label, List<String> extensions)? saveFileAs,
   Future<String?> Function(String label, List<String> extensions)? pickFile,
   HostSystem system = HostSystem.linux,
+  List<Ps3OnlineRelease> ps3OnlineReleases = const [],
   GitHubReleases? launcherReleases,
   Future<void> Function(String executable, List<String> arguments)? startDetached,
   void Function(int code)? quit,
   Map<String, String> environment = const {},
   bool prepareNewGames = false,
+  Future<RetroHardware?> Function()? retroHardware,
   int? Function(String folder)? freeSpace,
   LauncherWindow? window,
   ReplayBuffer? Function(int seconds)? replay,
@@ -219,6 +231,8 @@ Fixture makeFixture({
     system: system,
     persist: false,
     services: LauncherServices(
+      retroHardware: retroHardware,
+      ps3OnlineReleases: ps3OnlineReleases,
       computerName: 'Desk',
       pickFolder: pickFolder ?? (_) async => root,
       pickImage: pickImage,
@@ -236,6 +250,7 @@ Fixture makeFixture({
       togetherPollEvery: const Duration(milliseconds: 10),
       voiceEngine: voice ?? FakeVoiceEngine.new,
       sfuRoom: sfuRoom ?? FakeSfuRoom.new,
+      gameLinks: gameLinks,
       talkKeys: () => keys,
       engineReleases: engine == null ? null : GitHubReleases(api: engine),
       armEngineReleases: armEngine == null

@@ -10,10 +10,11 @@ class RetroAdapter {
 }
 
 class RetroHardware {
-  const RetroHardware({required this.displayHeight, required this.adapters});
+  const RetroHardware({required this.displayHeight, required this.adapters, this.logicalProcessors = 0});
 
   final int displayHeight;
   final List<RetroAdapter> adapters;
+  final int logicalProcessors;
 }
 
 enum RetroOptimizationMode { performance, balanced, quality }
@@ -36,6 +37,14 @@ class RetroOptimizationRecommendation {
 
 abstract final class RetroOptimizer {
   static const _gib = 1 << 30;
+
+  static RetroAdapter? detectedAdapter(RetroPlatform platform, RetroHardware? hardware) {
+    final adapters = hardware?.adapters ?? const <RetroAdapter>[];
+    // D3D11 opens the first enumerated adapter. The Vulkan adapter is only
+    // unambiguous here when Windows reports one physical adapter.
+    if (platform == RetroPlatform.ps3 && adapters.length != 1) return null;
+    return adapters.firstOrNull;
+  }
 
   static RetroOptimizationRecommendation? recommend({
     required RetroPlatform platform,

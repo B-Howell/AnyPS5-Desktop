@@ -228,15 +228,29 @@ class _Readout extends StatelessWidget {
 /// held lights in the accent, the sticks sit where they are inside their dead zone's ring, the
 /// triggers fill. The same drawing as the macOS launcher's.
 class PadDiagram extends StatelessWidget {
-  const PadDiagram({super.key, required this.kind, required this.state, required this.deadzone, required this.accent});
+  const PadDiagram({
+    super.key,
+    required this.kind,
+    required this.state,
+    required this.deadzone,
+    required this.accent,
+    this.focused,
+  });
 
   final PadKind kind;
   final PadState state;
   final int deadzone;
   final Color accent;
 
+  /// The input selected on a Controls page: tinted while it is not pressed.
+  final PadButton? focused;
+
   bool _lit(PadButton button) => state.pressed.contains(button);
-  Color _fill(PadButton button) => _lit(button) ? accent : Colors.white.withValues(alpha: 0.13);
+  Color _fill(PadButton button) => _lit(button)
+      ? accent
+      : button == focused
+      ? accent.withValues(alpha: 0.42)
+      : Colors.white.withValues(alpha: 0.13);
 
   String get _selectLabel => switch (kind) {
     PadKind.dualSense => 'Create',

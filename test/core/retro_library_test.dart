@@ -8,6 +8,21 @@ import 'package:test/test.dart';
 import '../support/fixtures.dart';
 
 void main() {
+  test('PS2 disc identity comes from SYSTEM.CNF even when the manifest names another title', () {
+    final root = temporaryFolder('ps2-disc-identity');
+    addTearDown(() => root.deleteSync(recursive: true));
+    writePs2IdentityIso(File(p.join(root.path, 'Renamed disc.iso')), bootSerial: 'SLUS_211.48', revision: '1.00');
+
+    final detected = GameLibrary.scan(root.path).single;
+    expect((detected.retroSerial, detected.version), ('SLUS21148', '1.00'));
+    File(p.join(root.path, 'retro.json')).writeAsStringSync(
+      jsonEncode({'platform': 'ps2', 'titleId': 'SLUS12345', 'name': 'Custom label', 'disc': 'Renamed disc.iso'}),
+    );
+    final configured = GameLibrary.scan(root.path).single;
+    expect(configured.name, 'Custom label');
+    expect((configured.retroSerial, configured.version), ('SLUS21148', '1.00'));
+  });
+
   test('disc discovery lists separate CUE games and groups a multi-disc playlist', () {
     final root = temporaryFolder('bare-retro-library');
     addTearDown(() => root.deleteSync(recursive: true));

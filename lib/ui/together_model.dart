@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/painting.dart' show Color;
 
 import '../core/audio/tones.dart';
@@ -11,6 +12,15 @@ import '../core/host.dart';
 import '../core/online/online_peer.dart';
 import '../core/online/online_peer_mesh.dart';
 import '../core/online/online_play.dart';
+import '../core/online/ps1_netplay_identity.dart';
+import '../core/online/ps1_netplay_match.dart';
+import '../core/online/ps1_local_handoff.dart';
+import '../core/online/ps1_netplay_media.dart';
+import '../core/online/ps1_netplay_session.dart';
+import '../core/online/ps2_lan_profile.dart';
+import '../core/online/retro_lan_match.dart';
+import '../core/online/retro_online_rooms.dart';
+import '../core/ps3_online_profile.dart';
 import '../core/profiles/profiles.dart' show ProfileAccount, ProfileMode;
 import '../core/remote/remote_protocol.dart';
 import '../core/capture/clip_tools.dart';
@@ -59,6 +69,8 @@ import 'compare_view.dart';
 import 'family_gate.dart';
 import 'livekit_room.dart';
 import 'online_webrtc.dart';
+import 'ps1_netplay_runner.dart';
+import 'embedded_retro_game.dart';
 import 'sealed_photo.dart';
 import 'strings.dart';
 import 'voice_webrtc.dart';
@@ -68,6 +80,9 @@ part 'together_ask.dart';
 part 'together_party.dart';
 part 'together_party_chat.dart';
 part 'together_play.dart';
+part 'together_ps1_netplay.dart';
+part 'together_ps2_lan.dart';
+part 'together_ps3_online.dart';
 part 'together_profile.dart';
 part 'together_find.dart';
 part 'together_social.dart';
@@ -82,6 +97,14 @@ const launcherVersion = '0.1.20';
 /// on the website, or the paired phone), the server it uses, and the rows the settings show for
 /// it. The interface reads it through [AppModel].
 class TogetherModel {
+  Ps1NetplayMatch? _ps1Match;
+  ({String id, bool hosting})? _ps1Partner;
+  bool _verifyingPs1 = false;
+  _Ps1InviteVerification? _ps1InviteVerification;
+  _Ps2LanAttempt? _ps2Lan;
+  _Ps2LanWorker? _ps2LanWorker;
+  _Ps3PartyAttempt? _ps3Party;
+
   TogetherModel(this.app) : environment = app.services.environment ?? Platform.environment {
     // The session of the profile playing; another profile's goes in when it plays.
     sessions = ProfileTokenStore(app.tokenStoreFor(app.sessionProfileId));
@@ -108,7 +131,12 @@ class TogetherModel {
     hub.games.onInvite = (invite) {
       _noticeSound();
       app.vibrate(HapticCue.ring);
-      app.show(T.format('gameInvitedYou', [invite.from?.displayName ?? '', gameName(invite.titleId)]));
+      if (app.running != null) app.inviteMenuFocus = invite.sessionId;
+      app.show(
+        T.format(app.running != null ? 'gameInvitedYouPs' : 'gameInvitedYou', [invite.from?.displayName ?? '', gameName(invite.titleId)]),
+        psButton: app.running != null,
+        onTap: app.running != null ? () => unawaited(app.openQuickMenu()) : null,
+      );
     };
     hub.games.onEnded = (host) => app.show(
       T.format(hub.games.ended?.together == true ? 'togetherEnded' : 'sessionEnded', [host?.displayName ?? '']),
@@ -409,6 +437,11 @@ class TogetherModel {
 
   /// Signed in or out: what depends on it starts or stops.
   void signedInChanged() {
+    _cancelPs1InviteVerification();
+    unawaited(_ps1Match?.leave());
+    _ps2Lan?.cancel();
+    _ps2LanWorker = null;
+    _ps3Party?.cancel();
     app.remote?.togetherServer = account.base.toString();
     // Another account (or none): what was typed for the last one's profile goes, and so do a
     // call ringing and the Captures read for it.
@@ -716,7 +749,15 @@ class TogetherModel {
   }
 
   Future<void> signOut() async {
+    await cancelPs3PartyAndWait();
     await account.signOut();
+  }
+
+  Future<void> cancelPs3PartyAndWait() async {
+    if (_ps3Party case final attempt?) {
+      attempt.cancel();
+      await attempt.done.future.timeout(const Duration(seconds: 3), onTimeout: () {});
+    }
   }
 
   /// A phone's side of a hand-off: it asks to be signed in as us, or answers ours.
@@ -838,7 +879,10 @@ class TogetherModel {
 
   /// A game's name in this library, else its title ID.
   String gameName(String titleId) =>
-      app.games.where((game) => game.titleId == titleId).firstOrNull?.nameFor([T.language.code]) ?? titleId;
+      app.games.where((game) => game.titleId == titleId).firstOrNull?.nameFor([T.language.code]) ??
+      app.games.where((game) => game.retroSerial == titleId).firstOrNull?.nameFor([T.language.code]) ??
+      app.games.where((game) => game.titleId == 'PS3-$titleId').firstOrNull?.nameFor([T.language.code]) ??
+      titleId;
 
   /// "Playing Neon Alley · 25 min", "Online", "Idle", "Do Not Disturb", "Offline", with the
   /// party they are in.
@@ -1040,7 +1084,76 @@ class TogetherModel {
         ),
         T.format('askRemoveFriend', [friend.person.displayName]),
       ),
+      ...ps1NetplayInvites(friend),
+      ...ps2LanInvites(friend),
+      ...ps3PartyInvites(friend),
       PanelRow(id: 'friend-back', title: T.text('back'), kind: ActionRow(() => app.open(Layer.friends))),
+    ];
+  }
+
+  PanelRow _retroDashboardInviteLink(
+    Game game,
+    void Function(PanelCategory Function()) open, {
+    required String prefix,
+    required String title,
+    required String detail,
+    required String unavailable,
+    required bool Function() available,
+    required void Function(Friend) invite,
+  }) {
+    final category = '$prefix-friends';
+    bool canInvite() => app.selectedGame?.id == game.id && available();
+    return PanelRow(
+      id: '$prefix-invite',
+      title: T.text(title),
+      detail: T.text(detail),
+      kind: ActionRow(() {
+        if (app.overlay != Layer.gameSettings || !canInvite()) return;
+        open(
+          () => PanelCategory(
+            id: category,
+            title: T.text('retroOnlineChooseFriend'),
+            rows: _retroInviteFriendRows(
+              prefix: prefix,
+              title: 'retroOnlineChooseFriend',
+              detail: detail,
+              unavailable: unavailable,
+              invite: (friend) {
+                if (app.overlay == Layer.emulatorMenu && app.spot?.category == category && canInvite()) invite(friend);
+              },
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  List<PanelRow> _retroInviteFriendRows({
+    required String prefix,
+    required String title,
+    required String detail,
+    required String unavailable,
+    required void Function(Friend) invite,
+  }) {
+    final online = hub.friends.friends.where((friend) => friend.presence.online).toList();
+    final connected = account.user != null && hub.socket.status == SocketStatus.ready;
+    if (!connected || online.isEmpty) {
+      return [
+        PanelRow(
+          id: '$prefix-empty',
+          title: T.text(title),
+          kind: InfoRow(T.text(connected ? 'retroOnlineNoFriends' : unavailable)),
+        ),
+      ];
+    }
+    return [
+      for (final friend in online)
+        PanelRow(
+          id: '$prefix-${friend.person.id}',
+          title: friend.person.displayName,
+          detail: T.text(detail),
+          kind: ActionRow(() => invite(friend)),
+        ),
     ];
   }
 
@@ -1335,6 +1448,9 @@ class TogetherModel {
 
   /// Gateway events worth a word on screen, and the outbox's chance after a reconnect.
   void _event(TogetherEvent event) {
+    _ps1Match?.receive(event.type, event.json);
+    _ps2Lan?.match?.receive(event.type, event.json);
+    _ps3PartyEvent(event);
     // Online play follows the same game session: players joining, leaving, signalling.
     online.handle(event);
     // Share play: the one hosted, the one watched, the invites.
@@ -1606,6 +1722,17 @@ class TogetherModel {
   }
 
   void dispose() {
+    _cancelPs1InviteVerification();
+    _ps2LanWorker = null;
+    unawaited(_ps1Match?.leave());
+    if (_ps2Lan case final attempt?) {
+      attempt.disposed = true;
+      attempt.cancel();
+    }
+    if (_ps3Party case final attempt?) {
+      attempt.disposed = true;
+      attempt.cancel();
+    }
     stopRinging();
     calls.noAnswer?.cancel();
     unawaited(online.stop());

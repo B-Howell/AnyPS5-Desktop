@@ -1,2 +1,9 @@
 tool/build-rpcs3-preview.sh text eol=lf
+tool/ps3_refresh_probe.sh text eol=lf
 tool/patches/rpcs3-libretro-frontend.patch text eol=lf
+tool/patches/swanstation-spu-checkpoint.patch text eol=lf
+tool/patches/rpcs3-libretro-network-policy.patch text eol=lf whitespace=-blank-at-eol,-space-before-tab
+tool/patches/rpcs3-libretro-patch-attestation.patch text eol=lf whitespace=-blank-at-eol,-space-before-tab
+tool/patches/rpcs3-libretro-rpcn-identity.patch text eol=lf whitespace=-blank-at-eol,-space-before-tab
+tool/patches/rpcs3-libretro-provider-status.patch text eol=lf whitespace=-blank-at-eol,-space-before-tab
+tool/patches/parallel-ps2-portable-gif-state.patch text eol=lf whitespace=-blank-at-eol,-space-before-tab

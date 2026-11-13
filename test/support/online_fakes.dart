@@ -231,6 +231,8 @@ class FakeGameNetwork {
 
   /// Messages dropped on the way (as an unreliable channel may), per sender; tests set it.
   bool Function(Uint8List data)? lose;
+  bool gameChannelReady = true;
+  Future<GamePathStats?> Function()? readPath;
 
   GameLinks get links => _FakeLinks(this);
 
@@ -252,7 +254,7 @@ class _FakeLinks implements GameLinks {
   Future<GameLink> link(List<Map<String, dynamic>> iceServers) async => network._make(iceServers);
 }
 
-class FakeGameLink implements GameLink {
+class FakeGameLink implements GameLink, RestartableGameLink, GameLinkPath {
   FakeGameLink._(this.network, this.id);
 
   final FakeGameNetwork network;
@@ -262,7 +264,15 @@ class FakeGameLink implements GameLink {
   bool _channel = false;
   bool _wantsChannel = false;
   bool closed = false;
+  int routeRestarts = 0;
+  int rejectLocalDescriptions = 0;
   String state = 'new';
+
+  void reportState(String next) {
+    state = next;
+    _onState?.call(next);
+  }
+
   final candidatesIn = <Map<String, dynamic>>[];
   void Function(Map<String, dynamic>)? _onCandidate;
   void Function(Uint8List)? _onMessage;
@@ -275,6 +285,15 @@ class FakeGameLink implements GameLink {
   FakeGameLink? get partner => _remote == null ? null : network._links[_remote];
 
   @override
+  Future<void> restartIce() async => routeRestarts++;
+
+  @override
+  Future<bool> routeConnected() async => state == 'connected';
+
+  @override
+  Future<GamePathStats?> readPath() async => await network.readPath?.call();
+
+  @override
   Future<Map<String, dynamic>> createOffer() async => {
     'type': 'offer',
     'sdp': 'fake $id${_wantsChannel ? ' channel' : ''}',
@@ -285,6 +304,10 @@ class FakeGameLink implements GameLink {
 
   @override
   Future<void> setLocal(Map<String, dynamic> description) async {
+    if (rejectLocalDescriptions > 0) {
+      rejectLocalDescriptions--;
+      throw StateError('Fixture rejected a local description.');
+    }
     _local = true;
     scheduleMicrotask(() => _onCandidate?.call({'candidate': 'candidate:$id', 'sdpMid': '0', 'sdpMLineIndex': 0}));
     _maybeConnect();
@@ -334,6 +357,9 @@ class FakeGameLink implements GameLink {
 
   @override
   bool get streamOpen => _channel && !closed;
+
+  @override
+  bool get gameOpen => _channel && !closed && network.gameChannelReady;
 
   @override
   bool sendStream(Uint8List data) {

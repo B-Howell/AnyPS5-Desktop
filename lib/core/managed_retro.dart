@@ -3,25 +3,40 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart' show getCrc32;
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:path/path.dart' as p;
 
+import 'binary.dart';
+import 'elf_core_library.dart';
+import 'embedded_core_host.dart';
 import 'game_library.dart';
+import 'online/ps1_netplay_media.dart';
 import 'toolkit_download.dart';
 
+export 'embedded_core_host.dart';
+
 class ManagedRetro {
-  ManagedRetro(this.root, {this.packageDirectory, this.ps3CoreDigests});
+  ManagedRetro(this.root, {required this.host, this.packageDirectory, this.ps3CoreDigests, this.ps2LanCoreDigests});
 
   final String root;
+  final EmbeddedCoreHost host;
   final String? packageDirectory;
   final String? ps3CoreDigests;
-  static const _patchedPs3Archive = '7bc267dc0a9cffdd21087340ab643c52ed91136606e6d33ae05c477adc7db3a4';
-  static const _patchedPs3Library = '7ac7504de83acfa2d977345f8c9b48e92f5e71c576abbf026406e667fe7a1370';
+  final String? ps2LanCoreDigests;
+  static const _patchedPs2Archive = '2df47bc025ff7dfdfce5594b709fa25884667acdff698334ed2d4942a8dc67f7';
+  static const _patchedPs2Library = '801af1211407964a4851839c3f4e90607f18353671dd1e427f56e12201d712a4';
+  static final _ps2LanChecks = <String, ({FileStat stat, String digest, bool valid})>{};
+  static const _ps1NetplayArchive = '86ab673a1a1b4260dc73256955d600dd64a5ee57e78e17696ae3504791a6633e';
+  static const _ps1OrdinaryHandoffArchive = 'df69b0ad16984b34240b875fa14bcb6a742daaaf9bbb5815e448510b810de036';
+  static const _ps1LinuxRollbackArchive = 'a887945055fac541b09801b364f2ff72e5c47a719404ca3845b169447b11d615';
+  static const _ps1RollbackArchive = 'd29f4bc04acbdb8252273b813903824aa90354d4a4607a939b3595834e5972a7';
+  // This package persists native SPU objects across launches. Keep the old
+  // core out of the default pins so a launcher build with the matching ZIP
+  // upgrades an already installed legacy core before booting a PS3 title.
+  static const _patchedPs3Archive = 'd472de683cb57aba711453e214a6da91420486a5d739e5cba2d492de300f8083';
+  static const _patchedPs3Library = '874b90826fccd5eb162fbdbe2e48a970e21a09867d4167c8eee63f4b16ad6d51';
 
-  static String libraryName(RetroPlatform platform) => switch (platform) {
-    RetroPlatform.ps1 => 'swanstation_libretro.dll',
-    RetroPlatform.ps2 => 'pcsx2_libretro.dll',
-    RetroPlatform.ps3 => 'rpcs3_libretro.dll',
-  };
+  String libraryName(RetroPlatform platform) => host.libraryName(platform);
 
   static String platformName(RetroPlatform platform) => switch (platform) {
     RetroPlatform.ps1 => 'PS1',
@@ -29,13 +44,309 @@ class ManagedRetro {
     RetroPlatform.ps3 => 'PS3',
   };
 
-  bool isInstalled(RetroPlatform platform) => _windowsX64Library(File(p.join(root, libraryName(platform))));
+  bool isInstalled(RetroPlatform platform) => _hostLibrary(File(p.join(root, libraryName(platform))));
+
+  bool _hostLibrary(File file, {String? requiredExport}) => switch (host) {
+    EmbeddedCoreHost.windowsX64 => _windowsX64Library(file, requiredExport: requiredExport),
+    EmbeddedCoreHost.linuxX64 => ElfCoreLibrary.isX64(file, requiredExport: requiredExport),
+  };
+
+  (String, String) _onlineDigests(String? configured, (String, String) windowsPins, String label) {
+    if (host == EmbeddedCoreHost.linuxX64 && configured == null) {
+      throw FormatException('A qualified Linux $label core package is required.');
+    }
+    return _coreDigests(configured, windowsPins, label);
+  }
+
+  Future<String?> verifiedPs1NetplayBios(String? offlinePath) async {
+    final home = Directory(root);
+    if (await home.exists()) {
+      final target = Directory(p.join(await home.resolveSymbolicLinks(), 'PS1-Netplay'));
+      final imported = File(p.join(target.path, 'scph1001.bin'));
+      if (await target.exists() &&
+          p.equals(await target.resolveSymbolicLinks(), target.path) &&
+          await imported.exists() &&
+          p.equals(await imported.resolveSymbolicLinks(), imported.path) &&
+          await _matchesPs1NetplayBios(imported)) {
+        return imported.path;
+      }
+    }
+    return offlinePath != null && await _matchesPs1NetplayBios(File(offlinePath)) ? offlinePath : null;
+  }
+
+  static Future<bool> _matchesPs1NetplayBios(File file) async {
+    try {
+      return await file.length() == 512 * 1024 && await AssetDownload.sha256Of(file.path) == Ps1NetplayMedia.biosPin;
+    } on FileSystemException {
+      return false;
+    }
+  }
+
+  Future<String> importPs1NetplayBios(String source) async {
+    const size = 512 * 1024;
+    final file = await File(source).open();
+    final Uint8List bytes;
+    try {
+      bytes = await file.read(size + 1);
+    } finally {
+      await file.close();
+    }
+    if (bytes.length != size || sha256.convert(bytes).toString() != Ps1NetplayMedia.biosPin) {
+      throw const FormatException('Select the matching SCPH-1001 BIOS dump for PS1 online play.');
+    }
+    final home = await Directory(root).create(recursive: true);
+    final target = await Directory(p.join(await home.resolveSymbolicLinks(), 'PS1-Netplay')).create();
+    if (!p.equals(await target.resolveSymbolicLinks(), target.path)) {
+      throw const FormatException('The PS1 netplay BIOS directory redirects outside its assigned path.');
+    }
+    final path = p.join(target.path, 'scph1001.bin');
+    final stage = await target.createTemp('bios-');
+    try {
+      final staged = await File(p.join(stage.path, 'scph1001.bin')).writeAsBytes(bytes, flush: true);
+      await staged.rename(path);
+    } finally {
+      await stage.delete(recursive: true);
+    }
+    return path;
+  }
+
+  /// Checkpoint handoff has its own core. Never upgrade the offline PS1 DLL.
+  Future<String> ensurePs1NetplayCore({
+    Ps1NetplayExecution execution = Ps1NetplayExecution.standard,
+    Future<String> Function(String filename)? pickArchive,
+  }) async {
+    if (host == EmbeddedCoreHost.linuxX64 && execution != Ps1NetplayExecution.mixedRollback) {
+      throw const FormatException('This PS1 online mode has no Linux core package.');
+    }
+    final (directory, archiveName, archivePin, corePin) = switch (execution) {
+      Ps1NetplayExecution.standard || Ps1NetplayExecution.standardAnalog => (
+        'PS1-Netplay',
+        'swanstation-netplay.zip',
+        _ps1NetplayArchive,
+        Ps1NetplayMedia.portableCorePin,
+      ),
+      Ps1NetplayExecution.ordinaryHandoff || Ps1NetplayExecution.rollbackHandoff => (
+        execution.usesPresentationCore ? 'PS1-Netplay-Rollback-Handoff' : 'PS1-Netplay-Ordinary',
+        'swanstation-netplay-ordinary.zip',
+        _ps1OrdinaryHandoffArchive,
+        Ps1NetplayMedia.ordinaryHandoffCorePin,
+      ),
+      Ps1NetplayExecution.rollbackPreview ||
+      Ps1NetplayExecution.mixedRollback when host == EmbeddedCoreHost.windowsX64 => (
+        'PS1-Netplay-Rollback',
+        'swanstation-netplay-rollback.zip',
+        _ps1RollbackArchive,
+        Ps1NetplayMedia.rollbackCorePin,
+      ),
+      Ps1NetplayExecution.mixedRollback => (
+        'PS1-Netplay-Rollback',
+        'swanstation-netplay-rollback-linux-x64.zip',
+        _ps1LinuxRollbackArchive,
+        Ps1NetplayMedia.linuxRollbackCorePin,
+      ),
+      Ps1NetplayExecution.rollbackPreview => throw StateError('Linux does not support the PS1 presentation core.'),
+    };
+    final home = await Directory(root).create(recursive: true);
+    final resolvedHome = await home.resolveSymbolicLinks();
+    final target = Directory(p.join(resolvedHome, directory));
+    final name = libraryName(RetroPlatform.ps1);
+    final installed = File(p.join(target.path, name));
+    final destinations = [
+      installed,
+      if (execution.usesPresentationCore) File(Ps1NetplayMedia.presentationCorePath(installed.path)),
+    ];
+    Future<void> checkDirectory(Directory directory) async {
+      if (await directory.exists() && !p.equals(await directory.resolveSymbolicLinks(), directory.path)) {
+        throw const FormatException('The PS1 netplay core directory redirects outside its assigned path.');
+      }
+    }
+
+    Future<bool> pinned(File file) async =>
+        await file.exists() &&
+        p.equals(await file.resolveSymbolicLinks(), file.path) &&
+        await AssetDownload.sha256Of(file.path) == corePin &&
+        (host == EmbeddedCoreHost.windowsX64 || _hostLibrary(file, requiredExport: 'retro_unserialize'));
+    await checkDirectory(target);
+    final missing = <File>[];
+    for (final file in destinations) {
+      await checkDirectory(file.parent);
+      if (!await pinned(file)) missing.add(file);
+    }
+    if (missing.isEmpty) return installed.path;
+    final legacy = File(p.join(resolvedHome, name));
+    if (execution.usesStandardCore && await pinned(legacy)) return legacy.path;
+
+    final packages = packageDirectory;
+    final configured = packages != null && p.isAbsolute(packages) ? File(p.join(packages, archiveName)) : null;
+    final staging = await home.createTemp('ps1-netplay-package-');
+    try {
+      final archive = File(p.join(staging.path, 'core.zip'));
+      Future<void> stageArchive(File source) async {
+        final info = await source.stat();
+        if (info.type != FileSystemEntityType.file || info.size <= 0 || info.size > 32 * 1024 * 1024) {
+          throw const FormatException('The PS1 netplay core package is missing or has an unexpected size.');
+        }
+        await source.openRead(0, info.size).pipe(archive.openWrite());
+        if (await AssetDownload.sha256Of(archive.path) != archivePin) {
+          throw const FormatException('The PS1 netplay core package did not pass verification.');
+        }
+      }
+
+      Future<bool> tryConfiguredArchive(File source) async {
+        try {
+          await stageArchive(source);
+          return true;
+        } on FormatException {
+          if (pickArchive == null) rethrow;
+          return false;
+        } on FileSystemException {
+          if (pickArchive == null) rethrow;
+          return false;
+        }
+      }
+
+      if (configured == null || !await tryConfiguredArchive(configured)) {
+        if (pickArchive == null) throw const FormatException('The PS1 netplay core package is missing.');
+        await stageArchive(File(await pickArchive(archiveName)));
+      }
+      await target.create();
+      await checkDirectory(target);
+      for (final file in missing) {
+        await file.parent.create();
+        await checkDirectory(file.parent);
+        await _publishCore(
+          name,
+          archive.path,
+          destination: file.parent.path,
+          verify: (file) async {
+            if (!await pinned(file)) throw const FormatException('The PS1 netplay core did not pass verification.');
+          },
+        );
+      }
+      return installed.path;
+    } finally {
+      await staging.delete(recursive: true);
+    }
+  }
+
+  /// Imports are enabled only for the explicitly configured reviewer package.
+  Future<String?> verifiedPs3UpdateCore() async {
+    if (ps3CoreDigests == null) return null;
+    try {
+      final (_, digest) = _onlineDigests(ps3CoreDigests, (_patchedPs3Archive, _patchedPs3Library), 'PS3');
+      final expected = p.join(await Directory(root).resolveSymbolicLinks(), libraryName(RetroPlatform.ps3));
+      final file = File(expected);
+      if (!p.equals(await file.resolveSymbolicLinks(), expected) ||
+          !_hostLibrary(file, requiredExport: 'retro_anyps5_ps3_network_policy_v1')) {
+        return null;
+      }
+      return await AssetDownload.sha256Of(expected) == digest ? expected : null;
+    } on FileSystemException {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  bool get supportsPs2Lan => _ps2LanLibrary(File(p.join(root, libraryName(RetroPlatform.ps2))));
+
+  bool _ps2LanLibrary(File library) => _hostLibrary(library, requiredExport: 'retro_anyps5_dev9_bind_v1');
+
+  String get _ps2LanHome => p.join(root, 'PS2-LAN');
+
+  (String, String) get _ps2LanDigests => _coreDigests(ps2LanCoreDigests, switch (host) {
+    EmbeddedCoreHost.windowsX64 => (_patchedPs2Archive, _patchedPs2Library),
+    EmbeddedCoreHost.linuxX64 => (
+      '27a80722e2d079de8330d32267eb7236c2573cbe3b2458e7166dbf74929fb411',
+      '800a2bc3ed710734b36bed6e311100b9d00f87e2634ae3cd5c33c2075135238e',
+    ),
+  }, 'PS2 LAN');
+
+  String? get configuredPs2LanPackage {
+    final directory = packageDirectory;
+    if (directory == null || !p.isAbsolute(directory)) return null;
+    final archive = File(p.join(directory, '${libraryName(RetroPlatform.ps2)}.zip'));
+    return archive.existsSync() ? archive.path : null;
+  }
+
+  String? get installedPs2LanHome {
+    final library = File(p.join(_ps2LanHome, libraryName(RetroPlatform.ps2)));
+    final stat = library.statSync();
+    if (stat.type != FileSystemEntityType.file || stat.size <= 0 || stat.size > 128 * 1024 * 1024) return null;
+    try {
+      final (_, digest) = _ps2LanDigests;
+      final key = p.absolute(library.path);
+      final cached = _ps2LanChecks[key];
+      if (cached != null &&
+          cached.digest == digest &&
+          cached.stat.modified == stat.modified &&
+          cached.stat.changed == stat.changed &&
+          cached.stat.size == stat.size) {
+        return cached.valid ? _ps2LanHome : null;
+      }
+      final expected = p.join(Directory(root).resolveSymbolicLinksSync(), p.basename(_ps2LanHome));
+      if (!p.equals(Directory(_ps2LanHome).resolveSymbolicLinksSync(), expected)) return null;
+      final opened = library.openSync();
+      final Uint8List bytes;
+      try {
+        bytes = opened.readSync(stat.size + 1);
+      } finally {
+        opened.closeSync();
+      }
+      final valid = bytes.length == stat.size && sha256.convert(bytes).toString() == digest && _ps2LanLibrary(library);
+      _ps2LanChecks[key] = (stat: stat, digest: digest, valid: valid);
+      return valid ? _ps2LanHome : null;
+    } on FileSystemException {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  Future<void> installPs2Lan(String package) async {
+    final (archiveDigest, libraryDigest) = _ps2LanDigests;
+    final source = File(package);
+    final info = await source.stat();
+    if (info.type != FileSystemEntityType.file || info.size <= 0 || info.size > 16 * 1024 * 1024) {
+      throw const FormatException('The PS2 LAN ZIP is missing or has an unexpected size.');
+    }
+    final directory = await Directory(root).create(recursive: true);
+    final stage = await directory.createTemp('ps2-lan-package-');
+    try {
+      final archive = File(p.join(stage.path, 'core.zip'));
+      await source.openRead(0, info.size).pipe(archive.openWrite());
+      if (await AssetDownload.sha256Of(archive.path) != archiveDigest) {
+        throw const FormatException('The PS2 LAN ZIP did not pass verification.');
+      }
+      final destination = await Directory(_ps2LanHome).create();
+      final expected = p.join(await directory.resolveSymbolicLinks(), p.basename(_ps2LanHome));
+      if (!p.equals(await destination.resolveSymbolicLinks(), expected)) {
+        throw const FormatException('The PS2 LAN core folder must be separate from the offline emulator.');
+      }
+      await _publishCore(
+        libraryName(RetroPlatform.ps2),
+        archive.path,
+        destination: destination.path,
+        verify: (file) async {
+          if (await AssetDownload.sha256Of(file.path) != libraryDigest || !_ps2LanLibrary(file)) {
+            throw const FormatException('The PS2 LAN core did not pass verification.');
+          }
+        },
+      );
+      _ps2LanChecks.remove(p.absolute(p.join(_ps2LanHome, libraryName(RetroPlatform.ps2))));
+    } finally {
+      await stage.delete(recursive: true);
+    }
+  }
 
   Future<void> install(RetroPlatform platform, {void Function(int, int)? progress}) async {
     final name = libraryName(platform);
     final installed = isInstalled(platform);
     if (platform == RetroPlatform.ps3) {
-      final (archiveDigest, libraryDigest) = _ps3Digests();
+      final (archiveDigest, libraryDigest) = _onlineDigests(ps3CoreDigests, (
+        _patchedPs3Archive,
+        _patchedPs3Library,
+      ), 'PS3');
       if (installed && await AssetDownload.sha256Of(p.join(root, name)) == libraryDigest) return;
       final directory = packageDirectory;
       if (directory == null) {
@@ -62,11 +373,11 @@ class ManagedRetro {
       return;
     }
     if (installed) return;
-    final url = Uri.https('buildbot.libretro.com', '/nightly/windows/x86_64/latest/$name.zip');
+    final url = Uri.https('buildbot.libretro.com', '/nightly/${host.buildbotPath}/latest/$name.zip');
     final (size, revision) = await _buildbotPackage(url);
-    final digest = switch (revision) {
-      0x356fa26d => 'b640a70f660fd0b5ca4adecad5c90281f481a46802a752b9f66e2aa2791474dc',
-      0xa7025679 => '1193159038bd8b77bbe099f1b1f46ff3add61ce6b44d6ec5a66611f0cbfe8c10',
+    final digest = switch ((host, revision)) {
+      (EmbeddedCoreHost.windowsX64, 0x356fa26d) => 'b640a70f660fd0b5ca4adecad5c90281f481a46802a752b9f66e2aa2791474dc',
+      (EmbeddedCoreHost.windowsX64, 0xa7025679) => '1193159038bd8b77bbe099f1b1f46ff3add61ce6b44d6ec5a66611f0cbfe8c10',
       _ => null,
     };
     final zip = p.join(root, 'Downloads', '${revision.toRadixString(16)}-$name.zip');
@@ -94,24 +405,28 @@ class ManagedRetro {
     );
   }
 
-  (String, String) _ps3Digests() {
-    final configured = ps3CoreDigests;
-    if (configured == null) return (_patchedPs3Archive, _patchedPs3Library);
+  static (String, String) _coreDigests(String? configured, (String, String) pinned, String label) {
+    if (configured == null) return pinned;
     if (!RegExp(r'^[a-fA-F0-9]{64}:[a-fA-F0-9]{64}$').hasMatch(configured) || configured.length != 129) {
-      throw const FormatException('Set PS3 core digests to the package and DLL SHA-256 values separated by a colon.');
+      throw FormatException('Set $label core digests to the package and library SHA-256 values separated by a colon.');
     }
     return (configured.substring(0, 64).toLowerCase(), configured.substring(65).toLowerCase());
   }
 
-  Future<void> _publishCore(String name, String archive, {required Future<void> Function(File) verify}) async {
-    final directory = await Directory(root).create(recursive: true);
+  Future<void> _publishCore(
+    String name,
+    String archive, {
+    String? destination,
+    required Future<void> Function(File) verify,
+  }) async {
+    final directory = await Directory(destination ?? root).create(recursive: true);
     final stage = await directory.createTemp('install-');
     try {
       await SafeUnpack.unpack(archive, stage.path);
       final candidate = File(p.join(stage.path, name));
-      if (!_windowsX64Library(candidate)) throw const FormatException('The download contains no Windows x64 core.');
+      if (!_hostLibrary(candidate)) throw FormatException('The download contains no ${host.name} core.');
       await verify(candidate);
-      await candidate.rename(p.join(root, name));
+      await candidate.rename(p.join(directory.path, name));
     } finally {
       await stage.delete(recursive: true);
     }
@@ -149,22 +464,39 @@ class ManagedRetro {
 
   bool get hasPs3Firmware => File(p.join(systemPath, 'rpcs3', 'dev_flash', 'vsh', 'module', 'vsh.self')).existsSync();
 
-  String get _ps3FirmwarePackage => p.join(systemPath, 'PS3UPDAT.PUP');
+  static const ps3FirmwareName = 'PS3UPDAT.PUP';
+  static const _ps3FirmwareSize = 206197916;
+  static const _ps3FirmwareDigest = '158471fd834f8ea8036136b6aab43cd86c7ba73d79ca30e0af3c0fe0001cf365';
+
+  String get _ps3FirmwarePackage => p.join(systemPath, ps3FirmwareName);
 
   bool get hasPs3FirmwarePackage => File(_ps3FirmwarePackage).existsSync();
 
   Future<void> installPs3Firmware({void Function(int, int)? progress}) async {
     if (hasPs3Firmware) return;
-    const size = 206197916;
+    await downloadPs3FirmwarePackage(_ps3FirmwarePackage, progress: progress);
+  }
+
+  static Future<bool> isVerifiedPs3FirmwarePackage(File file) async =>
+      await file.exists() &&
+      await file.length() == _ps3FirmwareSize &&
+      await AssetDownload.sha256Of(file.path) == _ps3FirmwareDigest;
+
+  static Future<void> downloadPs3FirmwarePackage(
+    String target, {
+    void Function(int, int)? progress,
+    DownloadCancel? cancel,
+  }) async {
     await AssetDownload.fetch(
       Uri.http(
         'dus01.ps3.update.playstation.net',
         '/update/ps3/image/us/2026_0318_a2b60b6ac1d2e49e230144345616927c/PS3UPDAT.PUP',
       ),
-      _ps3FirmwarePackage,
-      size: size,
-      sha256: '158471fd834f8ea8036136b6aab43cd86c7ba73d79ca30e0af3c0fe0001cf365',
-      onProgress: (bytes) => progress?.call(bytes, size),
+      target,
+      size: _ps3FirmwareSize,
+      sha256: _ps3FirmwareDigest,
+      onProgress: (bytes) => progress?.call(bytes, _ps3FirmwareSize),
+      cancel: cancel,
     );
   }
 
@@ -202,7 +534,7 @@ class ManagedRetro {
     await staged.rename(target.path);
   }
 
-  static bool _windowsX64Library(File file) {
+  static bool _windowsX64Library(File file, {String? requiredExport}) {
     try {
       final source = file.openSync();
       try {
@@ -214,14 +546,71 @@ class ManagedRetro {
         final header = source.readSync(24);
         if (header.length != 24) return false;
         final pe = ByteData.sublistView(header);
-        return pe.getUint32(0, Endian.little) == 0x4550 &&
+        final dll =
+            pe.getUint32(0, Endian.little) == 0x4550 &&
             pe.getUint16(4, Endian.little) == 0x8664 &&
             pe.getUint16(22, Endian.little) & 0x2000 != 0;
+        return dll && (requiredExport == null || _hasExport(source, header, requiredExport));
       } finally {
         source.closeSync();
       }
     } on FileSystemException {
       return false;
     }
+  }
+
+  // Read the PE32+ export table without loading or executing the DLL.
+  static bool _hasExport(RandomAccessFile file, Uint8List coff, String name) {
+    final optionalSize = Binary.u16(coff, 20);
+    final sectionCount = Binary.u16(coff, 6);
+    if (optionalSize < 120 || sectionCount == 0 || sectionCount > 96) return false;
+    final optional = file.readSync(optionalSize);
+    if (optional.length != optionalSize || Binary.u16(optional, 0) != 0x20b || Binary.u32(optional, 108) == 0) {
+      return false;
+    }
+    final sections = file.readSync(sectionCount * 40);
+    if (sections.length != sectionCount * 40) return false;
+    final fileSize = file.lengthSync();
+    Uint8List? readRva(int rva, int count, {bool executable = false}) {
+      if (rva == 0) return null;
+      for (var i = 0; i < sections.length; i += 40) {
+        final delta = rva - Binary.u32(sections, i + 12);
+        if (delta < 0 || delta + count > Binary.u32(sections, i + 16)) continue;
+        if (executable && Binary.u32(sections, i + 36) & 0x20000000 == 0) return null;
+        final offset = Binary.u32(sections, i + 20) + delta;
+        if (offset + count > fileSize) return null;
+        file.setPositionSync(offset);
+        final bytes = file.readSync(count);
+        return bytes.length == count ? bytes : null;
+      }
+      return null;
+    }
+
+    final exportsRva = Binary.u32(optional, 112);
+    final exportsSize = Binary.u32(optional, 116);
+    if (exportsSize < 40) return false;
+    final exports = readRva(exportsRva, 40);
+    if (exports == null) return false;
+    final count = Binary.u32(exports, 24);
+    if (count == 0 || count > 4096) return false;
+    final names = readRva(Binary.u32(exports, 32), count * 4);
+    if (names == null) return false;
+    final expected = [...name.codeUnits, 0];
+    for (var index = 0; index < count; index++) {
+      final symbol = readRva(Binary.u32(names, index * 4), expected.length);
+      if (symbol == null || !symbol.asMap().entries.every((entry) => entry.value == expected[entry.key])) continue;
+      final ordinals = readRva(Binary.u32(exports, 36), count * 2);
+      if (ordinals == null) return false;
+      final ordinal = Binary.u16(ordinals, index * 2);
+      if (ordinal >= Binary.u32(exports, 20)) return false;
+      final addressTable = Binary.u32(exports, 28);
+      if (addressTable == 0) return false;
+      final address = readRva(addressTable + ordinal * 4, 4);
+      if (address == null) return false;
+      final functionRva = Binary.u32(address, 0);
+      return (functionRva < exportsRva || functionRva >= exportsRva + exportsSize) &&
+          readRva(functionRva, 1, executable: true) != null;
+    }
+    return false;
   }
 }

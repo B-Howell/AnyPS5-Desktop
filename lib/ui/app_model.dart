@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ffi' show Abi;
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
@@ -8,7 +7,7 @@ import 'dart:ui' as ui show Image;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Color;
-import 'package:flutter/services.dart' show LogicalKeyboardKey;
+import 'package:flutter/services.dart' show LogicalKeyboardKey, PlatformException;
 import 'package:path/path.dart' as p;
 
 import '../core/audio/atrac9.dart';
@@ -57,6 +56,8 @@ import '../core/remote/remote_server.dart';
 import '../core/remote/usb_tunnel.dart';
 import '../core/replay_buffer.dart';
 import '../core/retro_optimizer.dart';
+import '../core/retro_launch_optimizer.dart';
+import '../core/retro_button_map.dart';
 import '../core/managed_retro.dart';
 import '../core/save_backup.dart';
 import '../core/steam/steam_launch.dart';
@@ -74,6 +75,13 @@ import '../core/together/media.dart' show SfuRoom;
 import '../core/together/talk_key.dart';
 import '../core/together/token_store.dart';
 import '../core/online/online_peer_mesh.dart';
+import '../core/online/ps1_netplay_media.dart';
+import '../core/online/ps2_lan_profile.dart';
+import '../core/online/retro_lan_bridge.dart';
+import '../core/online/retro_lan_dhcp.dart';
+import '../core/online/retro_lan_match.dart';
+import '../core/ps3_online_profile.dart';
+import '../core/ps3_update_import.dart';
 import '../core/together/voice_mesh.dart';
 import '../core/themes/theme_design.dart';
 import '../core/themes/theme_library.dart';
@@ -101,6 +109,7 @@ import 'retro_settings_model.dart';
 import 'retro_restart_tuning.dart';
 import 'retro_game_tuning.dart' show RetroTuningSample;
 import 'ps3_settings_model.dart';
+import 'ps3_update_worker.dart';
 import 'retro_tuning_panel.dart';
 import 'embedded_retro_game.dart';
 import 'sharing_model.dart';
@@ -112,6 +121,12 @@ import 'update_model.dart';
 import 'trophy_card.dart';
 
 part 'emulator_menu.dart';
+part 'retro_disc_menu.dart';
+part 'retro_embedded_controls.dart';
+part 'coop_lobby.dart';
+part 'retro_launch_optimization.dart';
+part 'ps3_online_readiness_page.dart';
+part 'ps3_update_panel.dart';
 part 'retro_home_folders.dart';
 part 'retro_restart_workflow.dart';
 part 'profiles_model.dart';
@@ -238,6 +253,24 @@ class Preferences {
     ..retroPs3Defaults = _readRetroOptions(json['retroPs3Defaults'])
     ..retroPs3Graphics = _readRetroGraphics(json['retroPs3Graphics'])
     ..retroEmbeddedGraphics = _readRetroGraphics(json['retroEmbeddedGraphics'])
+    ..retroAutoOptimized = {
+      if (json['retroAutoOptimized'] case final List<dynamic> games)
+        for (final game in games)
+          if (game is String) game,
+    }
+    ..retroButtonMaps = {
+      if (json['retroSwapCrossCircle'] case final List<dynamic> games)
+        for (final id in games)
+          if (id is String) id: RetroButtonMap.swapCrossCircle,
+      if (json['retroButtonMaps'] case final Map<dynamic, dynamic> maps)
+        for (final MapEntry(:key, :value) in maps.entries)
+          if (key is String && !RetroButtonMap.fromJson(value).isStandard) key: RetroButtonMap.fromJson(value),
+    }
+    ..retroLastDisc = {
+      if (json['retroLastDisc'] case final Map<dynamic, dynamic> discs)
+        for (final entry in discs.entries)
+          if (entry.key is String && entry.value is String) entry.key as String: entry.value as String,
+    }
     ..lastPlayed = {
       for (final entry in (json['lastPlayed'] as Map<String, dynamic>? ?? const {}).entries)
         entry.key: entry.value as String,
@@ -331,6 +364,9 @@ class Preferences {
   /// silent, null is 100. Games keep their own volume.
   int? launcherVolume;
   Map<String, String> lastPlayed = {};
+  Map<String, String> retroLastDisc = {};
+  Map<String, RetroButtonMap> retroButtonMaps = {};
+  Set<String> retroAutoOptimized = {};
   Map<String, String> retroInternalResolution = {};
   bool showRetroFolders = false;
   Map<String, String> retroPs3Defaults = {};
@@ -498,6 +534,10 @@ class Preferences {
     'musicVolume': musicVolume,
     if (launcherVolume != null) 'launcherVolume': launcherVolume,
     'lastPlayed': lastPlayed,
+    if (retroLastDisc.isNotEmpty) 'retroLastDisc': retroLastDisc,
+    if (retroButtonMaps.isNotEmpty)
+      'retroButtonMaps': {for (final MapEntry(:key, :value) in retroButtonMaps.entries) key: value.toJson()},
+    if (retroAutoOptimized.isNotEmpty) 'retroAutoOptimized': retroAutoOptimized.toList(),
     if (retroInternalResolution.isNotEmpty) 'retroInternalResolution': retroInternalResolution,
     if (showRetroFolders) 'showRetroFolders': true,
     if (retroPs3Defaults.isNotEmpty) 'retroPs3Defaults': retroPs3Defaults,
@@ -807,6 +847,8 @@ enum Layer {
   settings,
   gameSettings,
   retroGraphics,
+  retroDiscs,
+  retroStartDisc,
   emulatorMenu,
   controls,
 
@@ -873,6 +915,8 @@ enum Layer {
 
   /// PS in a game: the game paused under Resume, Game Settings and Close Game.
   quickMenu,
+  retroOnlineFriends,
+  coopLobby,
 
   /// A friend's share play watched full screen (share_play_model.dart): the controller is the
   /// game's, PS leaves.
@@ -944,6 +988,7 @@ class PanelRow {
     this.level,
     this.icon,
     this.previewGames = const [],
+    this.playerSlots = const [],
     this.pinToBottom = false,
   });
 
@@ -964,9 +1009,13 @@ class PanelRow {
   /// A sign drawn before the title where no one's picture is (a challenge's notifications).
   final PanelIcon? icon;
   final List<Game> previewGames;
+  final List<PlayerSlot> playerSlots;
   final bool pinToBottom;
 
-  bool get focusable => kind is! InfoRow;
+  bool get focusable => switch (kind) {
+    InfoRow(:final navigable) => navigable,
+    _ => true,
+  };
 }
 
 sealed class RowKind {
@@ -1045,8 +1094,9 @@ class ActionRow extends RowKind {
 }
 
 class InfoRow extends RowKind {
-  const InfoRow(this.text);
+  const InfoRow(this.text, {this.navigable = false});
   final String text;
+  final bool navigable;
 }
 
 /// A field to type in: choosing the row puts the cursor in it; Enter sends [submit].
@@ -1063,6 +1113,26 @@ class TextRow extends RowKind {
 
 /// How a person shows in a row: their initials or picture, a dot for what they are doing, a
 /// ring while they speak in party voice.
+/// One seat in a couch co-op lobby: Player 1 to 4, who holds it and with which controller.
+class PlayerSlot {
+  const PlayerSlot({
+    required this.player,
+    this.name,
+    required this.status,
+    this.you = false,
+    this.available = true,
+    this.joinHint = false,
+  });
+  final int player;
+  final String? name;
+  final String status;
+  final bool you;
+  final bool available;
+
+  /// A controller on this computer is connected but not seated: the seat asks it to press Cross.
+  final bool joinHint;
+}
+
 class PanelPerson {
   const PanelPerson({required this.name, this.avatar, this.picture, this.tint, this.status, this.speaking = false});
   final String name;
@@ -1143,6 +1213,8 @@ class LauncherServices {
     this.pads,
     this.systemProbe,
     this.retroHardware,
+    this.nativeRetroHost,
+    this.ps3OnlineReleases = Ps3OnlineRelease.catalog,
     this.displays,
     this.moveToDisplay,
     this.gameWindowReady,
@@ -1168,6 +1240,8 @@ class LauncherServices {
     this.discord,
     this.discordGames,
   });
+
+  final List<Ps3OnlineRelease> ps3OnlineReleases;
 
   /// Discord's IPC for the "Playing …" status (discord_model.dart); the tests give a fake.
   final DiscordPresence Function()? discord;
@@ -1241,6 +1315,7 @@ class LauncherServices {
   /// setting, permissions); nothing asked when not given.
   final SystemProbe Function()? systemProbe;
   final Future<RetroHardware?> Function()? retroHardware;
+  final EmbeddedCoreHost? nativeRetroHost;
   final Future<List<LauncherDisplay>> Function()? displays;
   final Future<bool> Function(String id, {int? pid})? moveToDisplay;
   final Future<bool> Function(int pid)? gameWindowReady;
@@ -1530,6 +1605,9 @@ class AppModel extends ChangeNotifier {
   /// play's sound plays through it.
   Future<bool> startSound() => _audio.start();
 
+  /// The sound card let go of as the launcher ends (see [AudioOut.close]).
+  void closeSound() => _audio.close();
+
   /// The interface's soft sounds (moving, selecting, going back, something finished).
   late final InterfaceSounds sounds = InterfaceSounds(_audio);
 
@@ -1672,13 +1750,28 @@ class AppModel extends ChangeNotifier {
     remote?.setAssist(devices: target.devices, controllers: target.controllers);
   }
 
+  Layer? _controllerTestFrom;
+  final List<String> localSeatPads = [];
+
+  /// A game invite that arrived while playing: the next PS menu opens on its Join row.
+  String? inviteMenuFocus;
+  bool toastPsButton = false;
+  int retroControlsPlayer = 1;
+  bool _controlsFromQuickMenu = false;
+
   void openControllerTest() {
     unawaited(controllers.probe());
+    _controllerTestFrom = overlay == Layer.controls ? Layer.controls : null;
     open(Layer.controllerTest);
   }
 
   /// Back from the controller test to Settings › Controllers, where it was opened from.
   void closeControllerTest() {
+    if (_controllerTestFrom case final Layer from) {
+      _controllerTestFrom = null;
+      open(from, cue: Cue.back);
+      return;
+    }
     open(Layer.settings, cue: Cue.back);
     final categories = panelCategories();
     final index = categories.indexWhere((category) => category.id == 'controllers');
@@ -1804,6 +1897,7 @@ class AppModel extends ChangeNotifier {
   /// A controller's event past the gate: to the navigator, or to Settings › Shortcuts while it
   /// waits for buttons.
   void _padEvent(PadEvent event) {
+    if (coopPadEvent(event)) return;
     if (event case PadButtonEvent(button: PadButton.guide) when _retroSession) return _navigator?.handle(event);
     if (embeddedGame != null && overlay == null && event is PadButtonEvent) return;
     if (embeddedGame != null && overlay == null && event is PadAxisEvent) return;
@@ -1811,7 +1905,9 @@ class AppModel extends ChangeNotifier {
     _navigator?.handle(event);
   }
 
-  bool get _retroSession => running?.$1.retro != null || starting?.retro != null;
+  Game? get _retroLaunchGame => starting?.retro != null ? starting : _ordinaryPs1Transition;
+
+  bool get _retroSession => running?.$1.retro != null || _retroLaunchGame != null;
 
   /// What the user moved the launcher with last: the controller's hints or the keys'.
   InputMode inputMode = InputMode.keyboardMouse;
@@ -2098,6 +2194,8 @@ class AppModel extends ChangeNotifier {
   late final _emulatorMenu = _EmulatorMenu(this);
   late final _retroRestartTrials = _RetroRestartTrials(this);
   Completer<void>? _retroSettled;
+  Game? _ordinaryPs1Transition;
+  ({Game game, int ticket, String core, String home})? _ordinaryPs1Recovery;
 
   late final RetroSettingsModel retroSettings = RetroSettingsModel(
     this,
@@ -2516,6 +2614,13 @@ class AppModel extends ChangeNotifier {
   String? _playAfterInstall;
 
   Game? starting;
+  bool _retroStartIsPs2Lan = false;
+  bool get startingPs2Lan => _retroStartIsPs2Lan && starting?.retro?.platform == RetroPlatform.ps2;
+  Object? _ps3PartyLaunch;
+  bool isStartingPs3Party(Object party) =>
+      identical(_ps3PartyLaunch, party) && starting?.retro?.platform == RetroPlatform.ps3 && !isPlayingPs3Party(party);
+  bool isPlayingPs3Party(Object party) =>
+      identical(_ps3PartyLaunch, party) && embeddedGame?.isPs3Online == true && embeddedGame?.startupVisible == true;
   String? _retroSetupDetail;
   int? _retroSetupPercent;
 
@@ -3732,6 +3837,15 @@ class AppModel extends ChangeNotifier {
 
   /// Plays [game]; [trace] turns detailed logging on for this start only.
   Future<void> play(Game game, {bool trace = false}) async {
+    if (_ordinaryPs1Transition != null) return;
+    if (_ordinaryPs1Recovery case final recovery? when recovery.game.id == game.id) {
+      try {
+        await restoreOrdinaryPs1(game, recovery.ticket, recovery.core, recovery.home);
+      } on Object {
+        show(T.text('ps1OnlineReturnFailed'));
+      }
+      return;
+    }
     if (game.retro case final RetroDisc disc) {
       await _playRetro(game, disc);
       return;
@@ -3889,10 +4003,19 @@ class AppModel extends ChangeNotifier {
 
   ManagedRetro get _managedRetro => ManagedRetro(
     p.join(p.dirname(paths.toolkits), 'Emulators'),
+    host: embeddedCoreHost,
     packageDirectory: (services.environment ?? Platform.environment)['ANYPS5_MANAGED_CORE_PACKAGES'],
     ps3CoreDigests: (services.environment ?? Platform.environment)['ANYPS5_PS3_CORE_DIGESTS'],
+    ps2LanCoreDigests: (services.environment ?? Platform.environment)['ANYPS5_PS2_LAN_CORE_DIGESTS'],
   );
-  bool get managedRetroAvailable => system == HostSystem.windows && Abi.current() == Abi.windowsX64;
+  EmbeddedCoreHost get embeddedCoreHost =>
+      system == HostSystem.windows ? EmbeddedCoreHost.windowsX64 : EmbeddedCoreHost.linuxX64;
+  EmbeddedCoreHost? get _nativeRetroHost => services.nativeRetroHost ?? EmbeddedCoreHost.current;
+  bool get managedRetroAvailable => system == HostSystem.windows && _nativeRetroHost == EmbeddedCoreHost.windowsX64;
+  bool get embeddedOnlineRetroAvailable =>
+      managedRetroAvailable || (system == HostSystem.linux && _nativeRetroHost == EmbeddedCoreHost.linuxX64);
+  bool supportsManagedRetro(RetroPlatform platform) =>
+      managedRetroAvailable || (embeddedOnlineRetroAvailable && platform == RetroPlatform.ps1);
   String? get retroCoreOverride => (services.environment ?? Platform.environment)['ANYPS5_LIBRETRO_HOME'];
 
   ({bool installed, bool systemReady}) managedRetroStatus(RetroPlatform platform) {
@@ -3906,8 +4029,9 @@ class AppModel extends ChangeNotifier {
   Future<bool> chooseManagedBios(RetroPlatform platform) async {
     final label = ManagedRetro.platformName(platform);
     final selected = await services.pickFile?.call('Select your $label BIOS', ['bin', 'rom', 'rom0']);
-    if (selected == null) return false;
+    if (selected == null || _disposed) return false;
     await _managedRetro.importBios(platform, selected);
+    if (_disposed) return false;
     preferences.retroBiosSources[platform.name] = selected;
     savePreferences();
     return true;
@@ -3921,7 +4045,7 @@ class AppModel extends ChangeNotifier {
   RetroPlatform? managedSetupConsole;
 
   Future<void> setupManagedRetro(RetroPlatform platform) async {
-    if (!managedRetroAvailable ||
+    if (!supportsManagedRetro(platform) ||
         (platform != RetroPlatform.ps3 && retroCoreOverride != null) ||
         managedSetupConsole != null ||
         starting != null ||
@@ -3980,16 +4104,398 @@ class AppModel extends ChangeNotifier {
 
   bool get managedPs3FirmwareDownloaded => _managedRetro.hasPs3FirmwarePackage;
 
+  Future<String?> preparePs1NetplayBios({required bool Function() canContinue}) async {
+    final managed = _managedRetro;
+    try {
+      final existing = await managed.verifiedPs1NetplayBios(managedBiosPath(RetroPlatform.ps1));
+      if (_disposed || !canContinue()) return null;
+      if (existing != null) return existing;
+      final picker = services.pickFile;
+      if (picker == null) throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.bios);
+      final selected = await picker(T.text('ps1OnlineBiosPicker'), const ['bin', 'rom', 'rom0']);
+      if (selected == null || _disposed || !canContinue()) return null;
+      return await managed.importPs1NetplayBios(selected);
+    } on FormatException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.bios);
+    } on FileSystemException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.bios);
+    } on PlatformException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.bios);
+    }
+  }
+
+  Future<Ps1NetplayMedia> verifyPs1Netplay(
+    Game game,
+    Ps1NetplayProfile profile, {
+    required String bios,
+    bool requireHandoff = false,
+    Ps1NetplayExecution execution = Ps1NetplayExecution.standard,
+    String? expectedCore,
+    String? expectedDisc,
+    bool preferPortable = false,
+    bool Function()? canContinue,
+  }) async {
+    final disc = game.retro;
+    if (disc == null || disc.platform != RetroPlatform.ps1) {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.disc);
+    }
+    final media = await Ps1NetplayMedia.verify(
+      profile: profile,
+      disc: disc.path,
+      bios: bios,
+      expectedDisc: expectedDisc,
+      resolveCore: () => resolvePs1NetplayCore(
+        execution,
+        requireHandoff: requireHandoff,
+        expectedCore: expectedCore,
+        preferPortable: preferPortable,
+        canContinue: canContinue,
+      ),
+      execution: execution,
+      canContinue: canContinue,
+    );
+    if ((requireHandoff && !media.supportsHandoff) || (expectedCore != null && media.coreDigest != expectedCore)) {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+    }
+    return media;
+  }
+
+  Future<String> resolvePs1NetplayCore(
+    Ps1NetplayExecution execution, {
+    required bool requireHandoff,
+    String? expectedCore,
+    bool preferPortable = false,
+    bool Function()? canContinue,
+  }) async {
+    final managed = _managedRetro;
+    final override = retroCoreOverride;
+    if (!execution.usesRollback && override != null) {
+      return p.join(override, embeddedCoreHost.libraryName(RetroPlatform.ps1));
+    }
+    var selectedPackage = false;
+    Future<String> pickPackage(String filename) async {
+      if (_disposed || canContinue?.call() == false) {
+        throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.canceled);
+      }
+      final picker = services.pickFile;
+      if (picker == null) throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+      final selected = await picker(T.format('ps1OnlinePackagePicker', [filename]), const ['zip']);
+      if (selected == null || _disposed || canContinue?.call() == false) {
+        throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.canceled);
+      }
+      selectedPackage = true;
+      return selected;
+    }
+
+    try {
+      if (execution.usesStandardCore && !requireHandoff) {
+        final existing = File(p.join(managed.root, embeddedCoreHost.libraryName(RetroPlatform.ps1)));
+        if (await existing.exists()) {
+          final digest = await AssetDownload.sha256Of(existing.path);
+          if (execution.coreDigests.contains(digest) && (expectedCore == null || expectedCore == digest)) {
+            if (!preferPortable || expectedCore != null || digest == Ps1NetplayMedia.portableCorePin) {
+              return existing.path;
+            }
+            try {
+              return await managed.ensurePs1NetplayCore(execution: execution);
+            } on FormatException {
+              return existing.path;
+            } on FileSystemException {
+              return existing.path;
+            }
+          }
+        }
+        if (expectedCore != null && expectedCore != Ps1NetplayMedia.portableCorePin) {
+          throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.core);
+        }
+      }
+      return await managed.ensurePs1NetplayCore(
+        execution: execution,
+        pickArchive: execution == Ps1NetplayExecution.mixedRollback ? pickPackage : null,
+      );
+    } on FormatException {
+      throw Ps1NetplayMediaFailure(selectedPackage ? Ps1NetplayMediaProblem.package : Ps1NetplayMediaProblem.core);
+    } on FileSystemException {
+      throw Ps1NetplayMediaFailure(selectedPackage ? Ps1NetplayMediaProblem.package : Ps1NetplayMediaProblem.core);
+    } on PlatformException {
+      throw const Ps1NetplayMediaFailure(Ps1NetplayMediaProblem.package);
+    }
+  }
+
+  Future<EmbeddedRetroGame> preparePs1Netplay(
+    Game game,
+    Ps1NetplayMedia media,
+    int seat, {
+    required bool Function() canBoot,
+  }) async {
+    final disc = game.retro;
+    if (disc == null || !embeddedOnlineRetroAvailable) throw StateError('PS1 netplay requires an embedded x64 core.');
+    final booted = Completer<EmbeddedRetroGame?>();
+    closeOverlay();
+    final launch = _playRetro(game, disc, booted: booted, canBoot: canBoot, netplay: (media: media, seat: seat));
+    final prepared = await Future.any([booted.future, launch.then<EmbeddedRetroGame?>((_) => null)]);
+    if (prepared == null) throw StateError('The PS1 netplay game could not start.');
+    return prepared;
+  }
+
+  Future<void> playStagedPs1(Game game, Ps1NetplayMedia media) {
+    final disc = game.retro;
+    if (disc == null || !media.supportsHandoff || media.execution != Ps1NetplayExecution.standard) {
+      return Future.value();
+    }
+    closeOverlay();
+    return _playRetro(game, disc, netplay: (media: media, seat: 0), localNetplayStaging: true);
+  }
+
+  Future<void> waitForRetroWorkerExit() async => await _retroSettled?.future;
+
+  void setOrdinaryPs1Transition(Game? game) {
+    _ordinaryPs1Transition = game;
+    _changed();
+  }
+
+  bool get ordinaryPs1RecoveryPending => _ordinaryPs1Recovery != null;
+
+  Future<bool> restoreOrdinaryPs1(Game game, int ticket, String core, String home) async {
+    final disc = game.retro;
+    if (disc?.platform != RetroPlatform.ps1 || _disposed) {
+      throw StateError('The original PS1 game is unavailable.');
+    }
+    final pending = (game: game, ticket: ticket, core: core, home: home);
+    _ordinaryPs1Recovery = pending;
+    final booted = Completer<EmbeddedRetroGame?>();
+    closeOverlay();
+    final launch = _playRetro(game, disc!, booted: booted, ordinaryRecovery: (ticket: ticket, core: core, home: home));
+    final restored = await Future.any([booted.future, launch.then<EmbeddedRetroGame?>((_) => null)]);
+    if (restored == null) throw StateError('The original PS1 game could not resume.');
+    var accepted = false;
+    try {
+      accepted = await restored.acceptOrdinaryRecovery(ticket);
+      if (!accepted) throw StateError('The original PS1 game could not resume.');
+    } finally {
+      if (!accepted) {
+        await restored.close();
+        await waitForRetroWorkerExit();
+      }
+    }
+    if (_ordinaryPs1Recovery == pending) _ordinaryPs1Recovery = null;
+    return restored.continuedFromPs1Match;
+  }
+
+  Future<RetroLanGame> preparePs2Lan(
+    Game game,
+    Uint8List mac, {
+    required bool Function() canBoot,
+    bool keepSetupPage = false,
+  }) async {
+    final disc = game.retro;
+    final bios = ps2LanBiosPath;
+    if (!embeddedOnlineRetroAvailable || disc?.platform != RetroPlatform.ps2 || bios == null) {
+      throw StateError('PS2 LAN requires the embedded emulator and a PS2 BIOS.');
+    }
+    if (!canBoot()) throw StateError('The PS2 LAN room closed before the game could start.');
+    final profile = await Ps2LanProfile.open(
+      root: p.join(p.dirname(paths.toolkits), 'RetroLan', 'PS2'),
+      owner: currentProfile?.id ?? LauncherProfile.legacyId,
+      bios: bios,
+    );
+    Future<void>? launch;
+    try {
+      if (!canBoot()) throw StateError('The PS2 LAN room closed before the game could start.');
+      final booted = Completer<EmbeddedRetroGame?>();
+      if (keepSetupPage) {
+        _dismissOverlay();
+      } else {
+        closeOverlay();
+      }
+      final settled = launch = _playRetro(
+        game,
+        disc!,
+        booted: booted,
+        canBoot: canBoot,
+        ps2Lan: (mac: mac, system: profile.system, saves: profile.saves),
+      ).whenComplete(profile.close);
+      final run = await Future.any([booted.future, settled.then<EmbeddedRetroGame?>((_) => null)]);
+      if (run == null) {
+        await settled;
+        throw StateError('The PS2 LAN game could not start.');
+      }
+      return (exchange: run.exchangePs2LanFrames, close: run.close, done: settled);
+    } finally {
+      if (launch == null) await profile.close();
+    }
+  }
+
+  String? get _ps2LanCoreHome =>
+      _managedRetro.installedPs2LanHome ??
+      (system == HostSystem.windows ? retroCoreOverride ?? _managedRetro.root : null);
+
+  bool get ps2LanCoreInstalled {
+    final home = _ps2LanCoreHome;
+    return home != null && ManagedRetro(home, host: embeddedCoreHost).supportsPs2Lan;
+  }
+
+  bool get _ps2LanPackageAvailable => _managedRetro.configuredPs2LanPackage != null;
+
+  void openPs2LanSetup({VoidCallback? onReady}) {
+    if (!together.ps2LanSetupAvailable) return show(T.text('ps2LanBusy'));
+    _emulatorMenu.openChild(() => _emulatorMenu._ps2LanSetupPage(onReady: onReady));
+  }
+
+  Future<void> _preparePs2LanMedia({required bool bios}) async {
+    if (!together.ps2LanSetupAvailable) return show(T.text('ps2LanBusy'));
+    final setupPage = _emulatorMenu._page;
+    managedSetupConsole = RetroPlatform.ps2;
+    try {
+      _changed();
+      if (bios) {
+        if (await chooseManagedBios(RetroPlatform.ps2) && !_disposed) show(T.text('ps2LanBiosImported'));
+      } else {
+        final archive =
+            _managedRetro.configuredPs2LanPackage ??
+            await services.pickFile?.call(T.text('ps2LanPackagePicker'), ['zip']);
+        if (archive == null || _disposed) return;
+        _setRetroSetup(T.text('ps2LanPackageInstalling'));
+        await _managedRetro.installPs2Lan(archive);
+        if (!_disposed) show(T.text('ps2LanPackageInstalled'));
+      }
+    } on Object catch (error) {
+      if (!_disposed) show(T.format('ps2LanInstallFailed', [error]));
+    } finally {
+      managedSetupConsole = null;
+      if (!_disposed) {
+        if (overlay == Layer.emulatorMenu && identical(_emulatorMenu._page, setupPage)) {
+          panelRow = 0;
+          _skipToFocusable();
+        }
+        if (retroSetupProgress != null) {
+          _setRetroSetup(null);
+        } else {
+          _changed();
+        }
+      }
+    }
+  }
+
+  bool _ps2LanSetupActive = false;
+  bool get ps2LanSetupActive => _ps2LanSetupActive;
+  static const _ps2SetupDisc = (serial: 'SCUS97328', revision: '2.00');
+
+  Game? get _ps2LanSetupTitle => games
+      .where(
+        (game) =>
+            game.retro?.platform == RetroPlatform.ps2 &&
+            (serial: game.retroSerial, revision: game.version) == _ps2SetupDisc,
+      )
+      .firstOrNull;
+
+  Future<void> _configurePs2Lan(Game game) async {
+    if (!together.ps2LanSetupAvailable) return show(T.text('ps2LanBusy'));
+    if (!ps2LanCoreInstalled) return show(T.text('ps2LanCore'));
+    if (ps2LanBiosPath == null) return show(T.text('ps2LanBios'));
+    final disc = File(game.retro!.path);
+    final before = disc.statSync();
+    if (before.type != FileSystemEntityType.file || GameLibrary.ps2DiscIdentity(disc.path) != _ps2SetupDisc) {
+      return show(T.text('ps2LanSetupMediaChanged'));
+    }
+    final owner = currentProfile?.id;
+    final setupPage = _emulatorMenu._page;
+    final setupSpot = spot;
+    _ps2LanSetupActive = true;
+    try {
+      final run = await preparePs2Lan(
+        game,
+        Uint8List.fromList([2, 0, 0, 0, 0, 1]),
+        keepSetupPage: true,
+        canBoot: () {
+          if (_disposed || currentProfile?.id != owner) return false;
+          final current = disc.statSync();
+          return current.type == FileSystemEntityType.file &&
+              current.size == before.size &&
+              current.modified == before.modified;
+        },
+      );
+      final bridge = RetroLanBridge.local(
+        dhcp: const RetroLanDhcp(mac: 0x020000000001, address: 0x0ae70065),
+        exchange: run.exchange,
+      );
+      final interrupted = Completer<void>();
+      final pump = Timer.periodic(const Duration(milliseconds: 8), (_) {
+        if (interrupted.isCompleted) return;
+        if (_disposed) {
+          interrupted.complete();
+          return;
+        }
+        unawaited(
+          bridge.pump().catchError((Object error, StackTrace stack) {
+            if (!interrupted.isCompleted) interrupted.completeError(error, stack);
+          }),
+        );
+      });
+      try {
+        show(T.text('ps2LanSetupInstructions'));
+        await Future.any([run.done, interrupted.future]);
+      } finally {
+        pump.cancel();
+        bridge.close();
+        await bridge.drained;
+        try {
+          await run.close();
+        } finally {
+          await run.done;
+        }
+      }
+    } on Ps2LanProfileInUse {
+      if (!_disposed) show(T.text('ps2LanProfileInUse'));
+    } on Object catch (error) {
+      _padLog?.call('retro: PS2 LAN setup ended: $error');
+      if (!_disposed) show(T.text('ps2LanSetupFailed'));
+    } finally {
+      _ps2LanSetupActive = false;
+      if (!_disposed) {
+        if (overlay == null && currentProfile?.id == owner && identical(_emulatorMenu._page, setupPage)) {
+          returnTo(setupSpot);
+        } else {
+          _changed();
+        }
+      }
+    }
+  }
+
+  String? get ps2LanBiosPath =>
+      _managedRetro.biosPath(RetroPlatform.ps2) ??
+      ManagedRetro(retroCoreOverride ?? _managedRetro.root, host: embeddedCoreHost).biosPath(RetroPlatform.ps2);
+
+  ({Game game, List<String> paths, Completer<String?> selection})? _retroDiscLaunch;
+
   Future<void> _playRetro(
     Game game,
     RetroDisc disc, {
     Map<String, String> trialOptions = const {},
+    String? restartDisc,
     Completer<EmbeddedRetroGame?>? booted,
     bool Function()? canBoot,
+    ({Ps1NetplayMedia media, int seat})? netplay,
+    bool localNetplayStaging = false,
+    ({Uint8List mac, String system, String saves})? ps2Lan,
+    Ps3OnlineProfile? onlineProfile,
+    Object? ps3Party,
+    ({int ticket, String core, String home})? ordinaryRecovery,
   }) async {
-    if (managedSetupConsole != null || starting != null || running != null || canBoot?.call() == false) return;
+    if (_disposed ||
+        _retroDiscLaunch != null ||
+        managedSetupConsole != null ||
+        starting != null ||
+        running != null ||
+        canBoot?.call() == false) {
+      return;
+    }
+    final launchPreferences = preferences;
     final allowed = together.family.beforePlay(game);
     if (!(allowed is bool ? allowed : await allowed) ||
+        _disposed ||
+        _retroDiscLaunch != null ||
+        !identical(preferences, launchPreferences) ||
         managedSetupConsole != null ||
         starting != null ||
         running != null ||
@@ -3999,9 +4505,32 @@ class AppModel extends ChangeNotifier {
     final ps3 = disc.platform == RetroPlatform.ps3;
     final override = ps3 ? null : retroCoreOverride;
     final program = retroSettings.program(disc.platform);
-    final standalone = program != null && File(program).existsSync();
-    final managed = override == null && !standalone && managedRetroAvailable ? _managedRetro : null;
-    final embeddedHome = override ?? managed?.root;
+    final standalone =
+        ordinaryRecovery == null &&
+        onlineProfile == null &&
+        netplay == null &&
+        ps2Lan == null &&
+        program != null &&
+        File(program).existsSync();
+    final managed =
+        ordinaryRecovery == null &&
+            onlineProfile == null &&
+            netplay == null &&
+            ps2Lan == null &&
+            override == null &&
+            !standalone &&
+            supportsManagedRetro(disc.platform)
+        ? _managedRetro
+        : null;
+    final embeddedHome = ordinaryRecovery != null
+        ? ordinaryRecovery.home
+        : onlineProfile != null
+        ? p.dirname(onlineProfile.core)
+        : ps2Lan != null
+        ? _ps2LanCoreHome
+        : netplay != null
+        ? p.dirname(netplay.media.core)
+        : override ?? managed?.root;
     if (embeddedHome == null && !standalone) {
       show(
         ps3
@@ -4015,12 +4544,56 @@ class AppModel extends ChangeNotifier {
       return;
     }
 
+    ({int index, String path})? initialDisc;
+    if (netplay == null &&
+        ordinaryRecovery == null &&
+        embeddedHome != null &&
+        disc.platform == RetroPlatform.ps1 &&
+        p.extension(disc.path).toLowerCase() == '.m3u') {
+      try {
+        final playlist = GameLibrary.ps1PlaylistDiscs(disc.path);
+        if (playlist.isEmpty) {
+          show(T.text('dumpMoved'));
+          return;
+        }
+        if (playlist.length > 1) {
+          final last = preferences.retroLastDisc[game.id];
+          final chosen = booted == null
+              ? await _pickRetroLaunchDisc(game, disc, playlist)
+              : restartDisc ??
+                    playlist.firstWhere((path) => _retroDiscKey(disc, path) == last, orElse: () => playlist.first);
+          if (chosen == null || _disposed || !identical(preferences, launchPreferences)) return;
+          final index = GameLibrary.ps1PlaylistDiscs(disc.path).indexWhere((path) => p.equals(path, chosen));
+          if (index < 0) {
+            show(T.text('dumpMoved'));
+            return;
+          }
+          initialDisc = (index: index, path: chosen);
+        }
+      } on FileSystemException {
+        show(T.text('dumpMoved'));
+        return;
+      }
+    }
+    if (_disposed ||
+        managedSetupConsole != null ||
+        starting != null ||
+        running != null ||
+        !identical(preferences, launchPreferences) ||
+        canBoot?.call() == false) {
+      return;
+    }
+
     final settled = Completer<void>();
     _retroSettled = settled;
     final launchTime = Stopwatch()..start();
     sounds.play(Cue.select);
+    _retroStartIsPs2Lan = ps2Lan != null;
+    _ps3PartyLaunch = ps3Party;
     starting = game;
     _changed();
+    EmbeddedRetroGame? lanRun;
+    var ordinaryCore = ordinaryRecovery?.core;
     try {
       if (managed != null) {
         final label = ManagedRetro.platformName(disc.platform);
@@ -4037,7 +4610,17 @@ class AppModel extends ChangeNotifier {
             return;
           }
         }
-        if (!ps3) await _installManagedCore(managed, disc.platform);
+        if (disc.platform == RetroPlatform.ps1 &&
+            (services.environment ?? Platform.environment)['ANYPS5_PS1_NETPLAY'] == '1') {
+          try {
+            ordinaryCore = await managed.ensurePs1NetplayCore(execution: Ps1NetplayExecution.mixedRollback);
+          } on FormatException {
+            // A preview without the matching package can still play locally.
+          } on FileSystemException {
+            // Keep the ordinary managed install available.
+          }
+        }
+        if (!ps3 && ordinaryCore == null) await _installManagedCore(managed, disc.platform);
         _setRetroSetup(null);
       }
       if (canBoot?.call() == false) {
@@ -4051,11 +4634,88 @@ class AppModel extends ChangeNotifier {
         final graphicsId = ps3 ? game.titleId : game.id;
         final tuningOriginals = <String, String?>{};
         const tuningResolutionKeys = {'swanstation_GPU_ResolutionScale', 'pcsx2_upscale_multiplier'};
+        void saveTuning(
+          Map<String, String> previous,
+          Map<String, String> values, {
+          required bool undo,
+          required bool auto,
+        }) {
+          if (trialOptions.isNotEmpty) throw StateError('Finish the restart trial first.');
+          final priorOptions = graphics[graphicsId];
+          final priorResolution = preferences.retroInternalResolution[game.id];
+          final options = {...?priorOptions};
+          final originals = {...tuningOriginals};
+          var resolution = priorResolution;
+          for (final entry in values.entries) {
+            final key = entry.key;
+            final isResolution = tuningResolutionKeys.contains(key);
+            final current = isResolution ? resolution : options[key];
+            if (undo && current != previous[key]) continue;
+            final next = undo ? originals.remove(key) : entry.value;
+            if (!undo) originals[key] = current;
+            if (isResolution) {
+              resolution = next;
+            } else if (next == null) {
+              options.remove(key);
+            } else {
+              options[key] = next;
+            }
+          }
+          void write(Map<String, String>? settings, String? scale) {
+            if (settings == null || settings.isEmpty) {
+              graphics.remove(graphicsId);
+            } else {
+              graphics[graphicsId] = settings;
+            }
+            if (scale == null) {
+              preferences.retroInternalResolution.remove(game.id);
+            } else {
+              preferences.retroInternalResolution[game.id] = scale;
+            }
+          }
+
+          final wasOptimized = preferences.retroAutoOptimized.contains(game.id);
+          if (auto && !undo) {
+            preferences.retroAutoOptimized.add(game.id);
+          } else {
+            preferences.retroAutoOptimized.remove(game.id);
+          }
+          write(options, resolution);
+          try {
+            if (persist) preferences._saveTuning(paths.preferencesFile);
+          } on FileSystemException {
+            write(priorOptions, priorResolution);
+            if (wasOptimized) {
+              preferences.retroAutoOptimized.add(game.id);
+            } else {
+              preferences.retroAutoOptimized.remove(game.id);
+            }
+            rethrow;
+          }
+          tuningOriginals
+            ..clear()
+            ..addAll(originals);
+          _changed();
+        }
+
         run = await EmbeddedRetroGame.start(
           embeddedHome,
           disc,
+          coreHost: embeddedCoreHost,
           internalResolution: preferences.retroInternalResolution[game.id],
           graphics: {if (ps3) ...preferences.retroPs3Defaults, ...?graphics[graphicsId], ...trialOptions},
+          initialDisc: initialDisc,
+          buttonMap: retroLayout(game.id, 1),
+          seatButtonMaps: [for (var player = 2; player <= 4; player++) retroLayout(game.id, player)],
+          onDiscPlayed: initialDisc == null || trialOptions.isNotEmpty
+              ? null
+              : (path) {
+                  if (_disposed || !identical(preferences, launchPreferences)) return;
+                  final key = _retroDiscKey(disc, path);
+                  if (preferences.retroLastDisc[game.id] == key) return;
+                  preferences.retroLastDisc[game.id] = key;
+                  savePreferences();
+                },
           onGraphicsSelected: (key, value) {
             if (trialOptions.isNotEmpty) return;
             final options = graphics.putIfAbsent(graphicsId, () => {});
@@ -4063,53 +4723,10 @@ class AppModel extends ChangeNotifier {
             options[key] = value;
             savePreferences();
           },
-          onTuningApplied: (previous, values, {required undo}) {
-            if (trialOptions.isNotEmpty) throw StateError('Finish the restart trial first.');
-            final priorOptions = graphics[graphicsId];
-            final priorResolution = preferences.retroInternalResolution[game.id];
-            final options = {...?priorOptions};
-            final originals = {...tuningOriginals};
-            var resolution = priorResolution;
-            for (final entry in values.entries) {
-              final key = entry.key;
-              final isResolution = tuningResolutionKeys.contains(key);
-              final current = isResolution ? resolution : options[key];
-              if (undo && current != previous[key]) continue;
-              final next = undo ? originals.remove(key) : entry.value;
-              if (!undo) originals[key] = current;
-              if (isResolution) {
-                resolution = next;
-              } else if (next == null) {
-                options.remove(key);
-              } else {
-                options[key] = next;
-              }
-            }
-            void write(Map<String, String>? settings, String? scale) {
-              if (settings == null || settings.isEmpty) {
-                graphics.remove(graphicsId);
-              } else {
-                graphics[graphicsId] = settings;
-              }
-              if (scale == null) {
-                preferences.retroInternalResolution.remove(game.id);
-              } else {
-                preferences.retroInternalResolution[game.id] = scale;
-              }
-            }
-
-            write(options, resolution);
-            try {
-              if (persist) preferences._saveTuning(paths.preferencesFile);
-            } on FileSystemException {
-              write(priorOptions, priorResolution);
-              rethrow;
-            }
-            tuningOriginals
-              ..clear()
-              ..addAll(originals);
-            _changed();
-          },
+          onTuningApplied: (before, values, {required undo}) => saveTuning(before, values, undo: undo, auto: false),
+          onAutoOptimizeApplied: (before, values, {required undo}) =>
+              saveTuning(before, values, undo: undo, auto: true),
+          onManualOptionAccepted: () => _clearRetroAutoOptimize(game.id),
           onResolutionSelected: (value) {
             if (trialOptions.isNotEmpty) return;
             if (preferences.retroInternalResolution[game.id] == value) return;
@@ -4120,7 +4737,15 @@ class AppModel extends ChangeNotifier {
             final player = controllers.playerOne ?? controllers.pads.firstOrNull;
             return player == null ? PadState.idle : controllers.stateOf(player.id) ?? PadState.idle;
           },
+          readSeats: localSeatStates,
           changed: _changed,
+          netplay: netplay,
+          localNetplayStaging: localNetplayStaging,
+          ps2Lan: ps2Lan,
+          localPs2LanSetup: _ps2LanSetupActive,
+          onlineProfile: onlineProfile,
+          ordinaryRecovery: ordinaryRecovery?.ticket,
+          ordinaryCore: ordinaryCore,
         );
       } else {
         retroSettings.applyQueuedGraphics(program!, disc.platform);
@@ -4131,13 +4756,18 @@ class AppModel extends ChangeNotifier {
           logFile: paths.logFile(game.titleId),
         );
       }
+      if (ps2Lan != null && run is EmbeddedRetroGame) lanRun = run;
       running = (game, run);
       _stopped = false;
       stopping = false;
       final cancelled = canBoot?.call() == false;
       if (cancelled) unawaited(stopRunningGame());
+      if (!cancelled && onlineProfile != null && run is EmbeddedRetroGame) _watchPs3ProviderFailure(run, ps3Party);
+      if ((netplay != null || ps2Lan != null) && booted != null && !booted.isCompleted) {
+        booted.complete(!cancelled && run is EmbeddedRetroGame ? run : null);
+      }
       together.family.followGame();
-      if (ps3) _watchPs3Trophies(game);
+      if (ps3 && onlineProfile == null) _watchPs3Trophies(game);
       if (run is EmbeddedRetroGame) {
         _padLog?.call('retro: ${disc.platform.name} embedded texture ${run.textureId} started');
       } else {
@@ -4193,11 +4823,13 @@ class AppModel extends ChangeNotifier {
         booted.complete(window == _GameWindowState.ready && !stopping && run is EmbeddedRetroGame ? run : null);
       }
       final code = await run.exitCode;
-      if (ps3) {
+      if (ps3 && run is EmbeddedRetroGame) together.ps3WorkerExited(run);
+      if (ps3 && onlineProfile == null) {
         _trophyWatch?.cancel();
         _loadTrophies(game);
       }
       running = null;
+      localSeatPads.clear();
       together.family.followGame();
       together.family.played(run.started, DateTime.now(), reported: false);
       stopping = false;
@@ -4210,6 +4842,9 @@ class AppModel extends ChangeNotifier {
       if (overlay == Layer.quickMenu ||
           overlay == Layer.closeGame ||
           overlay == Layer.retroGraphics ||
+          overlay == Layer.retroDiscs ||
+          overlay == Layer.retroOnlineFriends ||
+          overlay == Layer.coopLobby ||
           (overlay == Layer.emulatorMenu && _emulatorMenu.fromGraphics)) {
         overlay = null;
       }
@@ -4219,14 +4854,34 @@ class AppModel extends ChangeNotifier {
         show('${T.text('startFailed')}: ${game.name} (exit $code).');
       }
     } on Object catch (error) {
+      if (lanRun != null && identical(running?.$2, lanRun)) {
+        try {
+          await lanRun.close();
+        } on Object catch (stopError) {
+          _padLog?.call('retro: interrupted PS2 LAN launch could not stop the core: $stopError');
+        }
+      }
       starting = null;
       _retroSetupDetail = null;
       _retroSetupPercent = null;
       if (running == null && overlay == Layer.quickMenu) overlay = null;
-      show('${T.text('startFailed')}: $error');
+      show(error is Ps3OnlineIssue ? _ps3OnlineIssueText(error) : '${T.text('startFailed')}: $error');
     } finally {
       if (booted != null && !booted.isCompleted) booted.complete(null);
-      if (identical(_retroSettled, settled)) _retroSettled = null;
+      if (lanRun != null) {
+        // The LAN card remains leased until the core has finished writing it.
+        await lanRun.exitCode;
+        if (identical(running?.$2, lanRun)) {
+          running = null;
+          stopping = false;
+          _stopTimer?.cancel();
+          _stopTimer = null;
+        }
+      }
+      if (identical(_retroSettled, settled)) {
+        _retroSettled = null;
+        _ps3PartyLaunch = null;
+      }
       settled.complete();
     }
     _changed();
@@ -4239,8 +4894,8 @@ class AppModel extends ChangeNotifier {
 
   Game? get launchCardGame {
     final session = embeddedGame;
-    if (session == null) return starting;
-    return !session.presented || session.progress != null ? running?.$1 : null;
+    if (session == null) return starting ?? _ordinaryPs1Transition;
+    return !session.startupVisible || session.progress != null ? running?.$1 : null;
   }
 
   Duration retroStartTimeout = const Duration(minutes: 3);
@@ -4485,8 +5140,9 @@ class AppModel extends ChangeNotifier {
 
   // Messages.
 
-  void show(String message, {LevelBadge? level, String? icon, void Function()? onTap}) {
+  void show(String message, {LevelBadge? level, String? icon, void Function()? onTap, bool psButton = false}) {
     toast = message;
+    toastPsButton = psButton;
     toastLevel = level;
     toastIcon = icon;
     toastTap = onTap;
@@ -4497,6 +5153,7 @@ class AppModel extends ChangeNotifier {
       toastLevel = null;
       toastIcon = null;
       toastTap = null;
+      toastPsButton = false;
       notifyListeners();
     });
     notifyListeners();
@@ -4506,6 +5163,7 @@ class AppModel extends ChangeNotifier {
 
   /// Opens a layer with the select sound, or [cue] (going back to the panel before).
   void open(Layer next, {Cue cue = Cue.select}) {
+    if (next != Layer.retroStartDisc) _cancelRetroDiscPicker();
     sounds.play(cue);
     if (overlay != next) together.askingRow = null;
     overlay = next;
@@ -4532,7 +5190,8 @@ class AppModel extends ChangeNotifier {
       revealedTrophies = {};
     }
     if (next == Layer.trophies || next == Layer.gallery) _loadShots();
-    if (next == Layer.controls && selectedGame != null) _readControls(selectedGame!);
+    if (next == Layer.controls && selectedGame?.retro == null && selectedGame != null) _readControls(selectedGame!);
+    if (next == Layer.controls && overlay != Layer.controllerTest) retroControlsPlayer = 1;
     // The screens that show the own name and handle read them again first.
     if (next == Layer.friends || next == Layer.profile || next == Layer.settings || next == Layer.profilePicker) {
       together.refreshOwnProfile();
@@ -4615,6 +5274,10 @@ class AppModel extends ChangeNotifier {
   }
 
   void closeOverlay() {
+    if (overlay == Layer.retroDiscs && embeddedGame != null) {
+      open(Layer.quickMenu, cue: Cue.back);
+      return;
+    }
     if (overlay == Layer.emulatorMenu && _emulatorMenu.back()) return;
     if (_returnsToGame) {
       resumeGame();
@@ -4627,14 +5290,20 @@ class AppModel extends ChangeNotifier {
     final playing = running?.$1;
     if (playing == null) return false;
     return switch (overlay) {
-      Layer.quickMenu || Layer.closeGame || Layer.retroGraphics => true,
-      Layer.emulatorMenu => _emulatorMenu.fromGraphics,
-      Layer.gameSettings => playing.retro != null && selectedGame?.id == playing.id,
+      Layer.quickMenu ||
+      Layer.closeGame ||
+      Layer.retroGraphics ||
+      Layer.retroDiscs ||
+      Layer.retroOnlineFriends ||
+      Layer.coopLobby => true,
+      Layer.emulatorMenu => _emulatorMenu.fromGraphics || _emulatorMenu.fromQuickMenu,
+      Layer.gameSettings || Layer.controls => playing.retro != null && selectedGame?.id == playing.id,
       _ => false,
     };
   }
 
   void _dismissOverlay() {
+    _cancelRetroDiscPicker();
     overlay = null;
     // A crop closed some other way (PS) keeps nothing.
     pictureCrop?.image.dispose();
@@ -4836,7 +5505,9 @@ class AppModel extends ChangeNotifier {
           return;
         }
         if (command == Command.back || command == Command.options) {
-          open(Layer.gameSettings, cue: Cue.back);
+          final fromGame = _controlsFromQuickMenu && running != null;
+          _controlsFromQuickMenu = false;
+          open(fromGame ? Layer.quickMenu : Layer.gameSettings, cue: Cue.back);
           return;
         }
         _panelCommand(command);
@@ -4879,6 +5550,9 @@ class AppModel extends ChangeNotifier {
       case Layer.shareWatch:
         // Taken above; here only for the switch's sake.
         return sharePlay.watchCommand(command);
+      case Layer.retroDiscs when command == Command.back || command == Command.options:
+        closeOverlay();
+        return;
       case Layer.quickMenu || Layer.closeGame when command == Command.back || command == Command.options:
         resumeGame();
         return;
@@ -4915,9 +5589,17 @@ class AppModel extends ChangeNotifier {
         // A question asked in place (together_ask.dart) is answered Cancel first.
         if (!together.cancelAsk()) open(Layer.friends, cue: Cue.back);
         return;
+      case Layer.retroOnlineFriends when command == Command.back || command == Command.options:
+        open(running?.$1.retro?.platform == RetroPlatform.ps1 ? Layer.coopLobby : Layer.quickMenu, cue: Cue.back);
+        return;
+      case Layer.coopLobby when command == Command.back || command == Command.options:
+        open(Layer.quickMenu, cue: Cue.back);
+        return;
       case Layer.settings ||
           Layer.gameSettings ||
           Layer.retroGraphics ||
+          Layer.retroDiscs ||
+          Layer.retroStartDisc ||
           Layer.emulatorMenu ||
           Layer.confirmUninstall ||
           Layer.copyWarning ||
@@ -4929,6 +5611,8 @@ class AppModel extends ChangeNotifier {
           Layer.party ||
           Layer.family ||
           Layer.quickMenu ||
+          Layer.retroOnlineFriends ||
+          Layer.coopLobby ||
           Layer.closeGame ||
           Layer.homeMenu ||
           Layer.confirmQuit ||
@@ -5047,18 +5731,27 @@ class AppModel extends ChangeNotifier {
   /// The quick menu over the game playing: the game's Options pressed first (Settings ›
   /// Behaviour › Pause Game When Opening the Menu) while it is still in front, then the
   /// launcher in front with Resume, Game Settings and Close Game.
+  void _focusPendingInvite() {
+    final session = inviteMenuFocus;
+    if (session == null || overlay != Layer.quickMenu) return;
+    inviteMenuFocus = null;
+    final row = _currentRows.indexWhere((row) => row.id == 'game-accept-$session');
+    if (row >= 0) panelRow = row;
+  }
+
   Future<void> openQuickMenu() async {
     final playing = running;
     if (!preferences.onboarded) return;
     if (playing == null) {
-      if (starting?.retro == null) return;
+      if (_retroLaunchGame == null) return;
       open(Layer.quickMenu);
+      _focusPendingInvite();
       if (!_frontForGuide) await raiseLauncher();
       return;
     }
     final (game, run) = playing;
     final front = _frontForGuide;
-    quickMenuPaused = run is EmbeddedRetroGame;
+    _quickMenuOptionsSent = false;
     if (!front && preferences.pauseOnMenu && game.retro == null) {
       // An engine that takes presses: Options held on player 1's pad through the remote pad
       // bridge, whoever drives it (sent three times, 40 ms apart; the menu ~210 ms after the
@@ -5067,12 +5760,14 @@ class AppModel extends ChangeNotifier {
       if (server != null && server.gameTakesPresses) {
         final sent = server.pressButtons(RemotePacket.options);
         await Future<void>.delayed(const Duration(milliseconds: 210));
-        quickMenuPaused = await sent;
-        _padLog?.call('quick menu: ${quickMenuPaused ? 'Options pressed through the bridge' : 'no bridge took it'}');
+        _quickMenuOptionsSent = await sent;
+        _padLog?.call(
+          'quick menu: ${_quickMenuOptionsSent ? 'Options pressed through the bridge' : 'no bridge took it'}',
+        );
       } else {
         final key = optionsKey(game);
         final paused = key != null && await desktop.pressKey(run.pid, key);
-        quickMenuPaused = paused;
+        _quickMenuOptionsSent = paused;
         _padLog?.call('quick menu: ${paused ? 'pressed $key in the game' : 'could not pause the game'}');
       }
     }
@@ -5080,17 +5775,23 @@ class AppModel extends ChangeNotifier {
     final index = games.indexOf(game);
     if (index >= 0) selected = index;
     open(Layer.quickMenu);
+    _focusPendingInvite();
     if (!front) await raiseLauncher();
   }
 
-  /// Whether the game under the quick menu was sent its Options (paused, as far as the launcher
-  /// can tell).
-  bool quickMenuPaused = false;
+  bool _quickMenuOptionsSent = false;
+
+  /// Whether the embedded worker pauses for this menu or Options was sent to a standalone game.
+  bool get quickMenuPaused => switch (running?.$2) {
+    EmbeddedRetroGame(:final pausesForOverlay) => pausesForOverlay,
+    null => false,
+    _ => _quickMenuOptionsSent,
+  };
 
   /// PS held: Close Game? over a game in front; the home menu in the launcher.
   void homeHeld() {
     if (!preferences.onboarded) return;
-    if (running == null && starting?.retro != null) {
+    if (running == null && _retroLaunchGame != null) {
       unawaited(openQuickMenu());
       return;
     }
@@ -5171,6 +5872,7 @@ class AppModel extends ChangeNotifier {
     stopGame();
     unawaited(_stopReplay());
     unawaited(discord.close());
+    if (services.quit == null) closeSound();
     (services.quit ?? exit)(0);
   }
 
@@ -5181,7 +5883,10 @@ class AppModel extends ChangeNotifier {
       return false;
     }
     final playing = running;
-    if (playing == null || playing.$1.retro == null) return true;
+    if (playing == null || playing.$1.retro == null) {
+      await together.cancelPs3PartyAndWait();
+      return true;
+    }
     final run = playing.$2;
     unawaited(stopRunningGame());
     try {
@@ -5203,6 +5908,7 @@ class AppModel extends ChangeNotifier {
       show(run.error);
       return false;
     }
+    await together.cancelPs3PartyAndWait();
     return true;
   }
 
@@ -5503,25 +6209,48 @@ class AppModel extends ChangeNotifier {
 
   // Panels.
 
-  PanelCategory _embeddedGraphics(EmbeddedRetroGame game) => PanelCategory(
+  void _clearRetroAutoOptimize(String gameId) {
+    if (preferences.retroAutoOptimized.remove(gameId)) savePreferences();
+  }
+
+  PanelCategory _embeddedGraphics(Game title, EmbeddedRetroGame session) => PanelCategory(
     id: 'embedded-graphics',
     title: 'Graphics',
+    rows: [
+      _emulatorMenu.autoOptimizeLink(title, session),
+      PanelRow(
+        id: 'embedded-graphics-advanced',
+        title: 'Advanced',
+        detail: 'Set resolution, textures, and other graphics options yourself.',
+        kind: ActionRow(
+          () => _emulatorMenu.openAdvanced(
+            () => title.retro?.platform == RetroPlatform.ps3
+                ? _embeddedPs3Graphics(session)
+                : _embeddedPs12AdvancedGraphics(session),
+          ),
+        ),
+      ),
+    ],
+  );
+
+  PanelCategory _embeddedPs12AdvancedGraphics(EmbeddedRetroGame game) => PanelCategory(
+    id: 'embedded-graphics-advanced',
+    title: 'Advanced graphics',
     rows: [
       PanelRow(
         id: 'embedded-filter',
         title: 'Display filtering',
-        kind: ChoiceRow(['Sharp', 'Smooth'], game.filter, (choice) {
-          game.filter = choice;
-          _changed();
-        }),
+        kind: _emulatorMenu.advancedChoice('embedded-filter', ['Sharp', 'Smooth'], game.filter),
       ),
       PanelRow(
         id: 'embedded-framing',
         title: 'Display aspect ratio',
-        kind: ChoiceRow(['Original', '4:3', '16:9', 'Fill window'], game.framing, (choice) {
-          game.framing = choice;
-          _changed();
-        }),
+        kind: _emulatorMenu.advancedChoice('embedded-framing', [
+          'Original',
+          '4:3',
+          '16:9',
+          'Fill window',
+        ], game.framing),
       ),
       for (final option in game.options.entries.where((entry) => !entry.value.restart))
         PanelRow(
@@ -5533,12 +6262,12 @@ class AppModel extends ChangeNotifier {
             'swanstation_GPU_TextureFilter' => 'Texture filtering',
             _ => option.value.title.isEmpty ? option.key : option.value.title,
           },
-          kind: ChoiceRow(
+          kind: _emulatorMenu.advancedChoice(
+            option.key,
             option.key == 'swanstation_GPU_ResolutionScale'
                 ? option.value.values.map((value) => '${value}x').toList()
                 : option.value.values,
-            option.value.selected,
-            (choice) => unawaited(game.setOption(option.key, option.value.values[choice])),
+            game.tuning.effectiveOption(option.key, option.value).selected,
           ),
         ),
       if (game.options.values.any((option) => option.restart))
@@ -5546,9 +6275,10 @@ class AppModel extends ChangeNotifier {
           id: 'embedded-startup-options',
           title: 'Startup Options',
           detail: 'Changes apply the next time you start this game.',
-          kind: ActionRow(() => _emulatorMenu.openPage(() => _embeddedStartupOptions(game))),
+          kind: ActionRow(() => _emulatorMenu.openChild(() => _embeddedStartupOptions(game))),
         ),
       _emulatorMenu.tuningLink(game),
+      ..._emulatorMenu.advancedActions(game),
       if (game.resolutionError.isNotEmpty)
         PanelRow(id: 'embedded-resolution-error', title: 'Internal resolution', kind: InfoRow(game.resolutionError)),
     ],
@@ -5560,6 +6290,7 @@ class AppModel extends ChangeNotifier {
     rows: [
       for (final option in game.options.entries)
         if (option.value.restart) _ps3GraphicsRow(game, option.key, option.value),
+      ..._emulatorMenu.advancedActions(game),
     ],
   );
 
@@ -5597,8 +6328,8 @@ class AppModel extends ChangeNotifier {
       }
     }
     return PanelCategory(
-      id: 'embedded-graphics',
-      title: 'Graphics',
+      id: 'embedded-graphics-advanced',
+      title: 'Advanced graphics',
       rows: [
         const PanelRow(id: 'ps3-renderer', title: 'Renderer', kind: InfoRow('Vulkan')),
         for (final key in primary)
@@ -5609,18 +6340,20 @@ class AppModel extends ChangeNotifier {
             id: 'ps3-graphics-${entry.key}',
             title: entry.key,
             kind: ActionRow(
-              () => _emulatorMenu.openPage(
+              () => _emulatorMenu.openChild(
                 () => PanelCategory(
                   id: 'ps3-graphics-section',
                   title: 'PS3 › Graphics › ${entry.key}',
                   rows: [
                     for (final key in entry.value)
                       if (game.options[key] case final option?) _ps3GraphicsRow(game, key, option),
+                    ..._emulatorMenu.advancedActions(game),
                   ],
                 ),
               ),
             ),
           ),
+        ..._emulatorMenu.advancedActions(game),
       ],
     );
   }
@@ -5629,10 +6362,10 @@ class AppModel extends ChangeNotifier {
     id: key,
     title: option.title,
     detail: option.restart ? 'Applies on next launch.' : 'Applies when you resume.',
-    kind: ChoiceRow(
+    kind: _emulatorMenu.advancedChoice(
+      key,
       option.labels.length == option.values.length ? option.labels : option.values,
-      option.selected,
-      (choice) => unawaited(game.setOption(key, option.values[choice])),
+      game.tuning.effectiveOption(key, option).selected,
     ),
   );
 
@@ -5649,7 +6382,15 @@ class AppModel extends ChangeNotifier {
             id: 'game',
             title: game.name,
             rows: [
+              if (_canOptimizeBeforeLaunch(game) && running == null && starting == null)
+                _emulatorMenu.autoOptimizeLink(game),
               ..._gameRows(game),
+              ?together.ps1NetplayDashboardLink(game, _emulatorMenu.openPage),
+              ?together.ps2LanDashboardLink(game, _emulatorMenu.openPage),
+              ?together.ps3PartyDashboardLink(game, _emulatorMenu.openPage),
+              if (game.retro?.platform == RetroPlatform.ps3 &&
+                  (managedRetroAvailable || ps3OnlineReleasesFor(game).isNotEmpty))
+                _ps3OnlineReadinessRow(game),
               if (game.retro case final RetroDisc disc)
                 PanelRow(
                   id: 'game-emulators',
@@ -5667,8 +6408,7 @@ class AppModel extends ChangeNotifier {
               PanelCategory(id: 'embedded-restart-trial', title: 'Graphics', rows: [_emulatorMenu.tuningLink(session)]),
             ];
           }
-          if (running!.$1.retro!.platform == RetroPlatform.ps3) return [_embeddedPs3Graphics(session)];
-          return [_embeddedGraphics(session)];
+          return [_embeddedGraphics(running!.$1, session)];
         }
         return [retroSettings.graphicsCategory(running!.$1.retro!.platform)];
       case Layer.controls when game != null:
@@ -5757,6 +6497,33 @@ class AppModel extends ChangeNotifier {
             rows: updates.requiredRows(together.account.tooOld!),
           ),
         ];
+      case Layer.retroOnlineFriends when running != null:
+        return [
+          PanelCategory(
+            id: 'retroOnlineFriends',
+            title: T.text('retroOnlineChooseFriend'),
+            rows: [
+              ...switch (running?.$1.retro?.platform) {
+                RetroPlatform.ps2 => together.ps2LanInviteFriendRows(),
+                RetroPlatform.ps3 => together.ps3PartyInviteFriendRows(),
+                _ => together.ps1InviteFriendRows(),
+              },
+              PanelRow(
+                id: 'retro-invite-back',
+                title: T.text('back'),
+                kind: ActionRow(
+                  () => open(running?.$1.retro?.platform == RetroPlatform.ps1 ? Layer.coopLobby : Layer.quickMenu),
+                ),
+              ),
+            ],
+          ),
+        ];
+      case Layer.coopLobby when running != null:
+        return [PanelCategory(id: 'coopLobby', title: T.text('coopLobbyTitle'), rows: coopLobbyRows())];
+      case Layer.retroStartDisc:
+        return [PanelCategory(id: 'retroStartDisc', title: T.text('retroSelectDisc'), rows: _retroLaunchDiscRows())];
+      case Layer.retroDiscs:
+        return [PanelCategory(id: 'retroDiscs', title: T.text('retroChangeDisc'), rows: _embeddedDiscRows())];
       case Layer.quickMenu when running != null:
         return [
           PanelCategory(
@@ -5764,6 +6531,7 @@ class AppModel extends ChangeNotifier {
             title: running!.$1.name,
             rows: [
               PanelRow(id: 'resume', title: T.text('quickResume'), kind: ActionRow(resumeGame)),
+              ?_ps3ProviderQuickRow(running!.$1),
               // Settings › Battery & Heat: the profile that holds lifted for now.
               if (powerWatch.canUndo)
                 PanelRow(
@@ -5778,15 +6546,40 @@ class AppModel extends ChangeNotifier {
                   title: T.text('gameSettings'),
                   kind: ActionRow(() => open(Layer.gameSettings)),
                 ),
-              if (running?.$1.retro != null)
+              if (running?.$1.retro != null && embeddedGame?.isNetplay != true && embeddedGame?.isPs3Online != true)
                 PanelRow(
                   id: 'retroGraphics',
                   title: 'Graphics',
                   detail: embeddedGame == null ? 'Queue changes for the next launch.' : 'Adjust the running game.',
                   kind: ActionRow(() => open(Layer.retroGraphics)),
                 ),
+              if (embeddedGame != null)
+                PanelRow(
+                  id: 'retroControls',
+                  title: T.text('controls'),
+                  detail: _retroControlsSummary(running!.$1),
+                  kind: ActionRow(() {
+                    selected = games.indexWhere((game) => game.id == running!.$1.id).clamp(0, games.length - 1);
+                    _controlsFromQuickMenu = true;
+                    open(Layer.controls);
+                  }),
+                ),
+              if (embeddedGame?.discs case final EmbeddedDiscs discs)
+                PanelRow(
+                  id: 'retro-disc-menu',
+                  title: T.text('retroChangeDisc'),
+                  detail: discs.inserted == null
+                      ? T.text('retroDiscEmpty')
+                      : _embeddedDiscLabel(discs, discs.inserted!),
+                  kind: ActionRow(() => open(Layer.retroDiscs)),
+                ),
               if (embeddedGame == null) ...media.gameRows(),
               if (embeddedGame == null) ...sharePlay.rows(),
+              ?coopQuickRow(),
+              ...together.ps1QuickRows(),
+              ...together.ps2LanQuickRows(),
+              ...together.ps3PartyQuickRows(),
+              ...together.runningGameInviteRows(),
               PanelRow(
                 id: 'closeGame',
                 title: T.text('quickCloseGame'),
@@ -5796,14 +6589,17 @@ class AppModel extends ChangeNotifier {
             ],
           ),
         ];
-      case Layer.quickMenu when starting?.retro != null:
+      case Layer.quickMenu when _retroLaunchGame != null:
+        final onlineRows = [...together.ps1QuickRows(), ...together.ps2LanQuickRows(), ...together.ps3PartyQuickRows()];
         return [
           PanelCategory(
             id: 'quickMenu',
-            title: starting!.name,
+            title: _retroLaunchGame!.name,
             rows: [
-              PanelRow(id: 'retroPreparing', title: _retroSetupDetail ?? T.text('starting'), kind: const InfoRow('')),
+              if (onlineRows.isEmpty)
+                PanelRow(id: 'retroPreparing', title: _retroSetupDetail ?? T.text('starting'), kind: const InfoRow('')),
               PanelRow(id: 'resume', title: T.text('quickResume'), kind: ActionRow(resumeGame)),
+              ...onlineRows,
             ],
           ),
         ];
@@ -6368,7 +7164,8 @@ class AppModel extends ChangeNotifier {
           updates.channelRow(),
         ],
       ),
-      if (system == HostSystem.windows) _emulatorMenu.entry,
+      if (system == HostSystem.windows || supportsManagedRetro(RetroPlatform.ps1) || together.ps2LanSetupEnabled)
+        _emulatorMenu.entry,
     ];
   }
 
@@ -6756,6 +7553,13 @@ class AppModel extends ChangeNotifier {
   List<PanelRow> _gameRows(Game game) {
     if (game.retro != null) {
       return [
+        ...together.ps1LocalLaunchRows(game),
+        PanelRow(
+          id: 'controls',
+          title: T.text('controls'),
+          detail: T.text('retroControlsDetail'),
+          kind: ActionRow(() => open(Layer.controls)),
+        ),
         PanelRow(id: 'log', title: T.text('openLog'), kind: ActionRow(() => open(Layer.log))),
         PanelRow(
           id: 'folder',
@@ -7176,6 +7980,9 @@ class AppModel extends ChangeNotifier {
   }
 
   List<PanelRow> _controlRows(Game game) {
+    if (game.retro case final RetroDisc disc) {
+      return _retroControlRows(game, disc.platform);
+    }
     final settings = currentSettings(game);
     final changes = settings.controls ?? const <String, List<String>>{};
     // The game's own actions, when its files name them, under each button.
@@ -7975,6 +8782,7 @@ class AppModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _cancelRetroDiscPicker();
     saveSync.dispose();
     powerWatch.stop();
     for (final watcher in _libraries.values) {

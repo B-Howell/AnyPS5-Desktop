@@ -380,3 +380,239 @@ index 7a5b1b58c..35177bf20 100644
  
          // Get button values from libretro input
          auto button_values = get_button_values(binding.device);
+
+diff --git a/rpcs3/Emu/Cell/PPUThread.cpp b/rpcs3/Emu/Cell/PPUThread.cpp
+index c6ccba0..ec54937 100644
+--- a/rpcs3/Emu/Cell/PPUThread.cpp
++++ b/rpcs3/Emu/Cell/PPUThread.cpp
+@@ -4334,5 +4334,5 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_module<lv2_obj>*>* loaded_modules, bool is_fast_compilation)
+ 	g_progr_ftotal_bits += total_files_size;
+ 
+-	*progress_dialog = get_localized_string(localized_string_id::PROGRESS_DIALOG_COMPILING_PPU_MODULES);
++	*progress_dialog = get_localized_string(localized_string_id::PROGRESS_DIALOG_SCANNING_PPU_MODULES);
+ 
+ 	atomic_t<usz> fnext = 0;
+diff --git a/Utilities/JITLLVM.cpp b/Utilities/JITLLVM.cpp
+index 46a6c3f..5d9cba7 100644
+--- a/Utilities/JITLLVM.cpp
++++ b/Utilities/JITLLVM.cpp
+@@ -45,6 +45,8 @@ LOG_CHANNEL(jit_log, "JIT");
+ #include "llvm/ExecutionEngine/ObjectCache.h"
+ #include "llvm/ExecutionEngine/JITEventListener.h"
+ #include "llvm/Object/ObjectFile.h"
++#include "llvm/TargetParser/Triple.h"
++#include "llvm/Support/Error.h"
+ #include "llvm/Object/SymbolSize.h"
+ #ifdef _MSC_VER
+ #pragma warning(pop)
+@@ -545,6 +547,68 @@ public:
+ 
+ 		if (auto buf = load(path))
+ 		{
++			const std::string module_name = _module->getName().str();
++			constexpr std::string_view cache_prefix = "spu-objects-v1-";
++			constexpr std::string_view cache_suffix = ".obj";
++			if (!module_name.starts_with(cache_prefix))
++			{
++				jit_log.notice("LLVM: Loaded module: %s", _module->getName().data());
++				return buf;
++			}
++
++			const size_t digest_separator = module_name.rfind('-');
++			if (digest_separator == std::string::npos || !module_name.ends_with(cache_suffix))
++			{
++				jit_log.error("LLVM: Invalid cached SPU object name: %s", module_name);
++				return nullptr;
++			}
++			const std::string expected_entry = module_name.substr(
++				cache_prefix.size(), digest_separator - cache_prefix.size());
++
++			auto object_file = llvm::object::ObjectFile::createObjectFile(*buf);
++			if (!object_file)
++			{
++				llvm::consumeError(object_file.takeError());
++				jit_log.error("LLVM: Invalid cached SPU object: %s", path);
++				return nullptr;
++			}
++
++			const auto& cached_object = **object_file;
++			if (!cached_object.isELF() || cached_object.getArch() != llvm::Triple::x86_64 ||
++				!cached_object.isRelocatableObject())
++			{
++				jit_log.error("LLVM: Invalid cached SPU object architecture or type: %s", path);
++				return nullptr;
++			}
++
++			bool has_expected_entry = false;
++			for (const auto& symbol : cached_object.symbols())
++			{
++				auto name = symbol.getName();
++				if (!name)
++				{
++					llvm::consumeError(name.takeError());
++					return nullptr;
++				}
++				if (name->str() != expected_entry)
++				{
++					continue;
++				}
++				auto flags = symbol.getFlags();
++				if (!flags)
++				{
++					llvm::consumeError(flags.takeError());
++					return nullptr;
++				}
++				has_expected_entry = (*flags & llvm::object::SymbolRef::SF_Undefined) == 0;
++				break;
++			}
++			if (!has_expected_entry)
++			{
++				jit_log.error("LLVM: Cached SPU object has no matching defined entry: %s", expected_entry);
++				return nullptr;
++			}
++
+ 			jit_log.notice("LLVM: Loaded module: %s", _module->getName().data());
+ 			return buf;
+ 		}
+diff --git a/rpcs3/Crypto/unzip.cpp b/rpcs3/Crypto/unzip.cpp
+index 6485e4d..c77260e 100644
+--- a/rpcs3/Crypto/unzip.cpp
++++ b/rpcs3/Crypto/unzip.cpp
+@@ -32,35 +32,46 @@ std::vector<u8> unzip(const void* src, usz size)
+ 	zs.avail_out = static_cast<uInt>(out.size());
+ 	zs.next_out  = out.data();
+ 
+-	while (zs.avail_in)
++	bool stream_end = false;
++	while (!stream_end)
+ 	{
+-		switch (inflate(&zs, Z_FINISH))
++		res = inflate(&zs, Z_FINISH);
++		if (res == Z_STREAM_END)
+ 		{
+-		case Z_OK:
+-		case Z_STREAM_END:
++			stream_end = true;
+ 			break;
+-		case Z_BUF_ERROR:
+-			if (zs.avail_in)
+-				break;
+-			[[fallthrough]];
+-		default:
++		}
++
++		if (res != Z_OK && !(res == Z_BUF_ERROR && zs.avail_out == 0))
++		{
+ 			inflateEnd(&zs);
+-			return out;
++			return {};
+ 		}
+ 
+-		if (zs.avail_in)
++		if (zs.avail_out == 0)
+ 		{
+ 			const auto cur_size = zs.next_out - out.data();
+ 			out.resize(out.size() + 65536);
+ 			zs.avail_out = static_cast<uInt>(out.size() - cur_size);
+ 			zs.next_out = &out[cur_size];
++			continue;
++		}
++		else if (zs.avail_in == 0)
++		{
++			// Input ended without a complete gzip member and checksum.
++			inflateEnd(&zs);
++			return {};
+ 		}
+ 	}
+ 
+-	out.resize(zs.next_out - out.data());
+-
++	const bool consumed_all_input = zs.avail_in == 0;
+ 	res = inflateEnd(&zs);
++	if (!consumed_all_input || res != Z_OK)
++	{
++		return {};
++	}
+ 
++	out.resize(zs.next_out - out.data());
+ 	return out;
+ }
+ 
+diff --git a/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp b/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp
+index c901e22..76dab7f 100644
+--- a/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp
++++ b/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp
+@@ -1397,6 +1397,17 @@ spu_runtime::spu_runtime()
+ 		return;
+ 	}
+ 
++#if defined(LIBRETRO_CORE) && defined(ARCH_X64)
++	if (g_cfg.core.spu_cache && !g_cfg.core.spu_debug && g_cfg.core.spu_decoder == spu_decoder_type::llvm)
++	{
++		const std::string object_cache_path = m_cache_path + "spu-objects-v1/";
++		if (!fs::create_dir(object_cache_path) && !fs::is_dir(object_cache_path))
++		{
++			spu_log.warning("Could not initialize persistent SPU object cache at: %s", object_cache_path);
++		}
++	}
++#endif
++
+ 	if (g_cfg.core.spu_debug && g_cfg.core.spu_decoder != spu_decoder_type::dynamic && g_cfg.core.spu_decoder != spu_decoder_type::_static)
+ 	{
+ 		if (!fs::create_dir(m_cache_path + "llvm/"))
+diff --git a/rpcs3/Emu/Cell/SPULLVMRecompiler.cpp b/rpcs3/Emu/Cell/SPULLVMRecompiler.cpp
+index c444e5e..6d693e8 100644
+--- a/rpcs3/Emu/Cell/SPULLVMRecompiler.cpp
++++ b/rpcs3/Emu/Cell/SPULLVMRecompiler.cpp
+@@ -42,6 +42,7 @@ const extern spu_decoder<spu_iflag> g_spu_iflag;
+ #include <llvm/Analysis/PostDominators.h>
+ #include <llvm/IR/InlineAsm.h>
+ #include <llvm/IR/Verifier.h>
++#include <llvm/Config/llvm-config.h>
+ #include <llvm/TargetParser/Host.h>
+ #include <llvm/Transforms/Utils/BasicBlockUtils.h>
+ #include <llvm/Analysis/CGSCCPassManager.h>
+@@ -3894,6 +3895,30 @@ public:
+ 		m_function_queue.clear();
+ 		m_function_table = nullptr;
+ 
++#if defined(LIBRETRO_CORE) && defined(ARCH_X64)
++		const std::string object_cache_path = m_spurt->get_cache_path() + "spu-objects-v1/";
++		const bool use_persistent_cache = g_cfg.core.spu_cache && !g_cfg.core.spu_debug &&
++			!m_spurt->get_cache_path().empty() && fs::is_dir(object_cache_path);
++		if (use_persistent_cache)
++		{
++			std::string cache_ir;
++			raw_string_ostream cache_ir_stream(cache_ir);
++			cache_ir_stream << *_module;
++			cache_ir_stream.flush();
++			const std::string cache_identity = fmt::format(
++				"anyps5-rpcs3-74b3fa37-spu-cache-v1|%s|%s|%s|%s|%s",
++				LLVM_VERSION_STRING, jit_compiler::triple2(),
++				jit_compiler::cpu(g_cfg.core.llvm_cpu.to_string()), m_hash, cache_ir);
++			u8 cache_ir_hash[20];
++			sha1(reinterpret_cast<const u8*>(cache_identity.data()), cache_identity.size(), cache_ir_hash);
++			std::string cache_ir_hash_hex;
++			for (const u8 byte : cache_ir_hash)
++			{
++				fmt::append(cache_ir_hash_hex, "%02x", static_cast<unsigned>(byte));
++			}
++			_module->setModuleIdentifier(fmt::format("spu-objects-v1-%s-%s.obj", m_hash, cache_ir_hash_hex));
++		}
++#endif
+ 		// Append for now
+ 		std::string& llvm_log = function_log;
+ 		raw_string_ostream out(llvm_log);
+@@ -3988,6 +4013,12 @@ public:
+ 				// Testing only
+ 				m_jit.add(std::move(_module), m_spurt->get_cache_path() + "llvm/");
+ 			}
++#if defined(LIBRETRO_CORE) && defined(ARCH_X64)
++			else if (use_persistent_cache)
++			{
++				m_jit.add(std::move(_module), object_cache_path);
++			}
++#endif
+ 			else
+ 			{
+ 				m_jit.add(std::move(_module));
