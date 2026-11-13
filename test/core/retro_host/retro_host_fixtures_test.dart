@@ -235,6 +235,56 @@ void main() {
     ], check: (session) => expect(session.rumbles.last, _zero(1), reason: 'motors zeroed at the end')),
     timeout: const Timeout(Duration(seconds: 90)),
   );
+  test(
+    'connectedPorts sent before the start reply still counts',
+    () => _playOwn(
+      checkout,
+      python,
+      'start and connectedPorts(2) sent together, then rumble on port 2.',
+      'clean',
+      [
+        _startCall(checkout)[0],
+        _call('connectedPorts', 2, true, id: 3)[0],
+        _startCall(checkout)[1],
+        _call('connectedPorts', 2, true, id: 3)[1],
+        _rumbleStep(1, 1000),
+        ..._call('status', null, null),
+        {
+          'from': 'launcher',
+          'message': {'type': 'shutdown'},
+        },
+        {'hostExits': 0},
+      ],
+      check: (session) =>
+          expect([for (final r in session.rumbles) r.strong], contains(1000), reason: 'rumble on port 2 forwarded'),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'a pause sent before the start reply still silences rumble',
+    () => _playOwn(
+      checkout,
+      python,
+      'start and pause(true) sent together, then rumble.',
+      'clean',
+      [
+        _startCall(checkout)[0],
+        _call('pause', true, null, id: 3)[0],
+        _startCall(checkout)[1],
+        _call('pause', true, null, id: 3)[1],
+        _rumbleStep(0, 1000),
+        ..._call('status', null, null),
+        {
+          'from': 'launcher',
+          'message': {'type': 'shutdown'},
+        },
+        {'hostExits': 0},
+      ],
+      check: (session) =>
+          expect([for (final r in session.rumbles) r.strong], isNot(contains(1000)), reason: 'no rumble while paused'),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
 }
 
 Matcher _zero(int port) => isA<RetroRumble>()
@@ -247,16 +297,17 @@ Map<String, Object?> _rumbleStep(int port, int strong) => {
   'message': {'type': 'rumble', 'port': port, 'strong': strong, 'weak': 0},
 };
 
-/// A call the launcher sends and the host's reply.
-List<Map<String, Object?>> _call(String method, Object? args, Object? result) => [
+/// A call the launcher sends and the host's reply; [id] is the session's id for the call, which the
+/// fake host maps to the id the client used.
+List<Map<String, Object?>> _call(String method, Object? args, Object? result, {int id = 2}) => [
   {
     'from': 'launcher',
-    'message': {'type': 'call', 'id': 2, 'method': method, 'args': args},
+    'message': {'type': 'call', 'id': id, 'method': method, 'args': args},
     'anyValueFor': ['id'],
   },
   {
     'from': 'host',
-    'message': {'type': 'reply', 'id': 2, 'result': result},
+    'message': {'type': 'reply', 'id': id, 'result': result},
     'anyValueFor': ['id'],
   },
 ];

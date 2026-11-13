@@ -178,6 +178,12 @@ answered the same way, and never left waiting.
     after `connectedPorts(1)`) is not forwarded;
   - when the connection ends with a game loaded, a clean shutdown included;
   - on a host failure.
+- **Which rumble is forwarded.** The host takes calls in order, so the client
+  judges each `rumble` by the state the host will have once it has taken every
+  call sent so far: what the replies confirmed, then each call still waiting as
+  if it succeeds. A `pause(true)` or `connectedPorts(1)` stops rumble as soon
+  as it is sent, a `pause` or `connectedPorts` sent before an earlier `start`
+  was answered still counts, and a call the host refuses changes nothing.
 - **Rumble events** come asynchronously, so a listener may call anything on the
   client, `close()` included. Frame events stay synchronous because a frame
   that is not drawn can be read only until the next message.

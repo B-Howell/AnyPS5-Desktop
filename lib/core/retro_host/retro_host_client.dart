@@ -73,10 +73,11 @@ List<String> retroHostEnvironment(Map<String, String> base, Map<String, String> 
 }
 
 class _Pending {
-  _Pending(this.id, this.method, this.deadline);
+  _Pending(this.id, this.method, this.args, this.deadline);
 
   final int id;
   final String method;
+  final Object? args;
   final DateTime deadline;
   final completer = Completer<Object?>();
 }
@@ -284,16 +285,12 @@ class RetroHostClient {
     } on Object catch (error) {
       return Future.error(RetroCallError(RetroCallError.argument, 'The call cannot be sent: $error'));
     }
-    final pending = _Pending(_nextCallId++, method, DateTime.now().add(replyLimit));
+    final pending = _Pending(_nextCallId++, method, args, DateTime.now().add(replyLimit));
+    final before = _expectedRumble();
     _calls.add(pending);
-    if (method == 'start' || method == 'release') _zeroRumble();
-    if (method == 'connectedPorts' && args is int && (args == 1 || args == 2)) {
-      if (args < _ports) _zeroRumble();
-      _ports = args;
-    }
-    if (method == 'pause' && args is bool && _gameLoaded) {
-      _paused = args;
-      if (args) _zeroRumble();
+    final after = _expectedRumble();
+    if (method == 'start' || method == 'release' || (after.paused && !before.paused) || after.ports < before.ports) {
+      _zeroRumble();
     }
     _write(body);
     return pending.completer.future;
@@ -527,13 +524,15 @@ class RetroHostClient {
       pending.completer.completeError(failure);
       return;
     }
-    final result = _checkResult(pending.method, f.map['result']);
+    final result = _checkResult(pending, f.map['result']);
     _calls.removeFirst();
     pending.completer.complete(result);
     if (pending.method == 'start') _zeroInput();
   }
 
-  Object? _checkResult(String method, Object? result) {
+  Object? _checkResult(_Pending pending, Object? result) {
+    final method = pending.method;
+    final args = pending.args;
     switch (method) {
       case 'start':
         final epoch = RetroFields(_object(result, 'start'), 'start').integer('epoch', 1, RetroFields.maxId);
@@ -559,8 +558,10 @@ class RetroHostClient {
         }
       case 'connectedPorts' || 'changeDisc' || 'option':
         if (result is! bool) throw RetroProtocolError('The result of $method must be a boolean.');
+        if (method == 'connectedPorts' && result && args is int) _ports = args;
       case 'pause':
         _expectNull(method, result);
+        if (_gameLoaded && args is bool) _paused = args;
       case 'volume' || 'stop':
         _expectNull(method, result);
     }
@@ -650,8 +651,33 @@ class RetroHostClient {
 
   void _onRumble(RetroFields f) {
     final event = RetroRumble(f.integer('port', 0, 1), f.integer('strong', 0, 0xFFFF), f.integer('weak', 0, 0xFFFF));
-    if (_paused || !_inputFocus || event.port >= _ports) return;
+    final expected = _expectedRumble();
+    if (expected.paused || !_inputFocus || event.port >= expected.ports) return;
     _rumble.add(event);
+  }
+
+  /// Whether the game is paused and how many ports have a controller once the host has taken every
+  /// call sent so far, as the host takes them in order: what the replies confirmed, then each call
+  /// still waiting as if it succeeds. Rumble follows this, so it stops as soon as a pause or a
+  /// controller leaving is sent, and a call sent before an earlier `start` was answered still counts.
+  ({bool paused, int ports}) _expectedRumble() {
+    var loaded = _gameLoaded;
+    var paused = _paused;
+    var ports = _ports;
+    for (final call in _calls) {
+      final args = call.args;
+      switch (call.method) {
+        case 'start':
+          loaded = true;
+          paused = false;
+          ports = 1;
+        case 'pause' when loaded && args is bool:
+          paused = args;
+        case 'connectedPorts' when loaded && args is int && (args == 1 || args == 2):
+          ports = args;
+      }
+    }
+    return (paused: paused, ports: ports);
   }
 
   void _zeroRumble() {
