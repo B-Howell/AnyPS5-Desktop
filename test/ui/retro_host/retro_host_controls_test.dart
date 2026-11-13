@@ -241,6 +241,34 @@ void main() {
     expect(session.inputStates.where((sent) => sent.$1 == 0).last.$2, RetroPadInput.idle);
   });
 
+  test('rumble that comes as one controller takes the port of another goes to the new one', () async {
+    await started();
+    pads
+      ..connect('a')
+      ..connect('b')
+      ..connect('c');
+    motors.vibrating.addAll(['a', 'b', 'c']);
+    controls.poll();
+    pads.disconnect('a');
+    session.sendRumble(0, 0xFFFF, 0);
+    expect(controls.seats.at(0), 'c');
+    expect(motors.orders, [('c', 1.0, 0.0, const Duration(hours: 2))]);
+  });
+
+  test('controls made for a game already loaded tell the host how many ports are connected', () async {
+    await started();
+    pads
+      ..connect('a')
+      ..connect('b');
+    controls.poll();
+    controls.dispose();
+    pads.disconnect('b');
+    final again = RetroHostControls(game, pads: pads.reader, every: const Duration(hours: 1));
+    addTearDown(again.dispose);
+    again.poll();
+    expect(session.calls, [('connectedPorts', 2), ('connectedPorts', 1)]);
+  });
+
   test('dispose stops a motor the game left running', () async {
     await started();
     pads.connect('a');

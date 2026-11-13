@@ -173,7 +173,8 @@ takes the free port. Port 2 counts as connected while a controller sits
 there. The protocol's `connectedPorts` section says "A game starts with 1",
 so `connectedPorts` with `2` is sent when the game loads with two
 controllers or a second one sits down, and `1` when it leaves. Port 1 always
-has a controller in the host.
+has a controller in the host. Controls made for a game that is already loaded
+do not know what the host has, so they send the count on their first read.
 
 **Sending.** The controllers are read every 16 ms, as the SDL reader polls
 them. A port's state is sent when it changes. The protocol says the launcher
@@ -195,7 +196,8 @@ sticks come back at once.
 them to the controller seated at that port, if it can vibrate". So each
 `RetroHostGame.rumble` event goes to the controller at that port when the
 reader's `PadRumble.canRumble` says it can, as `strong / 65535` and
-`weak / 65535`. A `rumble` holds until the next one, but the SDL and evdev
+`weak / 65535`. The controllers are seated again before a `rumble` is routed,
+so one that just took a free port gets it. A `rumble` holds until the next one, but the SDL and evdev
 readers stop the motors after the length they are given. So a level that is
 not zero is given for `rumbleHold` (2 s) and given again every second. The
 client already gives zeros for both ports when the game starts, pauses, ends
@@ -282,6 +284,8 @@ native memory as a real ring slot would be, so no host is started.
     motors stopped, motors stopped when the host is shut down (also against a
     late `rumble`), vibration turned off, and `dispose`, which also lets go
     of held buttons;
+  - a `rumble` that comes as one controller takes another's port, and
+    controls made for a game already loaded sending the port count;
   - a button kept out after the menu closed that is let go and pressed again
     while the window has no focus.
 - [`retro_game_menu_test.dart`](../test/ui/retro_host/retro_game_menu_test.dart)

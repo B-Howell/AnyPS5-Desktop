@@ -41,6 +41,7 @@ class RetroHostControls {
     this.every = const Duration(milliseconds: 16),
     this.rumbleHold = const Duration(seconds: 2),
   }) {
+    _portsSent = game.loaded ? null : 1;
     _rumble = game.rumble.listen(_onRumble);
     game.addListener(_onGameChanged);
     _poll = Timer.periodic(every, (_) => poll());
@@ -80,7 +81,10 @@ class RetroHostControls {
   final List<RetroPadInput?> _sent = List.filled(RetroSeats.portCount, null);
   final List<int> _swallowed = List.filled(RetroSeats.portCount, 0);
   final List<(int, int)> _levels = List.filled(RetroSeats.portCount, (0, 0));
-  int _portsSent = 1;
+
+  /// The `connectedPorts` the host has: 1 for a game that has not loaded yet ("A game starts
+  /// with 1"), unknown (null) for one that was loaded before these controls, so it is sent.
+  int? _portsSent;
   bool _suspended = false;
   bool _disposed = false;
 
@@ -175,6 +179,7 @@ class RetroHostControls {
   /// that stopped with the game.
   void _onRumble(RetroRumble event) {
     if (_disposed || !game.loaded) return;
+    _syncSeats();
     _levels[event.port] = (event.strong, event.weak);
     final pad = seats.at(event.port);
     if (pad != null) _setMotors(pad, event.strong, event.weak);
