@@ -101,11 +101,15 @@ class RetroHostControls {
 
   /// The game stopped taking input: the client zeroed both ports (a game that started, focus that
   /// was lost), so what was sent is forgotten and sent again once it takes input. Told at each
-  /// change, so focus lost and back between two reads is not missed.
+  /// change, so focus lost and back between two reads is not missed. Once no game is loaded (it
+  /// ended, or the host was shut down, which sends no `rumble`), the motors stop too.
   void _onGameChanged() {
     if (game.acceptsInput) return;
     _sent.fillRange(0, _sent.length, null);
-    if (!game.loaded) _portsSent = 1;
+    if (game.loaded) return;
+    _portsSent = 1;
+    _stopMotors();
+    _levels.fillRange(0, _levels.length, (0, 0));
   }
 
   /// What the controller at [port] holds now, or null for a port without one.
@@ -121,6 +125,10 @@ class RetroHostControls {
     for (final change in seats.sync(pads.pads())) {
       if (!change.joined) _left(change);
     }
+    final held = [for (var port = 0; port < RetroSeats.portCount; port++) _suspended ? null : _read(port)];
+    for (var port = 0; port < RetroSeats.portCount; port++) {
+      _swallowed[port] &= held[port]?.buttons ?? 0;
+    }
     if (!game.acceptsInput) {
       _onGameChanged();
       return;
@@ -131,9 +139,8 @@ class RetroHostControls {
       unawaited(game.connectedPorts(count));
     }
     for (var port = 0; port < RetroSeats.portCount; port++) {
-      final held = _suspended ? null : _read(port);
-      _swallowed[port] &= held?.buttons ?? 0;
-      final input = held == null ? RetroPadInput.idle : held.withButtons(held.buttons & ~_swallowed[port]);
+      final now = held[port];
+      final input = now == null ? RetroPadInput.idle : now.withButtons(now.buttons & ~_swallowed[port]);
       if (input == _sent[port]) continue;
       _sent[port] = input;
       game.input(

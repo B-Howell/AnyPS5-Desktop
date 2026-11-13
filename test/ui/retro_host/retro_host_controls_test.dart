@@ -188,6 +188,36 @@ void main() {
     expect(motors.orders, [('a', 1.0, 0.0, const Duration(hours: 2)), ('a', 0.0, 0.0, Duration.zero)]);
   });
 
+  test('a held button let go and pressed again while the window has no focus reaches the game', () async {
+    await started();
+    pads.connect('a');
+    controls.poll();
+    controls.suspended = true;
+    pads.states['a'] = const PadState(pressed: {PadButton.south});
+    controls.suspended = false;
+    await game.setFocused(false);
+    pads.states['a'] = PadState.idle;
+    controls.poll();
+    pads.states['a'] = const PadState(pressed: {PadButton.south});
+    controls.poll();
+    await game.setFocused(true);
+    controls.poll();
+    expect(
+      session.inputStates.where((sent) => sent.$1 == 0).last.$2,
+      RetroPadInput(buttons: RetroPadButton.cross.mask),
+    );
+  });
+
+  test('shutting the host down stops a motor the game left running', () async {
+    await started();
+    pads.connect('a');
+    motors.vibrating.add('a');
+    controls.poll();
+    session.sendRumble(0, 0xFFFF, 0);
+    await game.shutdown();
+    expect(motors.orders.last, ('a', 0.0, 0.0, Duration.zero));
+  });
+
   test('dispose stops a motor the game left running', () async {
     await started();
     pads.connect('a');

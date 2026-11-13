@@ -200,7 +200,8 @@ not zero is given for `rumbleHold` (2 s) and given again every second. The
 client already gives zeros for both ports when the game starts, pauses, ends
 or loses focus, and gives nothing while paused or without focus. The controls
 add the protocol's last case, "when a controller leaves its port": its motors
-stop. Setting `vibration` to false stops the motors and keeps later rumble
+stop. They also stop every motor once no game is loaded, because a host that
+is shut down sends no `rumble` and the client gives no zeros for a clean end. Setting `vibration` to false stops the motors and keeps later rumble
 away. `dispose` stops any motor the game left running.
 
 ## The in-game menu: `RetroGameMenu`
@@ -272,7 +273,10 @@ native memory as a real ring slot would be, so no host is started.
     and back between two reads;
   - `suspended`, and a button held when it ends kept out until pressed again;
   - vibration sent to the controller at its port, a leaving controller's
-    motors stopped, vibration turned off, and `dispose`.
+    motors stopped, motors stopped when the host is shut down, vibration
+    turned off, and `dispose`;
+  - a button kept out after the menu closed that is let go and pressed again
+    while the window has no focus.
 - [`retro_game_menu_test.dart`](../test/ui/retro_host/retro_game_menu_test.dart)
   builds the rows from the protocol's status example. It checks disc changes,
   option steps, volume steps and mute, volume set before `welcome`, and that
