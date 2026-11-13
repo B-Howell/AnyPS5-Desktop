@@ -4,6 +4,7 @@ import '../../core/controllers/pad_info.dart';
 import '../../core/controllers/pad_inventory.dart';
 import '../../core/gamepad/feel.dart';
 import '../../core/retro_host/retro_host_client.dart';
+import '../../core/retro_host/retro_keyboard.dart';
 import '../../core/retro_host/retro_pad.dart';
 import '../../core/retro_host/retro_seats.dart';
 import 'retro_host_game.dart';
@@ -38,6 +39,7 @@ class RetroHostControls {
     this.game, {
     required this.pads,
     this.motors,
+    this.keyboard,
     this.every = const Duration(milliseconds: 16),
     this.rumbleHold = const Duration(seconds: 2),
   }) {
@@ -53,6 +55,10 @@ class RetroHostControls {
 
   /// The controllers' motors; null where the reader cannot turn them.
   final PadRumble? motors;
+
+  /// The keyboard's state now, joined to the controller at port 1 ([RetroKeyboard.merge]); null
+  /// when the keyboard does not play.
+  final PadState Function()? keyboard;
 
   final Duration every;
 
@@ -117,10 +123,13 @@ class RetroHostControls {
     _levels.fillRange(0, _levels.length, (0, 0));
   }
 
-  /// What the controller at [port] holds now, or null for a port without one.
+  /// What the controller at [port] holds now, with the keyboard at port 1, or null for a port
+  /// without either.
   RetroPadInput? _read(int port) {
     final pad = seats.at(port);
-    final state = pad == null ? null : pads.state(pad);
+    final padState = pad == null ? null : pads.state(pad);
+    final keys = port == 0 ? keyboard?.call() : null;
+    final state = keys == null ? padState : RetroKeyboard.merge(padState, keys);
     return state == null ? null : RetroPadInput.fromPad(state, deadzonePercent: deadzonePercent);
   }
 

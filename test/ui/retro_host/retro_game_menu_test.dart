@@ -124,14 +124,14 @@ void main() {
     await menu.stepVolume(-6);
     expect((game.volume, game.muted), (0.0, true));
     await menu.stepVolume(3);
-    expect(game.volume, closeTo(0.3, 1e-12));
+    expect(game.volume, 0.3, reason: 'whole tenths, not 3 × 0.1');
     expect(game.muted, isFalse);
     await menu.stepVolume(20);
     expect(game.volume, 1.0);
     expect(session.calls.map((call) => call.$2), [
       {'level': 0.5, 'muted': true},
       {'level': 0.0, 'muted': true},
-      {'level': closeTo(0.3, 1e-12), 'muted': false},
+      {'level': 0.3, 'muted': false},
       {'level': 1.0, 'muted': false},
     ]);
   });

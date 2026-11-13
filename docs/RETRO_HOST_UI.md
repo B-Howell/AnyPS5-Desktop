@@ -3,9 +3,9 @@
 [The emulator host client](RETRO_HOST_CLIENT.md) talks to the emulator host
 (the separate program that runs PS1 games). This page covers the UI built on
 it: a game's picture in the launcher, the object that runs one game in one
-host, the controllers that play it, and the model of its in-game menu. It is
-not yet part of the launcher's game flow. A PS1 game still starts the way it
-did before this change.
+host, the controllers that play it, the model of its in-game menu, and how
+the launcher plays a PS1 disc from its emulator library through all of them
+(behind a setting that is off by default, see "In the launcher").
 
 ## Files
 
@@ -21,6 +21,10 @@ did before this change.
 | [`lib/core/retro_host/retro_seats.dart`](../lib/core/retro_host/retro_seats.dart) | `RetroSeats`: which controller sits at each of the PS1's two ports. |
 | [`lib/ui/retro_host/retro_host_controls.dart`](../lib/ui/retro_host/retro_host_controls.dart) | `RetroHostControls`: plays a `RetroHostGame` with the launcher's controllers, connects port 2 and forwards vibration. `RetroPadReader` is how it reads the controllers. |
 | [`lib/ui/retro_host/retro_game_menu.dart`](../lib/ui/retro_host/retro_game_menu.dart) | `RetroGameMenu`: the in-game menu's rows (discs, core options, volume) and what choosing them does. |
+| [`lib/core/retro_host/retro_host_install.dart`](../lib/core/retro_host/retro_host_install.dart) | `RetroHostInstall`: the host and SwanStation library a build may run. |
+| [`lib/core/retro_host/retro_keyboard.dart`](../lib/core/retro_host/retro_keyboard.dart) | `RetroKeyboard`: the keyboard as a PS1 controller, with the keys of a game's Controls. |
+| [`lib/ui/retro_host_play.dart`](../lib/ui/retro_host_play.dart) | `RetroPlay` and the `RetroHostPlaying` part of `AppModel`: the setting, starting a disc in the host, the commands while it plays, the menu's panel rows, closing. |
+| [`lib/ui/retro_host/retro_play_view.dart`](../lib/ui/retro_host/retro_play_view.dart) | `RetroPlayView`: the game over the whole window, with `RetroGameNotice` for the loading and error screens. |
 
 Each piece does one job and can be used alone. A settings preview can use
 `RetroFrameView` with any picture, and a menu can follow `RetroHostGame` without
@@ -128,6 +132,10 @@ frames. `RetroHostGame.launch(command: …)` starts a real host;
   opened while the window has no focus still pauses its game.
   Once the host has ended or been shut down, focus is still recorded but no
   longer passed to the client, whose streams are closed by then.
+- **How the host ended.** `hostEnd` is the connection's end once it has one.
+  `RetroHostEnd.unsupported` means the host speaks no protocol version this
+  launcher offered, which the launcher shows as an emulator that needs
+  updating (protocol.md "Host failure").
 - **Stop.** `stop()` calls `stopGame()` (which enforces the 10-second stop
   limit), then `release`, and returns the status the game ended with. Stopping
   a game that is still `starting` cancels it. If `start` was not sent yet, it
@@ -239,6 +247,95 @@ opening the menu again while a close still waits for its reply keeps the
 controllers out. A menu disposed while open closes the same way. A game that
 is not loaded has no menu to open.
 
+## In the launcher
+
+**The setting.** Settings › Emulators › **Run PS1 games in the separate
+host** (`Preferences.retroHostPs1`) is off by default. The row shows only
+where a host is found. `RetroHostInstall.locate` finds one only in a debug
+build, as protocol.md "Finding and checking the host" allows: "Debug builds of
+the launcher MAY run the host named by the environment variable
+`ANYPS5_RETRO_HOST`, and any core, without the checks. Release builds ignore
+that variable." The core is the SwanStation library beside that host
+(`swanstation_libretro.dll` on Windows, `swanstation_libretro.so` on Linux),
+as a host release's zip holds the two. A release build finds no host, so the
+row is hidden and a PS1 disc goes to DuckStation as before, even with the
+setting saved as on. With the setting on, a PS1 disc needs no DuckStation:
+it is not shown as "Emulator required", and the PS1 folder on Home groups
+its games. The row **PS1 BIOS folder** opens the folder the BIOS goes in.
+
+**Starting.** `AppModel.play` sends a PS1 disc to `_playInHost` when
+`playsInHost` says so. It asks the family rules first, as every start does,
+then opens a host (`AppModel.openRetroHost`, which tests replace) with the
+player's volume, and sends `start` with:
+
+- `core`: the SwanStation library above;
+- `disc`: the disc's file (`.cue`, `.chd`, `.pbp` or `.m3u`);
+- `system`: `AppPaths.retroSystem`, `retro/system` in the launcher's
+  settings folder, where protocol.md's `start` example keeps it;
+- `saves`: `AppPaths.retroSaves`, `retro/saves/ps1` beside it;
+- `options`: the SwanStation options the player chose in the menu before
+  (`Preferences.retroHostOptions`).
+
+The family play-time watcher follows the game as it follows any game
+(`FamilyGate.followGame`), and a family limit that closes games closes it
+through Close game. No other game starts while it plays. A host that cannot
+be started at all (a file that is not a program) says so in a toast. Every
+path is sent normalized, so it has no `.` or `..` segment (protocol.md
+"Paths"). One host runs one game: `RetroHostGame` starts one game, and the
+host is shut down when the game is closed. The next game starts a new host.
+
+**The controllers.** `RetroHostControls` reads the app's own controller
+reader: `ControllersModel.pads` in the launcher's order (Player 1, the
+controller used last, first) and `ControllersModel.stateOf`. It turns the
+motors through the reader's (`padMotors`), takes the dead zone from Settings ›
+Controllers › Stick Dead Zone, and stops vibration when Settings › Behaviour ›
+Controller Vibration is off.
+
+**The keyboard.** `RetroKeyboard` plays the PS1 pad with the keys of the
+game's Controls (`Controls.sources`: the launcher's layout with the keys the
+player moved). Its state joins the controller at port 1, as a libretro
+frontend binds the keyboard to player 1: buttons of both count, and a stick
+comes from the keys while they tilt it. The touchpad's two halves are Select.
+The stick modifier tilts the keyboard's sticks by the game's stick modifier
+scale. Mouse buttons and the wheel are not read. The keys are read from
+Flutter's `HardwareKeyboard.physicalKeysPressed` at each poll. While the game's
+screen is in front, the launcher's own keys do nothing: only the in-game
+shortcuts of Settings › Shortcuts (PS, the quick menu, a screenshot, a clip)
+and full screen act. A PS1 game's Game Settings has a **Controls** row for its
+keys.
+
+**The game's screen.** `RetroPlayView` draws the game over the whole window,
+over the home screen and under every layer. While it starts or loads it shows
+the game's name and `status.progressLabel` (or "Loading the game…"), with a
+progress line from `status.progressPercent` when the host gives one. On the
+game's screen the controller is the game's: Cross, Circle, Start and the
+D-pad reach the game, not the launcher. Only PS acts. PS, PS held, the quick
+menu shortcut, and the mouse's right or Back button open the game's menu.
+While the game loads, PS or Esc gives the start up.
+
+**The menu.** `Layer.retroMenu` is a panel styled as the quick menu
+("Paused", the game's icon and name). Its rows come from `RetroGameMenu`:
+Resume, each disc of a multi-disc game ("In the console." under the inserted
+one), each SwanStation option as a choice of its labels, Volume (a bar in
+tenths), Mute, and Close game. Opening it pauses the game and keeps the
+controllers out of it. PS, Back or Resume close it. Any other layer over the
+game (a family notice) pauses it the same way, and the game's own screen back
+in front resumes it. The game's play time is counted for the family rules
+until it ends, not until its error screen is left. A chosen option is kept in
+`Preferences.retroHostOptions` once the host took it, and the volume and mute
+in `Preferences.retroHostVolume` and `retroHostMuted`, so the next game starts
+with them.
+
+**Ending.** Close game stops the game (the host writes the memory card),
+releases it and shuts the host down, then the library comes back. A game that
+ends without an error goes back to the library the same way. A game that ends
+with an error stays on its error screen ("Night Racer stopped") with the words
+for its `errorCode` (`retroHostErrorKey`; a code the launcher does not know is
+"The game stopped because of an error.", as protocol.md "Compatibility" asks),
+and Enter or Cross goes back to the library. A host that speaks another
+protocol version shows that it needs updating, and a host that never greeted
+the launcher shows that it could not be started.
+
 ## Tests
 
 The tests in `test/ui/retro_host` use a fake session and fake frames, kept in
@@ -302,13 +399,32 @@ native memory as a real ring slot would be, so no host is started.
 - [`fake_retro_host_session.dart`](../test/ui/retro_host/fake_retro_host_session.dart)
   holds the fakes: the session, frames, controllers (`FakePads`) and motors
   (`FakeMotors`).
+- [`retro_host_play_test.dart`](../test/ui/retro_host_play_test.dart)
+  plays a PS1 disc from a games folder through the launcher with a fake host
+  ([`ps1_launcher.dart`](../test/support/ps1_launcher.dart)): the setting off
+  (DuckStation as before) and without a host, the `start` argument with the
+  player's paths, volume and options, the controller kept from the launcher
+  on the game's screen, PS opening and closing the menu, the menu's rows and
+  what they keep, Close game, an error screen, a clean end, an outdated host,
+  and a start given up.
+- [`retro_host_play_golden_test.dart`](../test/ui/retro_host_play_golden_test.dart)
+  draws the loading screen, the error screen, the game's picture, the menu
+  over it, and Settings › Emulators with the host's rows.
+- [`retro_keyboard_test.dart`](../test/core/retro_host/retro_keyboard_test.dart)
+  checks the keyboard layout as a PS1 pad, a moved key, the stick modifier
+  and the keys joining a controller.
+  [`retro_host_install_test.dart`](../test/core/retro_host/retro_host_install_test.dart)
+  checks where the host and core are found, and that a release build finds
+  none.
 
 A widget test runs in fake time, but images are made by the engine in real
 time. So the view test waits for a picture by taking turns: a short real wait
 (`tester.runAsync`), then `tester.pump()`.
 
 ```bash
-flutter test test/ui/retro_host test/core/retro_host/retro_pad_test.dart test/core/retro_host/retro_seats_test.dart
+flutter test test/ui/retro_host test/ui/retro_host_play_test.dart test/ui/retro_host_play_golden_test.dart \
+  test/core/retro_host/retro_pad_test.dart test/core/retro_host/retro_seats_test.dart \
+  test/core/retro_host/retro_keyboard_test.dart test/core/retro_host/retro_host_install_test.dart
 ```
 
 ### Against the real host
@@ -340,19 +456,39 @@ Both cases passed on Windows on 13 November 2026, with the host built from
 the host repository's `stage2-gpu` branch (bde086e) with WinLibs GCC 15.2,
 and SwanStation built for Windows.
 
+[`retro_host_app_real_test.dart`](../test/ui/retro_host/retro_host_app_real_test.dart)
+reads the same file and runs the whole launcher against the real host: the
+host and SwanStation are copied into one folder that `ANYPS5_RETRO_HOST`
+names, the PS-EXE is put on a disc in a games folder, OpenBIOS goes in the
+PS1 BIOS folder, and `AppModel.play` starts the disc with the setting on. The
+game reaches `playing` and shows two pictures that differ. A second
+controller in the app's controller reader connects port 2. PS opens the menu
+(the host takes `pause`), the internal resolution is changed and kept, the
+volume is set and kept, PS resumes, and Close game ends with the host's clean
+exit and a memory card written. Its helpers, shared with the test above, are
+in [`real_host_support.dart`](../test/ui/retro_host/real_host_support.dart).
+It passed on Windows on 13 November 2026 with the same host and SwanStation
+builds. The host runs with the test's own environment, as the launcher starts
+it, so WinLibs' `bin` folder has to be on `PATH` there.
+
 ## Not yet
 
-- **Not in the game flow.** Starting a PS1 game still uses the old path.
-  Still to do: switching it to `RetroHostGame`, picking the host's files, and
-  the settings for using the host.
-- **No keyboard.** Only controllers play a game. The keyboard layout in
-  `Controls` is not turned into `input` yet.
-- **No menu view.** `RetroGameMenu` is a model. The view that shows its rows,
-  the button that opens it, and the loading and error screens
-  (`progressLabel`, `errorCode` in the player's language) are still to do.
-- **Not wired to the app.** Nothing yet makes a `RetroHostControls` from the
-  app's controller reader, its Player 1 order, the dead zone setting or the
-  player's volume. That comes with the game flow.
+- **Release builds.** Only debug builds find a host. Release builds get the
+  signed host release, with the checks of protocol.md "Finding and checking
+  the host", later.
+- **One host per game.** The host is shut down when its game is closed, and
+  the next game starts a new one. The protocol allows one host to run games
+  one after another.
+- **The host's environment on Linux.** The host gets the launcher's whole
+  environment. An emulator started from the AppImage gets it without what the
+  AppImage set (`GameProcess.withoutAppImage`); the host does not yet.
+- **No phone pad.** A phone or browser pad (Remote Play's) does not play a
+  PS1 game in the host, and does not move the launcher while the game's own
+  screen is in front.
+- **No mouse.** The mouse buttons and the wheel in a game's Controls are not
+  read for a PS1 game.
+- **Long menus.** The menu lists every option SwanStation offers (about fifty
+  for a PS1 game), in the host's order.
 - **One copy per frame.** Each frame is copied once and uploaded through
   `decodeImageFromPixels`. A texture that shares the ring with the GPU would
   avoid the copy. That is worth doing only if a trace shows the copy costs

@@ -66,6 +66,39 @@ void main() {
     ]);
   });
 
+  test('the keyboard plays at port 1, with or without a controller there, and is kept out by the menu', () async {
+    var keys = PadState.idle;
+    controls.dispose();
+    controls = RetroHostControls(
+      game,
+      pads: pads.reader,
+      motors: motors,
+      keyboard: () => keys,
+      every: const Duration(hours: 1),
+      rumbleHold: const Duration(hours: 2),
+    );
+    await started();
+    keys = const PadState(pressed: {PadButton.south}, leftX: 1);
+    controls.poll();
+    pads.connect('a', const PadState(pressed: {PadButton.east}, leftY: 1));
+    pads.connect('b', const PadState(pressed: {PadButton.west}));
+    controls.poll();
+    controls.suspended = true;
+    controls.suspended = false;
+    keys = PadState.idle;
+    controls.poll();
+    expect(session.inputStates, [
+      (0, RetroPadInput(buttons: RetroPadButton.cross.mask, leftX: 32767)),
+      (1, RetroPadInput.idle),
+      (0, RetroPadInput(buttons: RetroPadButton.cross.mask | RetroPadButton.circle.mask, leftX: 32767)),
+      (1, RetroPadInput(buttons: RetroPadButton.square.mask)),
+      (0, RetroPadInput.idle),
+      (1, RetroPadInput.idle),
+      (0, const RetroPadInput(leftX: 32767)),
+      (0, const RetroPadInput(leftY: 32767)),
+    ], reason: 'keys held when the menu closes stay out until let go; the sticks come back at once');
+  });
+
   test('a second controller connects port 2, and port 2 is let go when it leaves', () async {
     await started();
     pads.connect('a');

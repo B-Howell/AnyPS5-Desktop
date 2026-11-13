@@ -279,8 +279,10 @@ job), against the host repository at the commit named in
 
 ## Not yet
 
-- **Not in the game flow.** Frames can be shown ([RETRO_HOST_UI.md](RETRO_HOST_UI.md)),
-  but picking the host's files and the player's controls are still to come.
+- **Debug builds only.** A PS1 game plays through the host behind a setting
+  ([RETRO_HOST_UI.md](RETRO_HOST_UI.md), "In the launcher"), and only debug
+  builds find a host, through `ANYPS5_RETRO_HOST`. Release builds get the
+  signed host release later.
 - **No signature checks.** The release-time file checks from the protocol's
   "Finding and checking the host" section come with signed distribution.
   Until then, the client runs the command it is given.

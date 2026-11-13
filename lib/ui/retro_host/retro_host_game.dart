@@ -43,9 +43,11 @@ class RetroHostGame extends ChangeNotifier {
        _isMuted = muted {
     session.ready.ignore();
     unawaited(
-      session.ended.then((_) {
+      session.ended.then((end) {
         _hostEnded = true;
+        _hostEnd = end;
         _onHostEnded();
+        _notify();
       }),
     );
   }
@@ -116,6 +118,11 @@ class RetroHostGame extends ChangeNotifier {
   /// Why the game could not be started or followed, for logs, when no status says it.
   String? get failure => _failure;
   String? _failure;
+
+  /// How the host's connection ended; null while it is open. [RetroHostEnd.unsupported] means
+  /// the host speaks no protocol version this launcher does: the emulator needs updating.
+  RetroHostEnd? get hostEnd => _hostEnd;
+  RetroHostEnd? _hostEnd;
 
   Timer? _poll;
   bool _polling = false;

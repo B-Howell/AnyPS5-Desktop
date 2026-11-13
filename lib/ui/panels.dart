@@ -183,6 +183,7 @@ class PanelView extends StatelessWidget {
       Layer.copyWarning,
       Layer.gameFiles,
       Layer.quickMenu,
+      Layer.retroMenu,
       Layer.homeMenu,
       Layer.launcherReport,
       Layer.profileMenu,
@@ -192,6 +193,7 @@ class PanelView extends StatelessWidget {
     // PS's menus: a heading that may be long (the game's name), and only as tall as their rows.
     final psMenu = const {
       Layer.quickMenu,
+      Layer.retroMenu,
       Layer.homeMenu,
       Layer.launcherReport,
       Layer.profileMenu,
@@ -199,7 +201,11 @@ class PanelView extends StatelessWidget {
     }.contains(model.overlay);
     // The quick menu is about the game playing: its icon by the heading (Close Game? is a
     // ConfirmCard, with the icon too).
-    final gameIcon = model.overlay == Layer.quickMenu ? model.running?.$1.icon : null;
+    final gameIcon = switch (model.overlay) {
+      Layer.quickMenu => model.running?.$1.icon,
+      Layer.retroMenu => model.retroPlay?.game.icon,
+      _ => null,
+    };
     // The copy warning explains itself before its four choices.
     // A join held back says both builds whole and what to do.
     final tall = model.overlay == Layer.copyWarning || model.overlay == Layer.joinBlocked;
@@ -295,9 +301,15 @@ class PanelView extends StatelessWidget {
                                   color: model.accentChoice.color,
                                 ).copyWith(letterSpacing: 1.4 * scale),
                               ),
-                            if (model.overlay == Layer.quickMenu)
+                            if (model.overlay == Layer.quickMenu || model.overlay == Layer.retroMenu)
                               Text(
-                                T.upper(T.text(model.quickMenuPaused ? 'quickPaused' : 'quickRunning')),
+                                T.upper(
+                                  T.text(
+                                    model.quickMenuPaused || model.overlay == Layer.retroMenu
+                                        ? 'quickPaused'
+                                        : 'quickRunning',
+                                  ),
+                                ),
                                 style: AppText.display(
                                   12 * scale,
                                   weight: FontWeight.w700,
@@ -369,6 +381,7 @@ class PanelView extends StatelessWidget {
                         Layer.advanced,
                         Layer.friendOptions,
                         Layer.quickMenu,
+                        Layer.retroMenu,
                       }.contains(model.overlay),
                     ),
                   ],
@@ -602,6 +615,7 @@ class _RowView extends StatelessWidget {
   // Find Players, a friend's options), read by their rows' names and details, as on the Mac.
   static const _labelledMenus = {
     Layer.quickMenu,
+    Layer.retroMenu,
     Layer.homeMenu,
     Layer.launcherReport,
     Layer.profileMenu,

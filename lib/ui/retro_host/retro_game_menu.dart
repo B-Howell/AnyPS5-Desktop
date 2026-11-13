@@ -169,10 +169,12 @@ class RetroGameMenu extends ChangeNotifier {
   }
 
   /// Moves the volume [steps] of [volumeStep] up (down when negative), from 0 to 1. Turning it up
-  /// unmutes.
+  /// unmutes. The level is counted in whole steps and divided last, so three tenths is 0.3, not
+  /// 3 × 0.1 (0.30000000000000004).
   Future<void> stepVolume(int steps) {
-    final level = ((game.volume + steps * volumeStep) / volumeStep).round() * volumeStep;
-    return game.setVolume(level: level.clamp(0.0, 1.0), muted: steps > 0 ? false : null);
+    final perUnit = (1 / volumeStep).round();
+    final next = ((game.volume * perUnit).round() + steps).clamp(0, perUnit);
+    return game.setVolume(level: next / perUnit, muted: steps > 0 ? false : null);
   }
 
   Future<void> toggleMute() => game.setVolume(muted: !game.muted);
