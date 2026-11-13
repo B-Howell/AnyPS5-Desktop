@@ -36,7 +36,76 @@ void main() {
       timeout: const Timeout(Duration(seconds: 90)),
     );
   }
+  test('a reply with a wrong result still answers its call', () async {
+    final directory = Directory.systemTemp.createTempSync('retro-host-own-');
+    try {
+      final session = <String, Object?>{
+        'description': 'The host answers pause with true instead of null.',
+        'tests': ['launcher'],
+        'outcome': 'protocolError',
+        'steps': [
+          ..._greeting,
+          {
+            'from': 'launcher',
+            'message': {'type': 'call', 'id': 2, 'method': 'pause', 'args': true},
+            'anyValueFor': ['id'],
+          },
+          {
+            'from': 'host',
+            'message': {'type': 'reply', 'id': 2, 'result': true},
+            'anyValueFor': ['id'],
+            'invalid': 'pause returns null',
+          },
+        ],
+      };
+      final file = File(p.join(directory.path, 'pause-result-not-null.json'))..writeAsStringSync(jsonEncode(session));
+      await _Session(checkout, python, file, session).play();
+    } finally {
+      directory.deleteSync(recursive: true);
+    }
+  }, timeout: const Timeout(Duration(seconds: 90)));
 }
+
+/// The start of a session: hello, welcome and the first volume call.
+const _greeting = [
+  {
+    'from': 'launcher',
+    'message': {
+      'type': 'hello',
+      'minVersion': 1,
+      'maxVersion': 1,
+      'pixelFormats': ['rgba8', 'bgra8'],
+    },
+    'anyValueFor': ['pixelFormats'],
+  },
+  {
+    'from': 'host',
+    'message': {
+      'type': 'welcome',
+      'version': 1,
+      'pid': 1,
+      'hostVersion': '1.0.0',
+      'capabilities': ['ps1'],
+      'pixelFormat': 'rgba8',
+    },
+    'anyValueFor': ['pid', 'hostVersion', 'pixelFormat'],
+  },
+  {
+    'from': 'launcher',
+    'message': {
+      'type': 'call',
+      'id': 1,
+      'method': 'volume',
+      'args': {'level': 1, 'muted': false},
+    },
+    'anyValueFor': ['id', 'args'],
+  },
+  {
+    'from': 'host',
+    'message': {'type': 'reply', 'id': 1, 'result': null},
+    'anyValueFor': ['id'],
+  },
+];
 
 String _python() {
   final name = Platform.isWindows ? 'python' : 'python3';
@@ -142,9 +211,14 @@ class _Session {
     final clean = session['outcome'] == 'clean';
     var welcomed = false;
     var shutdown = false;
+    Future<RetroStatus?>? stopping;
     for (var index = 0; index < steps.length; index++) {
       final step = steps[index];
-      if (step['invalid'] != null && step['from'] == 'host') return;
+      if (step['invalid'] != null && step['from'] == 'host') {
+        await Future.wait([for (final pending in calls) pending.then((_) {}, onError: (_) {})])
+            .timeout(const Duration(seconds: 15), onTimeout: () => fail('a call was never answered'));
+        return;
+      }
       final message = step['message'] as Map<String, Object?>?;
       final from = step['from'];
       if (from == 'launcher' && message != null) {
@@ -154,6 +228,13 @@ class _Session {
             if (method == 'volume' && !welcomed) {
               welcomed = true;
               calls.add(client.ready.then((_) => null));
+            } else if (method == 'stop') {
+              stopping = client.stopGame();
+              calls.add(Future.value());
+            } else if (method == 'status' && stopping != null) {
+              final stopped = stopping;
+              stopping = null;
+              calls.add(stopped.then((status) => status?.toJson()));
             } else {
               calls.add(client.call(method, _fill(message['args'])));
             }
@@ -188,8 +269,13 @@ class _Session {
       } else if (step.containsKey('launcherReports')) {
         if (!clean) await client.ended.timeout(const Duration(seconds: 30));
         final expected = step['launcherReports']! as Map<String, Object?>;
-        final result = await client.call(expected['method']! as String);
-        expect(result, expected['result'], reason: 'step $index launcherReports');
+        final method = expected['method']! as String;
+        if (method == 'status') {
+          final status = await client.status();
+          expect(status?.toFailureJson(), expected['result'], reason: 'step $index launcherReports');
+        } else {
+          expect(await client.call(method), expected['result'], reason: 'step $index launcherReports');
+        }
         await _resume(index, report);
       }
     }
@@ -238,6 +324,7 @@ class _Session {
     if (ignore.contains(where)) return;
     if (expected is Map<String, Object?> && actual is Map<String, Object?>) {
       for (final key in expected.keys) {
+        if (ignore.contains('$where.$key')) continue;
         expect(actual.containsKey(key), isTrue, reason: '$where.$key is missing');
         _compare(expected[key], actual[key], ignore, '$where.$key');
       }

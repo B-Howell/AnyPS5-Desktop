@@ -28,6 +28,10 @@
 #define EVENT_FRAMING 2
 #define EVENT_EXITED 3
 
+// The `extra` of EVENT_EXITED when the exit code could not be read: another
+// part of the launcher reaped the host first (Linux without pidfd only).
+#define EXIT_UNKNOWN INT64_MIN
+
 #define MIN_MESSAGE 2
 #define MAX_MESSAGE 1048576
 
@@ -117,7 +121,12 @@ static DWORD WINAPI writer_main(void* argument) {
     Outgoing* item = c->first;
     c->first = item->next;
     if (!c->first) c->last = NULL;
+    int closing = c->closing;
     LeaveCriticalSection(&c->lock);
+    if (closing) {
+      free(item);
+      return 0;
+    }
     InterlockedExchange64(&c->write_started, (LONG64)GetTickCount64());
     DWORD done = 0;
     int ok = 1;
@@ -135,9 +144,13 @@ static DWORD WINAPI writer_main(void* argument) {
   }
 }
 
+// Reports the exit after the reader has passed on everything the host wrote
+// before it ended (or 2 seconds, if something else still holds its pipe), so a
+// last reply is never overtaken by the exit.
 static DWORD WINAPI waiter_main(void* argument) {
   Connection* c = (Connection*)argument;
   WaitForSingleObject(c->process, INFINITE);
+  WaitForSingleObject(c->reader, 2000);
   DWORD code = 0;
   GetExitCodeProcess(c->process, &code);
   c->callback(c->token, EVENT_EXITED, NULL, 0, (int64_t)code);
@@ -488,12 +501,10 @@ ANYPS5_EXPORT void anyps5_rh_store(void* address, uint32_t value) {
 #include <time.h>
 #include <unistd.h>
 
-#if defined(__APPLE__)
+#include <poll.h>
 #include <spawn.h>
+#include <sys/syscall.h>
 extern char** environ;
-#else
-#include <sched.h>
-#endif
 
 typedef struct Outgoing {
   struct Outgoing* next;
@@ -516,6 +527,8 @@ typedef struct Connection {
   Outgoing* last;
   int closing;
   int exited;
+  int reader_done;
+  int pidfd;
   int64_t write_started;
 } Connection;
 
@@ -598,8 +611,19 @@ static int read_part(Connection* c, uint8_t* out, size_t size, int first, int* d
   return 1;
 }
 
+static void read_messages(Connection* c);
+
 static void* reader_main(void* argument) {
   Connection* c = (Connection*)argument;
+  read_messages(c);
+  pthread_mutex_lock(&c->lock);
+  c->reader_done = 1;
+  pthread_cond_broadcast(&c->wake);
+  pthread_mutex_unlock(&c->lock);
+  return NULL;
+}
+
+static void read_messages(Connection* c) {
   for (;;) {
     int descriptors[1];
     int count = 0;
@@ -608,27 +632,27 @@ static void* reader_main(void* argument) {
     if (result <= 0) {
       close_received(descriptors, count);
       c->callback(c->token, result < 0 ? EVENT_FRAMING : EVENT_END, NULL, 0, -1);
-      return NULL;
+      return;
     }
     uint32_t length = (uint32_t)prefix[0] | (uint32_t)prefix[1] << 8 | (uint32_t)prefix[2] << 16 |
                       (uint32_t)prefix[3] << 24;
     if (length < MIN_MESSAGE || length > MAX_MESSAGE) {
       close_received(descriptors, count);
       c->callback(c->token, EVENT_FRAMING, NULL, (int32_t)length, -1);
-      return NULL;
+      return;
     }
     uint8_t* body = (uint8_t*)malloc(length);
     if (!body) {
       close_received(descriptors, count);
       c->callback(c->token, EVENT_FRAMING, NULL, -1, -1);
-      return NULL;
+      return;
     }
     result = read_part(c, body, length, 0, descriptors, &count);
     if (result <= 0) {
       free(body);
       close_received(descriptors, count);
       c->callback(c->token, result < 0 ? EVENT_FRAMING : EVENT_END, NULL, 0, -1);
-      return NULL;
+      return;
     }
     c->callback(c->token, EVENT_MESSAGE, body, (int32_t)length, count ? descriptors[0] : -1);
   }
@@ -651,6 +675,11 @@ static void* writer_main(void* argument) {
     Outgoing* item = c->first;
     c->first = item->next;
     if (!c->first) c->last = NULL;
+    if (c->closing) {
+      pthread_mutex_unlock(&c->lock);
+      free(item);
+      return NULL;
+    }
     c->write_started = now_ms();
     pthread_mutex_unlock(&c->lock);
     size_t done = 0;
@@ -669,51 +698,120 @@ static void* writer_main(void* argument) {
   }
 }
 
-// Waits for the host to end without reaping it first (WNOWAIT), marks it
-// exited under the lock that anyps5_rh_kill holds, and only then reaps it, so
-// a kill can never reach another process that was given the same id.
+#if defined(__linux__)
+#if !defined(SYS_pidfd_open)
+#define SYS_pidfd_open 434
+#endif
+#if !defined(SYS_pidfd_send_signal)
+#define SYS_pidfd_send_signal 424
+#endif
+#if !defined(P_PIDFD)
+#define P_PIDFD 3
+#endif
+#endif
+
+static int64_t exit_code(const siginfo_t* info) {
+  return info->si_code == CLD_EXITED ? info->si_status : -(int64_t)info->si_status;
+}
+
+// Waits for the host to end and reports its exit code, after the reader has
+// passed on everything the host wrote before it ended (or 2 seconds, if
+// something else still holds the host's end of the stream), so a last reply is
+// never overtaken by the exit.
+//
+// Linux: the Dart VM reaps its own children with a plain wait() whenever a
+// dart:io process is running (runtime/bin/process_linux.cc), and that can take
+// any child, the host included. So the host is watched through a pidfd: its
+// exit is seen even when the VM reaps it first, the exit code is read with
+// WNOWAIT while it is still there, and anyps5_rh_kill signals through the
+// pidfd, which can never reach a later process given the same id. Without
+// pidfd (Linux before 5.3) the exit code may be lost to the VM: it is then
+// EXIT_UNKNOWN. macOS: the VM waits only for its own process ids (kqueue), so
+// the host is this file's to reap.
 static void* waiter_main(void* argument) {
   Connection* c = (Connection*)argument;
-#if defined(__APPLE__)
-  const int all = 0;
-#else
-  const int all = __WALL;
-#endif
+  int64_t code = EXIT_UNKNOWN;
   siginfo_t info;
   memset(&info, 0, sizeof info);
-  int result;
-  do result = waitid(P_PID, (id_t)c->pid, &info, WEXITED | WNOWAIT | all);
-  while (result < 0 && errno == EINTR);
-  int64_t code = result < 0 ? -1 : info.si_code == CLD_EXITED ? info.si_status : -(int64_t)info.si_status;
-  pthread_mutex_lock(&c->lock);
-  c->exited = 1;
-  pthread_mutex_unlock(&c->lock);
-  int status;
-  while (waitpid(c->pid, &status, all) < 0 && errno == EINTR) {
+#if defined(__linux__)
+  if (c->pidfd >= 0) {
+    struct pollfd ready = {c->pidfd, POLLIN, 0};
+    while (poll(&ready, 1, -1) < 0 && errno == EINTR) {
+    }
+    if (waitid((idtype_t)P_PIDFD, (id_t)c->pidfd, &info, WEXITED | WNOWAIT) == 0) code = exit_code(&info);
+    pthread_mutex_lock(&c->lock);
+    c->exited = 1;
+    pthread_mutex_unlock(&c->lock);
+    while (waitid((idtype_t)P_PIDFD, (id_t)c->pidfd, &info, WEXITED) < 0 && errno == EINTR) {
+    }
+  } else
+#endif
+  {
+    int result;
+    do result = waitid(P_PID, (id_t)c->pid, &info, WEXITED | WNOWAIT);
+    while (result < 0 && errno == EINTR);
+    if (result == 0) code = exit_code(&info);
+    pthread_mutex_lock(&c->lock);
+    c->exited = 1;
+    pthread_mutex_unlock(&c->lock);
+    int status;
+    while (waitpid(c->pid, &status, 0) < 0 && errno == EINTR) {
+    }
   }
+  struct timespec until;
+  clock_gettime(CLOCK_REALTIME, &until);
+  until.tv_sec += 2;
+  pthread_mutex_lock(&c->lock);
+  while (!c->reader_done) {
+    if (pthread_cond_timedwait(&c->wake, &c->lock, &until) == ETIMEDOUT) break;
+  }
+  pthread_mutex_unlock(&c->lock);
   c->callback(c->token, EVENT_EXITED, NULL, 0, code);
   return NULL;
 }
 
-#if !defined(__APPLE__)
+// What protocol.md asks of the start on Linux and macOS: the host's end of the
+// stream as descriptor 3, an empty signal mask, and SIGTERM at its default.
+// macOS also gives the host no other descriptor (POSIX_SPAWN_CLOEXEC_DEFAULT);
+// on Linux every descriptor of the launcher's is close-on-exec, and the host
+// closes any above 3 itself. `host_end` is never 3 (see anyps5_rh_start).
+static int spawn_now(char* const* argv, char* const* envp, int host_end, pid_t* pid) {
+  posix_spawn_file_actions_t actions;
+  posix_spawnattr_t attributes;
+  posix_spawn_file_actions_init(&actions);
+  posix_spawnattr_init(&attributes);
+  posix_spawn_file_actions_adddup2(&actions, host_end, 3);
+  sigset_t empty;
+  sigset_t defaults;
+  sigemptyset(&empty);
+  sigemptyset(&defaults);
+  sigaddset(&defaults, SIGTERM);
+  posix_spawnattr_setsigmask(&attributes, &empty);
+  posix_spawnattr_setsigdefault(&attributes, &defaults);
+  short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
+#if defined(__APPLE__)
+  flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+#endif
+  posix_spawnattr_setflags(&attributes, flags);
+  int failure = posix_spawn(pid, argv[0], &actions, &attributes, argv, envp);
+  posix_spawn_file_actions_destroy(&actions);
+  posix_spawnattr_destroy(&attributes);
+  return failure;
+}
 
-// Linux. The host is started as a clone child that sends its parent no
-// signal when it ends. The Dart VM reaps its own children with wait(), which
-// takes any child that signals SIGCHLD; a clone child is left for this file's
-// waitpid(__WALL), so the host's exit code is never taken from it. Otherwise
-// this does what protocol.md asks of posix_spawn: descriptor 3, an empty
-// signal mask, and SIGTERM at its default. It runs on one thread that lives as
-// long as the launcher, because PR_SET_PDEATHSIG fires when the thread that
-// started the host exits.
+#if defined(__linux__)
 
+// Linux starts the host on one thread that lives as long as the launcher,
+// because PR_SET_PDEATHSIG, which the host sets, fires when the thread that
+// started it exits (protocol.md "Starting the host"). One job at a time; only
+// the spawner thread clears the slot, once the job is done.
 typedef struct Spawn {
   char* const* argv;
   char* const* envp;
   int host_end;
-  int child_error;
   pid_t pid;
-  int done;
   int failure;
+  int done;
 } Spawn;
 
 static pthread_mutex_t g_spawn_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -722,72 +820,17 @@ static Spawn* g_spawn_job;
 static pthread_once_t g_spawner_once = PTHREAD_ONCE_INIT;
 static int g_spawner_ready;
 
-static int child_main(void* argument) {
-  Spawn* job = (Spawn*)argument;
-  for (int signal_number = 1; signal_number < NSIG; ++signal_number) {
-    struct sigaction current;
-    if (sigaction(signal_number, NULL, &current) != 0) continue;
-    if (signal_number == SIGTERM || (current.sa_handler != SIG_IGN && current.sa_handler != SIG_DFL)) {
-      struct sigaction plain;
-      memset(&plain, 0, sizeof plain);
-      plain.sa_handler = SIG_DFL;
-      sigaction(signal_number, &plain, NULL);
-    }
-  }
-  sigset_t empty;
-  sigemptyset(&empty);
-  sigprocmask(SIG_SETMASK, &empty, NULL);
-  if (job->host_end == 3) {
-    if (fcntl(3, F_SETFD, 0) != 0) goto failed;
-  } else if (dup2(job->host_end, 3) != 3) {
-    goto failed;
-  }
-  execve(job->argv[0], job->argv, job->envp);
-failed:
-  job->child_error = errno;
-  _exit(127);
-}
-
-static void run_spawn(Spawn* job) {
-  const size_t stack_size = 64 * 1024;
-  void* stack = mmap(NULL, stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
-  if (stack == MAP_FAILED) {
-    job->failure = errno;
-    return;
-  }
-  sigset_t all;
-  sigset_t previous;
-  sigfillset(&all);
-  pthread_sigmask(SIG_SETMASK, &all, &previous);
-  job->child_error = 0;
-  pid_t pid = clone(child_main, (char*)stack + stack_size, CLONE_VM | CLONE_VFORK, job);
-  int clone_error = errno;
-  pthread_sigmask(SIG_SETMASK, &previous, NULL);
-  munmap(stack, stack_size);
-  if (pid < 0) {
-    job->failure = clone_error;
-    return;
-  }
-  if (job->child_error) {
-    int status;
-    while (waitpid(pid, &status, __WALL) < 0 && errno == EINTR) {
-    }
-    job->failure = job->child_error;
-    return;
-  }
-  job->pid = pid;
-}
-
 static void* spawner_main(void* argument) {
   (void)argument;
   pthread_mutex_lock(&g_spawn_lock);
   for (;;) {
-    while (!g_spawn_job || g_spawn_job->done) pthread_cond_wait(&g_spawn_wake, &g_spawn_lock);
+    while (!g_spawn_job) pthread_cond_wait(&g_spawn_wake, &g_spawn_lock);
     Spawn* job = g_spawn_job;
     pthread_mutex_unlock(&g_spawn_lock);
-    run_spawn(job);
+    job->failure = spawn_now(job->argv, job->envp, job->host_end, &job->pid);
     pthread_mutex_lock(&g_spawn_lock);
     job->done = 1;
+    g_spawn_job = NULL;
     pthread_cond_broadcast(&g_spawn_wake);
   }
   return NULL;
@@ -814,12 +857,10 @@ static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int*
   job.envp = envp;
   job.host_end = host_end;
   pthread_mutex_lock(&g_spawn_lock);
-  while (g_spawn_job && !g_spawn_job->done) pthread_cond_wait(&g_spawn_wake, &g_spawn_lock);
+  while (g_spawn_job) pthread_cond_wait(&g_spawn_wake, &g_spawn_lock);
   g_spawn_job = &job;
   pthread_cond_broadcast(&g_spawn_wake);
   while (!job.done) pthread_cond_wait(&g_spawn_wake, &g_spawn_lock);
-  g_spawn_job = NULL;
-  pthread_cond_broadcast(&g_spawn_wake);
   pthread_mutex_unlock(&g_spawn_lock);
   *failure = job.failure;
   return job.failure ? -1 : job.pid;
@@ -828,24 +869,8 @@ static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int*
 #else
 
 static pid_t spawn_host(char* const* argv, char* const* envp, int host_end, int* failure) {
-  posix_spawn_file_actions_t actions;
-  posix_spawnattr_t attributes;
-  posix_spawn_file_actions_init(&actions);
-  posix_spawnattr_init(&attributes);
-  if (host_end == 3) posix_spawn_file_actions_addinherit_np(&actions, 3);
-  else posix_spawn_file_actions_adddup2(&actions, host_end, 3);
-  sigset_t empty;
-  sigset_t defaults;
-  sigemptyset(&empty);
-  sigemptyset(&defaults);
-  sigaddset(&defaults, SIGTERM);
-  posix_spawnattr_setsigmask(&attributes, &empty);
-  posix_spawnattr_setsigdefault(&attributes, &defaults);
-  posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
   pid_t pid = -1;
-  *failure = posix_spawn(&pid, argv[0], &actions, &attributes, argv, envp);
-  posix_spawn_file_actions_destroy(&actions);
-  posix_spawnattr_destroy(&attributes);
+  *failure = spawn_now(argv, envp, host_end, &pid);
   return *failure ? -1 : pid;
 }
 
@@ -873,6 +898,15 @@ ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const
     return NULL;
   }
 #endif
+  int high = fcntl(ends[1], F_DUPFD_CLOEXEC, 10);
+  if (high < 0) {
+    close(ends[0]);
+    close(ends[1]);
+    set_error(error, error_size, "The control stream's socket could not be moved.");
+    return NULL;
+  }
+  close(ends[1]);
+  ends[1] = high;
   char parent[24];
   snprintf(parent, sizeof parent, "%ld", (long)getpid());
   const char** arguments = (const char**)calloc((size_t)argc + 5, sizeof(char*));
@@ -892,12 +926,7 @@ ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const
   arguments[argc + 2] = "--parent-pid";
   arguments[argc + 3] = parent;
   for (int32_t i = 0; i < envc; ++i) environment[i] = env[i];
-#if defined(__APPLE__)
   char* const* envp = envc > 0 ? (char* const*)environment : environ;
-#else
-  extern char** environ;
-  char* const* envp = envc > 0 ? (char* const*)environment : environ;
-#endif
   int failure = 0;
   pid_t pid = spawn_host((char* const*)arguments, envp, ends[1], &failure);
   free(arguments);
@@ -921,6 +950,11 @@ ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const
   c->callback = callback;
   c->pid = pid;
   c->socket = ends[0];
+  c->pidfd = -1;
+#if defined(__linux__)
+  c->pidfd = (int)syscall(SYS_pidfd_open, pid, 0);
+  if (c->pidfd >= 0) fcntl(c->pidfd, F_SETFD, FD_CLOEXEC);
+#endif
   pthread_mutex_init(&c->lock, NULL);
   pthread_cond_init(&c->wake, NULL);
   if (pthread_create(&c->waiter, NULL, waiter_main, c) == 0) c->threads |= 1;
@@ -938,6 +972,7 @@ ANYPS5_EXPORT void* anyps5_rh_start(const char* const* argv, int32_t argc, const
     if (c->threads & 2) pthread_join(c->reader, NULL);
     if (c->threads & 4) pthread_join(c->writer, NULL);
     close(c->socket);
+    if (c->pidfd >= 0) close(c->pidfd);
     pthread_mutex_destroy(&c->lock);
     pthread_cond_destroy(&c->wake);
     free(c);
@@ -950,6 +985,12 @@ ANYPS5_EXPORT int64_t anyps5_rh_pid(void* handle) { return (int64_t)((Connection
 
 ANYPS5_EXPORT void anyps5_rh_kill(void* handle) {
   Connection* c = (Connection*)handle;
+#if defined(__linux__)
+  if (c->pidfd >= 0) {
+    syscall(SYS_pidfd_send_signal, c->pidfd, SIGKILL, NULL, 0);
+    return;
+  }
+#endif
   pthread_mutex_lock(&c->lock);
   if (!c->exited) kill(c->pid, SIGKILL);
   pthread_mutex_unlock(&c->lock);
@@ -981,6 +1022,7 @@ ANYPS5_EXPORT void anyps5_rh_close(void* handle) {
     c->first = next;
   }
   close(c->socket);
+  if (c->pidfd >= 0) close(c->pidfd);
   pthread_mutex_destroy(&c->lock);
   pthread_cond_destroy(&c->wake);
   free(c);

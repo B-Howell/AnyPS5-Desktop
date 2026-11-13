@@ -98,6 +98,7 @@ class RetroFields {
   }
 
   String? stringOrNull(String key) {
+    if (!map.containsKey(key)) _bad(key, 'is missing');
     final value = map[key];
     if (value != null && value is! String) _bad(key, 'must be a string or null');
     return value as String?;
@@ -141,6 +142,15 @@ class RetroOption {
   final int selected;
   final String activeValue;
   final bool restart;
+
+  Map<String, Object?> toJson() => {
+    'title': title,
+    'values': values,
+    'labels': labels,
+    'selected': selected,
+    'activeValue': activeValue,
+    'restart': restart,
+  };
 }
 
 /// The discs of a multi-disc game.
@@ -160,6 +170,15 @@ class RetroDiscs {
   final String playedDiscPath;
   final bool busy;
   final bool failed;
+
+  Map<String, Object?> toJson() => {
+    'labels': labels,
+    'inserted': inserted,
+    'insertedDiscPath': insertedDiscPath,
+    'playedDiscPath': playedDiscPath,
+    'busy': busy,
+    'failed': failed,
+  };
 }
 
 /// A loaded game's state, from `status`, or the shorter form the client gives after a host failure.
@@ -205,22 +224,26 @@ class RetroStatus {
   final Map<String, RetroOption> options;
   final RetroDiscs? discs;
 
-  /// The status as protocol.md writes it: every field for a host's status, and only the four of
-  /// "Host failure" for one the client made.
-  Map<String, Object?> toJson({bool short = false}) => {
-    'ready': ready,
-    'ended': ended,
-    'error': error,
-    'errorCode': errorCode,
-    if (!short) ...{
-      'aspect': aspect,
-      'hardware': hardware,
-      'resolutionError': resolutionError,
-      'graphicsPending': graphicsPending,
-      'progressLabel': progressLabel,
-      'progressPercent': progressPercent,
-    },
+  /// The status as protocol.md "status" writes it.
+  Map<String, Object?> toJson() => {
+    ...toFailureJson(),
+    'aspect': aspect,
+    'hardware': hardware,
+    'resolutionError': resolutionError,
+    'graphicsPending': graphicsPending,
+    'progressLabel': progressLabel,
+    'progressPercent': progressPercent,
+    'options': {for (final option in options.values) option.key: option.toJson()},
+    'discs': ?discs?.toJson(),
   };
+
+  /// The four fields protocol.md "Host failure" gives for a status the client made.
+  Map<String, Object?> toFailureJson() => {'ready': ready, 'ended': ended, 'error': error, 'errorCode': errorCode};
+
+  /// Whether [map] is the client's own failure report rather than a host's status, which always
+  /// has every field.
+  static bool isFailureReport(Map<String, Object?> map) =>
+      map.length == 4 && (map['errorCode'] == RetroErrorCode.hostExited || map['errorCode'] == RetroErrorCode.hostHung);
 
   /// Reads a `status` result, throwing [RetroProtocolError] for a field out of what protocol.md
   /// allows. Unknown fields are ignored.
@@ -238,7 +261,9 @@ class RetroStatus {
         title: o.string('title'),
         values: values,
         labels: labels,
-        selected: o.integer('selected', 0, values.isEmpty ? 0 : values.length - 1),
+        selected: values.isEmpty
+            ? throw RetroProtocolError('status.options.$key.values is empty.')
+            : o.integer('selected', 0, values.length - 1),
         activeValue: o.string('activeValue'),
         restart: o.boolean('restart'),
       );
@@ -247,6 +272,7 @@ class RetroStatus {
     if (f.has('discs')) {
       final d = f.object('discs');
       final labels = d.strings('labels');
+      if (!d.has('inserted')) throw const RetroProtocolError('status.discs.inserted is missing.');
       final inserted = d.map['inserted'];
       if (inserted != null && (inserted is! int || inserted < 0 || inserted >= labels.length)) {
         throw const RetroProtocolError('status.discs.inserted must be a disc index or null.');
@@ -260,6 +286,7 @@ class RetroStatus {
         failed: d.boolean('failed'),
       );
     }
+    if (!f.has('progressPercent')) throw const RetroProtocolError('status.progressPercent is missing.');
     final percent = map['progressPercent'];
     if (percent != null && (percent is! int || percent < 0 || percent > 100)) {
       throw const RetroProtocolError('status.progressPercent must be an integer from 0 to 100 or null.');

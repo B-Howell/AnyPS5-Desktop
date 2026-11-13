@@ -21,8 +21,12 @@ abstract final class RetroHostEvent {
   /// of range, when that was the cause.
   static const framing = 2;
 
-  /// The host process ended; `extra` is its exit code, or minus the signal that ended it.
+  /// The host process ended; `extra` is its exit code, minus the signal that ended it, or
+  /// [exitUnknown]. It comes after every message the host wrote before it ended.
   static const exited = 3;
+
+  /// The exit code could not be read: on Linux without pidfd, the Dart VM reaped the host first.
+  static const exitUnknown = -9223372036854775808;
 }
 
 typedef RetroHostCallbackNative = Void Function(

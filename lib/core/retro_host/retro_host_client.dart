@@ -41,7 +41,8 @@ class RetroHostGone implements Exception {
 
 /// A `frame` message, after the client pinned and checked the newest frame. [frame] is null when
 /// the ring had no frame to pin; [drawn] says whether the frame belongs to the current game, which
-/// is the only kind the renderer may show.
+/// is the only kind the renderer may show. A frame that is not drawn may be read only until the
+/// next message; a drawn one stays readable as [RetroHostClient.frame] until another replaces it.
 class RetroFrameEvent {
   const RetroFrameEvent(this.frame, {required this.drawn});
 
@@ -127,6 +128,7 @@ class RetroHostClient {
   FrameRing? _ring;
   FrameRing? _previousRing;
   PinnedFrame? _frame;
+  FrameRing? _frameRing;
 
   /// Starts the host: [command] is the executable's absolute path and any arguments before the
   /// protocol's own; [environment] adds to the launcher's environment for the host. [volume] and
@@ -218,20 +220,27 @@ class RetroHostClient {
   /// Each `frame` message, after its frame was pinned and checked.
   Stream<RetroFrameEvent> get frames => _frames.stream;
 
-  /// The newest frame of the current game, pinned; null before one came.
+  /// The newest frame of the current game, pinned; null before one came. Its ring stays mapped while
+  /// it is the frame shown.
   PinnedFrame? get frame => _frame;
 
   /// Vibration to forward to the controller at a port; nothing while paused or without input focus.
   Stream<RetroRumble> get rumble => _rumble.stream;
 
-  /// Whether the launcher's window has input focus; losing it zeroes the controllers' input.
+  /// Whether the launcher's window has input focus; losing it zeroes the controllers' input and
+  /// their motors (protocol.md "input" and "rumble").
   set inputFocus(bool focused) {
     if (_inputFocus == focused) return;
     _inputFocus = focused;
     if (!focused) {
-      for (final port in const [0, 1]) {
-        input(port, 0);
-      }
+      _zeroInput();
+      _zeroRumble();
+    }
+  }
+
+  void _zeroInput() {
+    for (final port in const [0, 1]) {
+      input(port, 0);
     }
   }
 
@@ -249,7 +258,6 @@ class RetroHostClient {
     if (_nextCallId > RetroFields.maxId) throw StateError('This host has used every call id.');
     final pending = _Pending(_nextCallId++, method, DateTime.now().add(replyLimit));
     _calls.add(pending);
-    if (method == 'stop' && _gameLoaded) _stopDeadline = DateTime.now().add(stopLimit);
     if (method == 'start' || method == 'release') _zeroRumble();
     if (method == 'pause' && args is bool) {
       _paused = args;
@@ -262,10 +270,31 @@ class RetroHostClient {
   /// `start`: loads a game and gives its epoch.
   Future<int> startGame(Map<String, Object?> args) async => ((await call('start', args))! as Map)['epoch'] as int;
 
-  /// `status`: null with no game loaded.
+  /// `status`: null with no game loaded, and the short report of protocol.md "Host failure" after
+  /// one.
   Future<RetroStatus?> status() async {
     final result = await call('status');
-    return result == null ? null : RetroStatus.parse(result as Map<String, Object?>);
+    if (result == null) return null;
+    final map = result as Map<String, Object?>;
+    if (RetroStatus.isFailureReport(map)) {
+      return RetroStatus.failed(error: map['error']! as String, errorCode: map['errorCode']! as String);
+    }
+    return RetroStatus.parse(map);
+  }
+
+  static const _stopPoll = Duration(milliseconds: 250);
+
+  /// `stop`, then `status` until the game has ended, which it gives. The host is killed if the
+  /// game has not ended 10 seconds after `stop` (protocol.md "Timeouts"), and the status then is the
+  /// failure report. Null when no game was loaded.
+  Future<RetroStatus?> stopGame() async {
+    await call('stop');
+    if (_gameLoaded && !_ended.isCompleted) _stopDeadline ??= DateTime.now().add(stopLimit);
+    while (true) {
+      final current = await status();
+      if (current == null || current.ended) return current;
+      await Future<void>.delayed(_stopPoll);
+    }
   }
 
   /// The controller state of one port (protocol.md "input").
@@ -288,8 +317,13 @@ class RetroHostClient {
   }
 
   /// Asks the host to stop its game and exit; it is killed if it has not exited 15 seconds later.
+  /// Before `welcome` nothing may be sent, so the host is killed instead.
   void shutdown() {
-    if (_shutdownSent || _ended.isCompleted || _connection == nullptr) return;
+    if (_shutdownSent || _ended.isCompleted || _connection == nullptr || _unsupportedSeen) return;
+    if (!_greeted) {
+      _finish(RetroHostEnd.hostFailure, kill: true, reason: 'Shut down before welcome.');
+      return;
+    }
     _shutdownSent = true;
     _shutdownDeadline = DateTime.now().add(shutdownLimit);
     _sendObject({'type': 'shutdown'});
@@ -306,7 +340,7 @@ class RetroHostClient {
     if (failed == null) throw RetroHostGone(_ended.isCompleted ? _endValue! : RetroHostEnd.hostFailure);
     switch (method) {
       case 'status':
-        return failed.toJson(short: true);
+        return failed.toFailureJson();
       case 'release':
         _failedStatus = null;
         _gameLoaded = false;
@@ -348,7 +382,7 @@ class RetroHostClient {
         if (!_exited.isCompleted) _exited.complete(extra);
         if (_unsupportedSeen) {
           _finish(RetroHostEnd.unsupported);
-        } else if (_shutdownSent && extra == 0 && _calls.isEmpty) {
+        } else if (_shutdownSent && (extra == 0 || extra == RetroHostEvent.exitUnknown) && _calls.isEmpty) {
           _finish(RetroHostEnd.clean);
         } else {
           _finish(RetroHostEnd.hostFailure, errorCode: RetroErrorCode.hostExited);
@@ -447,14 +481,18 @@ class RetroHostClient {
     final hasResult = f.has('result');
     final hasError = f.has('error');
     if (hasResult == hasError) throw const RetroProtocolError('A reply needs exactly one of result and error.');
-    final pending = _calls.removeFirst();
+    final pending = _calls.first;
     if (hasError) {
       final error = f.object('error');
-      pending.completer.completeError(RetroCallError(error.string('code'), error.string('message')));
+      final failure = RetroCallError(error.string('code'), error.string('message'));
+      _calls.removeFirst();
+      pending.completer.completeError(failure);
       return;
     }
     final result = _checkResult(pending.method, f.map['result']);
+    _calls.removeFirst();
     pending.completer.complete(result);
+    if (pending.method == 'start') _zeroInput();
   }
 
   Object? _checkResult(String method, Object? result) {
@@ -464,10 +502,12 @@ class RetroHostClient {
         _epoch = epoch;
         _gameLoaded = true;
         _lastStatusEnded = false;
-        _frame = null;
+        _stopDeadline = null;
+        _setFrame(null, null);
       case 'status':
         if (result != null) {
           final status = RetroStatus.parse(_object(result, 'status'));
+          if (status.ended && !_lastStatusEnded) _zeroRumble();
           _lastStatusEnded = status.ended;
           if (status.ended) _stopDeadline = null;
         }
@@ -529,7 +569,10 @@ class RetroHostClient {
         retroHostUnmapRing(base, bytes);
         rethrow;
       }
-      _previousRing?.unmap();
+      if (_previousRing != null) {
+        if (identical(_frameRing, _previousRing)) _setFrame(null, null);
+        _previousRing!.unmap();
+      }
       _previousRing = _ring;
       _ring = ring;
     } finally {
@@ -541,13 +584,21 @@ class RetroHostClient {
     final ring = _ring;
     if (ring == null) throw const RetroProtocolError('A frame came before any ring.');
     final pinned = ring.pin();
-    if (pinned != null && _previousRing != null) {
-      _previousRing!.unmap();
+    final drawn = pinned != null && _gameLoaded && pinned.epoch == _epoch;
+    if (drawn) _setFrame(pinned, ring);
+    _frames.add(RetroFrameEvent(pinned, drawn: drawn));
+  }
+
+  /// Keeps [frame], in [ring], as the frame to show, and unmaps the older ring once nothing shown
+  /// is in it: the launcher maps at most two rings (protocol.md "Memory objects").
+  void _setFrame(PinnedFrame? frame, FrameRing? ring) {
+    _frame = frame;
+    _frameRing = ring;
+    final previous = _previousRing;
+    if (previous != null && !identical(_frameRing, previous)) {
+      previous.unmap();
       _previousRing = null;
     }
-    final drawn = pinned != null && _gameLoaded && pinned.epoch == _epoch;
-    if (drawn) _frame = pinned;
-    _frames.add(RetroFrameEvent(pinned, drawn: drawn));
   }
 
   void _onRumble(RetroFields f) {
