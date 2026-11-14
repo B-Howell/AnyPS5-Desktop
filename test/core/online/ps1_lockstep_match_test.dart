@@ -286,4 +286,14 @@ void main() {
     expect(pair.guestGame.next, isNull, reason: 'it never entered lockstep');
     await pair.close();
   });
+
+  test('a launcher that keeps its RAM hashes back while it plays on is not followed', () async {
+    final pair = _Pair();
+    pair.guestLink.withhold = (message) => utf8.decode(message).contains('"type":"hash"');
+    pair.run();
+    await pair.hostMatch.done;
+    expect(pair.hostMatch.end, Ps1LockstepEnd.protocol);
+    expect(pair.hostGame.steps.length, lessThan(60 * 10), reason: 'a few comparisons wait, no more');
+    await pair.close();
+  });
 }

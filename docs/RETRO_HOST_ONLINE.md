@@ -76,8 +76,7 @@ branch of [anyps5-retro-host](https://github.com/B-Howell/anyps5-retro-host).
    memory card folder of the match's own (`retro/online/<room>/saves`), and the
    match waits for its `status` to be ready. It then enters lockstep, loads the
    state and says `loaded`. The state is inflated only up to the size the
-   `start` announced, so data from the other side cannot take more memory than
-   that. A match that ends while the friend's game is still starting waits for
+   `start` announced. A match that ends while the friend's game is still starting waits for
    it and closes it.
 8. **Play.** From the state's frame on, the first `delay` frames of both ports
    are idle. Each launcher reads its player's controller for the frame `delay`
@@ -90,7 +89,9 @@ branch of [anyps5-retro-host](https://github.com/B-Howell/anyps5-retro-host).
    focus) its host runs no frame, no new input is read, and the other game
    waits; the other player is told and sees "Paused".
 9. **Checks.** Every 60 frames each launcher sends its RAM hash. A difference
-   ends the match on both sides as out of sync.
+   ends the match on both sides as out of sync. A launcher whose hashes stop
+   coming while its input still does, or whose input runs further ahead than
+   its game could, is not followed: the match ends, or the input is dropped.
 10. **The end.** Leaving from the lobby, or the other player leaving, the
     connection breaking or 15 seconds without word from the other side, ends
     the match. Each host leaves lockstep: the host player's game goes on alone

@@ -101,6 +101,9 @@ class TestLink implements Ps1LockstepLink {
   void Function(Uint8List)? _control;
   void Function()? _closed;
   bool closed = false;
+
+  /// Control messages this end sends that are lost on purpose, as a launcher that keeps them back.
+  bool Function(Uint8List message)? withhold;
   Future<void> _lastControl = Future.value();
   int controlBytes = 0;
 
@@ -136,6 +139,7 @@ class TestLink implements Ps1LockstepLink {
   @override
   bool sendControl(Uint8List message) {
     if (closed) return false;
+    if (withhold?.call(message) ?? false) return true;
     controlBytes += message.length;
     final copy = Uint8List.fromList(message);
     final previous = _lastControl;

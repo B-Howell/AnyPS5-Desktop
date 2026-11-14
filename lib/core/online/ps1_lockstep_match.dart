@@ -171,8 +171,9 @@ class Ps1LockstepMatch {
   /// per tick while the other side has not acknowledged them.
   static const _maxDatagrams = 4;
 
-  /// RAM hashes of the other player's not yet compared: its game runs at most the delay and a few
-  /// frames ahead, so a few comparisons at most wait.
+  /// RAM hashes not yet compared, of either side: neither game runs more than the delay and a few
+  /// frames ahead of the other, so a few comparisons at most wait. More is a launcher that keeps
+  /// its hashes back, and ends the match.
   static const _maxWaitingHashes = 8;
 
   /// How often a launcher with nothing new to send still sends its newest input.
@@ -398,8 +399,8 @@ class Ps1LockstepMatch {
   }
 
   /// The gzip data [packed] inflated, when it is exactly [bytes] long; null for data that is not
-  /// gzip or inflates to another size. Inflating stops as soon as it passes [bytes], so data from
-  /// the other player cannot take more memory than the state it announced.
+  /// gzip or inflates to another size. Inflating stops as soon as it passes [bytes], so no more
+  /// than the state the other player announced is kept, beyond the inflater's own buffer.
   static Uint8List? inflate(Uint8List packed, int bytes) {
     final out = BytesBuilder(copy: false);
     var tooLong = false;
@@ -538,6 +539,10 @@ class Ps1LockstepMatch {
     _local.removeWhere((frame, _) => frame <= kept);
     final ram = sync.ram;
     if (ram != null && (sync.frame - _first) % compareEvery == 0) {
+      if (_ourHashes.length >= _maxWaitingHashes) {
+        _finish(Ps1LockstepEnd.protocol);
+        return;
+      }
       _ourHashes[sync.frame] = ram;
       _send(Ps1LockstepHash(sync.frame, ram));
       _compare(sync.frame);
@@ -566,7 +571,7 @@ class Ps1LockstepMatch {
       expectedEpoch: _epoch,
       expectedSeat: _peerPort,
       oldestFrame: max(_first, _remoteHave - 255),
-      newestFrame: _remoteHave + 255,
+      newestFrame: _ran + 1 + 2 * (_delay! + _ahead) + 8,
       lastSentFrame: _produced,
     );
     if (packet == null) return;
