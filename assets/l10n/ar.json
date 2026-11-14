@@ -2478,7 +2478,7 @@
   "retroGfxDownsample": "تقليل العينات",
   "retroGfxDownsampleDetail": "يليّن الصورة بعد رسمها. يساعد الألعاب التي تمزج بين 2D و3D.",
   "retroGfxWidescreen": "شاشة عريضة",
-  "retroGfxWidescreenDetail": "يُظهر المزيد من الألعاب ثلاثية الأبعاد لملء شاشة عريضة. يفسد الألعاب ثنائية الأبعاد.",
+  "retroGfxWidescreenDetail": "يعرض مساحة أوسع من المشهد في الألعاب ثلاثية الأبعاد لملء شاشة عريضة. يفسد الألعاب ثنائية الأبعاد.",
   "retroGfxRestartNote": "يسري عند تشغيل اللعبة مرة أخرى.",
   "retroGfxFilterNearest": "إيقاف (بكسلات حادة)",
   "retroGfxFilterBilinear": "ناعم",
@@ -2512,7 +2512,7 @@
   "retroOptimizerRate": "%@ من %@ إطارًا في الثانية",
   "retroOptimizerUndo": "تراجع",
   "retroOptimizerUndoDetail": "يعيد الإعدادات التي كانت لهذه اللعبة قبل التطبيق.",
-  "retroOptimizerLoweredToast": "لم تستطع اللعبة الحفاظ على سرعتها الكاملة، لذا خُفّض %@ إلى %@.",
+  "retroOptimizerLoweredToast": "لم تستطع اللعبة الحفاظ على سرعتها الكاملة، لذا خُفّض الإعداد «%@» إلى %@.",
   "retroOptimizerHeldToast": "المحسّن التلقائي: تحافظ اللعبة على سرعتها الكاملة.",
   "retroOptimizerSlowToast": "تعمل اللعبة أبطأ من سرعتها الكاملة، ولم يبقَ شيء لتخفيضه."
 }

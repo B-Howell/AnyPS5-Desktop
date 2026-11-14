@@ -2474,7 +2474,7 @@
   "retroGfxVideos": "Makinis na video",
   "retroGfxVideosDetail": "Pinapakinis ang mga kahon-kahong kulay sa mga video ng laro.",
   "retroGfxProgressive": "Walang interlacing",
-  "retroGfxProgressiveDetail": "Iginuguhit ang buong larawan sa halip na salitang linya. May ilang larong nasisira.",
+  "retroGfxProgressiveDetail": "Iginuguhit ang buong larawan sa halip na mga salit-salitang linya. May ilang larong nasisira.",
   "retroGfxDownsample": "Downsampling",
   "retroGfxDownsampleDetail": "Pinalalambot ang larawan pagkatapos itong iguhit. Nakakatulong sa mga larong naghahalo ng 2D at 3D.",
   "retroGfxWidescreen": "Widescreen",
