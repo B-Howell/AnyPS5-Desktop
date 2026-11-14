@@ -31,7 +31,8 @@ import '../../support/signing.dart';
 /// With `"packer"` (that repository's tools/package_release.py) and `"coreLicence"` (SwanStation's
 /// LICENSE) the host and core are first packed as a release, signed with a throwaway key,
 /// installed and checked (lib/core/retro_host/retro_host_release.dart), and the host is started
-/// from the checked files: on Windows they must stay held until the game is ready.
+/// from the checked files: they must stay held until the host has exited, and on Windows nothing
+/// may write them while they are, since the host loads the core again for every game.
 void main() {
   final configPath = Platform.environment['ANYPS5_RETRO_HOST_REAL'];
   if (configPath == null || configPath.isEmpty) {
@@ -90,17 +91,10 @@ void main() {
       });
       _report('start: epoch $epoch');
 
-      if (checked != null && Platform.isWindows) {
-        expect(checked.held, isTrue);
-        for (final file in [checked.executable, checked.core]) {
-          expect(() => File(file).openSync(mode: FileMode.append).closeSync(), throwsA(isA<FileSystemException>()));
-        }
-        _report('the checked files are held while the game loads');
-      }
+      _expectHeld(checked, 'while the game loads');
       final ready = await _waitFor(started, (s) => s.ready || s.ended, const Duration(seconds: 60));
       expect(ready.ended, isFalse, reason: 'the game ended at start: ${ready.errorCode} ${ready.error}');
       if (checked != null) {
-        expect(checked.held, isFalse, reason: 'the checked files are let go once the game is ready');
         _report('host ${checked.version} checked and started from ${checked.program ?? checked.executable}');
       }
       _report('ready: hardware=${ready.hardware} resolutionError=${jsonEncode(ready.resolutionError)}');
@@ -126,6 +120,7 @@ void main() {
       expect(stopped?.errorCode, RetroErrorCode.none);
       expect(await started.call('release'), isNull);
       expect(await started.status(), isNull);
+      _expectHeld(checked, 'after the game was released, for the next core load');
 
       started.shutdown();
       final end = await started.ended;
@@ -133,6 +128,7 @@ void main() {
       _report('end: $end, exit code $code');
       expect(end, RetroHostEnd.clean, reason: started.failureReason);
       expect(code, 0);
+      if (checked != null) expect(checked.held, isFalse, reason: 'the checked files are let go once the host exited');
     } finally {
       await frames?.cancel();
       await client?.close();
@@ -216,3 +212,19 @@ String _python() {
 }
 
 void _report(String line) => stdout.writeln(line);
+
+/// That a checked host's files are still held [when], and on Windows that nothing can write them.
+void _expectHeld(RetroHostChecked? checked, String when) {
+  if (checked == null) return;
+  expect(checked.held, isTrue, reason: 'the checked files are held $when');
+  if (Platform.isWindows) {
+    for (final file in [checked.executable, checked.core]) {
+      expect(
+        () => File(file).openSync(mode: FileMode.append).closeSync(),
+        throwsA(isA<FileSystemException>()),
+        reason: '$file is written $when',
+      );
+    }
+  }
+  _report('the checked files are held $when');
+}

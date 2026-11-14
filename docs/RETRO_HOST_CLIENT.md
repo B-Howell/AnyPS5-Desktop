@@ -145,22 +145,26 @@ where the maintainers sign.
   then the `.files` against `SHA256SUMS`, then the host executable and
   SwanStation against the `.files`. Each of the two is hashed from a
   `CheckedFile`, on another isolate.
-  - On Windows both stay open with read sharing only. Nothing can write,
-    rename or delete them until the first game's `status` shows `ready` or
-    `ended`. By then the host has loaded the core.
+  - On Windows both stay open with read sharing only (no `FILE_SHARE_WRITE`
+    or `FILE_SHARE_DELETE`). Nothing can write, rename or delete them, or
+    rename another file onto them, until the host has exited. The host loads
+    SwanStation again for every game it starts, so a file let go after the
+    first game would leave the next game's load unchecked.
   - On Linux the host's descriptor is above 3 and close-on-exec. The host is
     started through it: `RetroHostChecked.program` is `/proc/self/fd/<n>`,
     which the native start passes to `posix_spawn` as the path, while
     `argv[0]` stays the real path. So the file that was checked is the file
     that runs, even if the path is replaced in between. SwanStation is checked
     by path, as the protocol allows on Linux.
-  - `RetroHostClient.start(checked: ...)` releases the files at the first such
-    `status`, or when the connection ends, whichever is first. It refuses a
-    command whose program is not the checked executable, and for the whole
-    life of that host it refuses any `start` whose `core` is not the release's
-    SwanStation, so a checked host never loads another core. A check is good
-    for one start: a second start with it, or a start after it was released,
-    is refused, so run `checkBeforeStart` again before each start.
+  - `RetroHostClient.start(checked: ...)` releases the files once the host
+    has exited, whether it was shut down, exited unasked or was killed after
+    a time limit or a broken rule, and before `exited` completes; a start that
+    fails releases them at once. It refuses a command whose program is not
+    the checked executable, and for the whole life of that host it refuses
+    any `start` whose `core` is not the release's SwanStation, so a checked
+    host never loads another core. A check is good for one start: a second
+    start with it, or a start after it was released, is refused, so run
+    `checkBeforeStart` again before each start.
   - A file swapped for something that is not a regular file (a FIFO, say) is
     refused at once; the descriptor is opened without blocking.
 - **When a check fails.** `RetroHostReleaseFailure` is thrown and the host is
@@ -339,8 +343,17 @@ that `SHA256SUMS` with a throwaway key. They check:
 
 With `packer` and `coreLicence` in its JSON, the real-host test packs the host
 and SwanStation as a release, signs it, installs it, checks it and starts it
-from the checked files. On Windows it also checks that both files stay held
-while the game loads and are released once it is ready.
+from the checked files. It also checks that both files stay held while the
+game loads and after it was stopped and released, ready for the next game's
+core load (on Windows, that nothing can write them), and that they are
+released once the host has exited.
+
+The fixture test also starts the fake host as a checked host, with the
+session's core as the checked file. It checks that the file stays held after
+every reply through a game that gets ready, ends and is released, and a second
+game, then is let go once the host exits; on Windows it tries to write,
+replace, rename and delete the core after each reply. Two more sessions check
+the same when the host exits unasked and when it is killed for a broken rule.
 
 [`test/core/retro_host/retro_host_environment_test.dart`](../test/core/retro_host/retro_host_environment_test.dart)
 covers how the host's environment is put together, and

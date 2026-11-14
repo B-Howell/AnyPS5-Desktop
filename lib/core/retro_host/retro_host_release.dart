@@ -81,7 +81,8 @@ class RetroHostVersion implements Comparable<RetroHostVersion> {
 }
 
 /// A host whose files were checked before a start: the client starts it from [program] when
-/// there is one, and calls [release] once the first game's `status` shows `ready` or `ended`.
+/// there is one, and calls [release] once the host has exited, since the host loads the core again
+/// for every game it starts.
 class RetroHostChecked {
   RetroHostChecked({
     required this.version,

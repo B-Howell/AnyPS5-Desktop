@@ -146,6 +146,10 @@ class RetroHostClient {
   FrameRing? _previousRing;
   PinnedFrame? _frame;
   FrameRing? _frameRing;
+
+  /// The checked files, held until the host has exited: the host loads the core again for every
+  /// game it starts, so each load must find the file that was checked (protocol.md "Finding and
+  /// checking the host").
   RetroHostChecked? _checked;
 
   /// The SwanStation of the checked release: the only core `start` may name for a checked host.
@@ -162,8 +166,9 @@ class RetroHostClient {
   /// [muted] are sent as the first call after `welcome`.
   ///
   /// [checked] is a host whose files were checked (retro_host_release.dart): it is started through
-  /// the checked file, and its files stay held until the first game's `status` shows `ready` or
-  /// `ended`, or the connection ends (protocol.md "Finding and checking the host").
+  /// the checked file, and its files stay held until the host has exited, so every game's core load
+  /// finds the checked SwanStation; [exited] completes only after they are let go. A start that
+  /// fails lets them go at once (protocol.md "Finding and checking the host").
   static RetroHostClient start({
     required List<String> command,
     RetroHostChecked? checked,
@@ -256,7 +261,8 @@ class RetroHostClient {
   /// The host's exit code, once it has exited.
   int? get exitCode => _exitCode;
 
-  /// Completes with the host's exit code when its process has ended.
+  /// Completes with the host's exit code when its process has ended, once a checked host's files
+  /// have been let go.
   Future<int> get exited => _exited.future;
 
   String get hostVersion => _hostVersion;
@@ -462,6 +468,7 @@ class RetroHostClient {
       case RetroHostEvent.exited:
         _exitCode = extra;
         _unsupportedKill?.cancel();
+        _releaseChecked();
         if (!_exited.isCompleted) _exited.complete(extra);
         if (_unsupportedSeen) {
           _finish(RetroHostEnd.unsupported);
@@ -601,7 +608,6 @@ class RetroHostClient {
           if (afterStop) _stopDeadline = null;
         } else {
           final status = RetroStatus.parse(_object(result, 'status'));
-          if (status.ready || status.ended) _releaseChecked();
           if (status.ended && !_lastStatusEnded) _zeroRumble();
           _lastStatusEnded = status.ended;
           if (status.ended && afterStop) _stopDeadline = null;
@@ -827,7 +833,6 @@ class RetroHostClient {
       }
     }
     if (!_ready.isCompleted) _ready.completeError(RetroHostGone(end));
-    _releaseChecked();
     _ended.complete(end);
     if (kill) unawaited(_release());
   }
@@ -843,6 +848,7 @@ class RetroHostClient {
     final address = _connection.address;
     final code = await Isolate.run(() => retroHostClose(Pointer<Void>.fromAddress(address)));
     _connection = nullptr;
+    _releaseChecked();
     if (!_exited.isCompleted) {
       _exitCode = code;
       _exited.complete(code);
