@@ -110,10 +110,15 @@ class TogetherModel {
       sfuRoom: app.services.sfuRoom ?? LiveKitRoom.new,
       bridgeFile: GameSessions.defaultBridgeFile(app.paths.config),
     );
+    // A friend's invite: the toast, over the launcher and over a PS1 game in its window, and the
+    // card over a game in its own window. A PS1 online invite names the game when a disc here is
+    // known to be it, and otherwise says what it is.
     hub.games.onInvite = (invite) {
       disturbingSound();
       inviteRing();
-      final text = T.format('gameInvitedYou', [invite.from?.displayName ?? '', gameName(invite.titleId)]);
+      final from = invite.from?.displayName ?? '';
+      final game = RetroHostOnline.isRetroOnlineInvite(invite) ? app.retroInviteGame(invite) : gameName(invite.titleId);
+      final text = game == null ? T.format('retroOnlineJoin', [from]) : T.format('gameInvitedYou', [from, game]);
       app.show(text);
       if (!doNotDisturb) {
         unawaited(app.noticeOverGame(text, detail: T.text('friendsTitle'), symbol: Icons.sports_esports_rounded));

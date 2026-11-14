@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:anyps5_desktop/core/online/ps1_lockstep_match.dart';
+import 'package:anyps5_desktop/core/online/ps1_netplay_state.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_client.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_lockstep.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_pad.dart';
@@ -14,7 +15,8 @@ import '../online/lockstep_test_support.dart';
 /// The launcher's own client in lockstep with two real emulator hosts running SwanStation, as two
 /// players' launchers drive them (anyps5-retro-host docs/protocol.md "Lockstep"): both start in
 /// lockstep and are given the same steps, and their main RAM must match after every frame; one
-/// then saves its state, which the other, after running on its own, loads and catches up with.
+/// then saves its state, which the other, after running on its own, loads and catches up with,
+/// though its disc has another name: the state is one for netplay, which names no path.
 ///
 /// Then two launchers' matches ([Ps1LockstepMatch]) play one through a link that loses, delays and
 /// reorders input: the host player's game runs on its own, is held, and its state goes to the
@@ -36,9 +38,11 @@ void main() {
     try {
       final system = Directory(p.join(work.path, 'system'))..createSync();
       File(path('bios')).copySync(p.join(system.path, 'openbios.bin'));
+      String discOf(String player) =>
+          p.join(work.path, '$player-disc', player == 'host' ? 'program.cue' : 'my copy.cue');
       String disc(String player) {
-        final folder = Directory(p.join(work.path, '$player-disc'))..createSync();
-        final cue = p.join(folder.path, 'program.cue');
+        Directory(p.join(work.path, '$player-disc')).createSync();
+        final cue = discOf(player);
         final built = Process.runSync(_python(), [path('discBuilder'), path('program'), cue]);
         expect(built.exitCode, 0, reason: 'make_test_disc.py: ${built.stderr}');
         return cue;
@@ -48,7 +52,7 @@ void main() {
         'core': path('core'),
         'system': system.path,
         'saves': p.join(work.path, 'saves-$player'),
-        'disc': p.join(work.path, '$player-disc', 'program.cue'),
+        'disc': discOf(player),
         'options': {
           'swanstation_BIOS_PathNTSCU': 'openbios.bin',
           'swanstation_BIOS_PathNTSCJ': 'openbios.bin',
@@ -108,6 +112,11 @@ void main() {
       final state = p.join(work.path, 'match.state');
       final saved = await host.saveState(state);
       expect(saved, RetroStatePosition(frame: 300, bytes: File(state).lengthSync()));
+      expect(
+        Ps1NetplayState.problem(File(state).readAsBytesSync()),
+        isNull,
+        reason: 'a state for a friend names no path',
+      );
 
       await guest.stopGame();
       expect(await guest.call('release'), isNull);
@@ -119,6 +128,7 @@ void main() {
       await run(clients, 300, 120);
       for (var frame = 300; frame < 420; frame++) {
         expect(syncs[1][frame]!.ram, syncs[0][frame]!.ram, reason: 'RAM after joined frame $frame');
+        expect(syncs[1][frame]!.state, syncs[0][frame]!.state, reason: 'state after joined frame $frame');
       }
       _report('join: the guest loaded the state (${saved!.bytes} bytes) and matched for 120 frames');
 
@@ -146,7 +156,8 @@ void main() {
       final system = Directory(p.join(work.path, 'system'))..createSync();
       File(path('bios')).copySync(p.join(system.path, 'openbios.bin'));
       String disc(String player) {
-        final cue = p.join((Directory(p.join(work.path, '$player-disc'))..createSync()).path, 'program.cue');
+        final folder = Directory(p.join(work.path, '$player-disc'))..createSync();
+        final cue = p.join(folder.path, player == 'host' ? 'program.cue' : 'my copy.cue');
         expect(Process.runSync(_python(), [path('discBuilder'), path('program'), cue]).exitCode, 0);
         return cue;
       }
@@ -190,7 +201,6 @@ void main() {
         system: 'linux',
         core: 'a' * 64,
         disc: 'b' * 64,
-        discName: 'program.cue',
         bios: 'c' * 64,
       );
       final (a, b) = TestLink.pair(

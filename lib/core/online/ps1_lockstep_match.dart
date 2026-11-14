@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import '../retro_host/retro_lockstep.dart';
 import '../retro_host/retro_pad.dart';
 import 'ps1_lockstep_control.dart';
+import 'ps1_netplay_state.dart';
 import 'ps1_netplay_wire.dart';
 
 /// The two channels of the peer connection a match runs on: input datagrams, unordered and
@@ -74,12 +75,17 @@ enum Ps1LockstepEnd {
   /// saved or loaded).
   hostFailed,
 
+  /// The host player's emulator host saved a state that is not fit for netplay
+  /// ([Ps1NetplayState]): it lacks the host's SwanStation patches, so its state would name the
+  /// player's disc path or could make the two games differ. Nothing was sent.
+  hostOld,
+
   /// The other launcher broke the match's rules.
   protocol,
 }
 
 /// What two launchers' hellos disagree on, first in this order.
-enum Ps1LockstepMismatch { host, core, disc, discName, bios }
+enum Ps1LockstepMismatch { host, core, disc, bios }
 
 /// What this launcher plays the match with ([Ps1LockstepHello] without the options).
 class Ps1LockstepIdentity {
@@ -88,7 +94,6 @@ class Ps1LockstepIdentity {
     required this.system,
     required this.core,
     required this.disc,
-    required this.discName,
     required this.bios,
   });
 
@@ -98,27 +103,20 @@ class Ps1LockstepIdentity {
   final String system;
   final String core;
   final String disc;
-  final String discName;
   final String bios;
 
-  Ps1LockstepHello hello(Map<String, String> options) => Ps1LockstepHello(
-    hostVersion: hostVersion,
-    system: system,
-    core: core,
-    disc: disc,
-    discName: discName,
-    bios: bios,
-    options: options,
-  );
+  Ps1LockstepHello hello(Map<String, String> options) =>
+      Ps1LockstepHello(hostVersion: hostVersion, system: system, core: core, disc: disc, bios: bios, options: options);
 
   /// The first thing [theirs] plays with differently, or null when both match. The SwanStation
   /// libraries are compared only on the same system: a Windows and a Linux build of the same
-  /// source are different files, and nothing the host says yet names the build they come from.
+  /// source are different files, and the host names no build identity that is the same on both
+  /// (docs/RETRO_HOST_ONLINE.md "Not yet"). The disc's file names do not count: the state names
+  /// the disc by its place in the disc list.
   Ps1LockstepMismatch? against(Ps1LockstepHello theirs) => switch (theirs) {
     _ when theirs.hostVersion != hostVersion => Ps1LockstepMismatch.host,
     _ when theirs.system == system && theirs.core != core => Ps1LockstepMismatch.core,
     _ when theirs.disc != disc => Ps1LockstepMismatch.disc,
-    _ when theirs.discName != discName => Ps1LockstepMismatch.discName,
     _ when theirs.bios != bios => Ps1LockstepMismatch.bios,
     _ => null,
   };
@@ -347,7 +345,10 @@ class Ps1LockstepMatch {
     final saved = await _guard(game.saveState(file.path));
     if (saved == null) throw _finish(Ps1LockstepEnd.hostFailed);
     final state = await _guard(file.readAsBytes());
-    if (state.length != saved.bytes) throw _finish(Ps1LockstepEnd.hostFailed);
+    if (state.length != saved.bytes || RetroStateFile.read(state)?.frame != saved.frame) {
+      throw _finish(Ps1LockstepEnd.hostFailed);
+    }
+    if (Ps1NetplayState.problem(state) != null) throw _finish(Ps1LockstepEnd.hostOld);
     final packed = Uint8List.fromList(gzip.encode(state));
     final chunks = <Uint8List>[
       for (var at = 0; at < packed.length; at += Ps1LockstepChunk.maxBytes)
@@ -386,7 +387,12 @@ class Ps1LockstepMatch {
     _setPhase(Ps1LockstepPhase.transferring);
     final packed = await _within(_stateCame.future);
     final state = inflate(packed, start.bytes);
-    if (state == null || sha256.convert(state).toString() != start.sha256) throw _finish(Ps1LockstepEnd.protocol);
+    if (state == null ||
+        sha256.convert(state).toString() != start.sha256 ||
+        RetroStateFile.read(state)?.frame != start.frame ||
+        Ps1NetplayState.problem(state) != null) {
+      throw _finish(Ps1LockstepEnd.protocol);
+    }
     work.createSync(recursive: true);
     final file = File(p.join(work.path, 'match.state'));
     await _guard(file.writeAsBytes(state, flush: true));

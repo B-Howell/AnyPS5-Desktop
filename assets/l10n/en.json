@@ -2561,7 +2561,6 @@
   "retroOnlinePeerLeft": "Your friend left the online game.",
   "retroOnlineTooSlow": "The connection is too slow for this game. Try again on a faster connection.",
   "retroOnlineMismatchHost": "The emulator hosts differ. Both players need the same AnyPS5 emulator host.",
-  "retroOnlineMismatchDiscName": "The disc files are named differently. Give your disc the same file name as your friend's.",
   "retroOnlineMismatchBios": "Your PS1 BIOS files differ. Both players need the same BIOS.",
   "retroOnlineNoHostDetail": "Turn on Settings › Emulators › Run PS1 games in the separate host to join a PS1 online game.",
   "retroOnlineNoDiscDetail": "This game's disc is not in your library. Add the same disc to play with your friend.",

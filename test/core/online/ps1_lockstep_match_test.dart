@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:anyps5_desktop/core/online/ps1_lockstep_control.dart';
 import 'package:anyps5_desktop/core/online/ps1_lockstep_match.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_pad.dart';
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -17,7 +18,6 @@ const _identity = Ps1LockstepIdentity(
   system: 'linux',
   core: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   disc: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-  discName: 'Game.cue',
   bios: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
 );
 
@@ -147,7 +147,6 @@ void main() {
         system: 'linux',
         core: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         disc: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-        discName: 'Game.cue',
         bios: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
       ),
     );
@@ -224,14 +223,21 @@ void main() {
 
   test('a control message of another shape is refused', () {
     Uint8List bytes(Object value) => Uint8List.fromList(utf8.encode(jsonEncode(value)));
-    expect(Ps1LockstepMessage.decode(bytes({'v': 1, 'type': 'pause', 'paused': true})), isA<Ps1LockstepPause>());
-    expect(() => Ps1LockstepMessage.decode(bytes({'v': 2, 'type': 'leave'})), throwsFormatException);
-    expect(() => Ps1LockstepMessage.decode(bytes({'v': 1, 'type': 'leave', 'extra': 1})), throwsFormatException);
+    expect(Ps1LockstepMessage.decode(bytes({'v': 2, 'type': 'pause', 'paused': true})), isA<Ps1LockstepPause>());
     expect(
-      () => Ps1LockstepMessage.decode(bytes({'v': 1, 'type': 'hash', 'frame': 0, 'ram': 'ABC'})),
+      () => Ps1LockstepMessage.decode(bytes({'v': 1, 'type': 'leave'})),
+      throwsFormatException,
+      reason: 'version 1 named the disc by its file name',
+    );
+    expect(() => Ps1LockstepMessage.decode(bytes({'v': 2, 'type': 'leave', 'extra': 1})), throwsFormatException);
+    expect(
+      () => Ps1LockstepMessage.decode(bytes({'v': 2, 'type': 'hash', 'frame': 0, 'ram': 'ABC'})),
       throwsFormatException,
     );
-    expect(() => Ps1LockstepMessage.decode(bytes({'v': 1, 'type': 'what'})), throwsFormatException);
+    expect(() => Ps1LockstepMessage.decode(bytes({'v': 2, 'type': 'what'})), throwsFormatException);
+    final hello = _identity.hello(const {'swanstation_GPU_ResolutionScale': '4'});
+    expect(jsonDecode(utf8.decode(hello.encode())), isNot(contains('discName')));
+    expect((Ps1LockstepMessage.decode(hello.encode()) as Ps1LockstepHello).disc, _identity.disc);
     final start = Ps1LockstepStart(
       frame: 600,
       delay: 3,
@@ -254,7 +260,6 @@ void main() {
       system: system,
       core: core,
       disc: _identity.disc,
-      discName: _identity.discName,
       bios: _identity.bios,
     ).hello(const {});
     expect(_identity.against(theirs('linux', _identity.core)), isNull);
@@ -269,6 +274,39 @@ void main() {
     expect(Ps1LockstepMatch.inflate(packed, state.length - 1), isNull, reason: 'more than announced');
     expect(Ps1LockstepMatch.inflate(packed, state.length + 1), isNull, reason: 'less than announced');
     expect(Ps1LockstepMatch.inflate(Uint8List.fromList([1, 2, 3]), 3), isNull, reason: 'not gzip');
+  });
+
+  test("a host player's state that names a path is never sent", () async {
+    final pair = _Pair();
+    pair.hostGame.netplaySafe = false;
+    pair.run();
+    await pair.hostMatch.done;
+    await pair.guestMatch.done;
+    expect(pair.hostMatch.end, Ps1LockstepEnd.hostOld);
+    expect(pair.hostLink.controlBytes, lessThan(4096), reason: 'no chunk of the state went out');
+    expect(pair.guestGame.loads, 0, reason: 'the friend loaded nothing');
+    expect(pair.hostGame.leaves, 1, reason: "the host player's game goes on alone");
+    await pair.close();
+  });
+
+  test('a state that names a path is not loaded by the friend', () async {
+    final pair = _Pair();
+    Uint8List encode(Map<String, Object?> json) => Uint8List.fromList(utf8.encode(jsonEncode(json)));
+    pair.hostLink.rewrite = (message) {
+      final json = jsonDecode(utf8.decode(message)) as Map<String, Object?>;
+      final unsafe = stateFile(0, utf8.encode('{"frame":0,"ram":0}'), pathless: false);
+      return switch (json['type']) {
+        'start' => encode({...json, 'bytes': unsafe.length, 'sha256': sha256.convert(unsafe).toString(), 'chunks': 1}),
+        'chunk' when json['index'] == 0 => encode({...json, 'data': base64.encode(gzip.encode(unsafe))}),
+        'chunk' => null,
+        _ => message,
+      };
+    };
+    pair.run();
+    await pair.guestMatch.done;
+    expect(pair.guestMatch.end, Ps1LockstepEnd.protocol);
+    expect(pair.guestGame.loads, 0, reason: 'the friend loaded nothing');
+    await pair.close();
   });
 
   test('a friend whose game is still starting when the match ends is let go', () async {

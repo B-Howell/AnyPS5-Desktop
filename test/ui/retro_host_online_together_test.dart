@@ -1,11 +1,15 @@
 import 'dart:io';
 
+import 'package:anyps5_desktop/core/game_library.dart';
+import 'package:anyps5_desktop/core/online/ps1_file_digests.dart';
+import 'package:anyps5_desktop/core/online/ps1_lockstep_media.dart';
 import 'package:anyps5_desktop/core/online/ps1_lockstep_rooms.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/retro_host/retro_host_game.dart';
 import 'package:anyps5_desktop/ui/strings.dart';
 import 'package:anyps5_desktop/ui/together_model.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 import '../support/fake_together.dart';
 import '../support/ps1_launcher.dart';
@@ -16,7 +20,8 @@ const _ben = '66666666-6666-4666-8666-666666666666';
 const _room = '33333333-3333-4333-8333-333333333333';
 
 /// The game's lobby signed in to AnyTogether (lib/ui/retro_host_online.dart): friends to invite, a
-/// friend invited through a private room for the disc, and a friend's PS1 invite in Friends. No
+/// friend invited through a private room for the disc, a friend's PS1 invite in Friends and as a
+/// notice, and the friend's launcher finding the disc by its tracks and starting its host muted. No
 /// widget test is in this file. The game's keyboard needs Flutter's binding, whose test binding
 /// answers every HTTP call with a 400, so its stand-in for HTTP is taken away again.
 void main() {
@@ -38,6 +43,31 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
     expect(condition(), isTrue);
+  }
+
+  /// The launcher's disc made a data disc: its cue sheet and one track of [bytes] bytes.
+  String track(int bytes) {
+    File(launcher.disc)
+        .writeAsStringSync(['FILE "game.bin" BINARY', '  TRACK 01 MODE2/2352', '    INDEX 01 00:00:00', ''].join('\n'));
+    return (File(p.join(p.dirname(launcher.disc), 'game.bin'))..writeAsBytesSync(List.filled(bytes, 5))).path;
+  }
+
+  /// Signed in to AnyTogether with Ana and Ben online and Cleo offline; no game plays.
+  Future<void> signedIn({void Function(FakeTogether)? serve}) async {
+    final fake = server = await FakeTogether.start();
+    fake.me = {'id': _me, 'handle': 'player1', 'displayName': 'Player One'};
+    fake.friend(_ana, 'ana', 'Ana', presence: {'state': 'online'});
+    fake.friend(_ben, 'ben', 'Ben', presence: {'state': 'online'});
+    fake.friend('77777777-7777-4777-8777-777777777777', 'cleo', 'Cleo');
+    serve?.call(fake);
+    launcher = Ps1Launcher(together: fake.base);
+    final model = launcher.model;
+    model.setRetroHostPs1(true);
+    model.together.email = 'player1@example.com';
+    await model.together.sendCode();
+    model.together.code = '123456';
+    await model.together.verify();
+    await until(() => model.together.connected && model.together.hub.friends.friends.length == 3);
   }
 
   /// The game plays; with [friends], the player is signed in to AnyTogether with Ana and Ben
@@ -123,16 +153,16 @@ void main() {
         return null;
       }),
     );
-    File(launcher.disc).writeAsStringSync('FILE "game.bin" BINARY');
+    track(4096);
     openLobby();
     final invite = lobby().singleWhere((row) => row.id == 'coop-invite-$_ana');
     expect(invite.title, T.format('partyInvite', ['Ana']));
     (invite.kind as ActionRow).run();
     await until(() => invited.isNotEmpty);
     expect(made?['properties'], {
-      'protocol': 'anyps5-ps1-lockstep-v1',
+      'protocol': 'anyps5-ps1-lockstep-v2',
       'discSha256': matches(RegExp(r'^[0-9a-f]{64}$')),
-      'discBytes': 22,
+      'discBytes': 4096,
     });
     expect(made?['capacity'], 2);
     expect(made?['joinable'], isFalse);
@@ -163,5 +193,66 @@ void main() {
     final row = launcher.model.together.gameRows().singleWhere((row) => row.id == 'game-accept-$_room');
     expect(row.title, T.format('retroOnlineJoin', ['Ana']));
     expect(row.detail, T.text('retroOnlineJoinDetail'));
+  });
+
+  test("a friend's PS1 invite is a notice; joining finds the disc by its tracks, once, and starts muted", () async {
+    late String digest;
+    late int bytes;
+    Map<String, dynamic> room() => {
+      'id': _room,
+      'kind': 'online',
+      'titleId': Ps1LockstepRooms.titleFor(digest),
+      'gameVersion': Ps1LockstepRooms.gameVersion,
+      'engineBuild': Ps1LockstepRooms.protocol,
+      'capacity': 2,
+      'joinable': false,
+      'endedAt': null,
+      'host': {'userId': _ana},
+      'properties': {'protocol': Ps1LockstepRooms.protocol, 'discSha256': digest, 'discBytes': bytes},
+      'members': const [],
+    };
+    final joins = <Object?>[];
+    await signedIn(
+      serve: (fake) => fake.handlers.add((call) {
+        switch ((call.method, call.path)) {
+          case ('GET', 'game-sessions/$_room'):
+            return (200, room());
+          case ('POST', 'game-sessions/$_room/join'):
+            joins.add(call.body);
+            return (404, {'status': 404, 'code': 'not_found', 'title': 'The game ended'});
+        }
+        return null;
+      }),
+    );
+    final bin = track(8192);
+    bytes = 8192;
+    digest = Ps1LockstepMedia.discDigestOf(GameLibrary.discFiles(launcher.disc), {bin: Ps1FileDigests.fileDigest(bin)});
+    final model = launcher.model;
+    Map<String, Object?> invite() => {
+      'sessionId': _room,
+      'titleId': Ps1LockstepRooms.titleFor(digest),
+      'gameVersion': Ps1LockstepRooms.gameVersion,
+      'engineBuild': Ps1LockstepRooms.protocol,
+      'from': FakeTogether.card(_ana, 'ana', 'Ana'),
+    };
+
+    server!.push('game_session.invite', invite());
+    await until(() => model.together.hub.games.invites.isNotEmpty);
+    expect(model.toast, T.format('retroOnlineJoin', ['Ana']), reason: 'no disc here is known to be it yet');
+
+    final joining = model.joinRetroOnline(model.together.hub.games.invites.single);
+    await until(() => launcher.opened.isNotEmpty);
+    expect(launcher.opened.single.$3, isTrue, reason: "the friend's host starts muted");
+    launcher.session.readyCompleter.complete();
+    await joining;
+    expect(joins, hasLength(1), reason: 'the disc in the library was found by its tracks and the room joined');
+    expect(launcher.session.shutdownAsked, isTrue, reason: 'the host opened for the match is let go');
+    expect(model.retroOnline, isNull);
+    expect(Ps1FileDigests(model.paths.retroDigests).knownNow([bin]), {
+      bin: Ps1FileDigests.fileDigest(bin),
+    }, reason: 'the disc is not read again for the next invite');
+
+    server!.push('game_session.invite', {...invite()});
+    await until(() => model.toast == T.format('gameInvitedYou', ['Ana', 'Night Racer']));
   });
 }

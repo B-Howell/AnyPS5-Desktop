@@ -1,100 +1,155 @@
+import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import '../game_library.dart';
+
+import 'ps1_file_digests.dart';
 import 'ps1_lockstep_match.dart';
 
 /// The files a PS1 match is played with, and their digests: two launchers play together only
-/// when the digests match (anyps5-retro-host docs/netplay.md "Joining a running game", step 1).
-/// Reading a whole disc takes seconds, so it runs on its own isolate.
+/// when the digests match (anyps5-retro-host docs/netplay.md "Joining a running game", step 1:
+/// "the same disc (by a hash of its tracks)"). The state a friend joins from names its disc by its
+/// place in the disc list, not by a path (netplay.md "Determinism"), so neither launcher's file
+/// names count: only each disc's layout (its cue sheet's tracks, modes, indexes and gaps) and
+/// tracks' contents, disc by disc in the order of the disc list.
 abstract final class Ps1LockstepMedia {
   /// The size of a PS1 BIOS image: what SwanStation reads from the system folder.
   static const biosBytes = 512 * 1024;
 
-  /// The bytes of a disc's [files] (its sheet and tracks, as the library found them).
+  /// The files that only name others: a cue sheet names its tracks and a playlist its discs, by
+  /// file name. Two copies of the same disc may name them differently.
+  static const sheets = {'.cue', '.m3u'};
+
+  /// A disc's tracks among its [files] (the library's list: the playlist, then each disc's sheet and
+  /// tracks, in the playlist's order), in that order.
+  static List<String> tracks(List<String> files) => [
+    for (final file in files)
+      if (!sheets.contains(p.extension(file).toLowerCase())) file,
+  ];
+
+  /// The bytes of a disc's tracks.
   static int discBytes(List<String> files) {
     var total = 0;
-    for (final file in files) {
+    for (final file in tracks(files)) {
       total += File(file).lengthSync();
     }
     return total;
   }
 
-  /// What this launcher plays [disc] with: the SHA-256 of the disc's [files] (each file's digest,
-  /// sorted, so neither the folder nor the order the library found them in counts), the disc's
-  /// file name, the SHA-256 of the [core] library, and the SHA-256 of the BIOS images in [system]
-  /// (each 512 KiB file's digest, sorted).
+  /// What this launcher plays a disc of [files] with: its disc digest ([discDigestOf]), the
+  /// SHA-256 of the [core] library, and that of the BIOS images in [system] ([biosDigestOf]). Only
+  /// files [digests] does not know as they are now are read.
   static Future<Ps1LockstepIdentity> identify({
+    required Ps1FileDigests digests,
     required String hostVersion,
     required String core,
-    required String disc,
     required List<String> files,
     required String system,
-  }) => Isolate.run(
-    () => Ps1LockstepIdentity(
+  }) async {
+    final bios = biosImages(system);
+    final known = await digests.of([core, ...tracks(files), ...bios]);
+    return Ps1LockstepIdentity(
       hostVersion: hostVersion,
       system: Platform.operatingSystem,
-      core: _fileDigest(core),
-      disc: discDigest(files),
-      discName: p.basename(disc),
-      bios: biosDigest(system),
-    ),
-  );
-
-  /// The SHA-256 of the sorted SHA-256 digests of [files], as lowercase hexadecimal.
-  static String discDigest(List<String> files) => _ofDigests([for (final file in files) _fileDigest(file)]);
-
-  /// The SHA-256 of the sorted SHA-256 digests of the BIOS images in [system]; that of no digests
-  /// when there is none.
-  static String biosDigest(String system) {
-    final folder = Directory(system);
-    if (!folder.existsSync()) return _ofDigests(const []);
-    return _ofDigests([
-      for (final entry in folder.listSync())
-        if (entry is File && entry.lengthSync() == biosBytes) _fileDigest(entry.path),
-    ]);
+      core: known[core]!,
+      disc: discDigestOf(files, known),
+      bios: biosDigestOf([for (final image in bios) known[image]!]),
+    );
   }
+
+  /// The disc digest of a disc of [files] when [digests] knows every track as it is now; null when
+  /// a track would have to be read, or the disc is not whole.
+  static String? knownDisc(Ps1FileDigests digests, List<String> files) {
+    final disc = tracks(files);
+    if (disc.isEmpty) return null;
+    final known = digests.knownNow(disc);
+    if (known == null) return null;
+    try {
+      return discDigestOf(files, known);
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  /// The disc digest of a disc of [files], reading the tracks [digests] does not know.
+  static Future<String> discDigest(Ps1FileDigests digests, List<String> files) async =>
+      discDigestOf(files, await digests.of(tracks(files)));
+
+  /// A cue sheet's `FILE` line: the file's name, quoted or not, and its type.
+  static final _fileLine = RegExp(r'^FILE\s+(?:"([^"]+)"|(\S+))\s+(\S+)$', caseSensitive: false);
+
+  /// The cue sheet commands that shape what the console reads: the rest (`REM`, `TITLE`,
+  /// `PERFORMER`, `CATALOG`, …) is description a copy may differ in.
+  static const _layout = {'TRACK', 'INDEX', 'PREGAP', 'POSTGAP', 'FLAGS'};
+
+  /// The SHA-256 of the disc list of [files] (the library's list: a playlist, then each disc's
+  /// cue sheet and tracks, or a CHD or PBP, in the playlist's order), given each track's SHA-256 in
+  /// [trackDigests]. One line a disc's part, a `DISC` line before each disc: a cue sheet's layout
+  /// commands as written (spaces collapsed, upper case), with each `FILE` naming its track by its
+  /// digest rather than its name, or `IMAGE` and the digest of a CHD or PBP. So two copies under
+  /// other names are the same disc list, and a different layout, a different number of discs or
+  /// another playlist order is not. Throws a [FileSystemException] when a cue sheet names a track
+  /// that is not among [files].
+  static String discDigestOf(List<String> files, Map<String, String> trackDigests) {
+    final named = {for (final file in tracks(files)) p.normalize(p.absolute(file)): trackDigests[file]!};
+    final inSheets = <String>{};
+    final lines = <String>[];
+    for (final file in files) {
+      switch (p.extension(file).toLowerCase()) {
+        case '.m3u':
+          continue;
+        case '.cue':
+          lines.add('DISC');
+          final folder = p.dirname(file);
+          for (final raw in const LineSplitter().convert(GameLibrary.sheetText(File(file)))) {
+            final fileLine = _fileLine.firstMatch(raw.trim());
+            final line = raw.trim().replaceAll(RegExp(r'\s+'), ' ');
+            if (fileLine != null) {
+              final name = (fileLine[1] ?? fileLine[2]!).replaceAll(r'\', '/');
+              final track = p.normalize(p.absolute(p.join(folder, p.joinAll(name.split('/')))));
+              final digest = named[track];
+              if (digest == null) throw FileSystemException('A cue sheet names a track that is not there', track);
+              inSheets.add(track);
+              lines.add('FILE $digest ${fileLine[3]!.toUpperCase()}');
+            } else if (line.isNotEmpty && _layout.contains(line.split(' ').first.toUpperCase())) {
+              lines.add(line.toUpperCase());
+            }
+          }
+        default:
+          final image = p.normalize(p.absolute(file));
+          if (inSheets.contains(image)) continue;
+          lines
+            ..add('DISC')
+            ..add('IMAGE ${named[image]!}');
+      }
+    }
+    return sha256.convert(utf8.encode(lines.join('\n'))).toString();
+  }
+
+  /// The 512 KiB files in [system], the BIOS images SwanStation may choose from.
+  static List<String> biosImages(String system) {
+    final folder = Directory(system);
+    if (!folder.existsSync()) return const [];
+    return [
+      for (final entry in folder.listSync())
+        if (entry is File && entry.lengthSync() == biosBytes) entry.path,
+    ];
+  }
+
+  /// The SHA-256 of the sorted SHA-256 digests [imageDigests] of the BIOS images; that of no
+  /// digests when there is none.
+  static String biosDigestOf(List<String> imageDigests) =>
+      sha256.convert((List.of(imageDigests)..sort()).join('\n').codeUnits).toString();
 
   /// Whether [files] could be the disc of an invite of [bytes] bytes, before they are read.
   static bool couldBe(List<String> files, int bytes) {
     try {
-      return discBytes(files) == bytes;
+      return tracks(files).isNotEmpty && discBytes(files) == bytes;
     } on FileSystemException {
       return false;
     }
   }
-
-  static String _ofDigests(List<String> digests) =>
-      sha256.convert((List.of(digests)..sort()).join('\n').codeUnits).toString();
-
-  static String _fileDigest(String path) {
-    final sink = _DigestSink();
-    final input = sha256.startChunkedConversion(sink);
-    final file = File(path).openSync();
-    try {
-      final buffer = Uint8List(1 << 20);
-      while (true) {
-        final read = file.readIntoSync(buffer);
-        if (read == 0) break;
-        input.add(buffer.sublist(0, read));
-      }
-    } finally {
-      file.closeSync();
-    }
-    input.close();
-    return sink.value.toString();
-  }
-}
-
-class _DigestSink implements Sink<Digest> {
-  late Digest value;
-
-  @override
-  void add(Digest data) => value = data;
-
-  @override
-  void close() {}
 }

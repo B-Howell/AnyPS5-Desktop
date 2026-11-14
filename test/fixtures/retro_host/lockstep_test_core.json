@@ -1,19 +1,19 @@
 {
- "recorded": "One anyps5-retro-host process from B-Howell/anyps5-retro-host netplay-design 9b75364, built on Windows with WinLibs GCC 15.2, running that repository's test core (tests/fake_core.c), driven by tests/lockstep_test.py: what a game in lockstep refuses, and leaving and entering lockstep again. The paths of saveState and loadState are left out.",
+ "recorded": "One anyps5-retro-host process from the Windows x64 release package of B-Howell/anyps5-retro-host netplay-design 5a4cda9 (release workflow run 43535853189), running that repository's test core (tests/fake_core.c at 5a4cda9, built with WinLibs GCC 15.2), driven by tests/lockstep_test.py: its first save and load of a state file, what a game in lockstep refuses, and leaving and entering lockstep again. The paths of saveState and loadState are left out.",
  "replies": [
   {
    "method": "saveState",
    "args": {
     "path": "<a file of the match>"
    },
-   "reply": "{\"type\":\"reply\",\"id\":3,\"result\":{\"frame\":600,\"bytes\":131152}}"
+   "reply": "{\"type\":\"reply\",\"id\":3,\"result\":{\"frame\":600,\"bytes\":131152,\"micros\":3061}}"
   },
   {
    "method": "loadState",
    "args": {
     "path": "<a file of the match>"
    },
-   "reply": "{\"type\":\"reply\",\"id\":4,\"result\":{\"frame\":600,\"bytes\":131152}}"
+   "reply": "{\"type\":\"reply\",\"id\":4,\"result\":{\"frame\":600,\"bytes\":131152,\"micros\":800}}"
   },
   {
    "method": "option",
@@ -21,33 +21,60 @@
     "key": "fake_color",
     "value": "green"
    },
-   "reply": "{\"type\":\"reply\",\"id\":5,\"result\":false}"
+   "reply": "{\"type\":\"reply\",\"id\":245,\"result\":false}"
   },
   {
    "method": "connectedPorts",
    "args": 2,
-   "reply": "{\"type\":\"reply\",\"id\":6,\"result\":false}"
+   "reply": "{\"type\":\"reply\",\"id\":246,\"result\":false}"
   },
   {
    "method": "saveState",
    "args": {
     "path": "<a file of the match>"
    },
-   "reply": "{\"type\":\"reply\",\"id\":7,\"result\":false}"
+   "reply": "{\"type\":\"reply\",\"id\":247,\"result\":false}"
   },
   {
    "method": "loadState",
    "args": {
     "path": "<a file of the match>"
    },
-   "reply": "{\"type\":\"reply\",\"id\":8,\"result\":false}"
+   "reply": "{\"type\":\"reply\",\"id\":248,\"result\":false}"
   },
   {
    "method": "loadState",
    "args": {
     "path": "<a file of the match>"
    },
-   "reply": "{\"type\":\"reply\",\"id\":9,\"result\":false}"
+   "reply": "{\"type\":\"reply\",\"id\":249,\"result\":false}"
+  },
+  {
+   "method": "saveState",
+   "args": {
+    "slot": 8
+   },
+   "reply": "{\"type\":\"reply\",\"id\":250,\"error\":{\"code\":\"argument\",\"message\":\"saveState.slot must be an integer from 0 to 7.\"}}"
+  },
+  {
+   "method": "saveState",
+   "args": {
+    "slot": -1
+   },
+   "reply": "{\"type\":\"reply\",\"id\":251,\"error\":{\"code\":\"argument\",\"message\":\"saveState.slot must be an integer from 0 to 7.\"}}"
+  },
+  {
+   "method": "saveState",
+   "args": {
+    "slot": 0,
+    "path": "<a file of the match>"
+   },
+   "reply": "{\"type\":\"reply\",\"id\":252,\"error\":{\"code\":\"argument\",\"message\":\"saveState takes a path or a slot.\"}}"
+  },
+  {
+   "method": "saveState",
+   "args": {},
+   "reply": "{\"type\":\"reply\",\"id\":253,\"error\":{\"code\":\"argument\",\"message\":\"saveState takes a path or a slot.\"}}"
   },
   {
    "method": "lockstep",
@@ -55,12 +82,12 @@
     "check": 1,
     "paced": false
    },
-   "reply": "{\"type\":\"reply\",\"id\":10,\"result\":{\"frame\":901}}"
+   "reply": "{\"type\":\"reply\",\"id\":254,\"result\":{\"frame\":1021}}"
   },
   {
    "method": "lockstep",
    "args": false,
-   "reply": "{\"type\":\"reply\",\"id\":11,\"result\":true}"
+   "reply": "{\"type\":\"reply\",\"id\":255,\"result\":true}"
   },
   {
    "method": "lockstep",
@@ -68,21 +95,28 @@
     "check": 1,
     "paced": false
    },
-   "reply": "{\"type\":\"reply\",\"id\":12,\"result\":{\"frame\":0}}"
+   "reply": "{\"type\":\"reply\",\"id\":256,\"result\":{\"frame\":0}}"
+  },
+  {
+   "method": "loadState",
+   "args": {
+    "slot": 0
+   },
+   "reply": "{\"type\":\"reply\",\"id\":257,\"result\":false}"
   },
   {
    "method": "saveState",
    "args": {
     "path": "<a file of the match>"
    },
-   "reply": "{\"type\":\"reply\",\"id\":13,\"result\":{\"frame\":0,\"bytes\":131152}}"
+   "reply": "{\"type\":\"reply\",\"id\":258,\"result\":{\"frame\":0,\"bytes\":131152,\"micros\":2984}}"
   },
   {
    "method": "saveState",
    "args": {
     "path": "<a file of the match>"
    },
-   "reply": "{\"type\":\"reply\",\"id\":14,\"result\":{\"frame\":0,\"bytes\":131152}}"
+   "reply": "{\"type\":\"reply\",\"id\":259,\"result\":{\"frame\":0,\"bytes\":131152,\"micros\":1750}}"
   }
  ]
 }

@@ -3,6 +3,8 @@
 /// back, and the rules that tie the two together, as the client checks them.
 library;
 
+import 'dart:typed_data';
+
 import 'retro_host_protocol.dart';
 import 'retro_pad.dart';
 
@@ -32,13 +34,16 @@ class RetroLockstepSettings {
   }
 }
 
-/// The result of `saveState` and `loadState`: the lockstep frame the state continues with, and the
-/// size of its file.
+/// The result of `saveState` and `loadState`: the lockstep frame the state continues with, the
+/// size of its file, and how long the host took, in microseconds.
 class RetroStatePosition {
-  const RetroStatePosition({required this.frame, required this.bytes});
+  const RetroStatePosition({required this.frame, required this.bytes, this.micros = 0});
 
   final int frame;
   final int bytes;
+
+  /// How long the host spent saving or loading the state; not part of what a state is.
+  final int micros;
 
   /// The largest file size a launcher accepts: 2^53, what a JSON number holds exactly.
   static const maxBytes = 9007199254740991;
@@ -48,6 +53,7 @@ class RetroStatePosition {
     return RetroStatePosition(
       frame: f.integer('frame', 0, RetroFields.maxUint32),
       bytes: f.integer('bytes', RetroStateFile.headerBytes, maxBytes),
+      micros: f.integer('micros', 0, maxBytes),
     );
   }
 
@@ -58,13 +64,52 @@ class RetroStatePosition {
   int get hashCode => Object.hash(frame, bytes);
 
   @override
-  String toString() => 'RetroStatePosition(frame $frame, $bytes bytes)';
+  String toString() => 'RetroStatePosition(frame $frame, $bytes bytes, $micros µs)';
 }
 
 /// The file `saveState` writes and `loadState` reads (protocol.md "saveState and loadState"): a
-/// 48-byte header, then the core's data.
-abstract final class RetroStateFile {
+/// 48-byte header, then the core's data. Integers are little-endian.
+class RetroStateFile {
+  const RetroStateFile({required this.frame, required this.ports, required this.core});
+
   static const headerBytes = 48;
+
+  /// The file's version this launcher reads: 2, the one that holds the port count.
+  static const version = 2;
+
+  static final _magic = 'AP5STATE'.codeUnits;
+
+  /// The lockstep frame the state continues with.
+  final int frame;
+
+  /// The connected controller ports the state was saved with, 1 or 2.
+  final int ports;
+
+  /// The core's `retro_serialize` data.
+  final Uint8List core;
+
+  /// Reads [bytes] as a state file; null for anything that is not one of [version].
+  static RetroStateFile? read(Uint8List bytes) {
+    if (bytes.length < headerBytes) return null;
+    for (var index = 0; index < _magic.length; index++) {
+      if (bytes[index] != _magic[index]) return null;
+    }
+    final header = ByteData.sublistView(bytes, 0, headerBytes);
+    final size = header.getUint64(32, Endian.little);
+    final ports = header.getUint32(40, Endian.little);
+    final frame = header.getUint64(16, Endian.little);
+    if (header.getUint32(8, Endian.little) != version ||
+        header.getUint32(12, Endian.little) > 1 ||
+        frame < 0 ||
+        frame > RetroFields.maxUint32 ||
+        size != bytes.length - headerBytes ||
+        ports < 1 ||
+        ports > 2 ||
+        header.getUint32(44, Endian.little) != 0) {
+      return null;
+    }
+    return RetroStateFile(frame: frame, ports: ports, core: Uint8List.sublistView(bytes, headerBytes));
+  }
 }
 
 /// The input of one lockstep frame (protocol.md "step"): one entry per connected port, from port 1.
@@ -129,8 +174,8 @@ class RetroSync {
   /// The last picture: the same on two machines only when both draw in software.
   final String? video;
 
-  /// The core's whole state: it also differs when the core keeps something of the machine in it,
-  /// such as SwanStation's disc path.
+  /// The core's whole state, saved for netplay so that it names no path: the same on two machines
+  /// that ran the same steps, except between two GPUs drawing above 1x (protocol.md "sync").
   final String? state;
 
   static final _hash = RegExp(r'^[0-9a-f]{16}$');

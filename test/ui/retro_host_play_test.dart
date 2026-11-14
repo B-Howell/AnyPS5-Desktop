@@ -291,6 +291,25 @@ void main() {
     expect(model.overlay, isNull);
   });
 
+  test("an online friend's game stays muted while it joins: Audio keeps the player's choice for later", () async {
+    launcher = Ps1Launcher();
+    final model = launcher.model..setRetroHostPs1(true);
+    await launcher.start(status: recordedStatus());
+    final session = launcher.session;
+    launcher.play.joining = true;
+    await model.openQuickMenu();
+    await pumpEventQueue();
+    (launcher.row('section-audio').kind as ActionRow).run();
+    final sent = session.calls.length;
+    (launcher.row('volume').kind as StepperRow).set(70);
+    (launcher.row('mute').kind as ToggleRow).set(false);
+    await pumpEventQueue();
+    expect(session.calls.skip(sent).where((call) => call.$1 == 'volume'), isEmpty, reason: 'the host is not unmuted');
+    expect(model.preferences.retroHostVolume, 70);
+    expect(model.preferences.retroHostMuted, isFalse);
+    expect((launcher.row('volume').kind as StepperRow).value, 70, reason: 'the row shows what the game will get');
+  });
+
   test('an option a player has no use for is neither shown nor sent, though it was kept', () async {
     launcher = Ps1Launcher();
     final model = launcher.model

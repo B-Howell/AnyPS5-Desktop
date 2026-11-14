@@ -2561,7 +2561,6 @@
   "retroOnlinePeerLeft": "Arkadaşınız çevrimiçi oyundan ayrıldı.",
   "retroOnlineTooSlow": "Bağlantı bu oyun için çok yavaş. Daha hızlı bir bağlantıyla tekrar deneyin.",
   "retroOnlineMismatchHost": "Emülatör programları farklı. İki oyuncunun da aynı AnyPS5 emülatör programını kullanması gerekiyor.",
-  "retroOnlineMismatchDiscName": "Disk dosyalarının adları farklı. Diskinize arkadaşınızınkiyle aynı dosya adını verin.",
   "retroOnlineMismatchBios": "PS1 BIOS dosyalarınız farklı. İki oyuncunun da aynı BIOS'u kullanması gerekiyor.",
   "retroOnlineNoHostDetail": "Bir PS1 çevrimiçi oyununa katılmak için Ayarlar › Emülatörler › PS1 oyunlarını ayrı emülatör programında çalıştır'ı açın.",
   "retroOnlineNoDiscDetail": "Bu oyunun diski kitaplığınızda yok. Arkadaşınızla oynamak için aynı diski ekleyin.",

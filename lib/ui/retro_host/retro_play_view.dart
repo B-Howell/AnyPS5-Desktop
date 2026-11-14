@@ -8,6 +8,8 @@ import 'retro_host_game_view.dart';
 
 /// A PS1 game playing in the launcher's window through the emulator host: its picture over the
 /// whole window, the loading screen while it starts, and its error screen when it stopped on one.
+/// The friend's game of an online match is not shown until it plays the match ([RetroPlay.joining]):
+/// what it plays before that is replaced by the host player's state.
 class RetroPlayView extends StatelessWidget {
   const RetroPlayView({super.key, required this.model, required this.play});
 
@@ -25,7 +27,7 @@ class RetroPlayView extends StatelessWidget {
         return Stack(
           fit: StackFit.expand,
           children: [
-            RetroHostGameView(game: host),
+            if (play.joining) const ColoredBox(color: Colors.black) else RetroHostGameView(game: host),
             if (problem != null)
               RetroGameNotice(
                 key: const ValueKey('retro-error'),
@@ -43,6 +45,15 @@ class RetroPlayView extends StatelessWidget {
                 text: status?.progressLabel ?? T.text('retroHostLoading'),
                 accent: model.accentChoice.color,
                 progress: status?.progressPercent == null ? null : status!.progressPercent! / 100,
+                working: true,
+              )
+            else if (play.joining && !play.closing)
+              RetroGameNotice(
+                key: const ValueKey('retro-joining'),
+                name: play.game.name,
+                icon: play.game.icon,
+                text: T.text('ps1OnlinePreparing'),
+                accent: model.accentChoice.color,
                 working: true,
               ),
           ],

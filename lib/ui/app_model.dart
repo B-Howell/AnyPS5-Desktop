@@ -92,6 +92,7 @@ import '../core/together/talk_key.dart';
 import '../core/together/token_store.dart';
 import '../core/online/online_peer.dart' show OnlinePeerSignal;
 import '../core/online/online_peer_mesh.dart';
+import '../core/online/ps1_file_digests.dart';
 import '../core/online/ps1_lockstep_match.dart';
 import '../core/online/ps1_lockstep_media.dart';
 import '../core/online/ps1_lockstep_peer.dart';
@@ -2762,6 +2763,10 @@ class AppModel extends ChangeNotifier {
 
   /// Its online match with a friend, from the invite to the end (retro_host_online.dart).
   RetroOnline? retroOnline;
+
+  /// The digests of the discs, cores and BIOS images PS1 matches were played with, so a disc is
+  /// read once, not for every invite (retro_host_online.dart).
+  late final retroDigests = Ps1FileDigests(paths.retroDigests);
 
   /// The emulator host of the last PS1 game, kept for the next one (retro_host_play.dart).
   @visibleForTesting

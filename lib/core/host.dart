@@ -112,6 +112,10 @@ class AppPaths {
   /// friend's memory cards for the match; removed when the match ends.
   String get retroOnline => p.join(config, 'retro', 'online');
 
+  /// The SHA-256 of the files PS1 matches were played with, kept while each file is unchanged
+  /// (`Ps1FileDigests`).
+  String get retroDigests => p.join(config, 'retro', 'digests.json');
+
   String logFile(String titleId) => p.join(logs, '$titleId.log');
   String shaderCache(String slug) => p.join(cache, slug, 'shader_cache');
 }

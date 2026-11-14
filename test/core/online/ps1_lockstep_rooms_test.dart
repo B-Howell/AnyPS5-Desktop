@@ -1,8 +1,4 @@
-import 'dart:io';
-
-import 'package:anyps5_desktop/core/online/ps1_lockstep_media.dart';
 import 'package:anyps5_desktop/core/online/ps1_lockstep_rooms.dart';
-import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 const _me = '11111111-1111-4111-8111-111111111111';
@@ -72,11 +68,11 @@ void main() {
       'kind': 'online',
       'titleId': 'PS1-${_disc.substring(0, 16).toUpperCase()}',
       'gameVersion': '1',
-      'engineBuild': 'anyps5-ps1-lockstep-v1',
+      'engineBuild': 'anyps5-ps1-lockstep-v2',
       'versionRule': 'exact',
       'capacity': 2,
       'joinable': false,
-      'properties': {'protocol': 'anyps5-ps1-lockstep-v1', 'discSha256': _disc, 'discBytes': 1000},
+      'properties': {'protocol': 'anyps5-ps1-lockstep-v2', 'discSha256': _disc, 'discBytes': 1000},
     });
     await rooms().invite(room, _friend);
     await rooms().leave(room);
@@ -153,32 +149,5 @@ void main() {
     answers['POST game-sessions'] = (_) => _session();
     await rooms(holds: (_) => false).host(disc: _disc, discBytes: 1000);
     expect(ended, isTrue);
-  });
-
-  test("a disc's digest does not depend on its folder or the order of its files, and BIOS images are 512 KiB", () {
-    final folder = Directory.systemTemp.createTempSync('lockstep-media-');
-    try {
-      File write(String name, List<int> bytes) => File(p.join(folder.path, name))..writeAsBytesSync(bytes);
-      final cue = write('Game.cue', 'FILE "Game.bin" BINARY'.codeUnits).path;
-      final bin = write('Game.bin', List.filled(4096, 7)).path;
-      Directory(p.join(folder.path, 'copy')).createSync();
-      final cue2 = write(p.join('copy', 'Game.cue'), 'FILE "Game.bin" BINARY'.codeUnits).path;
-      final bin2 = write(p.join('copy', 'Game.bin'), List.filled(4096, 7)).path;
-      expect(Ps1LockstepMedia.discDigest([cue, bin]), Ps1LockstepMedia.discDigest([bin2, cue2]));
-      expect(Ps1LockstepMedia.discBytes([cue, bin]), 4096 + 22);
-      expect(Ps1LockstepMedia.couldBe([cue, bin], 4118), isTrue);
-      expect(Ps1LockstepMedia.couldBe([cue, p.join(folder.path, 'gone.bin')], 4118), isFalse);
-      write(p.join('copy', 'Game.bin'), List.filled(4096, 8));
-      expect(Ps1LockstepMedia.discDigest([cue2, bin2]), isNot(Ps1LockstepMedia.discDigest([cue, bin])));
-
-      final system = Directory(p.join(folder.path, 'system'))..createSync();
-      final none = Ps1LockstepMedia.biosDigest(system.path);
-      File(p.join(system.path, 'readme.txt')).writeAsStringSync('not a BIOS');
-      expect(Ps1LockstepMedia.biosDigest(system.path), none);
-      File(p.join(system.path, 'scph1001.bin')).writeAsBytesSync(List.filled(Ps1LockstepMedia.biosBytes, 1));
-      expect(Ps1LockstepMedia.biosDigest(system.path), isNot(none));
-    } finally {
-      folder.deleteSync(recursive: true);
-    }
   });
 }

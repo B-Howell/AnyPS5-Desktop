@@ -32,7 +32,7 @@ void main() {
     }
   });
 
-  test('both hosts\' recorded syncs follow the steps, and match in RAM and picture but not in state', () {
+  test('both hosts\' recorded syncs follow the steps, and match in RAM, picture and state', () {
     final syncs = strings((real['syncs']! as Map)['host']);
     final guest = strings((real['syncs']! as Map)['guest']);
     final steps = strings(real['steps']).map((raw) => RetroStep.parse(decode(raw))).toList();
@@ -42,7 +42,6 @@ void main() {
       host.sending(step);
       other.sending(step);
     }
-    var differentState = 0;
     for (var index = 0; index < syncs.length; index++) {
       final ours = host.synced(decode(syncs[index]));
       final theirs = other.synced(decode(guest[index]));
@@ -50,10 +49,13 @@ void main() {
       expect(theirs.frame, index);
       expect(theirs.ram, ours.ram, reason: 'RAM of frame $index');
       expect(theirs.video, ours.video, reason: 'picture of frame $index');
-      if (theirs.state != ours.state) differentState++;
+      expect(
+        theirs.state,
+        ours.state,
+        reason: 'frame $index: a state for netplay names no path, though each disc is elsewhere under another name',
+      );
     }
     expect(syncs.map((raw) => decode(raw)['video']).first, isNull, reason: 'no picture before the first one');
-    expect(differentState, syncs.length, reason: "SwanStation's state names each player's own disc path");
   });
 
   test('the recorded saveState and loadState replies, and the syncs after a load', () {
@@ -65,6 +67,7 @@ void main() {
     }
     final saved = tracker.replied('saveState', save['args'], resultOf(decode(save['reply']! as String)));
     expect(saved, const RetroStatePosition(frame: 600, bytes: 11534384));
+    expect((saved! as RetroStatePosition).micros, greaterThan(0), reason: 'every state reply says how long it took');
     expect(tracker.nextStep, 600);
 
     for (final peer in ['host', 'guest']) {
@@ -84,6 +87,9 @@ void main() {
     final hostAfter = strings((real['afterLoad']! as Map)['host']).map((raw) => decode(raw)['ram']);
     final guestAfter = strings((real['afterLoad']! as Map)['guest']).map((raw) => decode(raw)['ram']);
     expect(guestAfter, hostAfter, reason: 'the guest that loaded the state runs as the host replayed it');
+    final hostStates = strings((real['afterLoad']! as Map)['host']).map((raw) => decode(raw)['state']);
+    final guestStates = strings((real['afterLoad']! as Map)['guest']).map((raw) => decode(raw)['state']);
+    expect(guestStates, hostStates, reason: 'state hashes too, the analog-mode combination held across the save');
   });
 
   test('the recorded entry into lockstep of a running game is at frame 0', () {
@@ -105,14 +111,22 @@ void main() {
 
     stepTo(600);
     final results = <Object?>[];
+    final errors = <Object?>[];
     for (final reply in replies) {
       final method = reply['method']! as String;
-      final result = resultOf(decode(reply['reply']! as String));
+      final message = decode(reply['reply']! as String);
+      final result = resultOf(message);
+      if (message['error'] case final Map<String, Object?> error) {
+        errors.add(error['code']);
+        continue;
+      }
       if (!retroLockstepMethods.contains(method)) {
         results.add(result);
         continue;
       }
-      if (method == 'lockstep' && reply['args'] != false && tracker.inLockstep) stepTo(901);
+      if (method == 'lockstep' && reply['args'] != false && tracker.inLockstep) {
+        stepTo((result! as Map<String, Object?>)['frame']! as int);
+      }
       results.add(tracker.replied(method, reply['args'], result));
     }
     expect(results, [
@@ -123,12 +137,14 @@ void main() {
       null,
       null,
       null,
-      901,
+      1021,
       true,
       0,
+      null,
       const RetroStatePosition(frame: 0, bytes: 131152),
       const RetroStatePosition(frame: 0, bytes: 131152),
     ]);
+    expect(errors, List.filled(4, 'argument'), reason: 'slots out of range, and neither or both of a path and a slot');
     expect(tracker.nextStep, 0);
   });
 
@@ -194,9 +210,14 @@ void main() {
     test('state results of the wrong shape', () {
       expect(() => stepped(1).replied('saveState', null, {'frame': 1, 'bytes': 47}), protocolError('saveState.bytes'));
       expect(() => stepped(1).replied('loadState', null, {'frame': 1}), protocolError('loadState.bytes'));
+      expect(() => stepped(1).replied('saveState', null, {'frame': 1, 'bytes': 48}), protocolError('saveState.micros'));
       expect(() => stepped(1).replied('saveState', null, true), protocolError('object or false'));
       expect(
-        () => (RetroLockstepTracker()..started(lockstep: false)).replied('saveState', null, {'frame': 0, 'bytes': 48}),
+        () => (RetroLockstepTracker()..started(lockstep: false)).replied('saveState', null, {
+          'frame': 0,
+          'bytes': 48,
+          'micros': 1,
+        }),
         protocolError('not in lockstep'),
       );
     });

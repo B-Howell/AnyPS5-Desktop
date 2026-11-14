@@ -239,7 +239,11 @@ A host that lists `ps1Lockstep` runs a game frame by frame for online play
 - **Methods.** `lockstep(settings)` gives the frame the next step is for, or
   null when the host could not. `leaveLockstep()` is `lockstep` with `false`.
   `saveState(path)` and `loadState(path)` give a `RetroStatePosition`, the
-  frame and the file's size, or null. `start` takes `lockstep` through
+  frame, the file's size and the `micros` the host took, or null.
+  `RetroStateFile.read` reads the file's 48-byte header (version 2: the frame
+  and the port count) and gives the core's data after it. The host's in-memory
+  slots (`{"slot": n}`) are for rollback, which the launcher does not do yet,
+  so the client offers no slot calls. `start` takes `lockstep` through
   `RetroHostStartRequest.lockstep`. None of them may be sent to a host that
   does not list the capability: that is a `StateError`, as for `ps1`.
 - **Steps.** `step(RetroStep)` sends one frame's input for one or two ports.

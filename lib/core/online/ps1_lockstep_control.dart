@@ -3,12 +3,13 @@ import 'dart:typed_data';
 
 /// The reliable, ordered messages two launchers exchange about one PS1 lockstep match
 /// (anyps5-retro-host docs/netplay.md "Joining a running game"), as JSON on the peer connection's
-/// stream channel. Every message has `v` (the version, 1) and `type`; a message of another version
-/// or shape is refused, and the match ends.
+/// stream channel. Every message has `v` (the version, 2) and `type`; a message of another version
+/// or shape is refused, and the match ends. Version 2 names the disc by its tracks alone and no
+/// longer by its file name, since the state a friend joins from names no path.
 sealed class Ps1LockstepMessage {
   const Ps1LockstepMessage();
 
-  static const version = 1;
+  static const version = 2;
 
   /// The largest message read: a state chunk of [Ps1LockstepChunk.maxBytes] in base64 with room
   /// for the rest.
@@ -32,7 +33,7 @@ sealed class Ps1LockstepMessage {
     }
     if (json is! Map<String, Object?>) throw const FormatException('A lockstep message is not an object.');
     final fields = _Fields(json);
-    if (fields.integer('v', 1, 1) != version) throw const FormatException('A lockstep message has another version.');
+    if (json['v'] != version) throw const FormatException('A lockstep message has another version.');
     final type = fields.string('type');
     final message = switch (type) {
       'hello' => Ps1LockstepHello._read(fields),
@@ -63,7 +64,6 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
     required this.system,
     required this.core,
     required this.disc,
-    required this.discName,
     required this.bios,
     required this.options,
   });
@@ -78,11 +78,8 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
   /// SHA-256 of the SwanStation library, 64 lowercase hexadecimal digits.
   final String core;
 
-  /// SHA-256 of the disc's files ([Ps1LockstepIdentity]).
+  /// SHA-256 of the disc's tracks ([Ps1LockstepIdentity]).
   final String disc;
-
-  /// The disc's file name, which SwanStation finds a loaded state's disc by.
-  final String discName;
 
   /// SHA-256 of the BIOS images in the system folder.
   final String bios;
@@ -99,7 +96,6 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
     'system': system,
     'core': core,
     'disc': disc,
-    'discName': discName,
     'bios': bios,
     'options': options,
   };
@@ -109,7 +105,6 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
     system: fields.string('system', max: 16),
     core: fields.hash('core', 64),
     disc: fields.hash('disc', 64),
-    discName: fields.string('discName', max: 255),
     bios: fields.hash('bios', 64),
     options: fields.options('options'),
   );

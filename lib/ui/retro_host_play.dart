@@ -46,6 +46,11 @@ class RetroPlay {
   /// The menu shows the game's lobby (retro_host_online.dart).
   bool lobby = false;
 
+  /// The friend's game of an online match until it plays the match: it runs muted and is not
+  /// shown, since the host player's state replaces what it plays first (anyps5-retro-host
+  /// docs/netplay.md "Joining a running game", step 4).
+  bool joining = false;
+
   bool _released = false;
 
   /// Lets go of the controllers, the menu and the host, once, whoever asks first: Close Game, or
@@ -181,13 +186,15 @@ extension RetroHostPlaying on AppModel {
   /// Starts [game]'s PS1 disc in a new emulator host and shows it in the launcher's window, and
   /// gives its play once `start` was answered (null when it did not start). An online match's
   /// friend gives the host it opened already ([opened]), the host player's core [options] and a
-  /// [saves] folder of the match's own (retro_host_online.dart).
+  /// [saves] folder of the match's own, and starts the game [joining]: muted and not shown until it
+  /// plays the match (retro_host_online.dart).
   Future<RetroPlay?> _playInHost(
     Game game,
     RetroDisc disc, {
     RetroHostSession? opened,
     Map<String, String>? options,
     String? saves,
+    bool joining = false,
   }) async {
     if (starting != null || running != null || retroPlay != null) return null;
     final install = retroHostInstall;
@@ -208,7 +215,7 @@ extension RetroHostPlaying on AppModel {
     }
 
     final volume = preferences.retroHostVolume / 100;
-    final muted = preferences.retroHostMuted;
+    final muted = joining || preferences.retroHostMuted;
     final kept = opened ?? retroHostKeeper.take(program: install.host);
     final RetroHostSession session;
     if (kept != null) {
@@ -252,7 +259,7 @@ extension RetroHostPlaying on AppModel {
       monitor: monitor,
       started: DateTime.now(),
       program: install.host,
-    );
+    )..joining = joining;
     retroPlay = play;
     host.addListener(_retroChanged);
     sounds.play(Cue.select);
@@ -475,7 +482,7 @@ extension RetroHostPlaying on AppModel {
           id: 'volume',
           title: T.text('retroMenuVolume'),
           kind: StepperRow(
-            value: (play.host.volume * 100).round(),
+            value: play.joining ? preferences.retroHostVolume : (play.host.volume * 100).round(),
             min: 0,
             max: 100,
             step: 10,
@@ -487,7 +494,10 @@ extension RetroHostPlaying on AppModel {
         PanelRow(
           id: 'mute',
           title: T.text('retroMenuMute'),
-          kind: ToggleRow(play.host.muted, (muted) => unawaited(_setRetroMuted(muted))),
+          kind: ToggleRow(
+            play.joining ? preferences.retroHostMuted : play.host.muted,
+            (muted) => unawaited(_setRetroMuted(muted)),
+          ),
         ),
       ],
       for (final option in menu.optionsIn(section))
@@ -542,6 +552,7 @@ extension RetroHostPlaying on AppModel {
   Future<void> _setRetroVolume(int percent) async {
     final play = retroPlay;
     if (play == null) return;
+    if (play.joining) return _keepJoiningVolume(volume: percent);
     final steps = ((percent - play.host.volume * 100) / 10).round();
     if (steps == 0) return;
     await play.menu.stepVolume(steps);
@@ -550,9 +561,22 @@ extension RetroHostPlaying on AppModel {
 
   Future<void> _setRetroMuted(bool muted) async {
     final play = retroPlay;
-    if (play == null || play.host.muted == muted) return;
+    if (play == null) return;
+    if (play.joining) return _keepJoiningVolume(muted: muted);
+    if (play.host.muted == muted) return;
     await play.menu.toggleMute();
     _keepRetroVolume(play);
+  }
+
+  /// A game joining a match stays muted (RetroPlay.joining): the volume and mute the player
+  /// chooses meanwhile are kept, and given to the game once it shows.
+  void _keepJoiningVolume({int? volume, bool? muted}) {
+    if (_disposed) return;
+    preferences
+      ..retroHostVolume = volume ?? preferences.retroHostVolume
+      ..retroHostMuted = muted ?? preferences.retroHostMuted;
+    savePreferences();
+    _changed();
   }
 
   void _keepRetroVolume(RetroPlay play) {

@@ -36,7 +36,7 @@ the launcher plays a PS1 disc from its emulator library through all of them
 | [`lib/core/retro_host/retro_host_install.dart`](../lib/core/retro_host/retro_host_install.dart) | `RetroHostInstall`: the host and SwanStation library a build may run. |
 | [`lib/core/retro_host/retro_keyboard.dart`](../lib/core/retro_host/retro_keyboard.dart) | `RetroKeyboard`: the keyboard as a PS1 controller, with the keys of a game's Controls. |
 | [`lib/ui/retro_host_play.dart`](../lib/ui/retro_host_play.dart) | `RetroPlay` and the `RetroHostPlaying` part of `AppModel`: the setting, starting a disc in the host, the commands while it plays, the menu's panel rows, closing. |
-| [`lib/ui/retro_host/retro_play_view.dart`](../lib/ui/retro_host/retro_play_view.dart) | `RetroPlayView`: the game over the whole window, with `RetroGameNotice` for the loading and error screens. |
+| [`lib/ui/retro_host/retro_play_view.dart`](../lib/ui/retro_host/retro_play_view.dart) | `RetroPlayView`: the game over the whole window, with `RetroGameNotice` for the loading, joining and error screens. |
 | [`lib/ui/retro_host_online.dart`](../lib/ui/retro_host_online.dart) | The game's lobby and PS1 online play with a friend ([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md)). |
 | [`lib/ui/player_slots_strip.dart`](../lib/ui/player_slots_strip.dart) | `PlayerSlotsStrip`: the lobby's Player 1 to 4 cards under a panel row. |
 
@@ -522,7 +522,10 @@ keys.
 **The game's screen.** `RetroPlayView` draws the game over the whole window,
 over the home screen and under every layer. While it starts or loads it shows
 the game's name and `status.progressLabel` (or "Loading the game…"), with a
-progress line from `status.progressPercent` when the host gives one. On the
+progress line from `status.progressPercent` when the host gives one. The
+friend's game of an online match is not drawn until it plays the match
+(`RetroPlay.joining`): the game's name shows over black with "Preparing both
+games" ([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md)). On the
 game's screen the controller is the game's: Cross, Circle, Start and the
 D-pad reach the game, not the launcher. Only PS acts. PS, PS held, the quick
 menu shortcut, and the mouse's right or Back button open the game's menu.
@@ -709,7 +712,8 @@ native memory as a real ring slot would be, so no host is started.
   Custom, Back to the menu, PS to the game, a game started with its own
   graphics, and the Auto Optimizer's rows, its toast and Undo.
 - [`retro_host_play_golden_test.dart`](../test/ui/retro_host_play_golden_test.dart)
-  draws the loading screen, the error screen, the game's picture, the menu's
+  draws the loading screen, the error screen, the game's picture, an online
+  friend's game while it joins, the menu's
   first page over it, its Console page, the Graphics page with Enhanced
   chosen, the Auto Optimizer's suggestion, and Settings › Emulators with the
   host's rows.

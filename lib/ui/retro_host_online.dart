@@ -236,8 +236,7 @@ extension RetroHostOnline on AppModel {
     final play = retroPlay;
     final me = together.user?.id;
     final install = retroHostInstall;
-    final disc = play?.game.retro;
-    if (play == null || me == null || install == null || disc == null || retroOnline != null) return;
+    if (play == null || me == null || install == null || play.game.retro == null || retroOnline != null) return;
     if (retroOnlineUnavailable(play) case final reason?) return show(T.text('${reason}Detail'));
     final online = retroOnline = RetroOnline(
       hosting: true,
@@ -249,9 +248,9 @@ extension RetroHostOnline on AppModel {
     Ps1LockstepRoom? room;
     try {
       final identity = await Ps1LockstepMedia.identify(
+        digests: retroDigests,
         hostVersion: play.host.session.hostVersion,
         core: install.core,
-        disc: disc.path,
         files: _retroDiscFiles(play.game),
         system: paths.retroSystem,
       );
@@ -334,17 +333,13 @@ extension RetroHostOnline on AppModel {
       final read = await rooms.readInvite(invite.sessionId, expectedHost: from.id);
       final game = await _retroGameFor(read);
       if (game == null) return show(T.text('retroOnlineNoDiscDetail'));
-      final session = opened = openRetroHost(
-        install,
-        volume: preferences.retroHostVolume / 100,
-        muted: preferences.retroHostMuted,
-      );
+      final session = opened = openRetroHost(install, volume: preferences.retroHostVolume / 100, muted: true);
       await session.ready;
       if (!session.canLockstep) return show(T.text('retroOnlineHostOldDetail'));
       final identity = await Ps1LockstepMedia.identify(
+        digests: retroDigests,
         hostVersion: session.hostVersion,
         core: install.core,
-        disc: game.retro!.path,
         files: _retroDiscFiles(game),
         system: paths.retroSystem,
       );
@@ -365,7 +360,14 @@ extension RetroHostOnline on AppModel {
         localInput: () => play?.controls.onlineInput ?? RetroPadInput.idle,
         paused: () => play?.host.paused ?? false,
         prepareGuest: (hello) => preparing = () async {
-          play = await _playInHost(game, game.retro!, opened: session, options: hello.options, saves: saves);
+          play = await _playInHost(
+            game,
+            game.retro!,
+            opened: session,
+            options: hello.options,
+            saves: saves,
+            joining: true,
+          );
           final started = play;
           if (started == null) return null;
           opened = null;
@@ -402,20 +404,43 @@ extension RetroHostOnline on AppModel {
     }
   }
 
-  /// The friend's game for [invite]: a PS1 disc in the library of the same size and SHA-256.
+  /// The friend's game for [invite]: a PS1 disc in the library whose tracks have the same size and
+  /// SHA-256. Discs whose digests are known are looked at first, so a disc played online before is
+  /// found without reading it again.
   Future<Game?> _retroGameFor(Ps1LockstepInvite invite) async {
-    for (final game in games) {
-      final disc = game.retro;
-      if (disc == null || disc.platform != RetroPlatform.ps1) continue;
-      final files = _retroDiscFiles(game);
-      if (!Ps1LockstepMedia.couldBe(files, invite.discBytes)) continue;
-      if (await Isolate.run(() => Ps1LockstepMedia.discDigest(files)) == invite.disc) return game;
+    final candidates = [
+      for (final game in games)
+        if (game.retro?.platform == RetroPlatform.ps1 &&
+            Ps1LockstepMedia.couldBe(_retroDiscFiles(game), invite.discBytes))
+          game,
+    ];
+    for (final game in candidates) {
+      if (Ps1LockstepMedia.knownDisc(retroDigests, _retroDiscFiles(game)) == invite.disc) return game;
+    }
+    for (final game in candidates) {
+      try {
+        if (await Ps1LockstepMedia.discDigest(retroDigests, _retroDiscFiles(game)) == invite.disc) return game;
+      } on FileSystemException catch (error) {
+        _padLog?.call('online: ${game.name} is not a whole disc: $error');
+      }
     }
     return null;
   }
 
-  /// A disc's files as the library found them: its sheet and tracks, or the disc file alone.
-  List<String> _retroDiscFiles(Game game) => game.files ?? [game.retro!.path];
+  /// The name of the game a friend's PS1 online [invite] is for, when a disc in the library is
+  /// known by its digest ([retroDigests]) to be it; null otherwise. Reads no disc.
+  String? retroInviteGame(GameInvite invite) {
+    for (final game in games) {
+      if (game.retro?.platform != RetroPlatform.ps1) continue;
+      final disc = Ps1LockstepMedia.knownDisc(retroDigests, _retroDiscFiles(game));
+      if (disc != null && Ps1LockstepRooms.titleFor(disc) == invite.titleId) return game.nameFor([T.language.code]);
+    }
+    return null;
+  }
+
+  /// A disc's files as the library found them: its playlist, sheets and tracks, or the disc file
+  /// alone; for a game of its own folder, read from its sheet or playlist.
+  List<String> _retroDiscFiles(Game game) => game.files ?? GameLibrary.discFiles(game.retro!.path);
 
   Ps1LockstepRooms _retroRooms(String me) => Ps1LockstepRooms(
     call: (method, path, [body]) {
@@ -488,7 +513,8 @@ extension RetroHostOnline on AppModel {
       !online.cancelled && identical(retroOnline, online) && identical(retroPlay, play) && !play.over;
 
   /// The match moved on: once the host is in lockstep the controllers here play this player's
-  /// port of the match, not the game.
+  /// port of the match, not the game. The friend's game shows, and is heard, once it plays the
+  /// match.
   void _retroMatchChanged(RetroOnline online, RetroPlay play) {
     final match = online.match;
     final phase = match?.phase;
@@ -500,6 +526,10 @@ extension RetroHostOnline on AppModel {
     if (identical(retroPlay, play) && (phase == Ps1LockstepPhase.transferring || phase == Ps1LockstepPhase.playing)) {
       play.controls.onlinePort = online.hosting ? 0 : 1;
     }
+    if (identical(retroPlay, play) && play.joining && phase == Ps1LockstepPhase.playing) {
+      play.joining = false;
+      unawaited(play.host.setVolume(level: preferences.retroHostVolume / 100, muted: preferences.retroHostMuted));
+    }
     _changed();
   }
 
@@ -510,11 +540,11 @@ extension RetroHostOnline on AppModel {
       Ps1LockstepEnd.desync => 'ps1OnlineDesync',
       Ps1LockstepEnd.tooSlow => 'retroOnlineTooSlow',
       Ps1LockstepEnd.hostFailed || Ps1LockstepEnd.protocol => 'ps1OnlineDisconnected',
+      Ps1LockstepEnd.hostOld => 'retroOnlineHostOldDetail',
       Ps1LockstepEnd.mismatch => switch (match.mismatch) {
         Ps1LockstepMismatch.host => 'retroOnlineMismatchHost',
         Ps1LockstepMismatch.core => 'ps1OnlineMismatchCore',
         Ps1LockstepMismatch.disc => 'ps1OnlineMismatchDisc',
-        Ps1LockstepMismatch.discName => 'retroOnlineMismatchDiscName',
         Ps1LockstepMismatch.bios || null => 'retroOnlineMismatchBios',
       },
       Ps1LockstepEnd.left || null => null,

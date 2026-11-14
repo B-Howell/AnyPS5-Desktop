@@ -358,6 +358,31 @@ abstract final class GameLibrary {
     return p.isWithin(folder, path) && File(path).existsSync() ? path : null;
   }
 
+  /// A PS1 disc's files as a scan gathers them ([Game.files]): a playlist, then each disc it lists;
+  /// a cue sheet, then the tracks it names; a CHD or PBP alone. For a game of its own folder
+  /// (`retro.json`), whose [Game.files] is null. Files a sheet names that are not beside it are left
+  /// out; a sheet's tracks are looked for beside the sheet, wherever the playlist is.
+  static List<String> discFiles(String disc) {
+    final folder = p.dirname(disc);
+    List<String> sheet(String path) => [
+      path,
+      for (final name in _cueFiles(File(path)) ?? const <String>[]) ?_localDiscFile(p.dirname(path), name),
+    ];
+    try {
+      return switch (p.extension(disc).toLowerCase()) {
+        '.m3u' => [
+          disc,
+          for (final entry in _playlistEntries(File(disc)).map((name) => _localDiscFile(folder, name)).nonNulls)
+            ...(p.extension(entry).toLowerCase() == '.cue' ? sheet(entry) : [entry]),
+        ],
+        '.cue' => sheet(disc),
+        _ => [disc],
+      };
+    } on FileSystemException {
+      return [disc];
+    }
+  }
+
   /// The files a cue sheet names, as written in it; null when it is not a data disc's sheet.
   static List<String>? _cueFiles(File file) {
     if (file.lengthSync() > 64 * 1024) return null;
@@ -647,6 +672,10 @@ abstract final class GameLibrary {
   static String? _string(Object? value) => value is String && value.isNotEmpty ? value : null;
 
   /// UTF-8 text without a byte order mark.
+  /// A sheet's or playlist's text as a scan reads it: UTF-8 without its byte order mark, with bytes
+  /// that are not UTF-8 (a legacy-encoded remark) kept as replacement characters.
+  static String sheetText(File file) => _text(file.readAsBytesSync());
+
   static String _text(List<int> bytes) {
     final start = bytes.length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
     return utf8.decode(bytes.sublist(start), allowMalformed: true);
