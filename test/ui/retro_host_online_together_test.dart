@@ -45,7 +45,7 @@ void main() {
   Future<void> playing({bool friends = false, void Function(FakeTogether)? serve}) async {
     if (friends) {
       final fake = server = await FakeTogether.start();
-      fake.me = {'id': _me, 'handle': 'brett', 'displayName': 'Brett'};
+      fake.me = {'id': _me, 'handle': 'player1', 'displayName': 'Player One'};
       fake.friend(_ana, 'ana', 'Ana', presence: {'state': 'online'});
       fake.friend(_ben, 'ben', 'Ben', presence: {'state': 'online'});
       fake.friend('77777777-7777-4777-8777-777777777777', 'cleo', 'Cleo');
@@ -56,7 +56,7 @@ void main() {
     model.setRetroHostPs1(true);
     await launcher.start();
     if (friends) {
-      model.together.email = 'brett@example.com';
+      model.together.email = 'player1@example.com';
       await model.together.sendCode();
       model.together.code = '123456';
       await model.together.verify();
