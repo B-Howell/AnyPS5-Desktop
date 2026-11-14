@@ -84,7 +84,10 @@ extension RetroHostOnline on AppModel {
   void _openRetroLobby(RetroPlay play) {
     if (!identical(retroPlay, play) || overlay != Layer.retroMenu) return;
     play.lobby = true;
-    panelRow = 0;
+    // The first row that can be chosen and ends nothing: a friend to invite, or Back to game.
+    final rows = retroLobbyRows(play);
+    final safe = rows.indexWhere((row) => row.focusable && !(row.kind is ActionRow && (row.kind as ActionRow).destructive));
+    panelRow = math.max(0, safe);
     sounds.play(Cue.select);
     _changed();
   }

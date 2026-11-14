@@ -431,8 +431,16 @@ class PanelView extends StatelessWidget {
 
 /// How tall the rows of a PS1 game's menu are, with the gap under each: its pages mix actions,
 /// choices, a slider and a switch, some with a line under the title, so each counts its own.
-double _gameMenuRowsHeight(List<PanelRow> rows) =>
-    rows.fold(0, (height, row) => height + (row.detail != null ? 81 : (row.kind is ActionRow ? 58 : 65)));
+double _gameMenuRowsHeight(List<PanelRow> rows) => rows.fold(
+  0,
+  (height, row) =>
+      height +
+      (row.detail != null || (row.kind is InfoRow && (row.kind as InfoRow).text.isNotEmpty)
+          ? 81
+          : (row.kind is ActionRow ? 58 : 65)) +
+      // A lobby's seats: the cards (PlayerSlotsStrip) and the space above them.
+      (row.playerSlots.isNotEmpty ? 190 : 0),
+);
 
 /// The sections' column: as large as the rows, scrolling with a scrollbar that shows whenever
 /// there are more than fit (Settings in a short window), the selected one kept in view.

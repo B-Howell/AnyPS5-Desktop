@@ -84,9 +84,11 @@ void main() {
     await pumpLauncher(tester, launcher.model);
     openLobby();
     await settle(tester);
+    await settle(tester);
     final slots = lobby().first.playerSlots;
     expectMultitapSeats(slots);
     expect(slots[0].you, isTrue);
+    expect(launcher.model.panelRow, 2, reason: 'on Back to game, the first row that can be chosen');
     expect(slots[1].name, isNull);
     expect(slots[1].status, T.text('retroLobbySecondController'));
     expect(lobby()[1].id, 'coop-unavailable');
