@@ -108,6 +108,10 @@ class AppPaths {
   String get retroSystem => p.join(config, 'retro', 'system');
   String get retroSaves => p.join(config, 'retro', 'saves', 'ps1');
 
+  /// One folder per PS1 online match (its room's ID): the state sent to the friend, and the
+  /// friend's memory cards for the match; removed when the match ends.
+  String get retroOnline => p.join(config, 'retro', 'online');
+
   String logFile(String titleId) => p.join(logs, '$titleId.log');
   String shaderCache(String slug) => p.join(cache, slug, 'shader_cache');
 }

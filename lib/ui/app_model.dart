@@ -90,7 +90,17 @@ import '../core/together/levels.dart';
 import '../core/together/media.dart' show SfuRoom;
 import '../core/together/talk_key.dart';
 import '../core/together/token_store.dart';
+import '../core/online/online_peer.dart' show OnlinePeerSignal;
 import '../core/online/online_peer_mesh.dart';
+import '../core/online/ps1_lockstep_match.dart';
+import '../core/online/ps1_lockstep_media.dart';
+import '../core/online/ps1_lockstep_peer.dart';
+import '../core/online/ps1_lockstep_rooms.dart';
+import '../core/retro_host/retro_lockstep.dart' show RetroLockstepHost;
+import '../core/retro_host/retro_pad.dart' show RetroPadInput;
+import '../core/together/game_sessions.dart' show GameInvite;
+import '../core/together/people.dart' show Friend;
+import '../core/together/socket.dart' show TogetherEvent;
 import '../core/together/voice_mesh.dart';
 import '../core/themes/theme_design.dart';
 import '../core/themes/theme_library.dart';
@@ -100,6 +110,7 @@ import '../core/update_channel.dart';
 import '../core/unreal/unreal_controls.dart';
 import 'browser_play.dart';
 import 'clip_player.dart';
+import 'online_webrtc.dart';
 import 'voice_note_player.dart';
 import 'components.dart';
 import 'controllers_model.dart';
@@ -137,6 +148,7 @@ import 'trophy_card.dart';
 part 'profiles_model.dart';
 part 'retro_home_folders.dart';
 part 'retro_host_graphics.dart';
+part 'retro_host_online.dart';
 part 'retro_host_play.dart';
 part 'standalone_emulators.dart';
 part 'settings_search.dart';
@@ -1034,6 +1046,7 @@ class PanelRow {
     this.picture,
     this.meter,
     this.wraps = false,
+    this.playerSlots = const [],
   });
 
   final String id;
@@ -1063,7 +1076,39 @@ class PanelRow {
   /// A picture (a game's icon) drawn before the title in the sign's place.
   final Uint8List? picture;
 
+  /// A lobby's seats, Player 1 to 4, drawn under the words across the row.
+  final List<PlayerSlot> playerSlots;
+
   bool get focusable => kind is! InfoRow;
+}
+
+/// One seat in a game's lobby: Player 1 to 4, who holds it and how.
+class PlayerSlot {
+  const PlayerSlot({
+    required this.player,
+    this.name,
+    required this.status,
+    this.you = false,
+    this.available = true,
+    this.joinHint = false,
+  });
+
+  final int player;
+
+  /// Who sits there; null for an open seat.
+  final String? name;
+
+  /// Their controller and connection, or why the seat is open or cannot be taken.
+  final String status;
+
+  /// This player's own seat.
+  final bool you;
+
+  /// False for a seat the game cannot have now: it is drawn dim.
+  final bool available;
+
+  /// A controller on this computer is connected but not seated: the seat asks it to press Cross.
+  final bool joinHint;
 }
 
 sealed class RowKind {
@@ -2714,6 +2759,9 @@ class AppModel extends ChangeNotifier {
 
   /// A PS1 game playing in the launcher's window through the emulator host (retro_host_play.dart).
   RetroPlay? retroPlay;
+
+  /// Its online match with a friend, from the invite to the end (retro_host_online.dart).
+  RetroOnline? retroOnline;
 
   /// The emulator host of the last PS1 game, kept for the next one (retro_host_play.dart).
   @visibleForTesting

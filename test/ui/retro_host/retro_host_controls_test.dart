@@ -313,4 +313,41 @@ void main() {
     session.sendRumble(0, 0xFFFF, 0);
     expect(motors.orders, hasLength(2));
   });
+
+  test('in an online match the controller at port 1 plays the match, not the game, and feels its port', () async {
+    await started();
+    pads.connect('a', const PadState(pressed: {PadButton.south}));
+    motors.vibrating.add('a');
+    controls.poll();
+    session.inputStates.clear();
+    controls.onlinePort = 1;
+    expect(controls.onlineInput, RetroPadInput(buttons: RetroPadButton.cross.mask));
+    pads.states['a'] = const PadState(pressed: {PadButton.east}, leftX: 1);
+    controls.poll();
+    expect(controls.onlineInput, RetroPadInput(buttons: RetroPadButton.circle.mask, leftX: 32767));
+    expect(session.inputStates, isEmpty, reason: "the game in lockstep takes only the match's steps");
+    pads.connect('b', const PadState(pressed: {PadButton.south}));
+    controls.poll();
+    expect(session.calls.where((call) => call.$1 == 'connectedPorts'), isEmpty, reason: 'the steps say the ports');
+    pads.disconnect('b');
+
+    motors.orders.clear();
+    session.sendRumble(0, 0xFFFF, 0);
+    session.sendRumble(1, 0, 0xFFFF);
+    expect(
+      [for (final order in motors.orders) (order.$1, order.$2, order.$3)],
+      [('a', 0.0, 1.0)],
+      reason: "port 2 is this player's in the match; port 1's motors are the other player's",
+    );
+
+    controls.suspended = true;
+    expect(controls.onlineInput, RetroPadInput.idle, reason: 'the menu keeps the presses out of the match');
+    controls.suspended = false;
+    controls.poll();
+    expect(controls.onlineInput.buttons, 0, reason: 'the press that closed the menu waits to be let go');
+
+    controls.onlinePort = null;
+    controls.poll();
+    expect(session.inputStates.last.$1, 1, reason: 'the game takes the controllers again, both ports sent');
+  });
 }

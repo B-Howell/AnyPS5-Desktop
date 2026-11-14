@@ -8,6 +8,7 @@ import 'package:anyps5_desktop/core/retro_host/retro_host_client.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_pad.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_session.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_lockstep.dart';
 import 'package:anyps5_desktop/ui/retro_host/retro_host_controls.dart';
 import 'package:ffi/ffi.dart';
 
@@ -152,11 +153,47 @@ class FakeRetroHostSession extends FakeFrameSource implements RetroHostSession {
     if (!endedCompleter.isCompleted) endedCompleter.complete(RetroHostEnd.clean);
   }
 
+  /// Whether the host lists `ps1Lockstep`.
+  @override
+  bool canLockstep = true;
+
+  @override
+  String hostVersion = '1.0.0';
+
+  final _syncs = StreamController<RetroSync>.broadcast(sync: true);
+
+  /// Every step sent, in order.
+  final steps = <RetroStep>[];
+
+  @override
+  Stream<RetroSync> get syncs => _syncs.stream;
+
+  /// A `sync` message from the host.
+  void sendSync(RetroSync sync) => _syncs.add(sync);
+
+  @override
+  Future<int?> lockstep(RetroLockstepSettings settings) async => await call('lockstep', settings.toArgs()) as int?;
+
+  @override
+  Future<bool> leaveLockstep() async => await call('lockstep', false) != false;
+
+  @override
+  Future<RetroStatePosition?> saveState(String path) async =>
+      await call('saveState', {'path': path}) as RetroStatePosition?;
+
+  @override
+  Future<RetroStatePosition?> loadState(String path) async =>
+      await call('loadState', {'path': path}) as RetroStatePosition?;
+
+  @override
+  void step(RetroStep step) => steps.add(step);
+
   @override
   Future<void> close() async {
     closed = true;
     await super.close();
     await _rumble.close();
+    await _syncs.close();
   }
 }
 

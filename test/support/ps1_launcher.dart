@@ -18,8 +18,12 @@ import 'ui_support.dart';
 /// fake host session for every host started in it: [sessions] in order, a new one made for a
 /// host started once every session there was used.
 class Ps1Launcher {
-  Ps1Launcher({bool hostFound = true, FakeRetroHostSession? session, Future<RetroHardware?> Function()? hardware})
-    : sessions = [session ?? FakeRetroHostSession()] {
+  Ps1Launcher({
+    bool hostFound = true,
+    FakeRetroHostSession? session,
+    Future<RetroHardware?> Function()? hardware,
+    Uri? together,
+  }) : sessions = [session ?? FakeRetroHostSession()] {
     final temp = temporaryFolder('ps1-host');
     final hostFolder = Directory(p.join(temp.path, 'host'))..createSync();
     host = (File(p.join(hostFolder.path, 'anyps5-retro-host'))..createSync()).path;
@@ -28,6 +32,7 @@ class Ps1Launcher {
       withToolkit: false,
       environment: {if (hostFound) RetroHostInstall.variable: host},
       retroHardware: hardware,
+      together: together,
     );
     folders.add(temp);
     final folder = Directory(p.join(model.root!, 'Night Racer'))..createSync();

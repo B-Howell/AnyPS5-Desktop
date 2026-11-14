@@ -7,6 +7,7 @@ import 'package:anyps5_desktop/core/retro_host/frame_ring.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_client.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_session.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_lockstep.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // What the tests against the real emulator host share (ANYPS5_RETRO_HOST_REAL).
@@ -97,4 +98,20 @@ class RecordingSession implements RetroHostSession {
   void shutdown() => client.shutdown();
   @override
   Future<void> close() => client.close();
+  @override
+  String get hostVersion => client.hostVersion;
+  @override
+  bool get canLockstep => client.canLockstep;
+  @override
+  Stream<RetroSync> get syncs => client.syncs;
+  @override
+  Future<int?> lockstep(RetroLockstepSettings settings) => client.lockstep(settings);
+  @override
+  Future<bool> leaveLockstep() => client.leaveLockstep();
+  @override
+  Future<RetroStatePosition?> saveState(String path) => client.saveState(path);
+  @override
+  Future<RetroStatePosition?> loadState(String path) => client.loadState(path);
+  @override
+  void step(RetroStep step) => client.step(step);
 }

@@ -1,6 +1,7 @@
 import 'frame_ring.dart';
 import 'retro_host_client.dart';
 import 'retro_host_protocol.dart';
+import 'retro_lockstep.dart';
 
 /// The frames one emulator host shows: [RetroHostClient.frames] and [RetroHostClient.frame].
 abstract interface class RetroFrameSource {
@@ -13,7 +14,7 @@ abstract interface class RetroFrameSource {
 
 /// What the launcher's UI uses of one emulator host connection. [RetroHostClient] is the real one;
 /// tests give a fake, so the UI is tested without starting a host.
-abstract interface class RetroHostSession implements RetroFrameSource {
+abstract interface class RetroHostSession implements RetroFrameSource, RetroLockstepHost {
   /// Completes once the host greeted the launcher; fails with [RetroHostGone] when it never did.
   Future<void> get ready;
 
@@ -57,6 +58,7 @@ class RetroHostStartRequest {
     required this.saves,
     this.options = const {},
     this.initialDisc,
+    this.lockstep,
   });
 
   /// The SwanStation library the launcher checked.
@@ -77,6 +79,9 @@ class RetroHostStartRequest {
   /// Only for an `.m3u`: the playlist entry to insert at boot, 0 to 127.
   final int? initialDisc;
 
+  /// The game starts in lockstep and runs no frame before a step (capability `ps1Lockstep`).
+  final RetroLockstepSettings? lockstep;
+
   Map<String, Object?> toArgs() => {
     'core': core,
     'disc': disc,
@@ -84,5 +89,6 @@ class RetroHostStartRequest {
     'saves': saves,
     if (options.isNotEmpty) 'options': options,
     'initialDisc': ?initialDisc,
+    'lockstep': ?lockstep?.toArgs(),
   };
 }

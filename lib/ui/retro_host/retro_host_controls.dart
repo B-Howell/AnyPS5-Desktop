@@ -91,6 +91,30 @@ class RetroHostControls {
   /// The `connectedPorts` the host has: 1 for a game that has not loaded yet ("A game starts
   /// with 1"), unknown (null) for one that was loaded before these controls, so it is sent.
   int? _portsSent;
+
+  /// While an online match plays the game, the port this computer's player plays (0 or 1): the
+  /// presses of the controller at port 1 here go to the match as [onlineInput] instead of to the
+  /// game, which in lockstep takes only the match's steps, and the core's vibration for that port
+  /// goes to that controller. Null for a game played on this computer alone.
+  int? get onlinePort => _onlinePort;
+  int? _onlinePort;
+  set onlinePort(int? port) {
+    if (port != null && (port < 0 || port >= RetroSeats.portCount)) {
+      throw RangeError.range(port, 0, RetroSeats.portCount - 1, 'port');
+    }
+    if (_onlinePort == port) return;
+    _stopMotors();
+    _levels.fillRange(0, _levels.length, (0, 0));
+    _onlinePort = port;
+    _sent.fillRange(0, _sent.length, null);
+    _portsSent = null;
+    onlineInput = RetroPadInput.idle;
+    poll();
+  }
+
+  /// What this computer's player holds now, for the online match: idle while the menu is open or
+  /// the window has no focus.
+  RetroPadInput onlineInput = RetroPadInput.idle;
   bool _suspended = false;
   bool _disposed = false;
 
@@ -141,6 +165,13 @@ class RetroHostControls {
     for (var port = 0; port < RetroSeats.portCount; port++) {
       _swallowed[port] &= held[port]?.buttons ?? 0;
     }
+    if (_onlinePort != null) {
+      final now = held[0];
+      onlineInput = !game.acceptsInput || now == null
+          ? RetroPadInput.idle
+          : now.withButtons(now.buttons & ~_swallowed[0]);
+      return;
+    }
     if (!game.acceptsInput) {
       _onGameChanged();
       return;
@@ -177,11 +208,16 @@ class RetroHostControls {
   /// leaves its port"), and the port is sent as idle by the next state that is sent.
   void _left(RetroSeatChange change) {
     _swallowed[change.port] = 0;
-    if (_levels[change.port] != (0, 0)) {
-      _levels[change.port] = (0, 0);
+    final port = _onlinePort == null ? change.port : (change.port == 0 ? _onlinePort! : null);
+    if (port != null && _levels[port] != (0, 0)) {
+      _levels[port] = (0, 0);
       _setMotors(change.pad, 0, 0);
     }
   }
+
+  /// The controller here that plays the console's [port]: the one seated there, or, in an online
+  /// match, Player 1's for this computer's port and none for the other player's.
+  String? _padFor(int port) => _onlinePort == null ? seats.at(port) : (port == _onlinePort ? seats.at(0) : null);
 
   /// The core's vibration for a port, kept and given to the controller there. Nothing once no
   /// game is loaded: a `rumble` still coming while the host shuts down must not start the motors
@@ -190,14 +226,14 @@ class RetroHostControls {
     if (_disposed || !game.loaded) return;
     _syncSeats();
     _levels[event.port] = (event.strong, event.weak);
-    final pad = seats.at(event.port);
+    final pad = _padFor(event.port);
     if (pad != null) _setMotors(pad, event.strong, event.weak);
   }
 
   void _refreshRumble() {
     for (var port = 0; port < RetroSeats.portCount; port++) {
       final (strong, weak) = _levels[port];
-      final pad = seats.at(port);
+      final pad = _padFor(port);
       if (pad != null && (strong != 0 || weak != 0)) _setMotors(pad, strong, weak);
     }
   }
@@ -213,7 +249,7 @@ class RetroHostControls {
     final rumble = motors;
     if (rumble == null) return;
     for (var port = 0; port < RetroSeats.portCount; port++) {
-      final pad = seats.at(port);
+      final pad = _padFor(port);
       if (pad != null && _levels[port] != (0, 0) && rumble.canRumble(pad)) rumble.rumble(pad, 0, 0, Duration.zero);
     }
   }

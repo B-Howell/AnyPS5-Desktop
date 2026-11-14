@@ -37,6 +37,8 @@ the launcher plays a PS1 disc from its emulator library through all of them
 | [`lib/core/retro_host/retro_keyboard.dart`](../lib/core/retro_host/retro_keyboard.dart) | `RetroKeyboard`: the keyboard as a PS1 controller, with the keys of a game's Controls. |
 | [`lib/ui/retro_host_play.dart`](../lib/ui/retro_host_play.dart) | `RetroPlay` and the `RetroHostPlaying` part of `AppModel`: the setting, starting a disc in the host, the commands while it plays, the menu's panel rows, closing. |
 | [`lib/ui/retro_host/retro_play_view.dart`](../lib/ui/retro_host/retro_play_view.dart) | `RetroPlayView`: the game over the whole window, with `RetroGameNotice` for the loading and error screens. |
+| [`lib/ui/retro_host_online.dart`](../lib/ui/retro_host_online.dart) | The game's lobby and PS1 online play with a friend ([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md)). |
+| [`lib/ui/player_slots_strip.dart`](../lib/ui/player_slots_strip.dart) | `PlayerSlotsStrip`: the lobby's Player 1 to 4 cards under a panel row. |
 
 Each piece does one job and can be used alone. A settings preview can use
 `RetroFrameView` with any picture, and a menu can follow `RetroHostGame` without
@@ -243,7 +245,10 @@ add the protocol's last case, "when a controller leaves its port": its motors
 stop. They also stop every motor once no game is loaded, because a host that
 is shut down sends no `rumble` and the client gives no zeros for a clean end.
 From then on they ignore any `rumble` that still comes. Setting `vibration`
-to false stops the motors and keeps later rumble away. `dispose` stops any
+to false stops the motors and keeps later rumble away. In an online match,
+`onlinePort` gives the controller at port 1 to the match instead of the game,
+with the vibration of this player's port ([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md),
+"Controllers in a match"). `dispose` stops any
 motor the game left running. It also sends idle for a port whose controller
 held something, so a game that goes on is not left with a held button.
 
@@ -525,8 +530,9 @@ While the game loads, PS or Esc gives the start up.
 
 **The menu.** `Layer.retroMenu` is a panel styled as the quick menu
 ("Paused", the game's icon and name), as tall as its rows. Its first page:
-Resume, each disc of a multi-disc game ("In the console." under the inserted
-one), Graphics (with a line saying what is in it), a row for each section
+Resume, Couch Co-op (the game's lobby, with Player 1 to 4 and online play
+with a friend, described in [RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md)), each
+disc of a multi-disc game ("In the console." under the inserted one), Graphics (with a line saying what is in it), a row for each section
 that has rows (Audio, Controller, Console, Advanced, each with a line saying
 what is in it), and Close game. Graphics opens `Layer.retroGraphics`, the
 Graphics page, with the sections Picture, Auto Optimizer and More picture
@@ -538,7 +544,7 @@ section shows its page, headed with its name: its SwanStation options as
 choices of their labels, and in Audio, Volume (a bar in tenths) and Mute
 first. An option that takes effect only when the game starts again says so
 under its title, and a chosen value not yet in effect says when it will be.
-Back on a section's page goes back to the first page, on that section's row.
+Back on a section's page, or the lobby, goes back to the first page, on its row.
 The menu always opens on its first page. Opening it pauses the game and keeps
 the controllers out of it. PS, Options or Resume close it, and so does Back
 on the first page. Any other layer over the

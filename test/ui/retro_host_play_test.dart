@@ -175,6 +175,7 @@ void main() {
       [for (final row in model.panelCategories().single.rows) row.id],
       [
         'resume',
+        'players',
         'disc-0',
         'disc-1',
         'graphics',
@@ -237,7 +238,7 @@ void main() {
     model.handle(Command.back);
     expect(model.overlay, Layer.retroMenu, reason: 'Back on a section goes back to the first page');
     expect(model.panelCategories().single.id, 'retroMenu');
-    expect(model.panelRow, 6, reason: 'on the Console row');
+    expect(model.panelRow, 7, reason: 'on the Console row');
     expect(launcher.play.menu.isOpen, isTrue);
 
     (launcher.row('section-advanced').kind as ActionRow).run();

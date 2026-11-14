@@ -667,17 +667,26 @@ extension TogetherProfiles on TogetherModel {
     final rows = <PanelRow>[
       ...togetherOfferRows(),
       for (final invite in games.invites) ...[
-        PanelRow(
-          id: 'game-accept-${invite.sessionId}',
-          title: T.format('gameJoin', [invite.from?.displayName ?? '', gameName(invite.titleId)]),
-          detail: T.text('gameInvitedDetail'),
-          person: invite.from == null ? null : TogetherModel.card(invite.from!, status: PersonStatus.playing),
-          kind: ActionRow(
-            () => unawaited(
-              joinFriendGame(invite.sessionId, titleId: invite.titleId, host: invite.from?.displayName ?? ''),
+        if (RetroHostOnline.isRetroOnlineInvite(invite))
+          PanelRow(
+            id: 'game-accept-${invite.sessionId}',
+            title: T.format('retroOnlineJoin', [invite.from?.displayName ?? '']),
+            detail: T.text('retroOnlineJoinDetail'),
+            person: invite.from == null ? null : TogetherModel.card(invite.from!, status: PersonStatus.playing),
+            kind: ActionRow(() => unawaited(app.joinRetroOnline(invite))),
+          )
+        else
+          PanelRow(
+            id: 'game-accept-${invite.sessionId}',
+            title: T.format('gameJoin', [invite.from?.displayName ?? '', gameName(invite.titleId)]),
+            detail: T.text('gameInvitedDetail'),
+            person: invite.from == null ? null : TogetherModel.card(invite.from!, status: PersonStatus.playing),
+            kind: ActionRow(
+              () => unawaited(
+                joinFriendGame(invite.sessionId, titleId: invite.titleId, host: invite.from?.displayName ?? ''),
+              ),
             ),
           ),
-        ),
         PanelRow(
           id: 'game-decline-${invite.sessionId}',
           title: T.format('gameDecline', [invite.from?.displayName ?? '']),

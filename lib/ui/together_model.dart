@@ -1449,6 +1449,8 @@ class TogetherModel {
   void _event(TogetherEvent event) {
     // Online play follows the same game session: players joining, leaving, signalling.
     online.handle(event);
+    // A PS1 online match of the game in the emulator host: the other launcher's signals.
+    app.retroOnlineEvent(event);
     // Share play: the one hosted, the one watched, the invites.
     if (event.type == 'live.ready' || event.type.startsWith('share_play.')) app.sharePlay.event(event);
     findEvent(event);

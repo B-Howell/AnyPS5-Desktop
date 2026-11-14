@@ -12,6 +12,7 @@ import 'frame_ring.dart';
 import 'retro_host_native.dart';
 import 'retro_host_protocol.dart';
 import 'retro_host_session.dart';
+import 'retro_lockstep.dart';
 import 'strict_json.dart';
 
 /// How a connection to the emulator host ended (anyps5-retro-host docs/protocol.md "Fixtures",
@@ -115,6 +116,8 @@ class RetroHostClient implements RetroHostSession {
   Timer? _unsupportedKill;
   final _frames = StreamController<RetroFrameEvent>.broadcast(sync: true);
   final _rumble = StreamController<RetroRumble>.broadcast();
+  final _syncs = StreamController<RetroSync>.broadcast(sync: true);
+  final _lockstep = RetroLockstepTracker();
   final _calls = Queue<_Pending>();
   final _pings = Queue<(int, DateTime)>();
 
@@ -238,6 +241,7 @@ class RetroHostClient implements RetroHostSession {
   /// Completes with the host's exit code when its process has ended.
   Future<int> get exited => _exited.future;
 
+  @override
   String get hostVersion => _hostVersion;
   List<String> get capabilities => _capabilities;
   String? get pixelFormat => _pixelFormat;
@@ -256,6 +260,14 @@ class RetroHostClient implements RetroHostSession {
   /// Events come asynchronously, so a listener may call anything on the client, [close] included.
   @override
   Stream<RetroRumble> get rumble => _rumble.stream;
+
+  /// Each `sync` of a game in lockstep (protocol.md "sync"), checked and in frame order.
+  @override
+  Stream<RetroSync> get syncs => _syncs.stream;
+
+  /// Whether the host lists `ps1Lockstep`, so a game can be played online through it.
+  @override
+  bool get canLockstep => _capabilities.contains(retroCapabilityPs1Lockstep);
 
   /// Whether the launcher's window has input focus; losing it zeroes the controllers' input and
   /// their motors (protocol.md "input" and "rumble"). Once the connection has ended there is no
@@ -287,10 +299,14 @@ class RetroHostClient implements RetroHostSession {
   }
 
   Future<Object?> _send(String method, Object? args) {
-    if (_ended.isCompleted) return Future.value(_afterFailure(method));
+    if (_ended.isCompleted) return Future.value(_afterFailure(method, args));
     if (!_greeted) throw StateError('No call may be sent before welcome.');
     if (method != 'volume' && !_capabilities.contains(retroCapabilityPs1)) {
       throw StateError('The host does not list the ps1 capability.');
+    }
+    final lockstepStart = method == 'start' && args is Map && args.containsKey('lockstep');
+    if ((retroLockstepMethods.contains(method) || lockstepStart) && !canLockstep) {
+      throw StateError('The host does not list the $retroCapabilityPs1Lockstep capability.');
     }
     if (StrictJson.hasLoneSurrogate(args)) {
       return Future.error(const RetroCallError(RetroCallError.argument, 'A string cannot be sent as UTF-8.'));
@@ -376,6 +392,43 @@ class RetroHostClient implements RetroHostSession {
     });
   }
 
+  /// `lockstep` with [settings]: the game enters lockstep, or keeps its count and takes the new
+  /// settings. Gives the frame the next [step] is for; null when the game has ended, or its frame
+  /// did not end in time.
+  @override
+  Future<int?> lockstep(RetroLockstepSettings settings) async => await call('lockstep', settings.toArgs()) as int?;
+
+  /// `lockstep` with `false`: the game leaves lockstep and runs on its own. False when the game has
+  /// ended, or its frame did not end in time.
+  @override
+  Future<bool> leaveLockstep() async => await call('lockstep', false) == true;
+
+  /// `saveState`: the game's state, with the next lockstep frame, written to [path]. Null when the
+  /// host could not.
+  @override
+  Future<RetroStatePosition?> saveState(String path) async =>
+      await call('saveState', {'path': path}) as RetroStatePosition?;
+
+  /// `loadState`: the state at [path] read into the game, whose next step is then for its frame.
+  /// Null when the host could not; the console is then in no known state.
+  @override
+  Future<RetroStatePosition?> loadState(String path) async =>
+      await call('loadState', {'path': path}) as RetroStatePosition?;
+
+  /// Sends one lockstep frame's input (protocol.md "step"). Steps go in frame order with no gaps,
+  /// from the frame the last `lockstep` or `loadState` gave; [RetroLockstepTracker] refuses any
+  /// other with a [StateError].
+  @override
+  void step(RetroStep step) {
+    if (!_greeted || _ended.isCompleted) return;
+    if (!canLockstep) throw StateError('The host does not list the $retroCapabilityPs1Lockstep capability.');
+    final before = _expectedRumble();
+    _lockstep.sending(step);
+    _ports = step.ports.length;
+    _zeroIfStricter(before);
+    _sendObject(step.toMessage());
+  }
+
   /// Asks the host to stop its game and exit; it is killed if it has not exited 15 seconds later.
   /// Before `welcome` nothing may be sent, so the host is killed instead.
   @override
@@ -397,7 +450,7 @@ class RetroHostClient implements RetroHostSession {
     await _release();
   }
 
-  Object? _afterFailure(String method) {
+  Object? _afterFailure(String method, [Object? args]) {
     final failed = _failedStatus;
     if (failed == null) throw RetroHostGone(_ended.isCompleted ? _endValue! : RetroHostEnd.hostFailure);
     switch (method) {
@@ -409,6 +462,8 @@ class RetroHostClient implements RetroHostSession {
         return null;
       case 'connectedPorts' || 'changeDisc' || 'option':
         return false;
+      case 'lockstep':
+        return args == false ? false : null;
       default:
         return null;
     }
@@ -495,6 +550,9 @@ class RetroHostClient implements RetroHostSession {
         _onFrame();
       case 'rumble':
         _onRumble(RetroFields(message, 'rumble'));
+      case 'sync':
+        if (!canLockstep) throw const RetroProtocolError('A sync came from a host without ps1Lockstep.');
+        _syncs.add(_lockstep.synced(message));
     }
   }
 
@@ -573,10 +631,12 @@ class RetroHostClient implements RetroHostSession {
         _ports = 1;
         _lastStatusEnded = false;
         _setFrame(null, null);
+        _lockstep.started(lockstep: args is Map && args.containsKey('lockstep'));
       case 'status':
         if (result == null) {
           if (_gameLoaded) _zeroRumble();
           _gameLoaded = false;
+          _lockstep.ended();
           _epoch = null;
           _lastStatusEnded = false;
           if (afterStop) _stopDeadline = null;
@@ -590,6 +650,7 @@ class RetroHostClient implements RetroHostSession {
         _expectNull(method, result);
         if (_lastStatusEnded) {
           _gameLoaded = false;
+          _lockstep.ended();
           _epoch = null;
           if (afterStop) _stopDeadline = null;
         }
@@ -601,6 +662,8 @@ class RetroHostClient implements RetroHostSession {
         if (_gameLoaded && args is bool) _paused = args;
       case 'volume' || 'stop':
         _expectNull(method, result);
+      case 'lockstep' || 'saveState' || 'loadState':
+        return _lockstep.replied(method, args, result);
     }
     return result;
   }
@@ -801,7 +864,7 @@ class RetroHostClient implements RetroHostSession {
     while (_calls.isNotEmpty) {
       final pending = _calls.removeFirst();
       try {
-        pending.completer.complete(_afterFailure(pending.method));
+        pending.completer.complete(_afterFailure(pending.method, pending.args));
       } on RetroHostGone catch (error) {
         pending.completer.completeError(error);
       }
@@ -834,6 +897,7 @@ class RetroHostClient implements RetroHostSession {
     _frame = null;
     await _frames.close();
     await _rumble.close();
+    await _syncs.close();
   }
 
   void _sendObject(Map<String, Object?> message) => _write(_encode(message));

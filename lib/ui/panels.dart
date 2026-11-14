@@ -16,6 +16,7 @@ import 'components.dart';
 import 'glass.dart';
 import 'level_badge.dart';
 import 'messages_view.dart';
+import 'player_slots_strip.dart';
 import 'profile_picture.dart';
 import 'home.dart';
 import 'strings.dart';
@@ -944,11 +945,14 @@ class _RowView extends StatelessWidget {
                       SizedBox(height: 10 * scale),
                       _MeterBar(meter: meter, color: model.accentChoice.color, scale: scale),
                     ],
+                    if (row.playerSlots.isNotEmpty) ...[
+                      SizedBox(height: 12 * scale),
+                      PlayerSlotsStrip(slots: row.playerSlots, accent: model.accentChoice.color),
+                    ],
                   ],
                 ),
               ),
-              SizedBox(width: 18 * scale),
-              value(),
+              if (row.playerSlots.isEmpty) ...[SizedBox(width: 18 * scale), value()],
             ],
           );
 

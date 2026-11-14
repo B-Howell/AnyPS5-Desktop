@@ -1,0 +1,88 @@
+{
+ "recorded": "One anyps5-retro-host process from B-Howell/anyps5-retro-host netplay-design 9b75364, built on Windows with WinLibs GCC 15.2, running that repository's test core (tests/fake_core.c), driven by tests/lockstep_test.py: what a game in lockstep refuses, and leaving and entering lockstep again. The paths of saveState and loadState are left out.",
+ "replies": [
+  {
+   "method": "saveState",
+   "args": {
+    "path": "<a file of the match>"
+   },
+   "reply": "{\"type\":\"reply\",\"id\":3,\"result\":{\"frame\":600,\"bytes\":131152}}"
+  },
+  {
+   "method": "loadState",
+   "args": {
+    "path": "<a file of the match>"
+   },
+   "reply": "{\"type\":\"reply\",\"id\":4,\"result\":{\"frame\":600,\"bytes\":131152}}"
+  },
+  {
+   "method": "option",
+   "args": {
+    "key": "fake_color",
+    "value": "green"
+   },
+   "reply": "{\"type\":\"reply\",\"id\":5,\"result\":false}"
+  },
+  {
+   "method": "connectedPorts",
+   "args": 2,
+   "reply": "{\"type\":\"reply\",\"id\":6,\"result\":false}"
+  },
+  {
+   "method": "saveState",
+   "args": {
+    "path": "<a file of the match>"
+   },
+   "reply": "{\"type\":\"reply\",\"id\":7,\"result\":false}"
+  },
+  {
+   "method": "loadState",
+   "args": {
+    "path": "<a file of the match>"
+   },
+   "reply": "{\"type\":\"reply\",\"id\":8,\"result\":false}"
+  },
+  {
+   "method": "loadState",
+   "args": {
+    "path": "<a file of the match>"
+   },
+   "reply": "{\"type\":\"reply\",\"id\":9,\"result\":false}"
+  },
+  {
+   "method": "lockstep",
+   "args": {
+    "check": 1,
+    "paced": false
+   },
+   "reply": "{\"type\":\"reply\",\"id\":10,\"result\":{\"frame\":901}}"
+  },
+  {
+   "method": "lockstep",
+   "args": false,
+   "reply": "{\"type\":\"reply\",\"id\":11,\"result\":true}"
+  },
+  {
+   "method": "lockstep",
+   "args": {
+    "check": 1,
+    "paced": false
+   },
+   "reply": "{\"type\":\"reply\",\"id\":12,\"result\":{\"frame\":0}}"
+  },
+  {
+   "method": "saveState",
+   "args": {
+    "path": "<a file of the match>"
+   },
+   "reply": "{\"type\":\"reply\",\"id\":13,\"result\":{\"frame\":0,\"bytes\":131152}}"
+  },
+  {
+   "method": "saveState",
+   "args": {
+    "path": "<a file of the match>"
+   },
+   "reply": "{\"type\":\"reply\",\"id\":14,\"result\":{\"frame\":0,\"bytes\":131152}}"
+  }
+ ]
+}

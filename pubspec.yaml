@@ -42,6 +42,8 @@ flutter:
   shaders:
     - shaders/background.frag
   assets:
+    # The controller drawn on each seat of a game's lobby (lib/ui/player_slots_strip.dart).
+    - assets/retro/coop-controller.png
     - assets/fonts/Figtree-OFL.txt
     # Play from a browser: the pad page phones get (lib/core/remote/browser_pad_server.dart), a copy
     # of the macOS launcher's tools/macos/launcher/BrowserPad/index.html (tool/sync_browser_pad.sh).

@@ -43,6 +43,9 @@ class RetroPlay {
   /// The section of the menu shown, or null for the menu's first page.
   RetroOptionSection? menuSection;
 
+  /// The menu shows the game's lobby (retro_host_online.dart).
+  bool lobby = false;
+
   bool _released = false;
 
   /// Lets go of the controllers, the menu and the host, once, whoever asks first: Close Game, or
@@ -175,19 +178,28 @@ extension RetroHostPlaying on AppModel {
     ];
   }
 
-  /// Starts [game]'s PS1 disc in a new emulator host and shows it in the launcher's window.
-  Future<void> _playInHost(Game game, RetroDisc disc) async {
-    if (starting != null || running != null || retroPlay != null) return;
+  /// Starts [game]'s PS1 disc in a new emulator host and shows it in the launcher's window, and
+  /// gives its play once `start` was answered (null when it did not start). An online match's
+  /// friend gives the host it opened already ([opened]), the host player's core [options] and a
+  /// [saves] folder of the match's own (retro_host_online.dart).
+  Future<RetroPlay?> _playInHost(
+    Game game,
+    RetroDisc disc, {
+    RetroHostSession? opened,
+    Map<String, String>? options,
+    String? saves,
+  }) async {
+    if (starting != null || running != null || retroPlay != null) return null;
     final install = retroHostInstall;
-    if (install == null) return;
+    if (install == null) return null;
     final allowed = together.family.beforePlay(game);
     if (!(allowed is bool ? allowed : await allowed) || starting != null || running != null || retroPlay != null) {
-      return;
+      return null;
     }
-    if (_disposed) return;
+    if (_disposed) return null;
     if (!File(disc.path).existsSync()) {
       show(T.text('retroDiscMoved'));
-      return;
+      return null;
     }
     try {
       Directory(paths.retroSystem).createSync(recursive: true);
@@ -197,7 +209,7 @@ extension RetroHostPlaying on AppModel {
 
     final volume = preferences.retroHostVolume / 100;
     final muted = preferences.retroHostMuted;
-    final kept = retroHostKeeper.take(program: install.host);
+    final kept = opened ?? retroHostKeeper.take(program: install.host);
     final RetroHostSession session;
     if (kept != null) {
       session = kept;
@@ -208,7 +220,7 @@ extension RetroHostPlaying on AppModel {
       } on Object catch (error) {
         _padLog?.call('emulator host: ${install.host} did not start: $error');
         show(T.text('retroHostNotStartedDetail'));
-        return;
+        return null;
       }
     }
     final host = RetroHostGame(session, statusEvery: retroStatusEvery, volume: volume, muted: muted);
@@ -255,16 +267,19 @@ extension RetroHostPlaying on AppModel {
         core: install.core,
         disc: p.normalize(disc.path),
         system: p.normalize(paths.retroSystem),
-        saves: p.normalize(paths.retroSaves),
-        options: {
-          for (final MapEntry(:key, :value) in {
-            ...preferences.retroHostOptions,
-            ...?preferences.retroHostGraphics[game.id]?.options,
-          }.entries)
-            if (retroOptionShown(key)) key: value,
-        },
+        saves: p.normalize(saves ?? paths.retroSaves),
+        options:
+            options ??
+            {
+              for (final MapEntry(:key, :value) in {
+                ...preferences.retroHostOptions,
+                ...?preferences.retroHostGraphics[game.id]?.options,
+              }.entries)
+                if (retroOptionShown(key)) key: value,
+            },
       ),
     );
+    return play;
   }
 
   /// The game moved on: a game that ended without an error, and was not closed by the player,
@@ -297,6 +312,7 @@ extension RetroHostPlaying on AppModel {
     final play = retroPlay;
     if (play == null || play.closing || !play.host.loaded || retroMenuShown) return;
     play.menuSection = null;
+    play.lobby = false;
     open(Layer.retroMenu);
     unawaited(play.menu.open());
   }
@@ -316,6 +332,7 @@ extension RetroHostPlaying on AppModel {
     final play = retroPlay;
     if (play == null) return;
     play.menuSection = null;
+    play.lobby = false;
     if (retroMenuShown) {
       overlay = null;
       sounds.play(Cue.back);
@@ -330,6 +347,7 @@ extension RetroHostPlaying on AppModel {
   Future<void> closeRetroGame() async {
     final play = retroPlay;
     if (play == null || play.closing) return;
+    unawaited(leaveRetroOnline());
     play.closing = true;
     play.menuSection = null;
     _countRetroPlay(play);
@@ -356,7 +374,7 @@ extension RetroHostPlaying on AppModel {
     final play = retroPlay;
     if (play == null) return false;
     if (overlay == Layer.retroMenu) {
-      if (command == Command.back && play.menuSection != null) {
+      if (command == Command.back && (play.menuSection != null || play.lobby)) {
         _leaveRetroMenuSection(play);
         return true;
       }
@@ -391,6 +409,9 @@ extension RetroHostPlaying on AppModel {
   List<PanelCategory> _retroMenuCategories() {
     final play = retroPlay;
     if (play == null) return const [];
+    if (play.lobby) {
+      return [PanelCategory(id: 'retroMenu-lobby', title: T.text('coopLobbyTitle'), rows: retroLobbyRows(play))];
+    }
     final section = play.menuSection;
     if (section != null) {
       return [
@@ -408,6 +429,7 @@ extension RetroHostPlaying on AppModel {
         title: play.game.name,
         rows: [
           PanelRow(id: 'resume', title: T.text('quickResume'), kind: ActionRow(resumeRetroGame)),
+          retroLobbyRow(play),
           for (final disc in menu.rows.whereType<RetroDiscRow>())
             PanelRow(
               id: 'disc-${disc.index}',
@@ -492,12 +514,14 @@ extension RetroHostPlaying on AppModel {
     _changed();
   }
 
-  /// Back from a section's page to the first page, on the section's row.
+  /// Back from a section's page, or the lobby, to the first page, on its row.
   void _leaveRetroMenuSection(RetroPlay play) {
     final section = play.menuSection;
+    final lobby = play.lobby;
     play.menuSection = null;
+    play.lobby = false;
     final rows = _retroMenuCategories().single.rows;
-    final index = rows.indexWhere((row) => row.id == 'section-${section?.name}');
+    final index = rows.indexWhere((row) => row.id == (lobby ? 'players' : 'section-${section?.name}'));
     panelRow = index < 0 ? 0 : index;
     sounds.play(Cue.back);
     _changed();

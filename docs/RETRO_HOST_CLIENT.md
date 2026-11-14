@@ -19,12 +19,14 @@ it, the game's picture and the object that runs one game, is described in
 | [`lib/core/retro_host/retro_host_protocol.dart`](../lib/core/retro_host/retro_host_protocol.dart) | The protocol's values, field checks and the game's `status`. |
 | [`lib/core/retro_host/frame_ring.dart`](../lib/core/retro_host/frame_ring.dart) | Checks a ring's header and growth. Pins the newest frame and checks its size. |
 | [`lib/core/retro_host/retro_host_client.dart`](../lib/core/retro_host/retro_host_client.dart) | One host process, as described in the sections below. |
+| [`lib/core/retro_host/retro_lockstep.dart`](../lib/core/retro_host/retro_lockstep.dart) | The lockstep messages and the rules of their order (see "Lockstep"). |
 
 `retro_host_client.dart` handles:
 
 - `hello` and `welcome`, and the first `volume` call;
 - calls and pings in order, with their time limits;
 - frames and rumble;
+- lockstep, for online play (see "Lockstep");
 - what to report when the host fails.
 
 ## Starting the host
@@ -228,6 +230,35 @@ whenever one is.
   ignored: there is no host to send input to, no rumble comes, and after
   `close()` the rumble stream is closed.
 
+## Lockstep
+
+A host that lists `ps1Lockstep` runs a game frame by frame for online play
+(protocol.md "Lockstep"; what the launcher does with it is in
+[RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md)). The client adds:
+
+- **Methods.** `lockstep(settings)` gives the frame the next step is for, or
+  null when the host could not. `leaveLockstep()` is `lockstep` with `false`.
+  `saveState(path)` and `loadState(path)` give a `RetroStatePosition`, the
+  frame and the file's size, or null. `start` takes `lockstep` through
+  `RetroHostStartRequest.lockstep`. None of them may be sent to a host that
+  does not list the capability: that is a `StateError`, as for `ps1`.
+- **Steps.** `step(RetroStep)` sends one frame's input for one or two ports.
+  `RetroLockstepTracker` keeps the frame the next step is for: from 0 after a
+  `start` with `lockstep` or entering lockstep, the same after a `lockstep`
+  that changes settings, and the state's frame after `loadState`. Any other
+  step is a `StateError`, so a launcher mistake never reaches the host as a
+  protocol error. The step's port count is what rumble follows from then on,
+  also after leaving lockstep, as the host keeps it.
+- **Syncs.** `syncs` gives each `sync`, checked: the frame from 0 to
+  4294967295 and stepped in the current count, after the last one, and each
+  hash 16 lowercase hexadecimal digits or `null`. A `sync` from a host without
+  the capability, for a game not in lockstep, for a frame not stepped or out
+  of order is a protocol error. A `lockstep` result for a frame other than the
+  next step (or 0 when entering), or a state of a game not in lockstep, is one
+  too.
+- **After a failure.** `lockstep` gives null, `leaveLockstep` false and the
+  state methods null, as the other calls give their "no game" results.
+
 ## Tests
 
 [`test/core/retro_host/retro_host_fixtures_test.dart`](../test/core/retro_host/retro_host_fixtures_test.dart)
@@ -263,6 +294,13 @@ host repository's `tests/real_core.py` does:
   `make_test_disc.py`), with an optional `environment` for the host, such as
   a `PATH` that has the host's runtime libraries. Python 3 must be on `PATH`.
   Without the variable the test is skipped, so CI skips it.
+
+[`test/core/retro_host/retro_lockstep_test.dart`](../test/core/retro_host/retro_lockstep_test.dart)
+replays lockstep messages recorded from real hosts, and
+[`test/core/retro_host/retro_lockstep_real_test.dart`](../test/core/retro_host/retro_lockstep_real_test.dart)
+runs the client in lockstep with two real hosts, with the same
+`ANYPS5_RETRO_HOST_REAL` file ([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md),
+"Tests").
 
 [`test/core/retro_host/retro_host_environment_test.dart`](../test/core/retro_host/retro_host_environment_test.dart)
 covers how the host's environment is put together, and
