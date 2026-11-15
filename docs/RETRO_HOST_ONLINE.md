@@ -209,8 +209,12 @@ the other player's.
   operating system's build of one release reports the same string. The hellos
   would then carry it and compare it across systems, the SHA-256 of the library
   staying a same-system check.
-- **Rollback.** Only lockstep with input delay is built; netplay.md's
-  `ps1Rollback` is not, and the client offers no in-memory state slots.
+- **Rollback.** Only lockstep with input delay is built. The host's
+  `netplay-design` branch now has `ps1Rollback` (`lockstep.rollback`, `null`
+  ports in `step`, `correct` and `rollback`) and in-memory `saveState`/
+  `loadState` slots, but the client sends none of them: the join needs the
+  state's bytes to send to the friend, so it saves to a file, and slots only
+  matter once the launcher predicts input and corrects it.
 - **Seats 3 and 4, and couch players online.** Four players need the Multitap,
   which the host keeps off. A second controller here and an online friend
   cannot play at once.
