@@ -446,8 +446,10 @@ repository's signed releases and is checked on download, as
 [RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md) "Finding and checking the host"
 describes. Once it is installed the row says **PS1 emulator 1.0.0** (its
 version), and selecting it looks for a newer release: "PS1 emulator 1.0.0 is
-up to date" when there is none. A host that failed its check before a start
-is offered again at any version. With no signed release yet the row says so.
+up to date" when there is none and the installed host passes its checks. A
+host that failed its check before a start, or that is missing a file, is
+downloaded again at any version. A file that cannot be written ends the
+download with its reason. With no signed release yet the row says so.
 The download is refused while a PS1 game plays or an online match is
 starting one. Before the new host is put in place, the host kept for the next
 game is shut down and waited for, so its held files are let go, and no game
@@ -480,8 +482,11 @@ its row in Settings › Emulators says why and offers it again. Then it opens a
 host (`AppModel.openRetroHost`, which tests replace) with the player's volume.
 A checked host is started through its checked files
 (`RetroHostClient.start(checked: ...)`), which stay held until that host has
-exited, across every game it plays. An online match's friend checks and starts
-its host the same way. Then it sends `start` with:
+exited, across every game it plays. A kept host is checked again before each
+later game, and shut down if it fails. An online match's friend checks and
+starts its host the same way. No host starts, and no kept host is used, while
+a download is putting a new host in place ("The PS1 emulator is being
+updated"). Then it sends `start` with:
 
 - `core`: the SwanStation library above;
 - `disc`: the disc's file (`.cue`, `.chd`, `.pbp` or `.m3u`);
@@ -754,7 +759,9 @@ native memory as a real ring slot would be, so no host is started.
   started, the toast says so, and its row offers it again. From a fake GitHub
   the row downloads, checks and installs the release and turns the setting on.
   Selecting the row again finds it up to date and downloads nothing, while a
-  broken host is downloaded again at the same version. With no release the row
+  broken host, or one missing a file, is downloaded again at the same version.
+  A kept host is checked again before its next game and shut down when its
+  core changed, and nothing starts while a download is installing. With no release the row
   says none is published yet. Nothing downloads while a game plays, and a debug
   build that runs `ANYPS5_RETRO_HOST` shows no download.
 - [`retro_keyboard_test.dart`](../test/core/retro_host/retro_keyboard_test.dart)

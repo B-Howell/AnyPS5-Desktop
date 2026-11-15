@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import '../../core/audio/tones.dart';
 import '../../core/retro_host/retro_host_release.dart';
@@ -68,7 +69,11 @@ class RetroHostDownloadModel {
     try {
       final release = RetroHostStore.newest(await source.all());
       final offered = release == null ? null : RetroHostVersion.tryParse(release.version);
-      if (before != null && broken == null && offered != null && offered.compareTo(before) <= 0) {
+      if (before != null &&
+          broken == null &&
+          offered != null &&
+          offered.compareTo(before) <= 0 &&
+          await _installedPassesCheck()) {
         app.show(T.format('retroHostUpToDate', ['$before']));
         return;
       }
@@ -94,6 +99,9 @@ class RetroHostDownloadModel {
       if (before == null) app.setRetroHostPs1(true);
       app.sounds.play(Cue.unlocked);
       app.show(T.format('retroHostReady', ['$version']));
+    } on FileSystemException catch (failure) {
+      error = failure.osError?.message ?? failure.message;
+      app.show(T.format('retroHostDownloadFailed', [error!]));
     } on ToolkitFailure catch (failure) {
       switch (failure.kind) {
         case ToolkitFailureKind.cancelled:
@@ -110,6 +118,18 @@ class RetroHostDownloadModel {
       _cancel = null;
       progress = null;
       app.refresh();
+    }
+  }
+
+  /// Whether the installed host is there whole and passes the checks before a start; only then
+  /// is a release of the same version not downloaded again.
+  Future<bool> _installedPassesCheck() async {
+    if (store.installed() == null) return false;
+    try {
+      (await store.check()).release();
+      return true;
+    } on RetroHostReleaseFailure {
+      return false;
     }
   }
 

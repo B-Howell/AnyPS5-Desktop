@@ -334,14 +334,16 @@ extension RetroHostOnline on AppModel {
       final read = await rooms.readInvite(invite.sessionId, expectedHost: from.id);
       final game = await _retroGameFor(read);
       if (game == null) return show(T.text('retroOnlineNoDiscDetail'));
+      if (retroHostDownload.installing) return show(T.text('retroHostUpdating'));
       final RetroHostChecked? checked;
       try {
         checked = await _checkRetroHost(install);
       } on RetroHostReleaseFailure {
         return;
       }
-      if (online.cancelled) {
+      if (online.cancelled || retroHostDownload.installing) {
         checked?.release();
+        if (!online.cancelled) show(T.text('retroHostUpdating'));
         return;
       }
       final RetroHostSession session;

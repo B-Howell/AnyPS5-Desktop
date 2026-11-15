@@ -152,6 +152,11 @@ class RetroHostStore {
       version = await RetroHostRelease.install(download, folder, keys: keys, system: system);
     } on RetroHostReleaseFailure catch (failure) {
       throw ToolkitFailure(ToolkitFailureKind.badLayout, failure.message);
+    } on FileSystemException catch (failure) {
+      throw ToolkitFailure(
+        ToolkitFailureKind.badLayout,
+        'the host could not be written: ${failure.osError?.message ?? failure.message}',
+      );
     }
     _forget(Directory(_downloads));
     return version;

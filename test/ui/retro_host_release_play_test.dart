@@ -58,6 +58,38 @@ void main() {
     expect((download.title, download.detail), (T.text('retroHostDownload'), T.text('retroHostBrokenDetail')));
   });
 
+  test('a kept host is checked again before its next game, and shut down when its core changed', () async {
+    launcher = await Ps1Launcher.withRelease();
+    final model = launcher.model..setRetroHostPs1(true);
+    model.select(model.games.indexOf(launcher.game));
+    await launcher.start();
+    await model.closeRetroGame();
+    expect(model.retroHostKeeper.holding, isTrue);
+
+    await launcher.start();
+    expect(launcher.opened, hasLength(1), reason: 'an unchanged host plays the next game');
+    await model.closeRetroGame();
+    expect(model.retroHostKeeper.holding, isTrue);
+
+    launcher.checked.single!.release();
+    File(model.retroHostInstall!.core).writeAsStringSync('changed\n');
+    await model.play(launcher.game);
+    await pumpEventQueue();
+    expect(model.retroPlay, isNull);
+    expect(launcher.opened, hasLength(1));
+    expect(model.toast, T.text('retroHostCheckFailed'));
+    expect(launcher.session.shutdownAsked, isTrue, reason: 'the kept host is not used again');
+  });
+
+  test('no host starts while a download puts a new one in place', () async {
+    launcher = await Ps1Launcher.withRelease();
+    final model = launcher.model..setRetroHostPs1(true);
+    model.retroHostDownload.installing = true;
+    await model.play(launcher.game);
+    expect(launcher.opened, isEmpty);
+    expect(model.toast, T.text('retroHostUpdating'));
+  });
+
   group('downloading', () {
     late FakeGitHub github;
     setUp(() async => github = await FakeGitHub.start(repository: RetroHostStore.repository));
@@ -107,6 +139,20 @@ void main() {
       expect(model.retroHostDownload.broken, isNull);
       final checked = await model.retroHostDownload.store.check();
       checked.release();
+    });
+
+    test('a host with a file missing is downloaded again at the same version', () async {
+      github.releases.add(retroHostFixtureRelease());
+      launcher = Ps1Launcher(hostFound: false, retroHostApi: github.api);
+      final model = launcher.model;
+      await model.retroHostDownload.download();
+      final core = model.retroHostInstall!.core;
+      File(core).deleteSync();
+      expect(model.retroHostInstall, isNull);
+      expect(row('retro-host-download')!.title, T.text('retroHostDownload'));
+      await model.retroHostDownload.download();
+      expect(model.toast, T.format('retroHostReady', ['1.0.0']));
+      expect(File(core).existsSync(), isTrue);
     });
 
     test('with no signed release yet, the row says so', () async {

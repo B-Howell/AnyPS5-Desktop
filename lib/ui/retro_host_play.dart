@@ -240,6 +240,7 @@ extension RetroHostPlaying on AppModel {
     final kept = opened ?? retroHostKeeper.take(program: install.host);
     final RetroHostSession session;
     if (kept != null) {
+      if (opened == null && !await _recheckKeptRetroHost(install, kept)) return null;
       session = kept;
       _padLog?.call('emulator host: the kept ${install.host} plays the next game');
     } else {
@@ -336,6 +337,34 @@ extension RetroHostPlaying on AppModel {
       if (!_disposed) show(T.text('retroHostCheckFailed'));
       rethrow;
     }
+  }
+
+  /// The checks again before a kept signed host loads its next game: its files are still held from
+  /// its own start on Windows, but on Linux SwanStation was checked by path and is loaded again for
+  /// every game, so it is checked again now (a second check, let go at once; the host's own stays
+  /// held). A host that fails them, or that a download is replacing, is shut down and not used.
+  Future<bool> _recheckKeptRetroHost(RetroHostInstall install, RetroHostSession kept) async {
+    void drop() {
+      kept.shutdown();
+      unawaited(kept.ended.then((_) => kept.close()));
+    }
+
+    if (retroHostDownload.installing) {
+      drop();
+      show(T.text('retroHostUpdating'));
+      return false;
+    }
+    try {
+      (await _checkRetroHost(install))?.release();
+    } on RetroHostReleaseFailure {
+      drop();
+      return false;
+    }
+    if (_disposed || starting != null || running != null || retroPlay != null || retroHostDownload.installing) {
+      drop();
+      return false;
+    }
+    return true;
   }
 
   /// The game moved on: a game that ended without an error, and was not closed by the player,
