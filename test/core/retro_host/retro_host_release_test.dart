@@ -280,6 +280,20 @@ void main() {
     );
     expect(other.held, isFalse);
 
+    for (final environment in [null, const <String, String>{}]) {
+      final whole = await RetroHostRelease.checkBeforeStart(folder, keys: keys, system: _current);
+      expect(
+        () => RetroHostClient.start(
+          command: [whole.executable, ...host.arguments(out)],
+          checked: whole,
+          environment: environment,
+          inheritEnvironment: false,
+        ),
+        throwsArgumentError,
+      );
+      expect(whole.held, isFalse, reason: 'an empty whole environment lets the check go');
+    }
+
     final checked = await RetroHostRelease.checkBeforeStart(folder, keys: keys, system: _current);
     final client = RetroHostClient.start(command: [checked.executable, ...host.arguments(out)], checked: checked);
     unawaited(client.ready.then((_) {}, onError: (_) {}));
