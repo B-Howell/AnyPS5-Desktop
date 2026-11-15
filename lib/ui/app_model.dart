@@ -8309,6 +8309,7 @@ class AppModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    retroHostDownload.close();
     _disposeRetroPlay();
     unawaited(retroHostKeeper.shutdown());
     profileFlow.listLeave?.cancel();

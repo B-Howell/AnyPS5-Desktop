@@ -155,6 +155,58 @@ void main() {
       expect(File(core).existsSync(), isTrue);
     });
 
+    test('a download shuts the kept host down and waits for it before the new host goes in', () async {
+      github.releases.add(retroHostFixtureRelease(tag: 'v1.0.1'));
+      launcher = await Ps1Launcher.withRelease(retroHostApi: github.api);
+      final model = launcher.model..setRetroHostPs1(true);
+      model.select(model.games.indexOf(launcher.game));
+      await launcher.start();
+      await model.closeRetroGame();
+      expect(model.retroHostKeeper.holding, isTrue);
+      expect(model.retroHostKeeper.keeps(program: model.retroHostInstall!.host), isTrue);
+      launcher.checked.single!.release();
+      await model.retroHostDownload.download();
+      expect(launcher.session.shutdownAsked, isTrue);
+      expect(launcher.session.closed, isTrue, reason: 'waited for before the files were replaced');
+      expect(model.retroHostKeeper.holding, isFalse);
+      expect(model.toast, T.format('retroHostReady', ['1.0.0']), reason: 'v1.0.1 carries the 1.0.0 files');
+    });
+
+    test('a download while a game is starting in the host refuses and leaves the kept host', () async {
+      github.releases.add(retroHostFixtureRelease(tag: 'v1.0.1'));
+      launcher = await Ps1Launcher.withRelease(retroHostApi: github.api);
+      final model = launcher.model..setRetroHostPs1(true);
+      model.select(model.games.indexOf(launcher.game));
+      await launcher.start();
+      await model.closeRetroGame();
+      expect(model.retroHostDownload.holdForStart(), isTrue, reason: 'as a start between its checks and its play');
+      await model.retroHostDownload.download();
+      expect(model.toast, T.text('retroHostDownloadCloseGame'));
+      expect(launcher.session.shutdownAsked, isFalse, reason: 'the starting game may still take it');
+      expect(model.retroHostKeeper.holding, isTrue);
+      expect(model.retroHostDownload.installing, isFalse);
+      model.retroHostDownload.releaseStart();
+      expect(model.retroHostDownload.holdForStart(), isTrue);
+      model.retroHostDownload.releaseStart();
+    });
+
+    test('a download the launcher closes during is not put in place, and none starts after', () async {
+      github.releases.add(retroHostFixtureRelease(tag: 'v1.0.1'));
+      launcher = await Ps1Launcher.withRelease(retroHostApi: github.api);
+      final model = launcher.model;
+      final download = model.retroHostDownload;
+      final installed = File(model.retroHostInstall!.host).lastModifiedSync();
+      final going = download.download();
+      download.close();
+      await going;
+      expect(model.toast, isNot(T.format('retroHostReady', ['1.0.0'])));
+      expect(download.installing, isFalse);
+      expect(File(model.retroHostInstall!.host).lastModifiedSync(), installed);
+      final asked = github.requests.length;
+      await download.download();
+      expect(github.requests, hasLength(asked), reason: 'a closed launcher downloads nothing');
+    });
+
     test('with no signed release yet, the row says so', () async {
       launcher = Ps1Launcher(hostFound: false, retroHostApi: github.api);
       final model = launcher.model;

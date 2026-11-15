@@ -423,7 +423,7 @@ extension RetroHostOnline on AppModel {
         started.controls.onlinePort = null;
         await closeRetroGame();
       }
-      opened?.shutdown();
+      if (opened case final unused?) retroHostKeeper.retire(unused);
       await _retroOnlineDone(online, room);
     }
   }

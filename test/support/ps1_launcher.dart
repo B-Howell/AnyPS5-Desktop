@@ -76,8 +76,8 @@ class Ps1Launcher {
 
   /// A launcher whose host is the recorded signed release, installed into its storage, as a
   /// release build has it.
-  static Future<Ps1Launcher> withRelease({FakeRetroHostSession? session}) async {
-    final launcher = Ps1Launcher._(hostFound: true, release: true, session: session);
+  static Future<Ps1Launcher> withRelease({FakeRetroHostSession? session, Uri? retroHostApi}) async {
+    final launcher = Ps1Launcher._(hostFound: true, release: true, session: session, retroHostApi: retroHostApi);
     await installRetroHostFixture(launcher.model.retroHostDownload.store.folder);
     return launcher;
   }

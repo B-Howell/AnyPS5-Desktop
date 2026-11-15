@@ -25,6 +25,9 @@ class RetroHostKeeper {
   /// Whether a host is kept now.
   bool get holding => _session != null;
 
+  /// Whether the host kept now was started from [program], so [take] would give it.
+  bool keeps({required String program}) => _session != null && _program == program;
+
   /// Keeps [session], the host started from [program], for the next game; a host kept before is
   /// shut down.
   void keep(RetroHostSession session, {required String program}) {
@@ -53,6 +56,14 @@ class RetroHostKeeper {
     }
     _forget();
     return session;
+  }
+
+  /// Shuts down [session], a host no game will use (an online match's friend's host that never
+  /// played), and counts it among the hosts [shutdown] waits for, so a download still waits for it
+  /// to end.
+  void retire(RetroHostSession session) {
+    if (identical(session, _session)) return _shutdownKept();
+    _track(_close(session));
   }
 
   /// Shuts the kept host down, if one is, and waits for every host this keeper shut down to end.

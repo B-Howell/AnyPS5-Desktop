@@ -235,12 +235,43 @@ extension RetroHostPlaying on AppModel {
       _padLog?.call('emulator host: no BIOS folder: $error');
     }
 
+    if (!retroHostDownload.holdForStart()) {
+      show(T.text('retroHostUpdating'));
+      return null;
+    }
+    try {
+      return await _playInHeldHost(
+        game,
+        disc,
+        install,
+        opened: opened,
+        options: options,
+        saves: saves,
+        joining: joining,
+      );
+    } finally {
+      retroHostDownload.releaseStart();
+    }
+  }
+
+  /// [_playInHost] once the installed host is held for the start, so no download replaces it
+  /// between its check and the game's play being set.
+  Future<RetroPlay?> _playInHeldHost(
+    Game game,
+    RetroDisc disc,
+    RetroHostInstall install, {
+    RetroHostSession? opened,
+    Map<String, String>? options,
+    String? saves,
+    required bool joining,
+  }) async {
     final volume = preferences.retroHostVolume / 100;
     final muted = joining || preferences.retroHostMuted;
+    final recheck = opened == null && install.checked && retroHostKeeper.keeps(program: install.host);
+    if (recheck && !await _recheckKeptRetroHost(install)) return null;
     final kept = opened ?? retroHostKeeper.take(program: install.host);
     final RetroHostSession session;
     if (kept != null) {
-      if (opened == null && !await _recheckKeptRetroHost(install, kept)) return null;
       session = kept;
       _padLog?.call('emulator host: the kept ${install.host} plays the next game');
     } else {
@@ -250,7 +281,7 @@ extension RetroHostPlaying on AppModel {
       } on RetroHostReleaseFailure {
         return null;
       }
-      if (_disposed || starting != null || running != null || retroPlay != null || retroHostDownload.installing) {
+      if (_disposed || starting != null || running != null || retroPlay != null) {
         checked?.release();
         return null;
       }
@@ -341,30 +372,18 @@ extension RetroHostPlaying on AppModel {
 
   /// The checks again before a kept signed host loads its next game: its files are still held from
   /// its own start on Windows, but on Linux SwanStation was checked by path and is loaded again for
-  /// every game, so it is checked again now (a second check, let go at once; the host's own stays
-  /// held). A host that fails them, or that a download is replacing, is shut down and not used.
-  Future<bool> _recheckKeptRetroHost(RetroHostInstall install, RetroHostSession kept) async {
-    void drop() {
-      kept.shutdown();
-      unawaited(kept.ended.then((_) => kept.close()));
-    }
-
-    if (retroHostDownload.installing) {
-      drop();
-      show(T.text('retroHostUpdating'));
-      return false;
-    }
+  /// every game, so it is checked again (a second check, let go at once; the host's own stays held).
+  /// The start holds the installed host ([RetroHostDownloadModel.holdForStart]) and the host stays
+  /// in [retroHostKeeper] meanwhile; it is taken only once the check passed. One that fails is shut
+  /// down through the keeper, which a download waits for. False when no game may start.
+  Future<bool> _recheckKeptRetroHost(RetroHostInstall install) async {
     try {
       (await _checkRetroHost(install))?.release();
     } on RetroHostReleaseFailure {
-      drop();
+      unawaited(retroHostKeeper.shutdown());
       return false;
     }
-    if (_disposed || starting != null || running != null || retroPlay != null || retroHostDownload.installing) {
-      drop();
-      return false;
-    }
-    return true;
+    return !_disposed && starting == null && running == null && retroPlay == null;
   }
 
   /// The game moved on: a game that ended without an error, and was not closed by the player,

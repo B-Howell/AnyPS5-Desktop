@@ -450,10 +450,14 @@ up to date" when there is none and the installed host passes its checks. A
 host that failed its check before a start, or that is missing a file, is
 downloaded again at any version. A file that cannot be written ends the
 download with its reason. With no signed release yet the row says so.
-The download is refused while a PS1 game plays or an online match is
-starting one. Before the new host is put in place, the host kept for the next
-game is shut down and waited for, so its held files are let go, and no game
-starts until the install is done. The first host installed turns the setting
+The download is refused while a PS1 game plays, while one is starting in the
+host (`RetroHostDownloadModel.holdForStart`, held from the checks before a
+start until the game's play is set), or while an online match is starting
+one. Before the new host is put in place, the host kept for the next game is
+shut down and waited for, so its held files are let go, and no game starts
+until the install is done. When the launcher goes, a download stops and one
+already fetched is not put in place (`RetroHostDownloadModel.close`), since
+the hosts shut down as it goes may not have exited yet. The first host installed turns the setting
 below on, since the player asked for the emulator to play PS1 games with it.
 
 **The setting.** Settings › Emulators › **Run PS1 games in the separate
@@ -483,8 +487,12 @@ host (`AppModel.openRetroHost`, which tests replace) with the player's volume.
 A checked host is started through its checked files
 (`RetroHostClient.start(checked: ...)`), which stay held until that host has
 exited, across every game it plays. A kept host is checked again before each
-later game, and shut down if it fails. An online match's friend checks and
-starts its host the same way. No host starts, and no kept host is used, while
+later game while it stays in the keeper, so a download can still find it, and
+is taken only once the check passed; one that fails is shut down through the
+keeper, which a download waits for. An online match's friend checks and
+starts its host the same way; a friend's host that never played (the match
+ended first) is retired through the keeper (`RetroHostKeeper.retire`), so a
+download waits for it to exit too. No host starts, and no kept host is used, while
 a download is putting a new host in place ("The PS1 emulator is being
 updated"). Then it sends `start` with:
 
@@ -634,7 +642,8 @@ native memory as a real ring slot would be, so no host is started.
 - [`retro_host_keeper_test.dart`](../test/ui/retro_host/retro_host_keeper_test.dart)
   checks that a kept host goes to the next game of the same program once,
   that one of another program, a second one kept, or one idle too long is
-  shut down, and that a kept host that ends by itself is forgotten and freed.
+  shut down, that a kept host that ends by itself is forgotten and freed, and
+  that `shutdown` waits for a retired host that is slow to exit.
 - [`retro_option_sections_test.dart`](../test/ui/retro_host/retro_option_sections_test.dart)
   sorts the fifty options of the recorded real status into their sections and
   the ten not shown, checks keys the recording lacks (port 2, multitap, a
@@ -761,7 +770,10 @@ native memory as a real ring slot would be, so no host is started.
   Selecting the row again finds it up to date and downloads nothing, while a
   broken host, or one missing a file, is downloaded again at the same version.
   A kept host is checked again before its next game and shut down when its
-  core changed, and nothing starts while a download is installing. With no release the row
+  core changed, and nothing starts while a download is installing. A download
+  shuts the kept host down and waits for it before the new host goes in, and
+  is refused, leaving the kept host, while a game is starting; one the
+  launcher closes during is not put in place. With no release the row
   says none is published yet. Nothing downloads while a game plays, and a debug
   build that runs `ANYPS5_RETRO_HOST` shows no download.
 - [`retro_keyboard_test.dart`](../test/core/retro_host/retro_keyboard_test.dart)

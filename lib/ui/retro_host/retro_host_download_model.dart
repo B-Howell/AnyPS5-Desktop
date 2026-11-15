@@ -36,6 +36,23 @@ class RetroHostDownloadModel {
   /// The new host is being put in place of the old: no host may start until it is.
   bool installing = false;
 
+  int _starts = 0;
+
+  /// A start of a game in the host holds the installed host from its checks until its play is set
+  /// ([releaseStart]), so a download does not put a new host in place meanwhile: it refuses, as for
+  /// a game playing. False, and nothing held, while a new host is being put in place.
+  bool holdForStart() {
+    if (installing) return false;
+    _starts++;
+    return true;
+  }
+
+  /// The start [holdForStart] held has its play, or did not start.
+  void releaseStart() {
+    assert(_starts > 0);
+    _starts--;
+  }
+
   /// Whether this launcher can download a host: it has the releases to read and a system the host
   /// is released for.
   bool get offered => app.services.retroHostReleases != null && store.system != null;
@@ -51,7 +68,7 @@ class RetroHostDownloadModel {
   /// it in place. Runs only when the player pressed for it; said to the player however it ends.
   /// The first host installed turns on Run PS1 games in the separate host.
   Future<void> download() async {
-    if (downloading) return;
+    if (downloading || _closed) return;
     final source = app.services.retroHostReleases;
     if (source == null || store.system == null) return;
     if (_hostInUse) {
@@ -89,11 +106,14 @@ class RetroHostDownloadModel {
           }
         },
       );
+      if (_closed) return;
       progress = const ToolkitProgress(ToolkitPhase.unpack, 1, 1);
       installing = true;
       app.refresh();
+      if (_hostInUse) throw ToolkitFailure(ToolkitFailureKind.badLayout, T.text('retroHostDownloadCloseGame'));
       await app.stopKeptRetroHost();
       if (_hostInUse) throw ToolkitFailure(ToolkitFailureKind.badLayout, T.text('retroHostDownloadCloseGame'));
+      if (_closed) return;
       final version = await store.putInPlace(download);
       broken = null;
       if (before == null) app.setRetroHostPs1(true);
@@ -136,8 +156,17 @@ class RetroHostDownloadModel {
   /// Stops the download; what came is kept, to carry on next time.
   void cancel() => _cancel?.cancel();
 
-  /// A game plays in a host, or an online match is starting one.
-  bool get _hostInUse => app.retroPlay != null || app.retroOnline != null;
+  bool _closed = false;
+
+  /// The launcher goes: a download stops, and one already fetched is not put in place, since the
+  /// hosts the launcher shuts down as it goes may not have exited yet.
+  void close() {
+    _closed = true;
+    cancel();
+  }
+
+  /// A game plays in a host, one is starting, or an online match is starting one.
+  bool get _hostInUse => _starts > 0 || app.retroPlay != null || app.retroOnline != null;
 
   /// Settings › Emulators' row for the download: one press to download the host, then how it
   /// goes; once installed, its version, and a press looks for a newer one. Nothing where no host

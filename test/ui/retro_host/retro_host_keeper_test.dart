@@ -26,6 +26,21 @@ void main() {
     expect(session.closed, isTrue);
   });
 
+  test('a retired host is shut down, and shutdown waits until it has ended and is closed', () async {
+    final keeper = RetroHostKeeper();
+    final session = FakeRetroHostSession()..endsOnShutdown = false;
+    keeper.retire(session);
+    expect(session.shutdownAsked, isTrue);
+    expect(keeper.holding, isFalse);
+    var done = false;
+    final waiting = keeper.shutdown().then((_) => done = true);
+    await pumpEventQueue();
+    expect(done, isFalse, reason: 'the host has not exited yet');
+    session.endedCompleter.complete(RetroHostEnd.clean);
+    await waiting;
+    expect(session.closed, isTrue);
+  });
+
   test('a second host kept shuts the first down', () async {
     final keeper = RetroHostKeeper();
     final first = FakeRetroHostSession();
