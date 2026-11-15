@@ -35,10 +35,10 @@ final class Ps1LockstepRoomInvalid implements Exception {
 final class Ps1LockstepRooms {
   const Ps1LockstepRooms({required this.call, required this.signal, required this.me, this.holds});
 
-  /// The rooms' `engineBuild` and member `protocol`. Version 2 rooms carry the digest and size
-  /// of the disc's tracks alone (`Ps1LockstepMedia`), and their launchers speak version 2 of
-  /// `Ps1LockstepMessage`.
-  static const protocol = 'anyps5-ps1-lockstep-v2';
+  /// The rooms' `engineBuild` and member `protocol`. Rooms carry the digest and size of the
+  /// disc's tracks alone (`Ps1LockstepMedia`), and version 3 rooms' launchers speak version 3 of
+  /// `Ps1LockstepMessage`, which adds rollback.
+  static const protocol = 'anyps5-ps1-lockstep-v3';
 
   /// The rooms' `gameVersion`.
   static const gameVersion = '1';

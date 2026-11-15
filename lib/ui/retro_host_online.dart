@@ -210,9 +210,25 @@ extension RetroHostOnline on AppModel {
           if (playing && path != null && path.route == PeerRoute.relay) T.text('sharePlayRelayed'),
           if (playing && match?.roundTripMs != null) T.format('sharePlayRoundTrip', [match!.roundTripMs!]),
           if (playing && match?.delay != null) T.format('retroOnlineDelay', [match!.delay!]),
+          if (playing) ..._retroRollbackDetail(match!),
         ].join(' · '),
         kind: ActionRow(() => unawaited(leaveRetroOnline()), destructive: true),
       ),
+    ];
+  }
+
+  /// How a playing match predicts: its rollback window and how its rollbacks have gone lately,
+  /// or that it plays in plain lockstep because a host cannot roll back.
+  List<String> _retroRollbackDetail(Ps1LockstepMatch match) {
+    final health = match.rollbackHealth;
+    if (health == null) return [if (match.lockstepOnly) T.text('retroOnlineNoRollback')];
+    return [
+      T.format('retroOnlineRollbackWindow', [health.window]),
+      if (health.rollbacks == 0)
+        T.text('retroOnlineRollbackNone')
+      else
+        T.format('retroOnlineRollbackHealth', [health.perMinute, health.millisEach]),
+      if (health.slow) T.text('retroOnlineRollbackSlow'),
     ];
   }
 
@@ -253,6 +269,7 @@ extension RetroHostOnline on AppModel {
         core: install.core,
         files: _retroDiscFiles(play.game),
         system: paths.retroSystem,
+        rollback: play.host.session.canRollback,
       );
       if (!_retroOnlineGoesOn(online, play)) return;
       final rooms = online.rooms = _retroRooms(me);
@@ -342,6 +359,7 @@ extension RetroHostOnline on AppModel {
         core: install.core,
         files: _retroDiscFiles(game),
         system: paths.retroSystem,
+        rollback: session.canRollback,
       );
       if (online.cancelled) return;
       room = online.room = await rooms.join(read);

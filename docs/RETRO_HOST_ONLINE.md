@@ -6,21 +6,24 @@ online with a friend from its lobby. Each player's launcher runs its own host
 and its own copy of the game; only controller input crosses the network, and
 both games run each frame with the same input. This is the launcher's side of
 the host repository's design, `docs/netplay.md`, and of the protocol's
-"Lockstep" section (capability `ps1Lockstep`), both on the `netplay-design`
-branch of [anyps5-retro-host](https://github.com/B-Howell/anyps5-retro-host)
-at 5a4cda9, whose SwanStation patches make the state a friend joins from fit
-for netplay: it names no path, names the disc by its place in the disc list,
-and carries the analog-mode button combination and each controller's mode.
+"Lockstep" and "Rollback" sections (capabilities `ps1Lockstep` and
+`ps1Rollback`), all on the `netplay-design` branch of
+[anyps5-retro-host](https://github.com/B-Howell/anyps5-retro-host) at ce13e07,
+whose SwanStation patches make the state a friend joins from fit for netplay
+(it names no path, names the disc by its place in the disc list, and carries
+the analog-mode button combination and each controller's mode) and make a
+state loaded in a rollback exact. When both players' hosts can roll back, the
+match plays in rollback (see "Rollback"); otherwise in plain lockstep.
 
 ## Files
 
 | File | What it does |
 | --- | --- |
-| [`lib/core/retro_host/retro_lockstep.dart`](../lib/core/retro_host/retro_lockstep.dart) | The protocol's lockstep messages: `RetroLockstepSettings` (the `lockstep` argument), `RetroStatePosition` (what `saveState` and `loadState` give, with the `micros` they took), `RetroStateFile` (the state file's header), `RetroStep`, `RetroSync`, and `RetroLockstepTracker`, which holds the client and the host to the order of steps and syncs. `RetroLockstepHost` is what a match uses of a host. |
-| [`lib/core/retro_host/retro_host_client.dart`](../lib/core/retro_host/retro_host_client.dart) | `lockstep`, `leaveLockstep`, `saveState`, `loadState`, `step` and the `syncs` stream ([RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md), "Lockstep"). |
+| [`lib/core/retro_host/retro_lockstep.dart`](../lib/core/retro_host/retro_lockstep.dart) | The protocol's lockstep and rollback messages: `RetroLockstepSettings` (the `lockstep` argument, with the rollback window), `RetroStatePosition` (what `saveState` and `loadState` give, with the `micros` they took), `RetroStateFile` (the state file's header), `RetroStep` (a port null when predicted), `RetroCorrect`, `RetroSync`, `RetroRollback`, and `RetroLockstepTracker`, which holds the client and the host to the order of steps, corrections, syncs and rollbacks. `RetroLockstepHost` is what a match uses of a host. |
+| [`lib/core/retro_host/retro_host_client.dart`](../lib/core/retro_host/retro_host_client.dart) | `lockstep`, `leaveLockstep`, `saveState`, `loadState`, `step`, `correct`, `canRollback` and the `syncs` and `rollbacks` streams ([RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md), "Lockstep" and "Rollback"). |
 | [`lib/core/online/ps1_netplay_wire.dart`](../lib/core/online/ps1_netplay_wire.dart) | `Ps1InputWire`: the input datagram, up to eight frames of one player's controller with the match's epoch and an acknowledgement. It is the input wire of the launcher's own PS1 online play on the fork's integrated branch, unchanged, as netplay.md asks. |
-| [`lib/core/online/ps1_lockstep_control.dart`](../lib/core/online/ps1_lockstep_control.dart) | The reliable messages between the two launchers: `hello`, `ping` and `pong`, `start`, the state's `chunk`s, `loaded`, `hash`, `pause` and `leave`, each read strictly. |
-| [`lib/core/online/ps1_lockstep_match.dart`](../lib/core/online/ps1_lockstep_match.dart) | `Ps1LockstepMatch`: one match, from the hellos to the end. `Ps1LockstepIdentity` is what a launcher plays with, and `Ps1LockstepLink` the two channels it needs. |
+| [`lib/core/online/ps1_lockstep_control.dart`](../lib/core/online/ps1_lockstep_control.dart) | The reliable messages between the two launchers: `hello`, `ping` and `pong`, `start`, the state's `chunk`s, `loaded`, `hash`, `advantage`, `pause` and `leave`, each read strictly (version 3). |
+| [`lib/core/online/ps1_lockstep_match.dart`](../lib/core/online/ps1_lockstep_match.dart) | `Ps1LockstepMatch`: one match, from the hellos to the end, in plain lockstep or in rollback, with its timing (`timingFor`) and `Ps1RollbackHealth`. `Ps1LockstepIdentity` is what a launcher plays with, and `Ps1LockstepLink` the two channels it needs. |
 | [`lib/core/online/ps1_lockstep_media.dart`](../lib/core/online/ps1_lockstep_media.dart) | `Ps1LockstepMedia`: what two launchers compare. The disc list is each disc's layout (its cue sheet's `FILE`, `TRACK`, `INDEX`, `PREGAP`, `POSTGAP` and `FLAGS` lines, each `FILE` naming its track by its SHA-256 instead of its name) and its tracks' contents, disc by disc in the playlist's order, so file names and remarks do not count but the number of discs, their layout and their order do; the core is its library; the BIOS is its 512 KiB images. A cue sheet that names a track that is not there gives no digest. |
 | [`lib/core/online/ps1_file_digests.dart`](../lib/core/online/ps1_file_digests.dart) | `Ps1FileDigests`: the SHA-256 of each file read for a match, kept with its size and modification time in `retro/digests.json` beside the launcher's settings, so a file is read again only once it changed. Files are read on an isolate. |
 | [`lib/core/online/ps1_netplay_state.dart`](../lib/core/online/ps1_netplay_state.dart) | `Ps1NetplayState`: whether a state file may go to another player. It must be a version 2 state file holding a SwanStation state of version 58 or later (the host's patch `swanstation-1-netplay-input-state`), with no title and no disc file name, and a disc trailer marked pathless with no path (patch `swanstation-2-pathless-netplay-state`). |
@@ -69,9 +72,9 @@ and carries the analog-mode button combination and each controller's mode.
    makes a `GameLink`. The host player's launcher offers, the friend's answers,
    and the signals go through the room. Signals that come before the
    connection is made are kept for it.
-5. **The hellos.** Each launcher says its host's version, its system, and its
-   core, disc and BIOS digests (version 2 of the control messages; rooms are
-   `anyps5-ps1-lockstep-v2`). Any difference ends the match with what differs,
+5. **The hellos.** Each launcher says its host's version, its system, its
+   core, disc and BIOS digests, and whether its host lists `ps1Rollback`
+   (version 3 of the control messages; rooms are `anyps5-ps1-lockstep-v3`). Any difference ends the match with what differs,
    before the game is held. The disc's file names do not count: the state names
    the disc by its place in the disc list. The cores are compared only between
    two launchers on the same system: a Windows and a Linux build of the same
@@ -80,16 +83,17 @@ and carries the analog-mode button combination and each controller's mode.
    that come early for it. The host player's hello also carries the
    core options its game runs with (the status's `activeValue`s).
 6. **The delay.** The host player's launcher measures the round trip with five
-   pings and takes the median. The delay in frames is half the round trip in
-   frames, rounded up, plus one. Above eight frames the match ends as too slow,
-   again before the game is held.
+   pings and takes the median. In plain lockstep the delay in frames is half
+   the round trip in frames, rounded up, plus one. Above eight frames the match
+   ends as too slow, again before the game is held. In rollback the delay and
+   the window come from the same round trip ("Rollback").
 7. **The state.** The host player's game enters lockstep and saves its state.
    The host saves a file for netplay, so it names no path. The launcher checks
    that (`Ps1NetplayState`) before anything is sent: a state that is not fit
    ends the match as "This emulator host cannot play online", and the host
    player's game goes on alone. The file is compressed and sent in 64 KiB
-   chunks with its SHA-256, after a `start` that names the frame, the delay and
-   the match's input epoch. Meanwhile the friend's game starts with the host
+   chunks with its SHA-256, after a `start` that names the frame, the delay,
+   the rollback window (0 in plain lockstep) and the match's input epoch. Meanwhile the friend's game starts with the host
    player's options and a memory card folder of the match's own
    (`retro/online/<room>/saves`), muted and not shown: the screen shows the
    game's name over black with "Preparing both games" (`RetroPlay.joining`),
@@ -105,9 +109,11 @@ and carries the analog-mode button combination and each controller's mode.
    are idle. Each launcher reads its player's controller for the frame `delay`
    past the newest one its host ran, and sends every input the other side has
    not acknowledged: at once when new, again each frame while not
-   acknowledged, and the newest every quarter of a second otherwise. A step
-   goes to the host once both inputs for its frame are known, at most eight
-   frames past the delay ahead of the host. Port 1 is the host player's and port
+   acknowledged, and the newest every quarter of a second otherwise. In plain
+   lockstep a step goes to the host once both inputs for its frame are known,
+   at most eight frames past the delay ahead of the host; in rollback each
+   frame is stepped on time, the other player's input predicted until it comes
+   ("Rollback"). Port 1 is the host player's and port
    2 the friend's. While a game is paused (its menu is open, or the window lost
    focus) its host runs no frame, no new input is read, and the other game
    waits; the other player is told and sees "Paused".
@@ -120,6 +126,52 @@ and carries the analog-mode button combination and each controller's mode.
     the match. Each host leaves lockstep: the host player's game goes on alone
     from where the match was, and the friend's game is closed. The room is
     ended or left and the match's folder deleted.
+
+## Rollback
+
+When both hellos say their hosts list `ps1Rollback`, the match plays as GGPO
+does, the model netplay.md "Rollback" takes, with the network left to the
+launcher:
+
+- **Timing.** The other player's input comes `late` frames after the frame it
+  is for would run with no delay: half the round trip in frames, rounded up,
+  plus one, as in lockstep. The input delay is 2 frames (netplay.md: "a fixed
+  1 or 2 frames"), or `late` when that is less, and the window is the frames
+  left to predict plus 2 for input that comes later than usual, at most 8
+  (GGPO's prediction window): a 100 ms round trip plays with 2 frames of delay
+  and a window of 4. A round trip that would need more than 8 raises the delay
+  instead, up to 8 frames, so rollback plays up to about a 430 ms round trip
+  where lockstep stops at about 233 ms (`Ps1LockstepMatch.timingFor`).
+- **One clock.** Each launcher steps its host on its own frame clock, one
+  frame each 16.667 ms, and the host runs each step as it comes (`paced`
+  false). A host that also kept to its core's own frame rate would run behind
+  the steps by however far the two clocks drift apart, and the other player's
+  input would then come before the frame ran, so nothing would be predicted:
+  measured against two real hosts with a 100 ms round trip, a paced host rolled
+  back 15 times in 600 frames, though about 500 of them were stepped without
+  the friend's input, and an unpaced one 280 to 317 times.
+- **Steps and corrections.** Stepping frame n reads this player's input for
+  frame n + delay. The other player's port is given when its input has come,
+  and null otherwise: the host predicts it. Once it comes it is sent as a
+  `correct`, in frame order. No frame is stepped while the window is full
+  (the frame a window back is not confirmed), while this player's game is
+  paused, or while the host is known to be more than 4 frames behind its
+  steps; the clock then waits too, so frames never come in a burst.
+- **Time sync.** The launcher that started first (the friend, by half a round
+  trip) would stay ahead and predict all of the round trip alone. So, as in
+  GGPO, each launcher sends its average frame advantage (how far the other
+  player's newest input is ahead of the frame it steps) every second in an
+  `advantage` message, and when both agree it is ahead, it waits half the
+  difference, at most 9 frames.
+- **Checks.** The host sends a `sync` every 60 frames, those whose RAM is
+  compared, rather than every frame: a `sync` hashes the RAM and the whole
+  state, which costs more than the frame, and comes again for each frame run
+  again.
+- **What the player sees.** The lobby's match row says the delay, how many
+  frames may be predicted, how many rollbacks there were a minute over the
+  last 10 seconds and how long each took, and that rollbacks are slower than a
+  frame on this computer when they are on average. A match in plain lockstep
+  because a host cannot roll back says so.
 
 ## Controllers in a match
 
@@ -151,6 +203,18 @@ the other player's.
   its header is the one its `saveState` reply gave, it is fit for netplay, and
   the same state with a title, a disc file name, a path, a stock trailer or an
   older SwanStation state version is not.
+- [`test/core/retro_host/retro_rollback_test.dart`](../test/core/retro_host/retro_rollback_test.dart)
+  replays
+  [`test/fixtures/retro_host/rollback_swanstation.json`](../test/fixtures/retro_host/rollback_swanstation.json):
+  three hosts built from the `netplay-design` branch at ce13e07 (WinLibs GCC,
+  Windows x64) running SwanStation 631f0fb with the host's five patches on
+  OpenBIOS and the psyqo hello disc, driven by that repository's
+  `tests/rollback_test.py`: two players' hosts in rollback, each stepping the
+  other's late port null and correcting it, and a reference in lockstep. Each
+  player's steps, corrections, syncs and rollback messages go through the
+  tracker in the order they were sent and read, and every confirmed frame's
+  RAM, picture and state equal the reference's. It also checks the rules the
+  tracker holds the launcher and the host to.
 - [`test/core/retro_host/retro_lockstep_real_test.dart`](../test/core/retro_host/retro_lockstep_real_test.dart)
   runs the launcher's own client against two real hosts, with the same
   `ANYPS5_RETRO_HOST_REAL` file as the real host test. Both run 300 frames from
@@ -159,12 +223,18 @@ the other player's.
   `Ps1LockstepMatch`es play a match through a link that loses a tenth of the
   input and delays and reorders it: the friend's game starts with the host
   player's options, loads the state, and both compare RAM up to frame 600.
+  They play it again in rollback with a 100 ms round trip: both hosts predict
+  and roll back, and the RAM still matches up to frame 600.
 - [`test/core/online/ps1_lockstep_match_test.dart`](../test/core/online/ps1_lockstep_match_test.dart)
   plays matches between test hosts whose RAM mixes every input: the same steps
   on both sides over a lossy link, a different disc, a slow connection, RAM
   that stops matching, a pause, a broken connection, and a state that names a
   path, which the host player's launcher does not send and the friend's does
-  not load. The shared helpers in
+  not load. In rollback its test hosts predict, correct and run frames again
+  as protocol.md says, and refuse a step or correction that breaks its rules:
+  both end with the same input in every confirmed frame, a host that cannot
+  roll back makes the match lockstep, the friend waits for the host player as
+  GGPO's time sync says, and the timing follows the round trip. The shared helpers in
   [`test/core/online/lockstep_test_support.dart`](../test/core/online/lockstep_test_support.dart)
   write the test hosts' states in the recorded state's form.
 - [`test/core/online/ps1_lockstep_media_test.dart`](../test/core/online/ps1_lockstep_media_test.dart)
@@ -178,7 +248,8 @@ the other player's.
   and [`test/core/online/ps1_netplay_wire_test.dart`](../test/core/online/ps1_netplay_wire_test.dart)
   cover the connection, the rooms and the input wire.
 - [`test/ui/retro_host_online_test.dart`](../test/ui/retro_host_online_test.dart)
-  has the lobby's goldens, signed out and with a friend invited, and
+  has the lobby's goldens, signed out and with a friend invited, and what the
+  row of a match playing says of its rollback, and
   [`test/ui/retro_host_online_together_test.dart`](../test/ui/retro_host_online_together_test.dart)
   signs in to the fake AnyTogether: the friends offered, a friend invited
   through a private room, a friend's invite in Friends, and an invite's notice
@@ -209,12 +280,16 @@ the other player's.
   operating system's build of one release reports the same string. The hellos
   would then carry it and compare it across systems, the SHA-256 of the library
   staying a same-system check.
-- **Rollback.** Only lockstep with input delay is built. The host's
-  `netplay-design` branch now has `ps1Rollback` (`lockstep.rollback`, `null`
-  ports in `step`, `correct` and `rollback`) and in-memory `saveState`/
-  `loadState` slots, but the client sends none of them: the join needs the
-  state's bytes to send to the friend, so it saves to a file, and slots only
-  matter once the launcher predicts input and corrects it.
+- **The frame rate in rollback.** The launcher's frame clock runs at 60 Hz,
+  and in rollback it is the game's only clock. An NTSC game (59.94 Hz on a
+  console) runs a tenth of a percent fast, and a PAL game would run at 60 Hz
+  instead of 50. The host reports no frame rate (the core's
+  `retro_system_av_info.timing.fps` stays in the host); it would need to give
+  it, for example in the `lockstep` reply, so the clock can follow it.
+- **Rollback cost.** With a `sync` every 60 frames, a rollback here took 16 to
+  21 ms on average against two real hosts (OpenGL, 1x, Windows), for 1.7
+  frames run again each; netplay.md's figures for CI runners are 3 to 6 ms a
+  frame. A rollback that runs again the frame of a `sync` hashes it again.
 - **Seats 3 and 4, and couch players online.** Four players need the Multitap,
   which the host keeps off. A second controller here and an online friend
   cannot play at once.

@@ -103,7 +103,11 @@ class RecordingSession implements RetroHostSession {
   @override
   bool get canLockstep => client.canLockstep;
   @override
+  bool get canRollback => client.canRollback;
+  @override
   Stream<RetroSync> get syncs => client.syncs;
+  @override
+  Stream<RetroRollback> get rollbacks => client.rollbacks;
   @override
   Future<int?> lockstep(RetroLockstepSettings settings) => client.lockstep(settings);
   @override
@@ -114,4 +118,6 @@ class RecordingSession implements RetroHostSession {
   Future<RetroStatePosition?> loadState(String path) => client.loadState(path);
   @override
   void step(RetroStep step) => client.step(step);
+  @override
+  void correct(RetroCorrect correct) => client.correct(correct);
 }

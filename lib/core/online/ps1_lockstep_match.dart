@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -95,6 +96,7 @@ class Ps1LockstepIdentity {
     required this.core,
     required this.disc,
     required this.bios,
+    this.rollback = false,
   });
 
   final String hostVersion;
@@ -105,8 +107,18 @@ class Ps1LockstepIdentity {
   final String disc;
   final String bios;
 
-  Ps1LockstepHello hello(Map<String, String> options) =>
-      Ps1LockstepHello(hostVersion: hostVersion, system: system, core: core, disc: disc, bios: bios, options: options);
+  /// Whether this launcher's emulator host can roll back (`ps1Rollback`).
+  final bool rollback;
+
+  Ps1LockstepHello hello(Map<String, String> options) => Ps1LockstepHello(
+    hostVersion: hostVersion,
+    system: system,
+    core: core,
+    disc: disc,
+    bios: bios,
+    options: options,
+    rollback: rollback,
+  );
 
   /// The first thing [theirs] plays with differently, or null when both match. The SwanStation
   /// libraries are compared only on the same system: a Windows and a Linux build of the same
@@ -122,13 +134,62 @@ class Ps1LockstepIdentity {
   };
 }
 
-/// One PS1 online match between two launchers, each with its own emulator host, in lockstep
-/// (anyps5-retro-host docs/netplay.md): the host player (port 1) holds the game they are playing,
-/// saves its state and sends it; the friend (port 2) starts the same game with the host player's
-/// options, loads that state, and from then on both hosts run each frame only once both players'
-/// input for it is known. Each launcher's input for frame n + [delay] goes out while its host runs
-/// frame n, so the round trip is hidden behind the delay. Main RAM hashes are compared every
-/// [compareEvery] frames, and the match ends at the first difference.
+/// The input delay a match plays with and, in rollback, its window.
+typedef Ps1LockstepTiming = ({int delay, int? window});
+
+/// How rollback has gone lately in a match ([Ps1LockstepMatch.rollbackHealth]), from the host's
+/// `rollback` messages of the last [Ps1LockstepMatch.healthSpan].
+class Ps1RollbackHealth {
+  const Ps1RollbackHealth({
+    required this.window,
+    required this.rollbacks,
+    required this.frames,
+    required this.micros,
+    required this.waited,
+  });
+
+  /// The match's rollback window in frames.
+  final int window;
+
+  /// Rollbacks in the span.
+  final int rollbacks;
+
+  /// Frames run again in the span, all rollbacks together.
+  final int frames;
+
+  /// Time the rollbacks took in the span, loads included, in microseconds.
+  final int micros;
+
+  /// Frames this launcher waited, in the whole match, so as not to run ahead of the other (GGPO's
+  /// time sync).
+  final int waited;
+
+  /// Rollbacks a minute, at the span's rate.
+  int get perMinute => (rollbacks * Duration.secondsPerMinute / Ps1LockstepMatch.healthSpan.inSeconds).round();
+
+  /// The average time of one rollback, in milliseconds; 0 without one.
+  int get millisEach => rollbacks == 0 ? 0 : (micros / rollbacks / 1000).round();
+
+  /// Whether a rollback takes longer than a frame on average, so the game stutters when one comes.
+  bool get slow => rollbacks > 0 && micros / rollbacks > Ps1LockstepMatch.frameTime.inMicroseconds;
+}
+
+/// One PS1 online match between two launchers, each with its own emulator host (anyps5-retro-host
+/// docs/netplay.md): the host player (port 1) holds the game they are playing, saves its state and
+/// sends it; the friend (port 2) starts the same game with the host player's options and loads
+/// that state. Main RAM hashes are compared every [compareEvery] frames, and the match ends at the
+/// first difference.
+///
+/// When both launchers' hosts can roll back (`ps1Rollback`), the match plays in rollback, GGPO's
+/// way (netplay.md "Rollback"): each launcher steps its host every frame on its own clock with the
+/// other player's input when it has come and null when not, so the host predicts it, and sends the
+/// real input as a correction once it arrives; the host runs the frames again when the guess was
+/// wrong. The input delay is lowered to [rollbackDelay] frames, the rest of the round trip is
+/// predicted within the [window], and the two launchers keep level with GGPO's time sync: each
+/// tells the other its frame advantage every [advantageEvery], and the one further ahead waits half
+/// the difference. Otherwise the match is in plain lockstep: both hosts run each frame only once
+/// both players' input for it is known, and each launcher's input for frame n + [delay] goes out
+/// while its host runs frame n, so the round trip is hidden behind the delay.
 ///
 /// The match owns the lockstep of its host, not the game: when it ends, a host still in lockstep
 /// leaves it, so the host player's game goes on alone, and the caller stops the friend's.
@@ -160,6 +221,32 @@ class Ps1LockstepMatch {
 
   /// A frame of a PS1 game at its 60 Hz.
   static const frameTime = Duration(microseconds: 16667);
+
+  /// The input delay a match in rollback plays with when the round trip allows: netplay.md's
+  /// "fixed 1 or 2 frames", the rest predicted.
+  static const rollbackDelay = 2;
+
+  /// Frames of the window beyond the round trip's, for input that comes later than usual.
+  static const _jitterFrames = 2;
+
+  /// Frames a host in rollback may run behind its steps before the launcher waits for it. A host
+  /// runs each step as it comes, so it falls behind only when it cannot keep up for a while: when
+  /// a rollback, or the hashes of a `sync`, take longer than the frames they cover.
+  static const _lead = 4;
+
+  /// Frames a launcher in rollback catches up, one a tick, when its timer was late: a tick later
+  /// than that resets its frame clock instead, so frames never come in a burst.
+  static const _catchUp = 2;
+
+  /// The most frames one time-sync wait lasts: GGPO's MAX_FRAME_ADVANTAGE.
+  static const _maxWait = 9;
+
+  /// How often a launcher in rollback tells the other its frame advantage, as GGPO's quality
+  /// reports do.
+  static const advantageEvery = Duration(seconds: 1);
+
+  /// How far back [rollbackHealth] looks.
+  static const healthSpan = Duration(seconds: 10);
 
   /// Steps queued ahead of the frame the host ran, beyond the delay: far below the 600 the host
   /// holds.
@@ -226,6 +313,30 @@ class Ps1LockstepMatch {
   int? get delay => _delay;
   int? _delay;
 
+  /// The rollback window in frames, once the host player's launcher chose it; null before, and for
+  /// a match in plain lockstep.
+  int? get window => _window;
+  int? _window;
+
+  /// Whether one of the two hosts cannot roll back, so the match plays in plain lockstep; known
+  /// once both hellos came.
+  bool get lockstepOnly => _lockstepOnly;
+  bool _lockstepOnly = false;
+
+  /// How rollback has gone over the last [healthSpan]; null unless the match plays in rollback.
+  Ps1RollbackHealth? get rollbackHealth {
+    final window = _window;
+    if (window == null || _phase != Ps1LockstepPhase.playing) return null;
+    _forgetOldRollbacks();
+    return Ps1RollbackHealth(
+      window: window,
+      rollbacks: _rollbackLog.length,
+      frames: _rollbackLog.fold(0, (sum, entry) => sum + entry.$2.frames),
+      micros: _rollbackLog.fold(0, (sum, entry) => sum + entry.$2.micros),
+      waited: _waited,
+    );
+  }
+
   /// The round trip the host player's launcher measured, in milliseconds.
   int? get roundTripMs => _roundTripMs;
   int? _roundTripMs;
@@ -256,6 +367,7 @@ class Ps1LockstepMatch {
 
   Timer? _timer;
   StreamSubscription<RetroSync>? _syncs;
+  StreamSubscription<RetroRollback>? _rollbacks;
   DateTime _heard = DateTime.now();
 
   int _epoch = 0;
@@ -273,6 +385,25 @@ class Ps1LockstepMatch {
   DateTime _lastSent = DateTime.fromMillisecondsSinceEpoch(0);
   final _ourHashes = <int, String>{};
   final _theirHashes = <int, String>{};
+
+  /// In rollback: the newest frame whose input from the other player the host has, in a step or a
+  /// correction, with every frame before it.
+  int _given = -1;
+
+  /// The newest frame the host sent a `sync` for, so it has run it.
+  int _lastSync = -1;
+
+  /// In rollback, the launcher's frame clock: frame [_anchorFrame] was due at [_anchorMicros] of
+  /// [_clock], and each later one a [frameTime] after the one before.
+  final _clock = Stopwatch();
+  int _anchorFrame = 0;
+  int _anchorMicros = 0;
+  int _advantageSum = 0;
+  int _advantageCount = 0;
+  int? _theirAdvantage;
+  int _lastAdvantageMicros = 0;
+  int _waited = 0;
+  final _rollbackLog = Queue<(int, RetroRollback)>();
 
   /// Begins the match on an open [link].
   Future<void> run() async {
@@ -313,6 +444,7 @@ class Ps1LockstepMatch {
   Future<void> _begin() async {
     _send(identity.hello(hosting ? options : const {}));
     final theirs = await _within(_theirHello.future);
+    _lockstepOnly = !identity.rollback || !theirs.rollback;
     if (hosting) {
       await _hostMatch();
     } else {
@@ -333,12 +465,14 @@ class Ps1LockstepMatch {
     samples.sort();
     final roundTrip = samples[samples.length ~/ 2];
     _roundTripMs = (roundTrip / 1000).round();
-    final delay = delayFor(Duration(microseconds: roundTrip));
-    if (delay == null) throw _finish(Ps1LockstepEnd.tooSlow);
-    _delay = delay;
-    _setPhase(Ps1LockstepPhase.transferring);
     final game = host!;
-    final frame = await _guard(game.lockstep(const RetroLockstepSettings(check: 1)));
+    _lockstepOnly = _lockstepOnly || !game.canRollback;
+    final timing = timingFor(Duration(microseconds: roundTrip), rollback: !_lockstepOnly);
+    if (timing == null) throw _finish(Ps1LockstepEnd.tooSlow);
+    final delay = _delay = timing.delay;
+    _window = timing.window;
+    _setPhase(Ps1LockstepPhase.transferring);
+    final frame = await _guard(game.lockstep(_settings));
     if (frame == null) throw _finish(Ps1LockstepEnd.hostFailed);
     work.createSync(recursive: true);
     final file = File(p.join(work.path, 'match.state'));
@@ -366,6 +500,7 @@ class Ps1LockstepMatch {
         bytes: state.length,
         sha256: sha256.convert(state).toString(),
         chunks: chunks.length,
+        window: _window ?? 0,
       ),
     );
     for (final (index, chunk) in chunks.indexed) {
@@ -379,11 +514,13 @@ class Ps1LockstepMatch {
     _setPhase(Ps1LockstepPhase.preparing);
     final prepared = prepareGuest!(theirs)..ignore();
     final start = await _within(_startCame.future);
+    if (start.window != 0 && _lockstepOnly) throw _finish(Ps1LockstepEnd.protocol);
     _delay = start.delay;
+    _window = start.window == 0 ? null : start.window;
     _epoch = start.epoch;
     _first = start.frame;
     final game = host = await _within(prepared);
-    if (game == null) throw _finish(Ps1LockstepEnd.hostFailed);
+    if (game == null || (_window != null && !game.canRollback)) throw _finish(Ps1LockstepEnd.hostFailed);
     _setPhase(Ps1LockstepPhase.transferring);
     final packed = await _within(_stateCame.future);
     final state = inflate(packed, start.bytes);
@@ -396,7 +533,7 @@ class Ps1LockstepMatch {
     work.createSync(recursive: true);
     final file = File(p.join(work.path, 'match.state'));
     await _guard(file.writeAsBytes(state, flush: true));
-    if (await _guard(game.lockstep(const RetroLockstepSettings(check: 1))) == null) {
+    if (await _guard(game.lockstep(_settings)) == null) {
       throw _finish(Ps1LockstepEnd.hostFailed);
     }
     final loaded = await _guard(game.loadState(file.path));
@@ -434,11 +571,44 @@ class Ps1LockstepMatch {
     return out.takeBytes();
   }
 
-  /// The input delay for a round trip: half of it in frames, rounded up, and one more; null above
-  /// [maxDelay] (netplay.md "Lockstep first, rollback after").
-  static int? delayFor(Duration roundTrip) {
-    final frames = (roundTrip.inMicroseconds / 2 / frameTime.inMicroseconds).ceil() + 1;
-    return frames > maxDelay ? null : frames;
+  /// What the host plays the match with. In plain lockstep the host keeps to its core's frame rate
+  /// and the steps wait for it, and a `sync` comes after every frame, which is how the match knows
+  /// which frame its host ran. In rollback, as in GGPO, the game has one clock, the launcher's
+  /// frame clock: the host runs each step as it comes (`paced` false), since a host that kept its
+  /// own time as well would run behind the steps by however far the two clocks drift apart, and
+  /// the other player's input would come before the frame ran, so rollback would add nothing to
+  /// lockstep. A `sync` comes every [compareEvery] frames, those whose RAM is compared: a `sync`
+  /// hashes the RAM and the whole state, which costs more than running the frame, and comes again
+  /// for each frame run again, so a check every frame would make each frame of a rollback take
+  /// several times as long (netplay.md "Tests").
+  RetroLockstepSettings get _settings =>
+      RetroLockstepSettings(check: _window == null ? 1 : compareEvery, rollback: _window, paced: _window == null);
+
+  /// Whether the RAM after [frame] is compared: every [compareEvery] frames from the first of the
+  /// match in plain lockstep, and in rollback the frames the host sends a `sync` for, whose number
+  /// is a multiple of it.
+  bool _compares(int frame) => (frame - (_window == null ? _first : 0)) % compareEvery == 0;
+
+  /// The frames the other player's input comes late by with no delay: half the round trip in
+  /// frames, rounded up, and one more (netplay.md "Lockstep first, rollback after").
+  static int lateFrames(Duration roundTrip) => (roundTrip.inMicroseconds / 2 / frameTime.inMicroseconds).ceil() + 1;
+
+  /// The input delay of plain lockstep for a round trip: [lateFrames]; null above [maxDelay].
+  static int? delayFor(Duration roundTrip) => timingFor(roundTrip, rollback: false)?.delay;
+
+  /// The timing a match plays with for a round trip; null when it is too slow. In plain lockstep
+  /// the delay is [lateFrames], at most [maxDelay]. In rollback, as GGPO plays (a fixed input delay
+  /// set by the game, the rest of the round trip predicted within a window of at most 8 frames):
+  /// the delay is [rollbackDelay], or [lateFrames] when that is less, and the window is the frames
+  /// that leaves predicted and two more for input that comes later than usual, at most
+  /// [RetroLockstepSettings.maxRollback]. A round trip that would need a wider window raises the
+  /// delay instead, up to [maxDelay].
+  static Ps1LockstepTiming? timingFor(Duration roundTrip, {required bool rollback}) {
+    final late = lateFrames(roundTrip);
+    if (!rollback) return late > maxDelay ? null : (delay: late, window: null);
+    final delay = max(min(late, rollbackDelay), late - (RetroLockstepSettings.maxRollback - _jitterFrames));
+    if (delay > maxDelay) return null;
+    return (delay: delay, window: min(RetroLockstepSettings.maxRollback, late - delay + _jitterFrames));
   }
 
   void _play() {
@@ -455,7 +625,13 @@ class Ps1LockstepMatch {
     _peerAck = _produced;
     _sentUpTo = _produced;
     _heard = DateTime.now();
+    _given = _first - 1;
+    _lastSync = _first - 1;
+    _anchorFrame = _first;
+    _clock.start();
+    _anchorMicros = _lastAdvantageMicros = _clock.elapsedMicroseconds;
     _syncs = host!.syncs.listen(_onSync);
+    if (_window != null) _rollbacks = host!.rollbacks.listen(_onRollback);
     _setPhase(Ps1LockstepPhase.playing);
     _timer = Timer.periodic(tick, (_) => _onTick());
     _onTick();
@@ -473,9 +649,108 @@ class Ps1LockstepMatch {
       _sentPaused = pausedNow;
       _send(Ps1LockstepPause(paused: pausedNow));
     }
+    if (_window != null) {
+      _advanceRollback();
+      _sendInputs(now);
+      _timeSync();
+      return;
+    }
     _produce();
     _sendInputs(now);
     _pump();
+  }
+
+  /// In rollback: gives the host the other player's input that came for frames it was stepped
+  /// without, in frame order, and steps the next frame once the frame clock says it is due. No
+  /// frame is stepped while this player's game is paused, while the window is full (the frame a
+  /// window back is not confirmed), or while the host is known to be more than [_lead] frames
+  /// behind its steps (it has the other player's input for the frame of the next `sync` and has not
+  /// sent it, so it has not run that frame); the clock waits then too, so the frames do not come in a burst after. One
+  /// frame is stepped at a time. Stepping frame n reads this player's input for frame n + [delay].
+  void _advanceRollback() {
+    final game = host;
+    if (game == null || _end != null) return;
+    try {
+      final known = min(_remoteHave, _nextStep - 1);
+      while (_given < known) {
+        final frame = _given + 1;
+        game.correct(RetroCorrect(frame, _peerPort, _remote[frame]!));
+        _given = frame;
+      }
+      final now = _clock.elapsedMicroseconds;
+      final due = _anchorFrame + (now - _anchorMicros) ~/ frameTime.inMicroseconds;
+      if (_nextStep > due) return;
+      final held = paused() || _rollbackBlocked();
+      if (_nextStep < due - _catchUp || held) {
+        _anchorFrame = _nextStep;
+        _anchorMicros = now;
+        if (held) return;
+      }
+      final frame = _nextStep;
+      final mine = _local[frame]!;
+      final theirs = frame == _given + 1 ? _remote[frame] : null;
+      game.step(RetroStep(frame, hosting ? [mine, theirs] : [theirs, mine]));
+      if (theirs != null) _given = frame;
+      _advantageSum += _remoteHave - frame;
+      _advantageCount++;
+      _nextStep++;
+      _produced = frame + _delay!;
+      _local[_produced] = localInput();
+    } on Object {
+      _finish(Ps1LockstepEnd.hostFailed);
+    }
+  }
+
+  bool _rollbackBlocked() {
+    final behind = _nextStep - _window!;
+    if (behind >= _first && min(_given, _nextStep - 1) < behind) return true;
+    final due = _nextSync;
+    return _given >= due && _nextStep - 1 - due > _lead;
+  }
+
+  /// The next frame the host sends a `sync` for in rollback: the first multiple of [compareEvery]
+  /// after the last one that came.
+  int get _nextSync {
+    final from = max(_lastSync + 1, _first);
+    return (from + compareEvery - 1) ~/ compareEvery * compareEvery;
+  }
+
+  /// GGPO's time sync: every [advantageEvery] this launcher tells the other its average frame
+  /// advantage (how far the other player's newest input is ahead of the frames stepped here), and
+  /// when both agree this one is ahead, its clock waits half the difference, at most [_maxWait]
+  /// frames. Without it the launcher that started first would stay ahead and predict all of the
+  /// round trip alone.
+  void _timeSync() {
+    final now = _clock.elapsedMicroseconds;
+    if (now - _lastAdvantageMicros < advantageEvery.inMicroseconds || _advantageCount == 0) return;
+    _lastAdvantageMicros = now;
+    final ours = (_advantageSum / _advantageCount).round().clamp(-Ps1LockstepAdvantage.most, Ps1LockstepAdvantage.most);
+    _advantageSum = 0;
+    _advantageCount = 0;
+    _send(Ps1LockstepAdvantage(ours));
+    final theirs = _theirAdvantage;
+    _theirAdvantage = null;
+    if (theirs != null && ours < theirs) {
+      final wait = min((theirs - ours) ~/ 2, _maxWait);
+      if (wait > 0) {
+        _anchorMicros += wait * frameTime.inMicroseconds;
+        _waited += wait;
+      }
+    }
+    onChanged?.call();
+  }
+
+  void _onRollback(RetroRollback rollback) {
+    if (_end != null) return;
+    _rollbackLog.add((_clock.elapsedMicroseconds, rollback));
+    _forgetOldRollbacks();
+  }
+
+  void _forgetOldRollbacks() {
+    final oldest = _clock.elapsedMicroseconds - healthSpan.inMicroseconds;
+    while (_rollbackLog.isNotEmpty && _rollbackLog.first.$1 < oldest) {
+      _rollbackLog.removeFirst();
+    }
   }
 
   /// This player's input for every frame up to the delay past the newest frame the host ran.
@@ -540,11 +815,12 @@ class Ps1LockstepMatch {
   void _onSync(RetroSync sync) {
     if (_end != null || sync.frame < _first) return;
     _ran = max(_ran, sync.frame);
+    _lastSync = max(_lastSync, sync.frame);
     _remote.remove(sync.frame);
     final kept = min(_ran, _peerAck);
     _local.removeWhere((frame, _) => frame <= kept);
     final ram = sync.ram;
-    if (ram != null && (sync.frame - _first) % compareEvery == 0) {
+    if (ram != null && _compares(sync.frame)) {
       if (_ourHashes.length >= _maxWaitingHashes) {
         _finish(Ps1LockstepEnd.protocol);
         return;
@@ -552,6 +828,10 @@ class Ps1LockstepMatch {
       _ourHashes[sync.frame] = ram;
       _send(Ps1LockstepHash(sync.frame, ram));
       _compare(sync.frame);
+    }
+    if (_window != null) {
+      _advanceRollback();
+      return;
     }
     _produce();
     _pump();
@@ -577,7 +857,7 @@ class Ps1LockstepMatch {
       expectedEpoch: _epoch,
       expectedSeat: _peerPort,
       oldestFrame: max(_first, _remoteHave - 255),
-      newestFrame: _ran + 1 + 2 * (_delay! + _ahead) + 8,
+      newestFrame: _window == null ? _ran + 1 + 2 * (_delay! + _ahead) + 8 : _produced + _window! + _delay! + 8,
       lastSentFrame: _produced,
     );
     if (packet == null) return;
@@ -586,7 +866,7 @@ class Ps1LockstepMatch {
     if (acknowledged != null && acknowledged > _peerAck) _peerAck = acknowledged;
     for (final (index, input) in packet.inputs.indexed) {
       final frame = packet.firstFrame + index;
-      if (frame < _nextStep) continue;
+      if (frame <= (_window == null ? _nextStep - 1 : _given)) continue;
       final value = RetroPadInput(
         buttons: input.buttons,
         leftX: input.leftX,
@@ -603,6 +883,10 @@ class Ps1LockstepMatch {
     }
     while (_remote.containsKey(_remoteHave + 1)) {
       _remoteHave++;
+    }
+    if (_window != null) {
+      _advanceRollback();
+      return;
     }
     _pump();
   }
@@ -644,7 +928,7 @@ class Ps1LockstepMatch {
         _loaded.complete(frame);
       case Ps1LockstepHash(:final frame, :final ram)
           when _phase == Ps1LockstepPhase.transferring || _phase == Ps1LockstepPhase.playing:
-        if (frame < _first || (frame - _first) % compareEvery != 0) {
+        if (frame < _first || !_compares(frame)) {
           _finish(Ps1LockstepEnd.protocol);
           return;
         }
@@ -654,6 +938,8 @@ class Ps1LockstepMatch {
         }
         _theirHashes[frame] = ram;
         _compare(frame);
+      case Ps1LockstepAdvantage(:final frames) when _window != null && _phase == Ps1LockstepPhase.playing:
+        _theirAdvantage = frames;
       case Ps1LockstepPause(:final paused):
         _peerPaused = paused;
         onChanged?.call();
@@ -698,6 +984,7 @@ class Ps1LockstepMatch {
   Future<void> _closeAll() async {
     try {
       await _syncs?.cancel();
+      await _rollbacks?.cancel();
       final game = host;
       if (game != null) await game.leaveLockstep();
     } on Object {

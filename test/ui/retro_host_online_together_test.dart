@@ -160,7 +160,7 @@ void main() {
     (invite.kind as ActionRow).run();
     await until(() => invited.isNotEmpty);
     expect(made?['properties'], {
-      'protocol': 'anyps5-ps1-lockstep-v2',
+      'protocol': 'anyps5-ps1-lockstep-v3',
       'discSha256': matches(RegExp(r'^[0-9a-f]{64}$')),
       'discBytes': 4096,
     });

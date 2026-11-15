@@ -1,9 +1,15 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:anyps5_desktop/core/online/ps1_lockstep_match.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_pad.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/launcher.dart';
 import 'package:anyps5_desktop/ui/retro_host/retro_host_game.dart';
 import 'package:anyps5_desktop/ui/strings.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../core/online/lockstep_test_support.dart';
 import '../support/fake_together.dart';
 import '../support/ps1_launcher.dart';
 import '../support/ui_support.dart';
@@ -13,7 +19,8 @@ const _ana = '22222222-2222-4222-8222-222222222222';
 const _ben = '66666666-6666-4666-8666-666666666666';
 
 /// The game's lobby in the host's menu (lib/ui/retro_host_online.dart) as it looks: Player 1 to 4
-/// with the Multitap's seats said to be off, signed out and with a friend invited. The lobby signed
+/// with the Multitap's seats said to be off, signed out and with a friend invited, and what the
+/// row of a match playing says of its rollback. The lobby signed
 /// in to AnyTogether is in retro_host_online_together_test.dart, since widget tests answer every
 /// HTTP call with 400.
 void main() {
@@ -117,5 +124,77 @@ void main() {
     expect(lobby()[1].title, T.text('ps1OnlineCancel'));
     await expectLater(shell, matchesGoldenFile('goldens/retro_host_lobby_invited_en.png'));
     launcher.model.retroOnline = null;
+  });
+
+  testWidgets('a match playing in rollback says its window and how its rollbacks go; in lockstep, why', (tester) async {
+    await tester.runAsync(() => playing());
+    await pumpLauncher(tester, launcher.model);
+    for (final rollback in [true, false]) {
+      late Directory work;
+      late Ps1LockstepMatch hosting;
+      late Ps1LockstepMatch joining;
+      late List<LockstepHost> games;
+      await tester.runAsync(() async {
+        work = Directory.systemTemp.createTempSync('retro-online-row-');
+        final (a, b) = TestLink.pair(const Duration(milliseconds: 40), jitter: const Duration(milliseconds: 10));
+        final identity = Ps1LockstepIdentity(
+          hostVersion: '1.0.0',
+          system: 'linux',
+          core: 'a' * 64,
+          disc: 'b' * 64,
+          bios: 'c' * 64,
+          rollback: rollback,
+        );
+        var count = 0;
+        RetroPadInput pad() => RetroPadInput(buttons: ++count & 0xFFFF);
+        games = [LockstepHost(), LockstepHost()];
+        hosting = Ps1LockstepMatch(
+          hosting: true,
+          link: a,
+          identity: identity,
+          work: Directory('${work.path}/host'),
+          localInput: pad,
+          paused: () => false,
+          host: games[0],
+        );
+        joining = Ps1LockstepMatch(
+          hosting: false,
+          link: b,
+          identity: identity,
+          work: Directory('${work.path}/guest'),
+          localInput: pad,
+          paused: () => false,
+          prepareGuest: (_) async => games[1],
+        );
+        unawaited(hosting.run());
+        unawaited(joining.run());
+        await until(() => rollback ? (hosting.rollbackHealth?.rollbacks ?? 0) > 0 : hosting.lastMatched != null);
+      });
+      launcher.model.retroOnline = RetroOnline(hosting: true, friendId: _ana, friendName: 'Ana')
+        ..step = RetroOnlineStep.match
+        ..match = hosting;
+      openLobby();
+      await settle(tester);
+      final detail = lobby()[1].detail!;
+      expect(detail, contains(T.format('retroOnlineDelay', [hosting.delay!])));
+      if (rollback) {
+        expect(detail, contains(T.format('retroOnlineRollbackWindow', [hosting.window!])));
+        final health = RegExp.escape(T.text('retroOnlineRollbackHealth')).replaceFirst('%d', r'\d+');
+        expect(detail, matches(health.replaceFirst('%d', '2')), reason: 'the test host reports 2 ms a rollback');
+        expect(detail, isNot(contains(T.text('retroOnlineRollbackSlow'))));
+      } else {
+        expect(detail, contains(T.text('retroOnlineNoRollback')));
+      }
+      launcher.model.closeOverlay();
+      launcher.model.retroOnline = null;
+      await tester.runAsync(() async {
+        await hosting.leave();
+        await joining.done;
+        for (final game in games) {
+          await game.close();
+        }
+        work.deleteSync(recursive: true);
+      });
+    }
   });
 }

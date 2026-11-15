@@ -19,7 +19,7 @@ it, the game's picture and the object that runs one game, is described in
 | [`lib/core/retro_host/retro_host_protocol.dart`](../lib/core/retro_host/retro_host_protocol.dart) | The protocol's values, field checks and the game's `status`. |
 | [`lib/core/retro_host/frame_ring.dart`](../lib/core/retro_host/frame_ring.dart) | Checks a ring's header and growth. Pins the newest frame and checks its size. |
 | [`lib/core/retro_host/retro_host_client.dart`](../lib/core/retro_host/retro_host_client.dart) | One host process, as described in the sections below. |
-| [`lib/core/retro_host/retro_lockstep.dart`](../lib/core/retro_host/retro_lockstep.dart) | The lockstep messages and the rules of their order (see "Lockstep"). |
+| [`lib/core/retro_host/retro_lockstep.dart`](../lib/core/retro_host/retro_lockstep.dart) | The lockstep and rollback messages and the rules of their order (see "Lockstep" and "Rollback"). |
 | [`lib/core/retro_host/retro_host_release.dart`](../lib/core/retro_host/retro_host_release.dart) | Finds the host and checks its signed release before it is unpacked and before each start (see "Finding and checking the host" below). |
 | [`lib/core/retro_host/checked_file.dart`](../lib/core/retro_host/checked_file.dart) | A release file held open while it is checked and started: no sharing for writing or deleting on Windows, a close-on-exec descriptor above 3 elsewhere. It hashes what it holds, never the path again. |
 
@@ -28,7 +28,7 @@ it, the game's picture and the object that runs one game, is described in
 - `hello` and `welcome`, and the first `volume` call;
 - calls and pings in order, with their time limits;
 - frames and rumble;
-- lockstep, for online play (see "Lockstep");
+- lockstep and rollback, for online play (see "Lockstep" and "Rollback");
 - what to report when the host fails.
 
 ## Starting the host
@@ -309,8 +309,9 @@ A host that lists `ps1Lockstep` runs a game frame by frame for online play
   frame, the file's size and the `micros` the host took, or null.
   `RetroStateFile.read` reads the file's 48-byte header (version 2: the frame
   and the port count) and gives the core's data after it. The host's in-memory
-  slots (`{"slot": n}`) are for rollback, which the launcher does not do yet,
-  so the client offers no slot calls. `start` takes `lockstep` through
+  slots (`{"slot": n}`) are not offered: in rollback the host keeps the states
+  it needs itself (protocol.md "Rollback"), and a friend joins from a file.
+  `start` takes `lockstep` through
   `RetroHostStartRequest.lockstep`. None of them may be sent to a host that
   does not list the capability: that is a `StateError`, as for `ps1`.
 - **Steps.** `step(RetroStep)` sends one frame's input for one or two ports.
@@ -329,6 +330,33 @@ A host that lists `ps1Lockstep` runs a game frame by frame for online play
   too.
 - **After a failure.** `lockstep` gives null, `leaveLockstep` false and the
   state methods null, as the other calls give their "no game" results.
+
+## Rollback
+
+A host that also lists `ps1Rollback` (`canRollback`) runs a game in lockstep
+ahead of the other player's input (protocol.md "Rollback"):
+
+- **Settings.** `RetroLockstepSettings.rollback` is the window, 1 to 8 frames,
+  written as `lockstep.rollback.frames`; `start.lockstep` takes it too.
+  Sending it to a host without the capability is a `StateError`.
+- **Steps and corrections.** A `RetroStep` port may be null, its input not
+  known yet. `correct(RetroCorrect)` gives that port's real input later. The
+  tracker holds the launcher to rollback's rules, each broken one a
+  `StateError`: a null port only in rollback; a port's input known in frame
+  order, so neither a step nor a correction gives a port's input while an
+  earlier frame's is unknown; a correction only for a port its step left null;
+  and no step beyond the window, for a frame the window back of which is not
+  confirmed. `RetroLockstepTracker.confirmed` is the newest frame every port's
+  input is known for, with every frame before it.
+- **What the host sends.** A `sync` in rollback must be for a confirmed frame;
+  one that is not is a protocol error. `rollbacks` gives each `rollback`
+  message as a `RetroRollback` (the first frame run again, how many, and the
+  microseconds of the whole and of the load), for a game in rollback and for
+  frames stepped; a host without the capability that sends one, or one for
+  frames not stepped, breaks the protocol. A `saveState` result while a frame
+  is not confirmed, or a `lockstep` result that turned rollback on or off or
+  changed its window then, is one too, as the host refuses both. A
+  `loadState` forgets the frames not confirmed.
 
 ## Tests
 
@@ -400,9 +428,12 @@ replace, rename and delete the core after each reply. Two more sessions check
 the same when the host exits unasked and when it is killed for a broken rule.
 
 [`test/core/retro_host/retro_lockstep_test.dart`](../test/core/retro_host/retro_lockstep_test.dart)
-replays lockstep messages recorded from real hosts, and
+replays lockstep messages recorded from real hosts,
+[`test/core/retro_host/retro_rollback_test.dart`](../test/core/retro_host/retro_rollback_test.dart)
+replays rollback messages recorded from real hosts and checks the tracker's
+rules, and
 [`test/core/retro_host/retro_lockstep_real_test.dart`](../test/core/retro_host/retro_lockstep_real_test.dart)
-runs the client in lockstep with two real hosts, with the same
+runs the client in lockstep and in rollback with two real hosts, with the same
 `ANYPS5_RETRO_HOST_REAL` file ([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md),
 "Tests").
 

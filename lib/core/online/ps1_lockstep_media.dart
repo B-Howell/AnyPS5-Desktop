@@ -40,14 +40,15 @@ abstract final class Ps1LockstepMedia {
   }
 
   /// What this launcher plays a disc of [files] with: its disc digest ([discDigestOf]), the
-  /// SHA-256 of the [core] library, and that of the BIOS images in [system] ([biosDigestOf]). Only
-  /// files [digests] does not know as they are now are read.
+  /// SHA-256 of the [core] library, that of the BIOS images in [system] ([biosDigestOf]), and
+  /// whether its host can [rollback]. Only files [digests] does not know as they are now are read.
   static Future<Ps1LockstepIdentity> identify({
     required Ps1FileDigests digests,
     required String hostVersion,
     required String core,
     required List<String> files,
     required String system,
+    bool rollback = false,
   }) async {
     final bios = biosImages(system);
     final known = await digests.of([core, ...tracks(files), ...bios]);
@@ -57,6 +58,7 @@ abstract final class Ps1LockstepMedia {
       core: known[core]!,
       disc: discDigestOf(files, known),
       bios: biosDigestOf([for (final image in bios) known[image]!]),
+      rollback: rollback,
     );
   }
 

@@ -157,6 +157,10 @@ class FakeRetroHostSession extends FakeFrameSource implements RetroHostSession {
   @override
   bool canLockstep = true;
 
+  /// Whether the host lists `ps1Rollback` too.
+  @override
+  bool canRollback = true;
+
   @override
   String hostVersion = '1.0.0';
 
@@ -188,12 +192,27 @@ class FakeRetroHostSession extends FakeFrameSource implements RetroHostSession {
   @override
   void step(RetroStep step) => steps.add(step);
 
+  /// Every correction sent, in order.
+  final corrections = <RetroCorrect>[];
+
+  @override
+  void correct(RetroCorrect correct) => corrections.add(correct);
+
+  final _rollbacks = StreamController<RetroRollback>.broadcast(sync: true);
+
+  @override
+  Stream<RetroRollback> get rollbacks => _rollbacks.stream;
+
+  /// A `rollback` message from the host.
+  void sendRollback(RetroRollback rollback) => _rollbacks.add(rollback);
+
   @override
   Future<void> close() async {
     closed = true;
     await super.close();
     await _rumble.close();
     await _syncs.close();
+    await _rollbacks.close();
   }
 }
 

@@ -118,6 +118,7 @@ class RetroHostClient implements RetroHostSession {
   final _frames = StreamController<RetroFrameEvent>.broadcast(sync: true);
   final _rumble = StreamController<RetroRumble>.broadcast();
   final _syncs = StreamController<RetroSync>.broadcast(sync: true);
+  final _rollbacks = StreamController<RetroRollback>.broadcast(sync: true);
   final _lockstep = RetroLockstepTracker();
   final _calls = Queue<_Pending>();
   final _pings = Queue<(int, DateTime)>();
@@ -308,6 +309,15 @@ class RetroHostClient implements RetroHostSession {
   @override
   bool get canLockstep => _capabilities.contains(retroCapabilityPs1Lockstep);
 
+  /// Whether the host lists `ps1Rollback` with `ps1Lockstep`, so a match can predict the other
+  /// player's input instead of waiting for it.
+  @override
+  bool get canRollback => canLockstep && _capabilities.contains(retroCapabilityPs1Rollback);
+
+  /// Each `rollback` message of a game in rollback (protocol.md "rollback message"), checked.
+  @override
+  Stream<RetroRollback> get rollbacks => _rollbacks.stream;
+
   /// Whether the launcher's window has input focus; losing it zeroes the controllers' input and
   /// their motors (protocol.md "input" and "rumble"). Once the connection has ended there is no
   /// input to zero and no rumble to forward, so a change is ignored.
@@ -355,6 +365,14 @@ class RetroHostClient implements RetroHostSession {
     final lockstepStart = method == 'start' && args is Map && args.containsKey('lockstep');
     if ((retroLockstepMethods.contains(method) || lockstepStart) && !canLockstep) {
       throw StateError('The host does not list the $retroCapabilityPs1Lockstep capability.');
+    }
+    final rollback = switch (method) {
+      'lockstep' => RetroLockstepSettings.rollbackOf(args),
+      'start' when args is Map => RetroLockstepSettings.rollbackOf(args['lockstep']),
+      _ => null,
+    };
+    if (rollback != null && !canRollback) {
+      throw StateError('The host does not list the $retroCapabilityPs1Rollback capability.');
     }
     if (StrictJson.hasLoneSurrogate(args)) {
       return Future.error(const RetroCallError(RetroCallError.argument, 'A string cannot be sent as UTF-8.'));
@@ -475,6 +493,16 @@ class RetroHostClient implements RetroHostSession {
     _ports = step.ports.length;
     _zeroIfStricter(before);
     _sendObject(step.toMessage());
+  }
+
+  /// Sends the real input of a port a step left null (protocol.md "correct"): the oldest unknown
+  /// input of that port; [RetroLockstepTracker] refuses any other with a [StateError].
+  @override
+  void correct(RetroCorrect correct) {
+    if (!_greeted || _ended.isCompleted) return;
+    if (!canRollback) throw StateError('The host does not list the $retroCapabilityPs1Rollback capability.');
+    _lockstep.correcting(correct);
+    _sendObject(correct.toMessage());
   }
 
   /// Asks the host to stop its game and exit; it is killed if it has not exited 15 seconds later.
@@ -602,6 +630,9 @@ class RetroHostClient implements RetroHostSession {
       case 'sync':
         if (!canLockstep) throw const RetroProtocolError('A sync came from a host without ps1Lockstep.');
         _syncs.add(_lockstep.synced(message));
+      case 'rollback':
+        if (!canRollback) throw const RetroProtocolError('A rollback message came from a host without ps1Rollback.');
+        _rollbacks.add(_lockstep.rolledBack(message));
     }
   }
 
@@ -680,7 +711,10 @@ class RetroHostClient implements RetroHostSession {
         _ports = 1;
         _lastStatusEnded = false;
         _setFrame(null, null);
-        _lockstep.started(lockstep: args is Map && args.containsKey('lockstep'));
+        _lockstep.started(
+          lockstep: args is Map && args.containsKey('lockstep'),
+          rollback: args is Map ? RetroLockstepSettings.rollbackOf(args['lockstep']) : null,
+        );
       case 'status':
         if (result == null) {
           if (_gameLoaded) _zeroRumble();
@@ -948,6 +982,7 @@ class RetroHostClient implements RetroHostSession {
     await _frames.close();
     await _rumble.close();
     await _syncs.close();
+    await _rollbacks.close();
   }
 
   void _sendObject(Map<String, Object?> message) => _write(_encode(message));

@@ -68,11 +68,11 @@ void main() {
       'kind': 'online',
       'titleId': 'PS1-${_disc.substring(0, 16).toUpperCase()}',
       'gameVersion': '1',
-      'engineBuild': 'anyps5-ps1-lockstep-v2',
+      'engineBuild': 'anyps5-ps1-lockstep-v3',
       'versionRule': 'exact',
       'capacity': 2,
       'joinable': false,
-      'properties': {'protocol': 'anyps5-ps1-lockstep-v2', 'discSha256': _disc, 'discBytes': 1000},
+      'properties': {'protocol': 'anyps5-ps1-lockstep-v3', 'discSha256': _disc, 'discBytes': 1000},
     });
     await rooms().invite(room, _friend);
     await rooms().leave(room);

@@ -3,13 +3,15 @@ import 'dart:typed_data';
 
 /// The reliable, ordered messages two launchers exchange about one PS1 lockstep match
 /// (anyps5-retro-host docs/netplay.md "Joining a running game"), as JSON on the peer connection's
-/// stream channel. Every message has `v` (the version, 2) and `type`; a message of another version
-/// or shape is refused, and the match ends. Version 2 names the disc by its tracks alone and no
-/// longer by its file name, since the state a friend joins from names no path.
+/// stream channel. Every message has `v` (the version, 3) and `type`; a message of another version
+/// or shape is refused, and the match ends. Version 2 named the disc by its tracks alone and no
+/// longer by its file name, since the state a friend joins from names no path. Version 3 adds
+/// rollback: whether each launcher's host can roll back (`hello.rollback`), the window a match
+/// plays with (`start.window`), and the frame advantage of GGPO's time sync (`advantage`).
 sealed class Ps1LockstepMessage {
   const Ps1LockstepMessage();
 
-  static const version = 2;
+  static const version = 3;
 
   /// The largest message read: a state chunk of [Ps1LockstepChunk.maxBytes] in base64 with room
   /// for the rest.
@@ -44,6 +46,9 @@ sealed class Ps1LockstepMessage {
       'loaded' => Ps1LockstepLoaded(fields.integer('frame', 0, _maxFrame)),
       'hash' => Ps1LockstepHash(fields.integer('frame', 0, _maxFrame), fields.hash('ram', 16)),
       'pause' => Ps1LockstepPause(paused: fields.boolean('paused')),
+      'advantage' => Ps1LockstepAdvantage(
+        fields.integer('frames', -Ps1LockstepAdvantage.most, Ps1LockstepAdvantage.most),
+      ),
       'leave' => const Ps1LockstepLeave(),
       _ => throw FormatException('A lockstep message has an unknown type, $type.'),
     };
@@ -66,6 +71,7 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
     required this.disc,
     required this.bios,
     required this.options,
+    this.rollback = false,
   });
 
   /// The emulator host's `welcome.hostVersion`.
@@ -87,6 +93,10 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
   /// The core options the game runs with, by key.
   final Map<String, String> options;
 
+  /// Whether the launcher's emulator host lists `ps1Rollback`: a match rolls back only when both
+  /// do, and is in plain lockstep otherwise.
+  final bool rollback;
+
   @override
   String get type => 'hello';
 
@@ -98,6 +108,7 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
     'disc': disc,
     'bios': bios,
     'options': options,
+    'rollback': rollback,
   };
 
   static Ps1LockstepHello _read(_Fields fields) => Ps1LockstepHello(
@@ -107,6 +118,7 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
     disc: fields.hash('disc', 64),
     bios: fields.hash('bios', 64),
     options: fields.options('options'),
+    rollback: fields.boolean('rollback'),
   );
 }
 
@@ -136,7 +148,8 @@ final class Ps1LockstepPong extends Ps1LockstepMessage {
 
 /// The host player's game is held at [frame] and its state follows in [chunks] chunks of the
 /// gzip-compressed state file, whose uncompressed [bytes] have the SHA-256 [sha256]. [delay] is the
-/// match's input delay in frames and [epoch] names its input packets.
+/// match's input delay in frames, [window] its rollback window (0 in plain lockstep), and [epoch]
+/// names its input packets.
 final class Ps1LockstepStart extends Ps1LockstepMessage {
   const Ps1LockstepStart({
     required this.frame,
@@ -145,10 +158,15 @@ final class Ps1LockstepStart extends Ps1LockstepMessage {
     required this.bytes,
     required this.sha256,
     required this.chunks,
+    this.window = 0,
   });
 
   final int frame;
   final int delay;
+
+  /// The most frames either game steps beyond the last confirmed one, 1 to 8; 0 when the match
+  /// plays in plain lockstep.
+  final int window;
   final int epoch;
   final int bytes;
   final String sha256;
@@ -163,6 +181,7 @@ final class Ps1LockstepStart extends Ps1LockstepMessage {
   Map<String, Object?> body() => {
     'frame': frame,
     'delay': delay,
+    'window': window,
     'epoch': BigInt.from(epoch).toUnsigned(64).toRadixString(16).padLeft(16, '0'),
     'bytes': bytes,
     'sha256': sha256,
@@ -176,6 +195,7 @@ final class Ps1LockstepStart extends Ps1LockstepMessage {
     return Ps1LockstepStart(
       frame: fields.integer('frame', 0, Ps1LockstepMessage._maxFrame),
       delay: fields.integer('delay', 1, 8),
+      window: fields.integer('window', 0, 8),
       epoch: value,
       bytes: fields.integer('bytes', 48, maxStateBytes),
       sha256: fields.hash('sha256', 64),
@@ -252,6 +272,24 @@ final class Ps1LockstepPause extends Ps1LockstepMessage {
 
   @override
   Map<String, Object?> body() => {'paused': paused};
+}
+
+/// The frame advantage of GGPO's time sync, averaged since the sender's last one: how many frames
+/// the sender's newest input from the other player is ahead of the frame the sender steps. A
+/// launcher further ahead than the other waits half the difference (Ps1LockstepMatch).
+final class Ps1LockstepAdvantage extends Ps1LockstepMessage {
+  const Ps1LockstepAdvantage(this.frames);
+
+  /// The largest advantage sent either way: far beyond the delay and window a match plays with.
+  static const most = 600;
+
+  final int frames;
+
+  @override
+  String get type => 'advantage';
+
+  @override
+  Map<String, Object?> body() => {'frames': frames};
 }
 
 /// The other player left the match.
