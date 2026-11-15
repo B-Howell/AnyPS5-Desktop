@@ -86,7 +86,9 @@ extension RetroHostOnline on AppModel {
     play.lobby = true;
     // The first row that can be chosen and ends nothing: a friend to invite, or Back to game.
     final rows = retroLobbyRows(play);
-    final safe = rows.indexWhere((row) => row.focusable && !(row.kind is ActionRow && (row.kind as ActionRow).destructive));
+    final safe = rows.indexWhere(
+      (row) => row.focusable && !(row.kind is ActionRow && (row.kind as ActionRow).destructive),
+    );
     panelRow = math.max(0, safe);
     sounds.play(Cue.select);
     _changed();
@@ -235,8 +237,7 @@ extension RetroHostOnline on AppModel {
   Future<void> inviteRetroFriend(Friend friend) async {
     final play = retroPlay;
     final me = together.user?.id;
-    final install = retroHostInstall;
-    if (play == null || me == null || install == null || play.game.retro == null || retroOnline != null) return;
+    if (play == null || me == null || play.game.retro == null || retroOnline != null) return;
     if (retroOnlineUnavailable(play) case final reason?) return show(T.text('${reason}Detail'));
     final online = retroOnline = RetroOnline(
       hosting: true,
@@ -250,7 +251,7 @@ extension RetroHostOnline on AppModel {
       final identity = await Ps1LockstepMedia.identify(
         digests: retroDigests,
         hostVersion: play.host.session.hostVersion,
-        core: install.core,
+        core: play.core,
         files: _retroDiscFiles(play.game),
         system: paths.retroSystem,
       );
@@ -333,7 +334,28 @@ extension RetroHostOnline on AppModel {
       final read = await rooms.readInvite(invite.sessionId, expectedHost: from.id);
       final game = await _retroGameFor(read);
       if (game == null) return show(T.text('retroOnlineNoDiscDetail'));
-      final session = opened = openRetroHost(install, volume: preferences.retroHostVolume / 100, muted: true);
+      final RetroHostChecked? checked;
+      try {
+        checked = await _checkRetroHost(install);
+      } on RetroHostReleaseFailure {
+        return;
+      }
+      if (online.cancelled) {
+        checked?.release();
+        return;
+      }
+      final RetroHostSession session;
+      try {
+        session = opened = openRetroHost(
+          install,
+          checked: checked,
+          volume: preferences.retroHostVolume / 100,
+          muted: true,
+        );
+      } on Object {
+        checked?.release();
+        rethrow;
+      }
       await session.ready;
       if (!session.canLockstep) return show(T.text('retroOnlineHostOldDetail'));
       final identity = await Ps1LockstepMedia.identify(
