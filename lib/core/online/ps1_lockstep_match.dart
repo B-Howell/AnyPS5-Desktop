@@ -674,7 +674,7 @@ class Ps1LockstepMatch {
       final known = min(_remoteHave, _nextStep - 1);
       while (_given < known) {
         final frame = _given + 1;
-        game.correct(RetroCorrect(frame, _peerPort, _remote[frame]!));
+        game.correct(RetroCorrect(frame, _peerPort, _remote.remove(frame)!));
         _given = frame;
       }
       final now = _clock.elapsedMicroseconds;
@@ -690,7 +690,10 @@ class Ps1LockstepMatch {
       final mine = _local[frame]!;
       final theirs = frame == _given + 1 ? _remote[frame] : null;
       game.step(RetroStep(frame, hosting ? [mine, theirs] : [theirs, mine]));
-      if (theirs != null) _given = frame;
+      if (theirs != null) {
+        _given = frame;
+        _remote.remove(frame);
+      }
       _advantageSum += _remoteHave - frame;
       _advantageCount++;
       _nextStep++;
