@@ -527,16 +527,21 @@ class Messages with Notifier {
     ];
     conversations = ordered(await _openLast(fetched));
     _unlisted.removeAll(conversations.map((c) => c.id));
+    unread = await _unreadCount();
     loaded = true;
-    await _countUnread();
+    notifyListeners();
     final shown = open;
     if (shown != null && shown.unread > 0) await _read(shown);
   }
 
   Future<void> _countUnread() async {
-    final count = await account.call('GET', 'me/conversations/unread');
-    unread = (count['messages'] as num? ?? 0).toInt();
+    unread = await _unreadCount();
     notifyListeners();
+  }
+
+  Future<int> _unreadCount() async {
+    final count = await account.call('GET', 'me/conversations/unread');
+    return (count['messages'] as num? ?? 0).toInt();
   }
 
   /// Shows a conversation: its newest messages, and read up to them.
