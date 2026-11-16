@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "File itu bukan BIOS PS2: file tidak punya daftar file yang mengawali BIOS PS2.",
   "retroHostPs2BiosNoVersion": "File itu bukan BIOS PS2: tidak ada versi di dalamnya.",
   "retroHostPs2BiosUnreadable": "File itu tidak bisa dibaca.",
+  "retroHostPs2BiosName": "LRPS2 tidak bisa memakai file itu dengan namanya. Ganti namanya agar berakhir dengan .bin, tanpa titik di awal, lalu pilih lagi.",
   "retroHostPs2BiosCopyFailed": "BIOS PS2 tidak bisa disalin ke folder emulator. Tutup game PS2 yang terbuka lalu coba lagi.",
   "retroHostPs2NoBiosDetail": "BIOS PS2 tidak ditemukan. Pilih BIOS PS2 Anda di Pengaturan › Emulator lalu mulai game lagi.",
   "retroHostNoPs2Detail": "Host emulator ini tidak bisa memainkan game PS2. Host perlu diperbarui.",

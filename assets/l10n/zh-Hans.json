@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "该文件不是 PS2 BIOS：它没有 PS2 BIOS 开头的文件列表。",
   "retroHostPs2BiosNoVersion": "该文件不是 PS2 BIOS：其中没有版本信息。",
   "retroHostPs2BiosUnreadable": "无法读取该文件。",
+  "retroHostPs2BiosName": "LRPS2 无法以此名称使用该文件。请将其重命名为以 .bin 结尾且开头没有点的名称，然后重新选择。",
   "retroHostPs2BiosCopyFailed": "无法将 PS2 BIOS 复制到模拟器的文件夹。请关闭所有 PS2 游戏后重试。",
   "retroHostPs2NoBiosDetail": "未找到 PS2 BIOS。请在“设置 › 模拟器”中选择你的 PS2 BIOS，然后重新启动游戏。",
   "retroHostNoPs2Detail": "此模拟器宿主程序无法运行 PS2 游戏，需要更新。",

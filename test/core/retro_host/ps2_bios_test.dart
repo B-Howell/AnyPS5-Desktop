@@ -187,11 +187,19 @@ void main() {
       expect(folder.listSync().map((entry) => p.basename(entry.path)).toSet(), {'console.bin', 'console.bin.partial'});
     });
 
-    test('a BIOS whose own name ends in .nvm is not taken as its own console settings', () async {
-      final bios = await Ps2Bios.install(write('console.nvm', biosShaped()), system: system);
-      expect(bios.fileName, 'console.nvm');
-      final folder = Directory(Ps2Bios.folderIn(system));
-      expect(folder.listSync().map((entry) => p.basename(entry.path)), ['console.nvm']);
+    test('a name LRPS2 would hide or write its settings over is refused, and nothing is copied', () async {
+      for (final name in ['.console', 'console.nvm', 'console.MEC']) {
+        final source = write(name, biosShaped());
+        await expectLater(
+          Ps2Bios.install(source, system: system),
+          throwsA(isA<Ps2BiosRefused>().having((refused) => refused.reason, 'reason', Ps2BiosRefusal.name)),
+          reason: name,
+        );
+        expect(Directory(Ps2Bios.folderIn(system)).existsSync(), isFalse, reason: name);
+      }
+      expect(Ps2Bios.usableName('scph39001.bin'), isTrue);
+      expect(Ps2Bios.usableName('SCPH-39001.v7.bin'), isTrue);
+      expect(Ps2Bios.usableName('bios'), isTrue);
     });
 
     test('the BIOS already in the folder is taken where it is', () async {

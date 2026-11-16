@@ -140,6 +140,7 @@ String ps2BiosRefusalKey(Ps2BiosRefusal reason) => switch (reason) {
   Ps2BiosRefusal.noDirectory => 'retroHostPs2BiosNoTable',
   Ps2BiosRefusal.noVersion => 'retroHostPs2BiosNoVersion',
   Ps2BiosRefusal.unreadable => 'retroHostPs2BiosUnreadable',
+  Ps2BiosRefusal.name => 'retroHostPs2BiosName',
 };
 
 /// The menu's sections, in the order its first page lists them. Graphics is on the game's

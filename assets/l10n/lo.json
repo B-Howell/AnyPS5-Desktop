@@ -2443,6 +2443,7 @@
   "retroHostPs2BiosNoTable": "ໄຟລ໌ນັ້ນບໍ່ແມ່ນ BIOS ຂອງ PS2: ມັນບໍ່ມີລາຍການໄຟລ໌ທີ່ BIOS ຂອງ PS2 ມີ.",
   "retroHostPs2BiosNoVersion": "ໄຟລ໌ນັ້ນບໍ່ແມ່ນ BIOS ຂອງ PS2: ມັນບໍ່ມີເວີຊັນ.",
   "retroHostPs2BiosUnreadable": "ບໍ່ສາມາດອ່ານໄຟລ໌ນັ້ນໄດ້.",
+  "retroHostPs2BiosName": "LRPS2 ໃຊ້ໄຟລ໌ນັ້ນດ້ວຍຊື່ນີ້ບໍ່ໄດ້. ປ່ຽນຊື່ໃຫ້ລົງທ້າຍດ້ວຍ .bin ໂດຍບໍ່ມີຈຸດຢູ່ທາງໜ້າ ແລ້ວເລືອກມັນອີກຄັ້ງ.",
   "retroHostPs2BiosCopyFailed": "ບໍ່ສາມາດສຳເນົາ BIOS ຂອງ PS2 ໄປໃສ່ໂຟນເດີຂອງອີມູເລເຕີໄດ້. ປິດເກມ PS2 ທີ່ເປີດຢູ່ ແລ້ວລອງອີກຄັ້ງ.",
   "retroHostPs2NoBiosDetail": "ບໍ່ພົບ BIOS ຂອງ PS2. ເລືອກ BIOS ຂອງ PS2 ຂອງທ່ານໃນ ການຕັ້ງຄ່າ › ອີມູເລເຕີ ແລ້ວເລີ່ມເກມອີກຄັ້ງ.",
   "retroHostNoPs2Detail": "ໂຮສອີມູເລເຕີນີ້ຫຼິ້ນເກມ PS2 ບໍ່ໄດ້. ມັນຕ້ອງໄດ້ອັບເດດ.",

@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "Fail itu bukan BIOS PS2: ia tiada senarai fail yang memulakan BIOS PS2.",
   "retroHostPs2BiosNoVersion": "Fail itu bukan BIOS PS2: ia tiada versi.",
   "retroHostPs2BiosUnreadable": "Fail itu tidak dapat dibaca.",
+  "retroHostPs2BiosName": "LRPS2 tidak dapat menggunakan fail itu dengan nama tersebut. Namakan semula supaya berakhir dengan .bin, tanpa titik di hadapan, dan pilih sekali lagi.",
   "retroHostPs2BiosCopyFailed": "BIOS PS2 tidak dapat disalin ke dalam folder emulator. Tutup sebarang permainan PS2 dan cuba lagi.",
   "retroHostPs2NoBiosDetail": "Tiada BIOS PS2 ditemui. Pilih BIOS PS2 anda dalam Tetapan › Emulator dan mulakan permainan sekali lagi.",
   "retroHostNoPs2Detail": "Hos emulator ini tidak dapat memainkan permainan PS2. Ia perlu dikemas kini.",

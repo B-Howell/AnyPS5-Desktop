@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "Bu dosya bir PS2 BIOS'u değil: PS2 BIOS'unun başladığı dosya listesi onda yok.",
   "retroHostPs2BiosNoVersion": "Bu dosya bir PS2 BIOS'u değil: içinde sürüm yok.",
   "retroHostPs2BiosUnreadable": "Bu dosya okunamadı.",
+  "retroHostPs2BiosName": "LRPS2 bu dosyayı bu adla kullanamaz. Başında nokta olmadan .bin ile bitecek şekilde yeniden adlandır ve tekrar seç.",
   "retroHostPs2BiosCopyFailed": "PS2 BIOS'u emülatörün klasörüne kopyalanamadı. Açık PS2 oyunlarını kapat ve yeniden dene.",
   "retroHostPs2NoBiosDetail": "PS2 BIOS'u bulunamadı. Ayarlar › Emülatörler bölümünden PS2 BIOS'unu seç ve oyunu yeniden başlat.",
   "retroHostNoPs2Detail": "Bu emülatör programı PS2 oyunlarını oynatamıyor. Güncellenmesi gerekiyor.",

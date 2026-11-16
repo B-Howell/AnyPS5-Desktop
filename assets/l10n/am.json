@@ -2441,6 +2441,7 @@
   "retroHostPs2BiosNoTable": "ያ ፋይል የPS2 BIOS አይደለም፤ የPS2 BIOS የሚጀምርበት የፋይሎች ዝርዝር የለውም።",
   "retroHostPs2BiosNoVersion": "ያ ፋይል የPS2 BIOS አይደለም፤ ስሪት በውስጡ የለም።",
   "retroHostPs2BiosUnreadable": "ያ ፋይል ሊነበብ አልቻለም።",
+  "retroHostPs2BiosName": "LRPS2 ያንን ፋይል በዚህ ስሙ ሊጠቀምበት አይችልም። መጀመሪያ ላይ ነጥብ ሳይኖረው በ.bin እንዲያልቅ ስሙን ይቀይሩና እንደገና ይምረጡት።",
   "retroHostPs2BiosCopyFailed": "የPS2 BIOS ወደ ኢሙሌተሩ አቃፊ ሊቀዳ አልቻለም። ማንኛውንም የPS2 ጨዋታ ይዝጉና እንደገና ይሞክሩ።",
   "retroHostPs2NoBiosDetail": "ምንም የPS2 BIOS አልተገኘም። የPS2 BIOSዎን በቅንብሮች › ኢሙሌተሮች ይምረጡና ጨዋታውን እንደገና ያስጀምሩ።",
   "retroHostNoPs2Detail": "ይህ የኢሙሌተር አስተናጋጅ የPS2 ጨዋታዎችን መጫወት አይችልም። መዘመን አለበት።",

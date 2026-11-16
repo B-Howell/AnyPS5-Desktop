@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "এই ফাইলটি PS2 BIOS নয়: এতে সেই ফাইল তালিকা নেই যা দিয়ে একটি PS2 BIOS শুরু হয়।",
   "retroHostPs2BiosNoVersion": "এই ফাইলটি PS2 BIOS নয়: এতে কোনো সংস্করণ নেই।",
   "retroHostPs2BiosUnreadable": "ফাইলটি পড়া যায়নি।",
+  "retroHostPs2BiosName": "LRPS2 ফাইলটি এই নামে ব্যবহার করতে পারে না। শুরুতে বিন্দু ছাড়া .bin দিয়ে শেষ হয় এমন নাম দিন এবং আবার বেছে নিন।",
   "retroHostPs2BiosCopyFailed": "PS2 BIOS এমুলেটরের ফোল্ডারে কপি করা যায়নি। যেকোনো PS2 গেম বন্ধ করে আবার চেষ্টা করুন।",
   "retroHostPs2NoBiosDetail": "কোনো PS2 BIOS পাওয়া যায়নি। সেটিংস › এমুলেটর-এ আপনার PS2 BIOS বেছে নিন এবং গেমটি আবার শুরু করুন।",
   "retroHostNoPs2Detail": "এই এমুলেটর হোস্ট PS2 গেম চালাতে পারে না। এটি আপডেট করতে হবে।",

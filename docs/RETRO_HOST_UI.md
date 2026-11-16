@@ -532,7 +532,8 @@ Settings › Emulators adds two rows under the PS1 ones, made the same way:
   checks it as LRPS2 does and copies it into `pcsx2/bios` of the system
   directory ([RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md) "PS2 games"). A
   file that is not one is refused, and the toast says why: its size, no file
-  list, no version, or that it could not be read. The row then shows what
+  list, no version, a name LRPS2 cannot use (a leading dot, or `.nvm` or
+  `.mec` at the end), or that it could not be read. The row then shows what
   the BIOS's `ROMVER` says: its region, version and year ("USA BIOS, version
   2.20 (2006)"). `Preferences.retroHostPs2Bios` keeps the file's name and
   `ROMVER` text only, never its contents or where it came from; a BIOS taken

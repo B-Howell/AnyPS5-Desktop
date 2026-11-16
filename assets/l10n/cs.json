@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "Tento soubor není BIOS PS2: chybí v něm seznam souborů, kterým BIOS PS2 začíná.",
   "retroHostPs2BiosNoVersion": "Tento soubor není BIOS PS2: neobsahuje žádnou verzi.",
   "retroHostPs2BiosUnreadable": "Soubor nelze přečíst.",
+  "retroHostPs2BiosName": "LRPS2 nemůže soubor pod tímto názvem použít. Přejmenujte ho tak, aby končil na .bin a nezačínal tečkou, a vyberte ho znovu.",
   "retroHostPs2BiosCopyFailed": "BIOS PS2 nelze zkopírovat do složky emulátoru. Zavřete všechny hry pro PS2 a zkuste to znovu.",
   "retroHostPs2NoBiosDetail": "Nebyl nalezen žádný BIOS PS2. Vyberte svůj BIOS PS2 v Nastavení › Emulátory a spusťte hru znovu.",
   "retroHostNoPs2Detail": "Tento hostitel emulátoru neumí hrát hry pro PS2. Je potřeba ho aktualizovat.",

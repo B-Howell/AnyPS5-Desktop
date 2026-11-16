@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "Ez a fájl nem PS2 BIOS: hiányzik belőle a fájllista, amellyel egy PS2 BIOS kezdődik.",
   "retroHostPs2BiosNoVersion": "Ez a fájl nem PS2 BIOS: nincs benne verzió.",
   "retroHostPs2BiosUnreadable": "A fájlt nem sikerült beolvasni.",
+  "retroHostPs2BiosName": "Az LRPS2 ezen a néven nem tudja használni a fájlt. Nevezd át úgy, hogy .bin-re végződjön, és ne ponttal kezdődjön, majd válaszd ki újra.",
   "retroHostPs2BiosCopyFailed": "A PS2 BIOS-t nem sikerült az emulátor mappájába másolni. Zárj be minden PS2-játékot, és próbáld újra.",
   "retroHostPs2NoBiosDetail": "Nem található PS2 BIOS. Válaszd ki a PS2 BIOS-odat a Beállítások › Emulátorok alatt, és indítsd újra a játékot.",
   "retroHostNoPs2Detail": "Ez az emulátor-gazdaprogram nem tud PS2-játékokat futtatni. Frissíteni kell.",

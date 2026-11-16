@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "Den filen er ikke en PS2-BIOS: den mangler fillisten en PS2-BIOS begynner med.",
   "retroHostPs2BiosNoVersion": "Den filen er ikke en PS2-BIOS: den har ingen versjon.",
   "retroHostPs2BiosUnreadable": "Filen kunne ikke leses.",
+  "retroHostPs2BiosName": "LRPS2 kan ikke bruke filen med det navnet. Gi den nytt navn som slutter på .bin, uten punktum først, og velg den igjen.",
   "retroHostPs2BiosCopyFailed": "PS2-BIOS-en kunne ikke kopieres til emulatorens mappe. Lukk alle PS2-spill og prøv igjen.",
   "retroHostPs2NoBiosDetail": "Fant ingen PS2-BIOS. Velg PS2-BIOS-en din under Innstillinger › Emulatorer, og start spillet på nytt.",
   "retroHostNoPs2Detail": "Denne emulatorverten kan ikke spille PS2-spill. Den må oppdateres.",

@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "Fișierul nu este un BIOS PS2: îi lipsește lista de fișiere cu care începe un BIOS PS2.",
   "retroHostPs2BiosNoVersion": "Fișierul nu este un BIOS PS2: nu are nicio versiune.",
   "retroHostPs2BiosUnreadable": "Fișierul nu a putut fi citit.",
+  "retroHostPs2BiosName": "LRPS2 nu poate folosi fișierul cu acest nume. Redenumește-l astfel încât să se termine în .bin, fără punct la început, și alege-l din nou.",
   "retroHostPs2BiosCopyFailed": "BIOS-ul PS2 nu a putut fi copiat în dosarul emulatorului. Închide orice joc PS2 și încearcă din nou.",
   "retroHostPs2NoBiosDetail": "Nu s-a găsit niciun BIOS PS2. Alege BIOS-ul PS2 în Setări › Emulatoare și pornește din nou jocul.",
   "retroHostNoPs2Detail": "Această gazdă de emulare nu poate rula jocuri PS2. Trebuie actualizată.",

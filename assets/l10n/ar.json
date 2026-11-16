@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "هذا الملف ليس BIOS لجهاز PS2: لا يحتوي على قائمة الملفات التي يبدأ بها BIOS جهاز PS2.",
   "retroHostPs2BiosNoVersion": "هذا الملف ليس BIOS لجهاز PS2: لا يحتوي على رقم إصدار.",
   "retroHostPs2BiosUnreadable": "تعذّرت قراءة هذا الملف.",
+  "retroHostPs2BiosName": "لا يستطيع LRPS2 استخدام هذا الملف باسمه الحالي. أعد تسميته لينتهي بـ .bin ومن دون نقطة في أوله، ثم اختره مرة أخرى.",
   "retroHostPs2BiosCopyFailed": "تعذّر نسخ BIOS جهاز PS2 إلى مجلد المحاكي. أغلق أي لعبة PS2 وحاول مرة أخرى.",
   "retroHostPs2NoBiosDetail": "لم يُعثر على BIOS لجهاز PS2. اختر BIOS جهاز PS2 في الإعدادات › المحاكيات ثم شغّل اللعبة مرة أخرى.",
   "retroHostNoPs2Detail": "مضيف المحاكاة هذا لا يستطيع تشغيل ألعاب PS2. يجب تحديثه.",

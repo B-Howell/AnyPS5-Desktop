@@ -560,8 +560,10 @@ local players only (host `docs/protocol.md` "Capabilities" and "start", and
   `pcsx2/bios` under its own name, with the `.nvm` and `.mec` files of the
   same name (LRPS2's console settings and drive version: the BIOS's name with
   only its last extension changed, as LRPS2 looks for them) when they are
-  beside the source and the folder has none of its own (a BIOS itself named
-  `.nvm` or `.mec` is not its own sidecar). Each file is first copied into a
+  beside the source and the folder has none of its own. A name LRPS2 could
+  not use is refused: one starting with a dot (its folder scan leaves hidden
+  files out) or ending in `.nvm` or `.mec` (LRPS2 would write the console's
+  settings over the BIOS). Each file is first copied into a
   folder of the install's own inside `pcsx2/bios`, so no file of the player's
   is ever in its way, and the BIOS is checked again there; only when every
   copy is done do they take their names, the BIOS last; a sidecar placed

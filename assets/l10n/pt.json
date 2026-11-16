@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "Esse arquivo não é uma BIOS do PS2: ele não tem a lista de arquivos com que uma BIOS do PS2 começa.",
   "retroHostPs2BiosNoVersion": "Esse arquivo não é uma BIOS do PS2: ele não tem versão.",
   "retroHostPs2BiosUnreadable": "Não foi possível ler esse arquivo.",
+  "retroHostPs2BiosName": "O LRPS2 não consegue usar esse arquivo com esse nome. Renomeie-o para terminar em .bin, sem ponto no início, e escolha-o novamente.",
   "retroHostPs2BiosCopyFailed": "Não foi possível copiar a BIOS do PS2 para a pasta do emulador. Feche qualquer jogo de PS2 e tente de novo.",
   "retroHostPs2NoBiosDetail": "Nenhuma BIOS do PS2 foi encontrada. Escolha sua BIOS do PS2 em Configurações › Emuladores e inicie o jogo novamente.",
   "retroHostNoPs2Detail": "Este host de emulação não consegue rodar jogos de PS2. Ele precisa ser atualizado.",

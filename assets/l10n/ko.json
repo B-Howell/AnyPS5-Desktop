@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "이 파일은 PS2 BIOS가 아닙니다. PS2 BIOS에 있는 파일 목록이 없습니다.",
   "retroHostPs2BiosNoVersion": "이 파일은 PS2 BIOS가 아닙니다. 버전 정보가 없습니다.",
   "retroHostPs2BiosUnreadable": "이 파일을 읽을 수 없습니다.",
+  "retroHostPs2BiosName": "LRPS2는 이 이름의 파일을 사용할 수 없습니다. 앞에 점이 없고 .bin으로 끝나도록 이름을 바꾼 뒤 다시 선택하세요.",
   "retroHostPs2BiosCopyFailed": "PS2 BIOS를 에뮬레이터 폴더에 복사할 수 없습니다. PS2 게임을 모두 닫고 다시 시도하세요.",
   "retroHostPs2NoBiosDetail": "PS2 BIOS를 찾을 수 없습니다. 설정 › 에뮬레이터에서 PS2 BIOS를 선택하고 게임을 다시 시작하세요.",
   "retroHostNoPs2Detail": "이 에뮬레이터 호스트는 PS2 게임을 실행할 수 없습니다. 업데이트가 필요합니다.",

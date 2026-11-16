@@ -16,6 +16,11 @@ enum Ps2BiosRefusal {
 
   /// It could not be read.
   unreadable,
+
+  /// LRPS2 could not use it under its name: one that starts with a dot, which LRPS2's folder scan
+  /// leaves out as hidden, or one that ends in `.nvm` or `.mec`, the names LRPS2 writes the
+  /// console's settings and drive version to beside the BIOS, which would overwrite it.
+  name,
 }
 
 /// A file refused as a PS2 BIOS, and why.
@@ -146,12 +151,16 @@ class Ps2Bios {
     return false;
   }
 
+  /// Whether LRPS2 can start a BIOS of this file [name] from its folder ([Ps2BiosRefusal.name]).
+  static bool usableName(String name) =>
+      !name.startsWith('.') && !const {'.nvm', '.mec'}.contains(p.extension(name).toLowerCase());
+
   /// Copies [source], checked again first, into [folderIn] of [system] under its own name, and
   /// beside it the `.nvm` and `.mec` files of the same name (LRPS2's console settings and drive
   /// version: the BIOS's name with its last extension changed, `cdvdBiosSiblingPath` in
   /// `pcsx2/CDVD/CDVD.c`) when they sit beside [source] and the folder has none of its own yet, so
-  /// settings LRPS2 already wrote there are kept (a BIOS named `.nvm` or `.mec` is not its own
-  /// sidecar). Every file is first copied into a folder of this install's own, made inside
+  /// settings LRPS2 already wrote there are kept. A name LRPS2 could not use is refused
+  /// ([usableName]). Every file is first copied into a folder of this install's own, made inside
   /// [folderIn] so no file of the player's can be in its way and a rename moves each file without
   /// copying it again, and the BIOS is checked again there; only when all were copied does
   /// each take its name, the sidecars before the BIOS, and a sidecar placed before a later file
@@ -161,6 +170,7 @@ class Ps2Bios {
   /// and [FileSystemException] when it cannot be copied.
   static Future<Ps2Bios> install(File source, {required String system}) async {
     final bios = await check(source);
+    if (!usableName(bios.fileName)) throw const Ps2BiosRefused(Ps2BiosRefusal.name);
     final folder = Directory(folderIn(system));
     await folder.create(recursive: true);
     final target = File(p.join(folder.path, bios.fileName));

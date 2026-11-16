@@ -2457,6 +2457,7 @@
   "retroHostPs2BiosNoTable": "Diese Datei ist kein PS2-BIOS: Ihr fehlt die Dateiliste, mit der ein PS2-BIOS beginnt.",
   "retroHostPs2BiosNoVersion": "Diese Datei ist kein PS2-BIOS: Sie enthält keine Version.",
   "retroHostPs2BiosUnreadable": "Die Datei konnte nicht gelesen werden.",
+  "retroHostPs2BiosName": "LRPS2 kann die Datei unter diesem Namen nicht verwenden. Benenne sie so um, dass sie auf .bin endet und nicht mit einem Punkt beginnt, und wähle sie erneut.",
   "retroHostPs2BiosCopyFailed": "Das PS2-BIOS konnte nicht in den Ordner des Emulators kopiert werden. Schließe alle PS2-Spiele und versuche es erneut.",
   "retroHostPs2NoBiosDetail": "Es wurde kein PS2-BIOS gefunden. Wähle dein PS2-BIOS unter Einstellungen › Emulatoren und starte das Spiel erneut.",
   "retroHostNoPs2Detail": "Dieser Emulator-Host kann keine PS2-Spiele abspielen. Er muss aktualisiert werden.",

@@ -2440,6 +2440,7 @@
   "retroHostPs2BiosNoTable": "ई फाइल PS2 BIOS ना ह: एह में ऊ फाइल सूची नइखे जवना से PS2 BIOS शुरू होला।",
   "retroHostPs2BiosNoVersion": "ई फाइल PS2 BIOS ना ह: एह में कवनो संस्करण नइखे।",
   "retroHostPs2BiosUnreadable": "ई फाइल पढ़ल ना जा सकल।",
+  "retroHostPs2BiosName": "LRPS2 एह फाइल के एकरा नाम से ना चला सकेला। एकर नाम बदलीं कि ई .bin पर खतम होखे, सुरू में बिंदु ना होखे, आ फेर से चुनीं।",
   "retroHostPs2BiosCopyFailed": "PS2 BIOS एमुलेटर के फोल्डर में कॉपी ना हो सकल। कवनो PS2 गेम बंद करीं आ फेर से कोसिस करीं।",
   "retroHostPs2NoBiosDetail": "कवनो PS2 BIOS ना मिलल। सेटिंग्स › एमुलेटर में आपन PS2 BIOS चुनीं आ गेम फेर से शुरू करीं।",
   "retroHostNoPs2Detail": "ई एमुलेटर होस्ट PS2 गेम ना चला सकेला। एकरा के अपडेट करे के पड़ी।",
