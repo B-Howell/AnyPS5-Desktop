@@ -152,6 +152,29 @@ void main() {
       expect(folder.listSync(), hasLength(1));
     });
 
+    test("a name of several dots keeps all but its last extension, as LRPS2 names the BIOS's files", () async {
+      final source = write('SCPH-39001.v7.bin', biosShaped());
+      write('SCPH-39001.v7.nvm', [1]);
+      write('SCPH-39001.nvm', [2]);
+      await Ps2Bios.install(source, system: system);
+      final folder = Ps2Bios.folderIn(system);
+      expect(File(p.join(folder, 'SCPH-39001.v7.nvm')).readAsBytesSync(), [1]);
+      expect(File(p.join(folder, 'SCPH-39001.nvm')).existsSync(), isFalse);
+    });
+
+    test('a copy that fails part way leaves nothing behind, so the next try copies everything', () async {
+      final source = write('bios.bin', biosShaped());
+      write('bios.nvm', [1]);
+      write('bios.mec', [2]);
+      final folder = Directory(Ps2Bios.folderIn(system))..createSync(recursive: true);
+      final blocker = Directory(p.join(folder.path, 'bios.mec.partial'))..createSync();
+      await expectLater(Ps2Bios.install(source, system: system), throwsA(isA<FileSystemException>()));
+      expect(folder.listSync().map((entry) => p.basename(entry.path)), ['bios.mec.partial']);
+      blocker.deleteSync();
+      await Ps2Bios.install(source, system: system);
+      expect(folder.listSync().map((entry) => p.basename(entry.path)).toSet(), {'bios.bin', 'bios.nvm', 'bios.mec'});
+    });
+
     test('the BIOS already in the folder is taken where it is', () async {
       final folder = Directory(Ps2Bios.folderIn(system))..createSync(recursive: true);
       final inside = File(p.join(folder.path, 'inside.bin'))..writeAsBytesSync(biosShaped());

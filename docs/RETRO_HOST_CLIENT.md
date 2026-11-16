@@ -557,10 +557,13 @@ local players only (host `docs/protocol.md` "Capabilities" and "start", and
   rounding) were checked against the real LRPS2 of a 3cb36d2 host, which
   lists every file it takes in its `pcsx2_bios` option: it took exactly the
   three `Ps2Bios.check` takes. `Ps2Bios.install` copies a checked file into
-  `pcsx2/bios` under its own name, through a partial file that is checked
-  again before it takes the name, and copies the `.nvm` and `.mec` files of
-  the same name (LRPS2's console settings and drive version) when they are
-  beside the source and the folder has none of its own. Nothing of a BIOS is
+  `pcsx2/bios` under its own name, with the `.nvm` and `.mec` files of the
+  same name (LRPS2's console settings and drive version: the BIOS's name with
+  only its last extension changed, as LRPS2 looks for them) when they are
+  beside the source and the folder has none of its own. Each file goes to a
+  partial file first and the BIOS is checked again there; only when every
+  copy is done do they take their names, so a copy that fails leaves nothing
+  behind for the next try to skip. Nothing of a BIOS is
   logged, uploaded or sent to a friend: PS1 online play reads only the
   512 KiB files at the top of the system directory.
 - **Options.** LRPS2's options are `pcsx2_...`. A value the player kept goes

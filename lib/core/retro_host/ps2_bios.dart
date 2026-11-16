@@ -148,29 +148,39 @@ class Ps2Bios {
 
   /// Copies [source], checked again first, into [folderIn] of [system] under its own name, and
   /// beside it the `.nvm` and `.mec` files of the same name (LRPS2's console settings and drive
-  /// version, `pcsx2/CDVD/CDVD.c`) when they sit beside [source] and the folder has none of its
-  /// own yet, so settings LRPS2 already wrote there are kept. The BIOS goes through a file of its
-  /// own in the folder first and then takes its name, so a copy that fails leaves the folder as it
-  /// was. Returns the BIOS; throws [Ps2BiosRefused] for a file that is not one, and
-  /// [FileSystemException] when it cannot be copied.
+  /// version: the BIOS's name with its last extension changed, `cdvdBiosSiblingPath` in
+  /// `pcsx2/CDVD/CDVD.c`) when they sit beside [source] and the folder has none of its own yet, so
+  /// settings LRPS2 already wrote there are kept. Every file is copied to a `.partial` file of its
+  /// own in the folder first, and the BIOS is checked again there; only when all were copied does
+  /// each take its name, the sidecars before the BIOS, so a copy that fails leaves no file behind.
+  /// Returns the BIOS; throws [Ps2BiosRefused] for a file that is not one,
+  /// and [FileSystemException] when it cannot be copied.
   static Future<Ps2Bios> install(File source, {required String system}) async {
     final bios = await check(source);
     final folder = Directory(folderIn(system));
     await folder.create(recursive: true);
     final target = File(p.join(folder.path, bios.fileName));
     if (p.equals(p.canonicalize(source.path), p.canonicalize(target.path))) return bios;
-    final partial = File('${target.path}.partial');
+    final copies = <(File, File)>[
+      for (final extension in const ['.nvm', '.mec'])
+        if (File(p.setExtension(source.path, extension)) case final sibling
+            when sibling.existsSync() && !File(p.join(folder.path, p.basename(sibling.path))).existsSync())
+          (sibling, File(p.join(folder.path, p.basename(sibling.path)))),
+      (source, target),
+    ];
+    final partials = [for (final (_, to) in copies) File('${to.path}.partial')];
     try {
-      await source.copy(partial.path);
-      await check(partial);
-      await partial.rename(target.path);
+      for (final (index, (from, _)) in copies.indexed) {
+        await from.copy(partials[index].path);
+      }
+      await check(partials.last);
+      for (final (index, (_, to)) in copies.indexed) {
+        await partials[index].rename(to.path);
+      }
     } finally {
-      if (await partial.exists()) await partial.delete();
-    }
-    for (final extension in const ['.nvm', '.mec']) {
-      final sibling = File(p.setExtension(p.withoutExtension(source.path), extension));
-      final kept = File(p.join(folder.path, p.basename(sibling.path)));
-      if (await sibling.exists() && !await kept.exists()) await sibling.copy(kept.path);
+      for (final partial in partials) {
+        if (await partial.exists()) await partial.delete();
+      }
     }
     return bios;
   }
