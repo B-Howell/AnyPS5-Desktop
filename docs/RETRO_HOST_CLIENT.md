@@ -562,8 +562,9 @@ local players only (host `docs/protocol.md` "Capabilities" and "start", and
   only its last extension changed, as LRPS2 looks for them) when they are
   beside the source and the folder has none of its own. Each file goes to a
   partial file first and the BIOS is checked again there; only when every
-  copy is done do they take their names, so a copy that fails leaves nothing
-  behind for the next try to skip. Nothing of a BIOS is
+  copy is done do they take their names, the BIOS last; a sidecar placed
+  before a later file failed to take its name is removed again, so a failed
+  install leaves nothing behind for the next try to skip. Nothing of a BIOS is
   logged, uploaded or sent to a friend: PS1 online play reads only the
   512 KiB files at the top of the system directory.
 - **Options.** LRPS2's options are `pcsx2_...`. A value the player kept goes

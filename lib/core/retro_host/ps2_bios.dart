@@ -152,7 +152,9 @@ class Ps2Bios {
   /// `pcsx2/CDVD/CDVD.c`) when they sit beside [source] and the folder has none of its own yet, so
   /// settings LRPS2 already wrote there are kept. Every file is copied to a `.partial` file of its
   /// own in the folder first, and the BIOS is checked again there; only when all were copied does
-  /// each take its name, the sidecars before the BIOS, so a copy that fails leaves no file behind.
+  /// each take its name, the sidecars before the BIOS, and a sidecar placed before a later file
+  /// could not take its name is removed again (none was there before), so a copy that fails leaves
+  /// no file of it behind.
   /// Returns the BIOS; throws [Ps2BiosRefused] for a file that is not one,
   /// and [FileSystemException] when it cannot be copied.
   static Future<Ps2Bios> install(File source, {required String system}) async {
@@ -169,6 +171,7 @@ class Ps2Bios {
       (source, target),
     ];
     final partials = [for (final (_, to) in copies) File('${to.path}.partial')];
+    final placed = <File>[];
     try {
       for (final (index, (from, _)) in copies.indexed) {
         await from.copy(partials[index].path);
@@ -176,7 +179,13 @@ class Ps2Bios {
       await check(partials.last);
       for (final (index, (_, to)) in copies.indexed) {
         await partials[index].rename(to.path);
+        placed.add(to);
       }
+    } on Object {
+      for (final sidecar in placed.where((file) => !identical(file, target))) {
+        if (await sidecar.exists()) await sidecar.delete();
+      }
+      rethrow;
     } finally {
       for (final partial in partials) {
         if (await partial.exists()) await partial.delete();

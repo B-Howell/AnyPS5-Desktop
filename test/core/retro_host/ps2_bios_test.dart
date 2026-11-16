@@ -175,6 +175,20 @@ void main() {
       expect(folder.listSync().map((entry) => p.basename(entry.path)).toSet(), {'bios.bin', 'bios.nvm', 'bios.mec'});
     });
 
+    test('a BIOS that cannot take its name takes back the sidecars placed before it', () async {
+      final source = write('bios.bin', biosShaped());
+      write('bios.nvm', [1]);
+      write('bios.mec', [2]);
+      final folder = Directory(Ps2Bios.folderIn(system))..createSync(recursive: true);
+      final blocker = Directory(p.join(folder.path, 'bios.bin'))..createSync();
+      await expectLater(Ps2Bios.install(source, system: system), throwsA(isA<FileSystemException>()));
+      expect(folder.listSync().map((entry) => p.basename(entry.path)), ['bios.bin'], reason: 'only the blocker');
+      blocker.deleteSync();
+      await Ps2Bios.install(source, system: system);
+      expect(File(p.join(folder.path, 'bios.nvm')).readAsBytesSync(), [1]);
+      expect(File(p.join(folder.path, 'bios.mec')).readAsBytesSync(), [2]);
+    });
+
     test('the BIOS already in the folder is taken where it is', () async {
       final folder = Directory(Ps2Bios.folderIn(system))..createSync(recursive: true);
       final inside = File(p.join(folder.path, 'inside.bin'))..writeAsBytesSync(biosShaped());
