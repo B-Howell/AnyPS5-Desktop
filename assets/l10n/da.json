@@ -2559,6 +2559,7 @@
   "ps1OnlineDisconnected": "Onlinespillet mistede forbindelsen.",
   "ps1OnlineDesync": "De to kopier kom ud af trit. Kampen sluttede.",
   "ps1OnlineMismatchCore": "PS1-kernerne er forskellige builds. Begge spillere skal have den samme udgivelse af emulatorværten.",
+  "ps1OnlineMismatchSyncHash": "Emulatorværterne er forskellige builds. Begge spillere skal have den samme udgivelse af emulatorværten.",
   "ps1OnlineMismatchDisc": "Jeres PS1-diskfiler er forskellige. Begge spillere skal have den samme disk og version.",
   "retroConnectionTimeoutHost": "Forbindelsen tog for lang tid. Inviter din ven igen.",
   "retroConnectionTimeoutGuest": "Forbindelsen tog for lang tid. Bed din ven om at sende en ny invitation.",

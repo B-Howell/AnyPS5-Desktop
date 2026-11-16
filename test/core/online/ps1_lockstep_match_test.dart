@@ -29,8 +29,15 @@ final _rollbackIdentity = _identityWith(core: _windowsCore, rollback: true);
 final _guestIdentity = _identityWith();
 final _guestRollbackIdentity = _identityWith(rollback: true);
 
-Ps1LockstepIdentity _identityWith({RetroCore? core, String disc = 'b', bool rollback = false}) =>
-    Ps1LockstepIdentity(hostVersion: '1.0.0', core: core, disc: disc * 64, bios: 'c' * 64, rollback: rollback);
+Ps1LockstepIdentity _identityWith({RetroCore? core, String disc = 'b', bool rollback = false, bool syncXxh3 = true}) =>
+    Ps1LockstepIdentity(
+      hostVersion: '1.0.0',
+      core: core,
+      disc: disc * 64,
+      bios: 'c' * 64,
+      rollback: rollback,
+      syncXxh3: syncXxh3,
+    );
 
 /// A player's controller: a different input every time it is read, so every frame's input is
 /// seen to reach both hosts in the same place.
@@ -50,6 +57,8 @@ class _Pair {
     int guestSalt = 0,
     bool hostRolls = true,
     bool guestRolls = true,
+    bool hostHashesXxh3 = true,
+    bool guestHashesXxh3 = true,
     Future<LockstepHost?> Function(Ps1LockstepHello hello)? prepare,
     double? Function()? frameRate,
     double? Function()? guestFrameRate,
@@ -57,8 +66,8 @@ class _Pair {
     final (a, b) = TestLink.pair(latency, jitter: jitter, loss: loss);
     hostLink = a;
     guestLink = b;
-    hostGame = LockstepHost(ram: 1234, canRollback: hostRolls)..next = null;
-    guestGame = LockstepHost(salt: guestSalt, canRollback: guestRolls);
+    hostGame = LockstepHost(ram: 1234, canRollback: hostRolls, canHashXxh3: hostHashesXxh3)..next = null;
+    guestGame = LockstepHost(salt: guestSalt, canRollback: guestRolls, canHashXxh3: guestHashesXxh3);
     hostMatch = Ps1LockstepMatch(
       hosting: true,
       link: a,
@@ -148,6 +157,8 @@ void main() {
     expect(pair.hostMatch.lastMatched, greaterThanOrEqualTo(240), reason: 'RAM compared every 60 frames');
     expect(pair.guestMatch.lastMatched, greaterThanOrEqualTo(240));
     expect(pair.hostMatch.phase, Ps1LockstepPhase.playing);
+    expect(pair.hostGame.state, isFalse, reason: 'only RAM is compared, so the state is left out of the checks');
+    expect(pair.guestGame.state, isFalse);
 
     await pair.hostMatch.leave();
     await pair.guestMatch.done;
@@ -405,7 +416,7 @@ void main() {
 
   test('a control message of another shape is refused', () {
     Uint8List bytes(Object value) => Uint8List.fromList(utf8.encode(jsonEncode(value)));
-    expect(Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'pause', 'paused': true})), isA<Ps1LockstepPause>());
+    expect(Ps1LockstepMessage.decode(bytes({'v': 5, 'type': 'pause', 'paused': true})), isA<Ps1LockstepPause>());
     expect(
       () => Ps1LockstepMessage.decode(bytes({'v': 1, 'type': 'leave'})),
       throwsFormatException,
@@ -416,17 +427,22 @@ void main() {
       throwsFormatException,
       reason: 'version 2 had no rollback',
     );
-    expect(() => Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'leave', 'extra': 1})), throwsFormatException);
     expect(
-      () => Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'hash', 'frame': 0, 'ram': 'ABC'})),
+      () => Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'leave'})),
+      throwsFormatException,
+      reason: "version 4 did not say which hash its host's checks use",
+    );
+    expect(() => Ps1LockstepMessage.decode(bytes({'v': 5, 'type': 'leave', 'extra': 1})), throwsFormatException);
+    expect(
+      () => Ps1LockstepMessage.decode(bytes({'v': 5, 'type': 'hash', 'frame': 0, 'ram': 'ABC'})),
       throwsFormatException,
     );
-    expect(() => Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'what'})), throwsFormatException);
+    expect(() => Ps1LockstepMessage.decode(bytes({'v': 5, 'type': 'what'})), throwsFormatException);
     expect(
-      (Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'advantage', 'frames': -4})) as Ps1LockstepAdvantage).frames,
+      (Ps1LockstepMessage.decode(bytes({'v': 5, 'type': 'advantage', 'frames': -4})) as Ps1LockstepAdvantage).frames,
       -4,
     );
-    expect(() => Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'advantage', 'frames': 601})), throwsFormatException);
+    expect(() => Ps1LockstepMessage.decode(bytes({'v': 5, 'type': 'advantage', 'frames': 601})), throwsFormatException);
     final hello = _identity.hello(const {'swanstation_GPU_ResolutionScale': '4'});
     expect(jsonDecode(utf8.decode(hello.encode())), isNot(contains('discName')));
     expect((Ps1LockstepMessage.decode(hello.encode()) as Ps1LockstepHello).disc, _identity.disc);
@@ -435,6 +451,16 @@ void main() {
       (Ps1LockstepMessage.decode(_rollbackIdentity.hello(const {}).encode()) as Ps1LockstepHello).rollback,
       isTrue,
     );
+    expect((Ps1LockstepMessage.decode(hello.encode()) as Ps1LockstepHello).syncXxh3, isTrue);
+    final fnv = _identityWith(core: _windowsCore, syncXxh3: false).hello(const {});
+    expect((Ps1LockstepMessage.decode(fnv.encode()) as Ps1LockstepHello).syncXxh3, isFalse);
+    final helloBody = jsonDecode(utf8.decode(hello.encode())) as Map<String, Object?>;
+    expect(
+      () => Ps1LockstepMessage.decode(bytes({...helloBody}..remove('syncXxh3'))),
+      throwsFormatException,
+      reason: 'a hello says which hash its host checks with',
+    );
+    expect(() => Ps1LockstepMessage.decode(bytes({...helloBody, 'syncXxh3': 1})), throwsFormatException);
     final start = Ps1LockstepStart(
       frame: 600,
       delay: 3,
@@ -479,7 +505,7 @@ void main() {
     expect((Ps1LockstepMessage.decode(_guestIdentity.hello(const {}).encode()) as Ps1LockstepHello).core, isNull);
     final ready = Ps1LockstepMessage.decode(Ps1LockstepReady(_linuxCore).encode()) as Ps1LockstepReady;
     expect(ready.core, _linuxCore);
-    expect(() => Ps1LockstepMessage.decode(_message({'v': 4, 'type': 'ready', 'core': null})), throwsFormatException);
+    expect(() => Ps1LockstepMessage.decode(_message({'v': 5, 'type': 'ready', 'core': null})), throwsFormatException);
     for (final core in [
       {'name': 'SwanStation'},
       {'name': 'SwanStation', 'version': 7},
@@ -511,6 +537,50 @@ void main() {
       expect(pair.guestGame.next, isNull, reason: "the friend's game never entered lockstep");
       await pair.close();
     }
+  });
+
+  test('a friend whose host hashes its checks another way is told so, and neither game is held', () async {
+    for (final hostHashesXxh3 in [true, false]) {
+      final pair = _Pair(
+        hostIdentity: _identityWith(core: _windowsCore, syncXxh3: hostHashesXxh3),
+        guestIdentity: _identityWith(syncXxh3: !hostHashesXxh3),
+        hostHashesXxh3: hostHashesXxh3,
+        guestHashesXxh3: !hostHashesXxh3,
+      );
+      pair.run();
+      await pair.hostMatch.done;
+      await pair.guestMatch.done;
+      expect(pair.hostMatch.end, Ps1LockstepEnd.mismatch, reason: 'host player hashes with XXH3: $hostHashesXxh3');
+      expect(pair.hostMatch.mismatch, Ps1LockstepMismatch.syncHash);
+      expect(pair.guestMatch.mismatch, Ps1LockstepMismatch.syncHash);
+      expect(pair.hostGame.next, isNull, reason: "the host player's game never entered lockstep");
+      expect(pair.guestGame.next, isNull, reason: "the friend's game never started");
+      await pair.close();
+    }
+  });
+
+  test('two hosts without syncXxh3 still play, and keep the state in their checks', () async {
+    final pair = _Pair(
+      hostIdentity: _identityWith(core: _windowsCore, syncXxh3: false),
+      guestIdentity: _identityWith(syncXxh3: false),
+      hostHashesXxh3: false,
+      guestHashesXxh3: false,
+    );
+    pair.run();
+    await pair.until(() => (pair.hostMatch.lastMatched ?? 0) >= 120 && (pair.guestMatch.lastMatched ?? 0) >= 120);
+    expect(pair.hostGame.state, isNull, reason: 'a host without syncXxh3 takes no lockstep.state');
+    expect(pair.guestGame.state, isNull);
+    await pair.close();
+  });
+
+  test("a friend's game whose host is not the one its hello spoke for is not played", () async {
+    final pair = _Pair(prepare: (hello) async => LockstepHost(canHashXxh3: false));
+    pair.run();
+    await pair.hostMatch.done;
+    await pair.guestMatch.done;
+    expect(pair.guestMatch.end, Ps1LockstepEnd.hostFailed);
+    expect(pair.hostGame.next, isNull, reason: "the host player's game was never held");
+    await pair.close();
   });
 
   test('a hello that names a core from the friend, or none from the host player, is refused', () async {

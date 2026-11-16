@@ -18,12 +18,17 @@ const retroCapabilityPs1Lockstep = 'ps1Lockstep';
 /// the messages `correct` and `rollback`. A host lists it only with [retroCapabilityPs1Lockstep].
 const retroCapabilityPs1Rollback = 'ps1Rollback';
 
+/// The capability that makes the hashes of `sync` XXH3-64 instead of FNV-1a, and adds
+/// `lockstep.state`, which can leave the core's state out of them. The two hashes of the same bytes
+/// differ, so two players' hosts must both list it or both not (protocol.md "sync").
+const retroCapabilitySyncXxh3 = 'syncXxh3';
+
 /// The methods only a host with [retroCapabilityPs1Lockstep] has.
 const retroLockstepMethods = {'lockstep', 'saveState', 'loadState'};
 
 /// The argument of `lockstep` and of `start.lockstep` (protocol.md "lockstep").
 class RetroLockstepSettings {
-  const RetroLockstepSettings({required this.check, this.paced = true, this.rollback});
+  const RetroLockstepSettings({required this.check, this.paced = true, this.state, this.rollback});
 
   /// A `sync` comes after every frame whose number is a multiple of this, 1 to 3600.
   final int check;
@@ -31,6 +36,12 @@ class RetroLockstepSettings {
   /// Keeps the game to its core's frame rate even when steps queue up; false runs queued steps as
   /// fast as the machine can.
   final bool paced;
+
+  /// With [retroCapabilitySyncXxh3], whether a `sync` hashes the core's state: false gives
+  /// `state` null and the host does not serialize the core for a check, so under a GPU it reads no
+  /// video memory back. A launcher that compares only `ram` sends false. Null sends nothing, which
+  /// a host takes as true; a host without the capability takes nothing else.
+  final bool? state;
 
   /// With [retroCapabilityPs1Rollback], the game runs in rollback with at most this many frames,
   /// 1 to [maxRollback], stepped beyond the last confirmed one; null is plain lockstep.
@@ -50,9 +61,14 @@ class RetroLockstepSettings {
     return {
       'check': check,
       'paced': paced,
+      'state': ?state,
       if (frames != null) 'rollback': {'frames': frames},
     };
   }
+
+  /// Whether a `lockstep` argument as [toArgs] writes it sets `state`, which only a host with
+  /// [retroCapabilitySyncXxh3] takes.
+  static bool setsState(Object? args) => args is Map && args.containsKey('state');
 
   /// The rollback window of a `lockstep` argument as [toArgs] writes it; null for plain lockstep.
   static int? rollbackOf(Object? args) {
@@ -254,8 +270,10 @@ class RetroRollback {
   String toString() => 'RetroRollback(from $frame, $frames frames, $micros µs, load $loadMicros µs)';
 }
 
-/// What a lockstep frame left behind (protocol.md "sync"): 64-bit FNV-1a hashes as 16 lowercase
-/// hexadecimal digits, null where the core cannot give them.
+/// What a lockstep frame left behind (protocol.md "sync"): 64-bit hashes as 16 lowercase
+/// hexadecimal digits, null where the core cannot give them. A host that lists
+/// [retroCapabilitySyncXxh3] gives XXH3-64 hashes and any other host FNV-1a ones, so hashes of two
+/// hosts are compared only when both list it or neither does. The launcher compares [ram] alone.
 class RetroSync {
   const RetroSync({required this.frame, required this.ram, required this.video, required this.state});
 
@@ -268,7 +286,8 @@ class RetroSync {
   final String? video;
 
   /// The core's whole state, saved for netplay so that it names no path: the same on two machines
-  /// that ran the same steps, except between two GPUs drawing above 1x (protocol.md "sync").
+  /// that ran the same steps, except between two GPUs drawing above 1x (protocol.md "sync"). Null
+  /// when the lockstep's [RetroLockstepSettings.state] is false.
   final String? state;
 
   static final _hash = RegExp(r'^[0-9a-f]{16}$');
@@ -525,6 +544,10 @@ abstract interface class RetroLockstepHost {
   /// Whether the host lists [retroCapabilityCoreIdentity], so its `status` names the core a game
   /// loaded ([RetroStatus.core]); a match needs it of both hosts.
   bool get canIdentifyCore;
+
+  /// Whether the host lists [retroCapabilitySyncXxh3], so its `sync` hashes are XXH3-64 and
+  /// [RetroLockstepSettings.state] can leave the state out of them; two players' hosts must agree.
+  bool get canHashXxh3;
 
   /// Each `sync`, checked and in frame order.
   Stream<RetroSync> get syncs;

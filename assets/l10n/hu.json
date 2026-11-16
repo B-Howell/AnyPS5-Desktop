@@ -2559,6 +2559,7 @@
   "ps1OnlineDisconnected": "Az online játék elvesztette a kapcsolatot.",
   "ps1OnlineDesync": "A két példány elcsúszott egymástól. A meccs véget ért.",
   "ps1OnlineMismatchCore": "A PS1-magok eltérő buildek. Mindkét játékosnak az emulátor-gazdaprogram ugyanazon kiadása kell.",
+  "ps1OnlineMismatchSyncHash": "Az emulátor-gazdaprogramok eltérő buildek. Mindkét játékosnak az emulátor-gazdaprogram ugyanazon kiadása kell.",
   "ps1OnlineMismatchDisc": "A PS1-lemezfájljaitok eltérnek. Mindkét játékosnak ugyanaz a lemez és ugyanaz a kiadás kell.",
   "retroConnectionTimeoutHost": "A csatlakozás túl sokáig tartott. Hívd meg újra a barátodat.",
   "retroConnectionTimeoutGuest": "A csatlakozás túl sokáig tartott. Kérd meg a barátodat, hogy küldjön új meghívót.",

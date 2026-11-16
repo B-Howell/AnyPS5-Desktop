@@ -319,6 +319,11 @@ class RetroHostClient implements RetroHostSession {
   @override
   bool get canIdentifyCore => _capabilities.contains(retroCapabilityCoreIdentity);
 
+  /// Whether the host lists `syncXxh3`, so its `sync` hashes are XXH3-64 and a lockstep can leave
+  /// the core's state out of them.
+  @override
+  bool get canHashXxh3 => canLockstep && _capabilities.contains(retroCapabilitySyncXxh3);
+
   /// Whether the host lists `gameTiming`, so each `status` gives the game's frame rate, which a
   /// match's frame clock follows in rollback.
   bool get canReportTiming => _capabilities.contains(retroCapabilityGameTiming);
@@ -375,13 +380,16 @@ class RetroHostClient implements RetroHostSession {
     if ((retroLockstepMethods.contains(method) || lockstepStart) && !canLockstep) {
       throw StateError('The host does not list the $retroCapabilityPs1Lockstep capability.');
     }
-    final rollback = switch (method) {
-      'lockstep' => RetroLockstepSettings.rollbackOf(args),
-      'start' when args is Map => RetroLockstepSettings.rollbackOf(args['lockstep']),
+    final lockstepArgs = switch (method) {
+      'lockstep' => args,
+      'start' when args is Map => args['lockstep'],
       _ => null,
     };
-    if (rollback != null && !canRollback) {
+    if (RetroLockstepSettings.rollbackOf(lockstepArgs) != null && !canRollback) {
       throw StateError('The host does not list the $retroCapabilityPs1Rollback capability.');
+    }
+    if (RetroLockstepSettings.setsState(lockstepArgs) && !canHashXxh3) {
+      throw StateError('The host does not list the $retroCapabilitySyncXxh3 capability.');
     }
     if (StrictJson.hasLoneSurrogate(args)) {
       return Future.error(const RetroCallError(RetroCallError.argument, 'A string cannot be sent as UTF-8.'));

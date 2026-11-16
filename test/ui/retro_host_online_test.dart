@@ -138,8 +138,14 @@ void main() {
       await tester.runAsync(() async {
         work = Directory.systemTemp.createTempSync('retro-online-row-');
         final (a, b) = TestLink.pair(const Duration(milliseconds: 40), jitter: const Duration(milliseconds: 10));
-        Ps1LockstepIdentity identity({RetroCore? core}) =>
-            Ps1LockstepIdentity(hostVersion: '1.0.0', core: core, disc: 'b' * 64, bios: 'c' * 64, rollback: rollback);
+        Ps1LockstepIdentity identity({RetroCore? core}) => Ps1LockstepIdentity(
+          hostVersion: '1.0.0',
+          core: core,
+          disc: 'b' * 64,
+          bios: 'c' * 64,
+          rollback: rollback,
+          syncXxh3: true,
+        );
         var count = 0;
         RetroPadInput pad() => RetroPadInput(buttons: ++count & 0xFFFF);
         games = [LockstepHost(), LockstepHost()];

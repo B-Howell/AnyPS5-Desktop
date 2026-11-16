@@ -170,6 +170,10 @@ class FakeRetroHostSession extends FakeFrameSource implements RetroHostSession {
   @override
   bool canIdentifyCore = true;
 
+  /// Whether the host lists `syncXxh3`, so a lockstep can leave the state out of its checks.
+  @override
+  bool canHashXxh3 = true;
+
   @override
   String hostVersion = '1.0.0';
 

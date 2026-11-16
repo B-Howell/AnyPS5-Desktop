@@ -2559,6 +2559,7 @@
   "ps1OnlineDisconnected": "Nawalan ng koneksyon ang online na laro.",
   "ps1OnlineDesync": "Hindi na magkatugma ang dalawang kopya. Natapos ang laban.",
   "ps1OnlineMismatchCore": "Magkaibang build ang mga PS1 core. Kailangan ng dalawang manlalaro ang parehong release ng emulator host.",
+  "ps1OnlineMismatchSyncHash": "Magkaibang build ang mga emulator host. Kailangan ng dalawang manlalaro ang parehong release ng emulator host.",
   "ps1OnlineMismatchDisc": "Magkaiba ang mga file ng PS1 disc ninyo. Kailangan ng dalawang manlalaro ang parehong disc at rebisyon.",
   "retroConnectionTimeoutHost": "Masyadong natagalan ang pagkonekta. Imbitahan muli ang kaibigan mo.",
   "retroConnectionTimeoutGuest": "Masyadong natagalan ang pagkonekta. Hilingin sa kaibigan mo na magpadala ng bagong imbitasyon.",

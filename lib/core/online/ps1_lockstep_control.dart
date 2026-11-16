@@ -5,18 +5,20 @@ import '../retro_host/retro_host_protocol.dart';
 
 /// The reliable, ordered messages two launchers exchange about one PS1 lockstep match
 /// (anyps5-retro-host docs/netplay.md "Joining a running game"), as JSON on the peer connection's
-/// stream channel. Every message has `v` (the version, 4) and `type`; a message of another version
+/// stream channel. Every message has `v` (the version, 5) and `type`; a message of another version
 /// or shape is refused, and the match ends. Version 2 named the disc by its tracks alone and no
 /// longer by its file name, since the state a friend joins from names no path. Version 3 adds
 /// rollback: whether each launcher's host can roll back (`hello.rollback`), the window a match
 /// plays with (`start.window`), and the frame advantage of GGPO's time sync (`advantage`).
 /// Version 4 compares the cores by their build identity (the host's `status.core`, capability
 /// `coreIdentity`) instead of by the SHA-256 of the library on the same system: the host player's
-/// `hello.core`, and the friend's `ready` once its game has loaded its core.
+/// `hello.core`, and the friend's `ready` once its game has loaded its core. Version 5 says whether
+/// each launcher's host hashes its checks with XXH3 (`hello.syncXxh3`, capability `syncXxh3`): the
+/// RAM hashes of a host with it and of one without never match, so the two must agree.
 sealed class Ps1LockstepMessage {
   const Ps1LockstepMessage();
 
-  static const version = 4;
+  static const version = 5;
 
   /// The largest message read: a state chunk of [Ps1LockstepChunk.maxBytes] in base64 with room
   /// for the rest.
@@ -44,7 +46,9 @@ sealed class Ps1LockstepMessage {
     final type = fields.string('type');
     final message = switch (type) {
       'hello' => Ps1LockstepHello._read(fields),
-      'ready' => Ps1LockstepReady(fields.core('core') ?? (throw const FormatException('A lockstep ready names no core.'))),
+      'ready' => Ps1LockstepReady(
+        fields.core('core') ?? (throw const FormatException('A lockstep ready names no core.')),
+      ),
       'ping' => Ps1LockstepPing(fields.integer('id', 0, _maxId)),
       'pong' => Ps1LockstepPong(fields.integer('id', 0, _maxId)),
       'start' => Ps1LockstepStart._read(fields),
@@ -77,6 +81,7 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
     required this.bios,
     required this.options,
     this.rollback = false,
+    this.syncXxh3 = false,
   });
 
   /// The emulator host's `welcome.hostVersion`.
@@ -100,6 +105,10 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
   /// do, and is in plain lockstep otherwise.
   final bool rollback;
 
+  /// Whether the launcher's emulator host lists `syncXxh3`, so its RAM hashes are XXH3-64 and not
+  /// FNV-1a: a match plays only when both say the same.
+  final bool syncXxh3;
+
   @override
   String get type => 'hello';
 
@@ -111,6 +120,7 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
     'bios': bios,
     'options': options,
     'rollback': rollback,
+    'syncXxh3': syncXxh3,
   };
 
   static Ps1LockstepHello _read(_Fields fields) => Ps1LockstepHello(
@@ -120,6 +130,7 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
     bios: fields.hash('bios', 64),
     options: fields.options('options'),
     rollback: fields.boolean('rollback'),
+    syncXxh3: fields.boolean('syncXxh3'),
   );
 }
 

@@ -11,7 +11,7 @@ import 'package:anyps5_desktop/core/retro_host/retro_pad.dart';
 
 /// What two real hosts sent about the core they loaded:
 /// test/fixtures/retro_host/core_identity_swanstation.json, the Windows and the Linux release
-/// packages of the host's netplay-design fb85606, each with its own SwanStation build.
+/// packages of the host's netplay-design 67aec4e, each with its own SwanStation build.
 Map<String, Object?> recordedCoreIdentity(String system) =>
     (jsonDecode(File('test/fixtures/retro_host/core_identity_swanstation.json').readAsStringSync())
             as Map<String, Object?>)[system]!
@@ -39,7 +39,7 @@ RetroCore recordedCore(String system) => recordedCoreStatus(system, 'ready').cor
 /// message reports it, and a frame's `sync` comes once the frame is confirmed. A launcher that
 /// breaks a rule of step or correct gets a [StateError], as the real host ends the connection.
 class LockstepHost implements RetroLockstepHost {
-  LockstepHost({this.salt = 0, this.ram = 0x811c9dc5, this.canRollback = true});
+  LockstepHost({this.salt = 0, this.ram = 0x811c9dc5, this.canRollback = true, this.canHashXxh3 = true});
 
   /// Mixed into the RAM after every frame: a host whose game is not the other's.
   final int salt;
@@ -56,6 +56,12 @@ class LockstepHost implements RetroLockstepHost {
 
   @override
   final bool canRollback;
+
+  @override
+  final bool canHashXxh3;
+
+  /// The `state` of the current lockstep's settings: whether its syncs would hash the state.
+  bool? state;
 
   /// The rollback window of the current lockstep, null in plain lockstep.
   int? window;
@@ -90,6 +96,8 @@ class LockstepHost implements RetroLockstepHost {
   @override
   Future<int?> lockstep(RetroLockstepSettings settings) async {
     if (settings.rollback != null && !canRollback) throw StateError('This host has no rollback.');
+    if (settings.state != null && !canHashXxh3) throw StateError('This host has no syncXxh3.');
+    state = settings.state;
     window = settings.rollback;
     check = settings.check;
     if (next == null) _restart(0);

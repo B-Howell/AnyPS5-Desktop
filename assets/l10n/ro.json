@@ -2559,6 +2559,7 @@
   "ps1OnlineDisconnected": "Jocul online a pierdut conexiunea.",
   "ps1OnlineDesync": "Cele două copii s-au desincronizat. Meciul s-a încheiat.",
   "ps1OnlineMismatchCore": "Nucleele PS1 sunt compilări diferite. Ambii jucători au nevoie de aceeași versiune a gazdei de emulare.",
+  "ps1OnlineMismatchSyncHash": "Gazdele de emulare sunt compilări diferite. Ambii jucători au nevoie de aceeași versiune a gazdei de emulare.",
   "ps1OnlineMismatchDisc": "Fișierele voastre de disc PS1 diferă. Ambii jucători au nevoie de același disc și de aceeași revizie.",
   "retroConnectionTimeoutHost": "Conectarea a durat prea mult. Invită-ți din nou prietenul.",
   "retroConnectionTimeoutGuest": "Conectarea a durat prea mult. Roagă-ți prietenul să trimită o invitație nouă.",

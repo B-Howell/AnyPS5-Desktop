@@ -2559,6 +2559,7 @@
   "ps1OnlineDisconnected": "オンラインゲームの接続が切れました。",
   "ps1OnlineDesync": "2 つのコピーの同期がずれました。対戦は終了しました。",
   "ps1OnlineMismatchCore": "PS1 コアのビルドが異なります。両方のプレイヤーに同じエミュレーターホストのリリースが必要です。",
+  "ps1OnlineMismatchSyncHash": "エミュレーターホストのビルドが異なります。両方のプレイヤーに同じエミュレーターホストのリリースが必要です。",
   "ps1OnlineMismatchDisc": "PS1 ディスクのファイルが異なります。両方のプレイヤーに同じディスクと同じ版が必要です。",
   "retroConnectionTimeoutHost": "接続に時間がかかりすぎました。もう一度フレンドを招待してください。",
   "retroConnectionTimeoutGuest": "接続に時間がかかりすぎました。フレンドに新しい招待を送ってもらってください。",

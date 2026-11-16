@@ -2559,6 +2559,7 @@
   "ps1OnlineDisconnected": "The online game lost the connection.",
   "ps1OnlineDesync": "The two copies fell out of sync. The match ended.",
   "ps1OnlineMismatchCore": "The PS1 cores are different builds. Both players need the same emulator host release.",
+  "ps1OnlineMismatchSyncHash": "The emulator hosts are different builds. Both players need the same emulator host release.",
   "ps1OnlineMismatchDisc": "Your PS1 disc files differ. Both players need the same disc and revision.",
   "retroConnectionTimeoutHost": "Connecting took too long. Invite your friend again.",
   "retroConnectionTimeoutGuest": "Connecting took too long. Ask your friend to send a new invite.",

@@ -87,9 +87,10 @@ enum Ps1LockstepEnd {
   protocol,
 }
 
-/// What two launchers disagree on: their hellos, first in the order host, disc, BIOS, and then the
-/// cores, once the friend's game has loaded its own ([Ps1LockstepReady]).
-enum Ps1LockstepMismatch { host, core, disc, bios }
+/// What two launchers disagree on: their hellos, first in the order host, the hash of the hosts'
+/// checks ([syncHash]), disc, BIOS, and then the cores, once the friend's game has loaded its own
+/// ([Ps1LockstepReady]).
+enum Ps1LockstepMismatch { host, syncHash, core, disc, bios }
 
 /// What this launcher plays the match with ([Ps1LockstepHello] without the options).
 class Ps1LockstepIdentity {
@@ -99,6 +100,7 @@ class Ps1LockstepIdentity {
     required this.disc,
     required this.bios,
     this.rollback = false,
+    this.syncXxh3 = false,
   });
 
   final String hostVersion;
@@ -112,6 +114,9 @@ class Ps1LockstepIdentity {
   /// Whether this launcher's emulator host can roll back (`ps1Rollback`).
   final bool rollback;
 
+  /// Whether this launcher's emulator host hashes its checks with XXH3 (`syncXxh3`).
+  final bool syncXxh3;
+
   Ps1LockstepHello hello(Map<String, String> options) => Ps1LockstepHello(
     hostVersion: hostVersion,
     core: core,
@@ -119,14 +124,19 @@ class Ps1LockstepIdentity {
     bios: bios,
     options: options,
     rollback: rollback,
+    syncXxh3: syncXxh3,
   );
 
   /// The first thing [theirs] plays with differently, or null when both match. The disc's file
   /// names do not count: the state names the disc by its place in the disc list. The cores are
   /// compared once the friend's is known ([RetroCore.playsWith]), on any two systems: the host's
-  /// SwanStation builds name the same build identity on Windows, Linux and macOS.
+  /// SwanStation builds name the same build identity on Windows, Linux and macOS. Hosts that
+  /// differ in `syncXxh3` hash the same RAM differently, so their checks could never match
+  /// (protocol.md "sync"): they are refused before the game is held, not found out of sync at the
+  /// first check.
   Ps1LockstepMismatch? against(Ps1LockstepHello theirs) => switch (theirs) {
     _ when theirs.hostVersion != hostVersion => Ps1LockstepMismatch.host,
+    _ when theirs.syncXxh3 != syncXxh3 => Ps1LockstepMismatch.syncHash,
     _ when theirs.disc != disc => Ps1LockstepMismatch.disc,
     _ when theirs.bios != bios => Ps1LockstepMismatch.bios,
     _ => null,
@@ -227,6 +237,9 @@ class Ps1LockstepMatch {
       );
     }
     if (!hosting && prepareGuest == null) throw ArgumentError('The friend needs a way to start the game.');
+    if (hosting && host!.canHashXxh3 != identity.syncXxh3) {
+      throw ArgumentError("The identity's syncXxh3 is not what the running game's host lists.");
+    }
   }
 
   /// The most input delay a match plays with; slower connections are refused (netplay.md).
@@ -509,7 +522,7 @@ class Ps1LockstepMatch {
     _setPhase(Ps1LockstepPhase.preparing);
     await _within(_guestReady.future);
     _setPhase(Ps1LockstepPhase.transferring);
-    final frame = await _guard(game.lockstep(_settings));
+    final frame = await _guard(game.lockstep(_settings(game)));
     if (frame == null) throw _finish(Ps1LockstepEnd.hostFailed);
     work.createSync(recursive: true);
     final file = File(p.join(work.path, 'match.state'));
@@ -552,6 +565,9 @@ class Ps1LockstepMatch {
     final guest = await _within(prepareGuest!(theirs));
     if (guest == null) throw _finish(Ps1LockstepEnd.hostFailed);
     final game = host = guest.host;
+    // The hello said which hash this launcher's host checks with; a game in another host would
+    // send hashes the other launcher cannot compare.
+    if (game.canHashXxh3 != identity.syncXxh3) throw _finish(Ps1LockstepEnd.hostFailed);
     _send(Ps1LockstepReady(guest.core));
     if (!guest.core.playsWith(theirs.core!)) throw _mismatched(Ps1LockstepMismatch.core);
     final start = await _within(_startCame.future);
@@ -573,7 +589,7 @@ class Ps1LockstepMatch {
     work.createSync(recursive: true);
     final file = File(p.join(work.path, 'match.state'));
     await _guard(file.writeAsBytes(state, flush: true));
-    if (await _guard(game.lockstep(_settings)) == null) {
+    if (await _guard(game.lockstep(_settings(game))) == null) {
       throw _finish(Ps1LockstepEnd.hostFailed);
     }
     final loaded = await _guard(game.loadState(file.path));
@@ -617,12 +633,17 @@ class Ps1LockstepMatch {
   /// frame clock: the host runs each step as it comes (`paced` false), since a host that kept its
   /// own time as well would run behind the steps by however far the two clocks drift apart, and
   /// the other player's input would come before the frame ran, so rollback would add nothing to
-  /// lockstep. A `sync` comes every [compareEvery] frames, those whose RAM is compared: a `sync`
-  /// hashes the RAM and the whole state, which costs more than running the frame, and comes again
-  /// for each frame run again, so a check every frame would make each frame of a rollback take
-  /// several times as long (netplay.md "Tests").
-  RetroLockstepSettings get _settings =>
-      RetroLockstepSettings(check: _window == null ? 1 : compareEvery, rollback: _window, paced: _window == null);
+  /// lockstep. A `sync` comes every [compareEvery] frames, those whose RAM is compared, as
+  /// netplay.md "Desync checks" advises: a check frame is hashed again each time a rollback runs it
+  /// again. Only `ram` is compared, so a host that lists `syncXxh3` is told to leave the core's
+  /// state out of its hashes (`state` false): it then serializes nothing for a check, which under a
+  /// GPU would read the console's video memory back. A host without it hashes the state too.
+  RetroLockstepSettings _settings(RetroLockstepHost game) => RetroLockstepSettings(
+    check: _window == null ? 1 : compareEvery,
+    rollback: _window,
+    paced: _window == null,
+    state: game.canHashXxh3 ? false : null,
+  );
 
   /// Whether the RAM after [frame] is compared: every [compareEvery] frames from the first of the
   /// match in plain lockstep, and in rollback the frames the host sends a `sync` for, whose number
