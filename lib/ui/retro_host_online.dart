@@ -274,6 +274,7 @@ extension RetroHostOnline on AppModel {
         files: _retroDiscFiles(play.game),
         system: paths.retroSystem,
         rollback: play.host.session.canRollback,
+        syncXxh3: play.host.session.canHashXxh3,
       );
       if (!_retroOnlineGoesOn(online, play)) return;
       final rooms = online.rooms = _retroRooms(me);
@@ -389,6 +390,7 @@ extension RetroHostOnline on AppModel {
         files: _retroDiscFiles(game),
         system: paths.retroSystem,
         rollback: session.canRollback,
+        syncXxh3: session.canHashXxh3,
       );
       if (online.cancelled) return;
       room = online.room = await rooms.join(read);
@@ -592,6 +594,7 @@ extension RetroHostOnline on AppModel {
       Ps1LockstepEnd.hostOld => 'retroOnlineHostOldDetail',
       Ps1LockstepEnd.mismatch => switch (match.mismatch) {
         Ps1LockstepMismatch.host => 'retroOnlineMismatchHost',
+        Ps1LockstepMismatch.syncHash => 'ps1OnlineMismatchSyncHash',
         Ps1LockstepMismatch.core => 'ps1OnlineMismatchCore',
         Ps1LockstepMismatch.disc => 'ps1OnlineMismatchDisc',
         Ps1LockstepMismatch.bios || null => 'retroOnlineMismatchBios',

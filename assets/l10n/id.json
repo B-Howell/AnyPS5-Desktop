@@ -2557,6 +2557,7 @@
   "ps1OnlineDisconnected": "Game online kehilangan koneksi.",
   "ps1OnlineDesync": "Kedua salinan tidak lagi sinkron. Pertandingan berakhir.",
   "ps1OnlineMismatchCore": "Core PS1 kalian adalah build yang berbeda. Kedua pemain memerlukan rilis host emulator yang sama.",
+  "ps1OnlineMismatchSyncHash": "Host emulator kalian adalah build yang berbeda. Kedua pemain memerlukan rilis host emulator yang sama.",
   "ps1OnlineMismatchDisc": "File disk PS1 kalian berbeda. Kedua pemain memerlukan disk dan revisi yang sama.",
   "retroConnectionTimeoutHost": "Koneksi terlalu lama. Undang temanmu lagi.",
   "retroConnectionTimeoutGuest": "Koneksi terlalu lama. Minta temanmu mengirim undangan baru.",

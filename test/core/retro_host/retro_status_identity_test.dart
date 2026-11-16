@@ -2,14 +2,15 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_lockstep.dart';
 import 'package:test/test.dart';
 
 import '../online/lockstep_test_support.dart';
 
 /// `status.core` and `status.timing` (capabilities `coreIdentity` and `gameTiming`) as real hosts
-/// sent them: test/fixtures/retro_host/core_identity_swanstation.json (netplay-design fb85606) and
-/// test/fixtures/retro_host/game_timing_swanstation.json (netplay-design 098cc0a), each from the
-/// Windows and the Linux release packages.
+/// sent them: test/fixtures/retro_host/core_identity_swanstation.json and
+/// test/fixtures/retro_host/game_timing_swanstation.json, each from the Windows and the Linux
+/// release packages of netplay-design 67aec4e.
 void main() {
   Map<String, Object?> recording(String system) =>
       (jsonDecode(File('test/fixtures/retro_host/game_timing_swanstation.json').readAsStringSync())
@@ -25,7 +26,7 @@ void main() {
   RetroStatus status(String system, String game, String when) =>
       RetroStatus.parse(result(system, game, when), coreIdentity: true, gameTiming: true);
 
-  test('both hosts list coreIdentity and gameTiming', () {
+  test('both hosts list coreIdentity, gameTiming and syncXxh3', () {
     for (final system in ['windows', 'linux']) {
       for (final file in [recording(system), recordedCoreIdentity(system)]) {
         final welcome = jsonDecode(file['welcome']! as String) as Map<String, Object?>;
@@ -33,6 +34,7 @@ void main() {
       }
       final welcome = jsonDecode(recording(system)['welcome']! as String) as Map<String, Object?>;
       expect(welcome['capabilities'], contains(retroCapabilityGameTiming), reason: system);
+      expect(welcome['capabilities'], contains(retroCapabilitySyncXxh3), reason: system);
     }
   });
 

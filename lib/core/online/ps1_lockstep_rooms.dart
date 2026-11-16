@@ -36,9 +36,10 @@ final class Ps1LockstepRooms {
   const Ps1LockstepRooms({required this.call, required this.signal, required this.me, this.holds});
 
   /// The rooms' `engineBuild` and member `protocol`. Rooms carry the digest and size of the
-  /// disc's tracks alone (`Ps1LockstepMedia`), and version 4 rooms' launchers speak version 4 of
-  /// `Ps1LockstepMessage`, which compares the cores by their build identity.
-  static const protocol = 'anyps5-ps1-lockstep-v4';
+  /// disc's tracks alone (`Ps1LockstepMedia`), and version 5 rooms' launchers speak version 5 of
+  /// `Ps1LockstepMessage`, which compares the cores by their build identity and the hosts by the
+  /// hash their checks use.
+  static const protocol = 'anyps5-ps1-lockstep-v5';
 
   /// The rooms' `gameVersion`.
   static const gameVersion = '1';

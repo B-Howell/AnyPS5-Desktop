@@ -2557,6 +2557,7 @@
   "ps1OnlineDisconnected": "線上遊戲的連線已中斷。",
   "ps1OnlineDesync": "兩份遊戲不再同步。對戰已結束。",
   "ps1OnlineMismatchCore": "PS1 核心的建置不同。雙方玩家需要相同版本的模擬器宿主程式。",
+  "ps1OnlineMismatchSyncHash": "模擬器宿主程式的建置不同。雙方玩家需要相同版本的模擬器宿主程式。",
   "ps1OnlineMismatchDisc": "你們的 PS1 光碟檔案不同。雙方玩家需要相同的光碟和版本。",
   "retroConnectionTimeoutHost": "連線時間過長。請重新邀請你的好友。",
   "retroConnectionTimeoutGuest": "連線時間過長。請你的好友重新傳送邀請。",

@@ -2557,6 +2557,7 @@
   "ps1OnlineDisconnected": "Çevrimiçi oyun bağlantısı kesildi.",
   "ps1OnlineDesync": "Oyun kopyalarının eşzamanı bozuldu. Oyun sona erdi.",
   "ps1OnlineMismatchCore": "PS1 çekirdekleri farklı derlemeler. İki oyuncu da emülatör programının aynı sürümünü kullanmalı.",
+  "ps1OnlineMismatchSyncHash": "Emülatör programları farklı derlemeler. İki oyuncu da emülatör programının aynı sürümünü kullanmalı.",
   "ps1OnlineMismatchDisc": "PS1 disk dosyalarınız farklı. İki oyuncunun da aynı diski ve disk sürümünü kullanması gerekiyor.",
   "retroConnectionTimeoutHost": "Bağlantı zaman aşımına uğradı. Arkadaşınızı tekrar davet edin.",
   "retroConnectionTimeoutGuest": "Bağlantı zaman aşımına uğradı. Arkadaşınızdan yeni bir davet göndermesini isteyin.",

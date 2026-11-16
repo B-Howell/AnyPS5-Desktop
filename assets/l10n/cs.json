@@ -2557,6 +2557,7 @@
   "ps1OnlineDisconnected": "Online hra ztratila spojení.",
   "ps1OnlineDesync": "Obě kopie se rozešly. Zápas skončil.",
   "ps1OnlineMismatchCore": "Jádra PS1 jsou různá sestavení. Oba hráči potřebují stejné vydání hostitele emulátoru.",
+  "ps1OnlineMismatchSyncHash": "Hostitelé emulátoru jsou různá sestavení. Oba hráči potřebují stejné vydání hostitele emulátoru.",
   "ps1OnlineMismatchDisc": "Vaše soubory disku PS1 se liší. Oba hráči potřebují stejný disk a stejnou revizi.",
   "retroConnectionTimeoutHost": "Připojení trvalo příliš dlouho. Pozvěte přítele znovu.",
   "retroConnectionTimeoutGuest": "Připojení trvalo příliš dlouho. Požádejte přítele o novou pozvánku.",

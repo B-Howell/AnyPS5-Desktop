@@ -2557,6 +2557,7 @@
   "ps1OnlineDisconnected": "O jogo online perdeu a conexão.",
   "ps1OnlineDesync": "As duas cópias saíram de sincronia. A partida terminou.",
   "ps1OnlineMismatchCore": "Os núcleos de PS1 são compilações diferentes. Os dois jogadores precisam da mesma versão do host de emulação.",
+  "ps1OnlineMismatchSyncHash": "Os hosts de emulação são compilações diferentes. Os dois jogadores precisam da mesma versão do host de emulação.",
   "ps1OnlineMismatchDisc": "Seus arquivos de disco de PS1 são diferentes. Os dois jogadores precisam do mesmo disco e da mesma revisão.",
   "retroConnectionTimeoutHost": "A conexão demorou demais. Convide seu amigo novamente.",
   "retroConnectionTimeoutGuest": "A conexão demorou demais. Peça ao seu amigo para enviar um novo convite.",

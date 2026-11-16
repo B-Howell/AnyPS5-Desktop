@@ -216,6 +216,7 @@ Future<void> _match(String configPath, {required bool rollback}) async {
     final guestDisc = disc('guest');
     if (rollback) expect(host.canRollback, isTrue, reason: 'the host lists ps1Rollback');
     expect(host.canIdentifyCore, isTrue, reason: 'the host lists coreIdentity');
+    expect(host.canHashXxh3, isTrue, reason: 'the host lists syncXxh3');
     final hostCore = (await host.status())!.core!;
     Ps1LockstepIdentity identity({RetroCore? core}) => Ps1LockstepIdentity(
       hostVersion: host.hostVersion,
@@ -223,6 +224,7 @@ Future<void> _match(String configPath, {required bool rollback}) async {
       disc: 'b' * 64,
       bios: 'c' * 64,
       rollback: rollback,
+      syncXxh3: host.canHashXxh3,
     );
     final (a, b) = TestLink.pair(
       Duration(milliseconds: rollback ? 50 : 15),
@@ -231,6 +233,9 @@ Future<void> _match(String configPath, {required bool rollback}) async {
     );
     final rollbacks = <RetroRollback>[];
     host.rollbacks.listen(rollbacks.add);
+    final syncs = <RetroSync>[];
+    host.syncs.listen(syncs.add);
+    guest.syncs.listen(syncs.add);
     var frame = 0;
     RetroPadInput pad(int salt) {
       frame++;
@@ -276,6 +281,12 @@ Future<void> _match(String configPath, {required bool rollback}) async {
     );
     expect(hosting.end, isNull, reason: 'the match ended: ${hosting.end} ${hosting.mismatch}');
     expect(received, options, reason: "the friend's game starts with the host player's options");
+    expect(syncs, isNotEmpty);
+    expect(
+      syncs.every((sync) => sync.ram != null && sync.state == null),
+      isTrue,
+      reason: 'the match compares RAM alone, so both hosts leave the state out of their checks',
+    );
     if (rollback) {
       expect(hosting.window, isNotNull, reason: 'both hosts roll back, so the match does');
       expect(joining.window, hosting.window);

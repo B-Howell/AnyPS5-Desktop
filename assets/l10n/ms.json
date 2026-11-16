@@ -2557,6 +2557,7 @@
   "ps1OnlineDisconnected": "Permainan dalam talian terputus sambungan.",
   "ps1OnlineDesync": "Kedua-dua salinan tidak lagi segerak. Perlawanan tamat.",
   "ps1OnlineMismatchCore": "Teras PS1 ialah binaan yang berbeza. Kedua-dua pemain memerlukan keluaran hos emulator yang sama.",
+  "ps1OnlineMismatchSyncHash": "Hos emulator ialah binaan yang berbeza. Kedua-dua pemain memerlukan keluaran hos emulator yang sama.",
   "ps1OnlineMismatchDisc": "Fail cakera PS1 anda berbeza. Kedua-dua pemain memerlukan cakera dan semakan yang sama.",
   "retroConnectionTimeoutHost": "Penyambungan mengambil masa terlalu lama. Jemput rakan anda sekali lagi.",
   "retroConnectionTimeoutGuest": "Penyambungan mengambil masa terlalu lama. Minta rakan anda menghantar jemputan baharu.",

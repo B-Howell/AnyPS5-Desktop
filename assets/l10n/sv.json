@@ -2557,6 +2557,7 @@
   "ps1OnlineDisconnected": "Onlinespelet tappade anslutningen.",
   "ps1OnlineDesync": "De två kopiorna kom ur synk. Matchen avslutades.",
   "ps1OnlineMismatchCore": "PS1-kärnorna är olika byggen. Båda spelarna behöver samma utgåva av emulatorvärden.",
+  "ps1OnlineMismatchSyncHash": "Emulatorvärdarna är olika byggen. Båda spelarna behöver samma utgåva av emulatorvärden.",
   "ps1OnlineMismatchDisc": "Era PS1-skivfiler skiljer sig åt. Båda spelarna behöver samma skiva och version.",
   "retroConnectionTimeoutHost": "Anslutningen tog för lång tid. Bjud in din vän igen.",
   "retroConnectionTimeoutGuest": "Anslutningen tog för lång tid. Be din vän skicka en ny inbjudan.",
