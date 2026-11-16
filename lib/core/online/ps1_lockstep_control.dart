@@ -44,7 +44,7 @@ sealed class Ps1LockstepMessage {
     final type = fields.string('type');
     final message = switch (type) {
       'hello' => Ps1LockstepHello._read(fields),
-      'ready' => Ps1LockstepReady(fields.core('core')!),
+      'ready' => Ps1LockstepReady(fields.core('core') ?? (throw const FormatException('A lockstep ready names no core.'))),
       'ping' => Ps1LockstepPing(fields.integer('id', 0, _maxId)),
       'pong' => Ps1LockstepPong(fields.integer('id', 0, _maxId)),
       'start' => Ps1LockstepStart._read(fields),

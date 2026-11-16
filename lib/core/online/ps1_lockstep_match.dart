@@ -482,8 +482,7 @@ class Ps1LockstepMatch {
     final delay = _delay = timing.delay;
     _window = timing.window;
     _setPhase(Ps1LockstepPhase.preparing);
-    final theirCore = await _within(_guestReady.future);
-    if (!identity.core!.playsWith(theirCore)) throw _mismatched(Ps1LockstepMismatch.core);
+    await _within(_guestReady.future);
     _setPhase(Ps1LockstepPhase.transferring);
     final frame = await _guard(game.lockstep(_settings));
     if (frame == null) throw _finish(Ps1LockstepEnd.hostFailed);
@@ -929,6 +928,12 @@ class Ps1LockstepMatch {
         _theirHello.complete(message);
         if (identity.against(message) case final mismatch?) _mismatched(mismatch);
       case Ps1LockstepReady(:final core) when hosting && _theirHello.isCompleted && !_guestReady.isCompleted:
+        // Compared as it comes, as the hellos are: the friend ends the match right after sending a
+        // ready whose core differs, maybe while this launcher still measures the round trip.
+        if (!identity.core!.playsWith(core)) {
+          _mismatched(Ps1LockstepMismatch.core);
+          return;
+        }
         _guestReady.complete(core);
       case Ps1LockstepPing(:final id) when !hosting:
         _send(Ps1LockstepPong(id));
