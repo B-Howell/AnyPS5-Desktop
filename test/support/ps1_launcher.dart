@@ -6,23 +6,28 @@ import 'package:anyps5_desktop/core/host.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_hardware.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_install.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_host_release.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import '../ui/retro_host/fake_retro_host_session.dart';
 import 'fixtures.dart';
+import 'retro_host_release_fixture.dart';
 import 'ui_support.dart';
 
-/// A launcher with one PS1 disc in its games folder, a host where ANYPS5_RETRO_HOST says, and a
-/// fake host session for every host started in it: [sessions] in order, a new one made for a
-/// host started once every session there was used.
+/// A launcher with one PS1 disc in its games folder, a host where ANYPS5_RETRO_HOST says (or, with
+/// [release], the recorded signed host release downloaded into the launcher's storage and no
+/// variable), and a fake host session for every host started in it: [sessions] in order, a new one
+/// made for a host started once every session there was used.
 class Ps1Launcher {
-  Ps1Launcher({
-    bool hostFound = true,
+  Ps1Launcher._({
+    required bool hostFound,
+    required this.release,
     FakeRetroHostSession? session,
     Future<RetroHardware?> Function()? hardware,
     Uri? together,
+    Uri? retroHostApi,
   }) : sessions = [session ?? FakeRetroHostSession()] {
     final temp = temporaryFolder('ps1-host');
     final hostFolder = Directory(p.join(temp.path, 'host'))..createSync();
@@ -30,9 +35,11 @@ class Ps1Launcher {
     core = (File(p.join(hostFolder.path, RetroHostInstall.coreName(HostSystem.current)))..createSync()).path;
     fixture = makeFixture(
       withToolkit: false,
-      environment: {if (hostFound) RetroHostInstall.variable: host},
+      environment: {if (hostFound && !release) RetroHostInstall.variable: host},
       retroHardware: hardware,
       together: together,
+      retroHostApi: retroHostApi,
+      retroHostKeys: release || retroHostApi != null ? retroHostFixtureKeys() : null,
     );
     folders.add(temp);
     final folder = Directory(p.join(model.root!, 'Night Racer'))..createSync();
@@ -43,12 +50,40 @@ class Ps1Launcher {
     model.setRetroLibrary(true);
     game = model.games.singleWhere((game) => game.retro != null);
     model.retroStatusEvery = const Duration(hours: 1);
-    model.openRetroHost = (install, {required volume, required muted}) {
+    model.openRetroHost = (install, {checked, required volume, required muted}) {
       opened.add((install, volume, muted));
+      this.checked.add(checked);
       if (opened.length > sessions.length) sessions.add(FakeRetroHostSession());
       return sessions[opened.length - 1];
     };
   }
+
+  /// A launcher on the debug host [host] (ANYPS5_RETRO_HOST), or none with [hostFound] false.
+  Ps1Launcher({
+    bool hostFound = true,
+    FakeRetroHostSession? session,
+    Future<RetroHardware?> Function()? hardware,
+    Uri? together,
+    Uri? retroHostApi,
+  }) : this._(
+         hostFound: hostFound,
+         release: false,
+         session: session,
+         hardware: hardware,
+         together: together,
+         retroHostApi: retroHostApi,
+       );
+
+  /// A launcher whose host is the recorded signed release, installed into its storage, as a
+  /// release build has it.
+  static Future<Ps1Launcher> withRelease({FakeRetroHostSession? session, Uri? retroHostApi}) async {
+    final launcher = Ps1Launcher._(hostFound: true, release: true, session: session, retroHostApi: retroHostApi);
+    await installRetroHostFixture(launcher.model.retroHostDownload.store.folder);
+    return launcher;
+  }
+
+  /// Whether the host is the signed release rather than the debug host.
+  final bool release;
 
   late final Fixture fixture;
   late final String host;
@@ -63,6 +98,10 @@ class Ps1Launcher {
   /// The session made last: the host the next game starts on, until another is made.
   FakeRetroHostSession get session => sessions.last;
   final opened = <(RetroHostInstall, double, bool)>[];
+
+  /// The check each host was started with, in [opened]'s order: null for the debug host. Each is
+  /// let go when the launcher goes, as the client lets it go when its host exits.
+  final checked = <RetroHostChecked?>[];
 
   AppModel get model => fixture.model;
   RetroPlay get play => model.retroPlay!;
@@ -93,6 +132,9 @@ class Ps1Launcher {
   }
 
   void dispose() {
+    for (final check in checked) {
+      check?.release();
+    }
     if (!_modelDisposed) model.dispose();
     fixture.dispose();
     for (final folder in folders) {
