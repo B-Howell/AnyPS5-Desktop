@@ -560,8 +560,10 @@ local players only (host `docs/protocol.md` "Capabilities" and "start", and
   `pcsx2/bios` under its own name, with the `.nvm` and `.mec` files of the
   same name (LRPS2's console settings and drive version: the BIOS's name with
   only its last extension changed, as LRPS2 looks for them) when they are
-  beside the source and the folder has none of its own. Each file goes to a
-  partial file first and the BIOS is checked again there; only when every
+  beside the source and the folder has none of its own (a BIOS itself named
+  `.nvm` or `.mec` is not its own sidecar). Each file is first copied into a
+  folder of the install's own inside `pcsx2/bios`, so no file of the player's
+  is ever in its way, and the BIOS is checked again there; only when every
   copy is done do they take their names, the BIOS last; a sidecar placed
   before a later file failed to take its name is removed again, so a failed
   install leaves nothing behind for the next try to skip. Nothing of a BIOS is

@@ -162,19 +162,6 @@ void main() {
       expect(File(p.join(folder, 'SCPH-39001.nvm')).existsSync(), isFalse);
     });
 
-    test('a copy that fails part way leaves nothing behind, so the next try copies everything', () async {
-      final source = write('bios.bin', biosShaped());
-      write('bios.nvm', [1]);
-      write('bios.mec', [2]);
-      final folder = Directory(Ps2Bios.folderIn(system))..createSync(recursive: true);
-      final blocker = Directory(p.join(folder.path, 'bios.mec.partial'))..createSync();
-      await expectLater(Ps2Bios.install(source, system: system), throwsA(isA<FileSystemException>()));
-      expect(folder.listSync().map((entry) => p.basename(entry.path)), ['bios.mec.partial']);
-      blocker.deleteSync();
-      await Ps2Bios.install(source, system: system);
-      expect(folder.listSync().map((entry) => p.basename(entry.path)).toSet(), {'bios.bin', 'bios.nvm', 'bios.mec'});
-    });
-
     test('a BIOS that cannot take its name takes back the sidecars placed before it', () async {
       final source = write('bios.bin', biosShaped());
       write('bios.nvm', [1]);
@@ -182,11 +169,29 @@ void main() {
       final folder = Directory(Ps2Bios.folderIn(system))..createSync(recursive: true);
       final blocker = Directory(p.join(folder.path, 'bios.bin'))..createSync();
       await expectLater(Ps2Bios.install(source, system: system), throwsA(isA<FileSystemException>()));
-      expect(folder.listSync().map((entry) => p.basename(entry.path)), ['bios.bin'], reason: 'only the blocker');
+      expect(folder.listSync().map((entry) => p.basename(entry.path)), [
+        'bios.bin',
+      ], reason: 'only the blocker: no staging copy, no sidecar');
       blocker.deleteSync();
       await Ps2Bios.install(source, system: system);
       expect(File(p.join(folder.path, 'bios.nvm')).readAsBytesSync(), [1]);
       expect(File(p.join(folder.path, 'bios.mec')).readAsBytesSync(), [2]);
+    });
+
+    test('a file of the folder named like a staging copy is never touched', () async {
+      final folder = Directory(Ps2Bios.folderIn(system))..createSync(recursive: true);
+      final other = File(p.join(folder.path, 'console.bin.partial'))
+        ..writeAsBytesSync(biosShaped(romver: '0100JC20000117'));
+      await Ps2Bios.install(write('console.bin', biosShaped()), system: system);
+      expect(other.readAsBytesSync(), biosShaped(romver: '0100JC20000117'));
+      expect(folder.listSync().map((entry) => p.basename(entry.path)).toSet(), {'console.bin', 'console.bin.partial'});
+    });
+
+    test('a BIOS whose own name ends in .nvm is not taken as its own console settings', () async {
+      final bios = await Ps2Bios.install(write('console.nvm', biosShaped()), system: system);
+      expect(bios.fileName, 'console.nvm');
+      final folder = Directory(Ps2Bios.folderIn(system));
+      expect(folder.listSync().map((entry) => p.basename(entry.path)), ['console.nvm']);
     });
 
     test('the BIOS already in the folder is taken where it is', () async {

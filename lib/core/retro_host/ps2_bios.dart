@@ -150,8 +150,10 @@ class Ps2Bios {
   /// beside it the `.nvm` and `.mec` files of the same name (LRPS2's console settings and drive
   /// version: the BIOS's name with its last extension changed, `cdvdBiosSiblingPath` in
   /// `pcsx2/CDVD/CDVD.c`) when they sit beside [source] and the folder has none of its own yet, so
-  /// settings LRPS2 already wrote there are kept. Every file is copied to a `.partial` file of its
-  /// own in the folder first, and the BIOS is checked again there; only when all were copied does
+  /// settings LRPS2 already wrote there are kept (a BIOS named `.nvm` or `.mec` is not its own
+  /// sidecar). Every file is first copied into a folder of this install's own, made inside
+  /// [folderIn] so no file of the player's can be in its way and a rename moves each file without
+  /// copying it again, and the BIOS is checked again there; only when all were copied does
   /// each take its name, the sidecars before the BIOS, and a sidecar placed before a later file
   /// could not take its name is removed again (none was there before), so a copy that fails leaves
   /// no file of it behind.
@@ -166,19 +168,22 @@ class Ps2Bios {
     final copies = <(File, File)>[
       for (final extension in const ['.nvm', '.mec'])
         if (File(p.setExtension(source.path, extension)) case final sibling
-            when sibling.existsSync() && !File(p.join(folder.path, p.basename(sibling.path))).existsSync())
+            when !p.equals(sibling.path, source.path) &&
+                sibling.existsSync() &&
+                !File(p.join(folder.path, p.basename(sibling.path))).existsSync())
           (sibling, File(p.join(folder.path, p.basename(sibling.path)))),
       (source, target),
     ];
-    final partials = [for (final (_, to) in copies) File('${to.path}.partial')];
+    final staging = await folder.createTemp('.anyps5-staging-');
+    final staged = [for (final (_, to) in copies) File(p.join(staging.path, p.basename(to.path)))];
     final placed = <File>[];
     try {
       for (final (index, (from, _)) in copies.indexed) {
-        await from.copy(partials[index].path);
+        await from.copy(staged[index].path);
       }
-      await check(partials.last);
+      await check(staged.last);
       for (final (index, (_, to)) in copies.indexed) {
-        await partials[index].rename(to.path);
+        await staged[index].rename(to.path);
         placed.add(to);
       }
     } on Object {
@@ -187,9 +192,7 @@ class Ps2Bios {
       }
       rethrow;
     } finally {
-      for (final partial in partials) {
-        if (await partial.exists()) await partial.delete();
-      }
+      await staging.delete(recursive: true);
     }
     return bios;
   }
