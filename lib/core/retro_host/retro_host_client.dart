@@ -328,6 +328,11 @@ class RetroHostClient implements RetroHostSession {
   /// match's frame clock follows in rollback.
   bool get canReportTiming => _capabilities.contains(retroCapabilityGameTiming);
 
+  /// Whether the host lists `ps2`, so it takes `start.console` and plays PS2 games on LRPS2, and
+  /// each `status` names the console.
+  @override
+  bool get canPlayPs2 => _capabilities.contains(retroCapabilityPs2);
+
   /// Each `rollback` message of a game in rollback (protocol.md "rollback message"), checked.
   @override
   Stream<RetroRollback> get rollbacks => _rollbacks.stream;
@@ -391,6 +396,12 @@ class RetroHostClient implements RetroHostSession {
     if (RetroLockstepSettings.setsState(lockstepArgs) && !canHashXxh3) {
       throw StateError('The host does not list the $retroCapabilitySyncXxh3 capability.');
     }
+    if (method == 'start' && args is Map && args.containsKey('console')) {
+      if (!canPlayPs2) throw StateError('The host does not list the $retroCapabilityPs2 capability.');
+      if (args['console'] == RetroConsole.ps2 && (args.containsKey('lockstep') || args.containsKey('initialDisc'))) {
+        throw StateError('A PS2 game has no lockstep and no playlist (protocol.md "start").');
+      }
+    }
     if (StrictJson.hasLoneSurrogate(args)) {
       return Future.error(const RetroCallError(RetroCallError.argument, 'A string cannot be sent as UTF-8.'));
     }
@@ -427,7 +438,7 @@ class RetroHostClient implements RetroHostSession {
     if (RetroStatus.isFailureReport(map)) {
       return RetroStatus.failed(error: map['error']! as String, errorCode: map['errorCode']! as String);
     }
-    return RetroStatus.parse(map, coreIdentity: canIdentifyCore, gameTiming: canReportTiming);
+    return RetroStatus.parse(map, coreIdentity: canIdentifyCore, gameTiming: canReportTiming, ps2: canPlayPs2);
   }
 
   static const _stopPoll = Duration(milliseconds: 250);
@@ -745,6 +756,7 @@ class RetroHostClient implements RetroHostSession {
             _object(result, 'status'),
             coreIdentity: canIdentifyCore,
             gameTiming: canReportTiming,
+            ps2: canPlayPs2,
           );
           if (status.ended && !_lastStatusEnded) _zeroRumble();
           _lastStatusEnded = status.ended;

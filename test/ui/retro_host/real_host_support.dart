@@ -109,6 +109,8 @@ class RecordingSession implements RetroHostSession {
   @override
   bool get canHashXxh3 => client.canHashXxh3;
   @override
+  bool get canPlayPs2 => client.canPlayPs2;
+  @override
   Stream<RetroSync> get syncs => client.syncs;
   @override
   Stream<RetroRollback> get rollbacks => client.rollbacks;

@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'dart:ffi';
+import 'dart:io';
 
+import 'package:anyps5_desktop/core/retro_host/ps2_bios.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_graphics_catalog.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_hardware.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
@@ -10,6 +13,7 @@ import 'package:anyps5_desktop/ui/retro_host/retro_play_view.dart';
 import 'package:anyps5_desktop/ui/strings.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 import '../support/ps1_launcher.dart';
 import '../support/ui_support.dart';
@@ -17,7 +21,8 @@ import 'retro_host/fake_option_session.dart';
 import 'retro_host/fake_retro_host_session.dart';
 
 /// A PS1 game in the emulator host as it looks: loading, stopped on an error, an online friend's
-/// game joining a match, its menu over the game, its Graphics page and Auto Optimizer, and Settings â€º Emulators with the host's rows.
+/// game joining a match, its menu over the game, its Graphics page and Auto Optimizer, and Settings › Emulators with the host's rows;
+/// and a PS2 game's rows and its missing BIOS.
 void main() {
   late Ps1Launcher launcher;
   final shell = find.byType(LauncherShell);
@@ -195,6 +200,49 @@ void main() {
     expect(find.text('Run PS1 games in the separate host'), findsOneWidget);
     expect(find.text('PS1 BIOS folder'), findsOneWidget);
     await expectLater(shell, matchesGoldenFile('goldens/settings_emulators_host_en.png'));
+  });
+
+  testWidgets('settings: Emulators with LRPS2 beside the host, PS2 turned on and a BIOS chosen', (tester) async {
+    launcher = Ps1Launcher(ps2Core: true);
+    final model = launcher.model
+      ..setRetroHostPs1(true)
+      ..setRetroHostPs2(true);
+    final folder = Directory(Ps2Bios.folderIn(model.paths.retroSystem))..createSync(recursive: true);
+    File(p.join(folder.path, 'console.bin')).createSync();
+    model.preferences.retroHostPs2Bios = const Ps2Bios(fileName: 'console.bin', version: '0220AC20060210');
+    model.open(Layer.settings);
+    model.selectCategory(model.panelCategories().indexWhere((category) => category.id == 'emulators'));
+    await pumpLauncher(tester, model);
+    expect(find.text('Run PS2 games in the separate host'), findsOneWidget);
+    expect(find.text('PS2 BIOS'), findsOneWidget);
+    expect(find.text('USA BIOS, version 2.20 (2006). Select to choose another.'), findsOneWidget);
+    await expectLater(shell, matchesGoldenFile('goldens/settings_emulators_host_ps2_en.png'));
+  });
+
+  testWidgets('stopped: a PS2 game whose host found no PS2 BIOS, as the real LRPS2 said', (tester) async {
+    final file = jsonDecode(File('test/fixtures/retro_host/ps2_lrps2_and_fake_core.json').readAsStringSync()) as Map;
+    final replies = ((file['lrps2'] as Map)['replies'] as List).cast<Map<String, Object?>>();
+    final ended = replies.firstWhere((reply) => reply['game'] == 'noBiosFolder' && reply['when'] == 'ended');
+    final status = RetroStatus.parse(
+      (jsonDecode(ended['reply']! as String) as Map<String, Object?>)['result']! as Map<String, Object?>,
+      coreIdentity: true,
+      gameTiming: true,
+      ps2: true,
+    );
+    launcher = Ps1Launcher(ps2Core: true);
+    final model = launcher.model..setRetroHostPs2(true);
+    launcher.session.nextStatus = status;
+    await tester.runAsync(() async {
+      final playing = model.play(launcher.ps2Game);
+      launcher.session.readyCompleter.complete();
+      await playing;
+      await pumpEventQueue();
+    });
+    await pumpLauncher(tester, model);
+    expect(find.byKey(const ValueKey('retro-error')), findsOneWidget);
+    expect(find.text('Sky Racer stopped'), findsOneWidget);
+    expect(find.text(T.text('retroHostPs2NoBiosDetail')), findsOneWidget);
+    await expectLater(shell, matchesGoldenFile('goldens/retro_host_error_ps2_bios_en.png'));
   });
 
   testWidgets('settings: Emulators offering the PS1 emulator before one is installed', (tester) async {

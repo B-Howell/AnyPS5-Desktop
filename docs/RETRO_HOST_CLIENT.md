@@ -23,6 +23,7 @@ it, the game's picture and the object that runs one game, is described in
 | [`lib/core/retro_host/retro_host_release.dart`](../lib/core/retro_host/retro_host_release.dart) | Checks a signed host release before it is unpacked and before each start, and installs it whole or not at all (see "Finding and checking the host" below). |
 | [`lib/core/retro_host/retro_host_store.dart`](../lib/core/retro_host/retro_host_store.dart) | `RetroHostStore`: the host downloaded from the host repository's signed GitHub releases into the launcher's own storage, and its check before each start. |
 | [`lib/core/retro_host/retro_host_install.dart`](../lib/core/retro_host/retro_host_install.dart) | `RetroHostInstall`: the host and SwanStation a build runs, the downloaded release's (checked) or, in a debug or test build (`RetroHostBuild`), the one `ANYPS5_RETRO_HOST` names (unchecked). |
+| [`lib/core/retro_host/ps2_bios.dart`](../lib/core/retro_host/ps2_bios.dart) | `Ps2Bios`: the player's PS2 BIOS checked as LRPS2 checks one, and copied into LRPS2's folder (see "PS2 games"). |
 | [`lib/core/retro_host/checked_file.dart`](../lib/core/retro_host/checked_file.dart) | A release file held open while it is checked and started: no sharing for writing or deleting on Windows, a close-on-exec descriptor above 3 elsewhere. It hashes what it holds, never the path again. |
 
 `retro_host_client.dart` handles:
@@ -245,15 +246,19 @@ flutter build linux --release --dart-define=ANYPS5_UNCHECKED_RETRO_HOST_BUILD=tr
 
 Then start it with `ANYPS5_RETRO_HOST` set to the absolute path of the host
 executable, with `swanstation_libretro.dll` (or `.so`) beside it, as for a
-debug build.
+debug build. For PS2 games put LRPS2 beside them too: `pcsx2_libretro.dll`
+(or `.so`), which a host configured with `-DANYPS5_RETRO_HOST_LRPS2=ON` builds
+in its `cores` folder (host `docs/ps2.md` "The core"; see "PS2 games").
+The host's protocol.md "Finding and checking the host" names all three kinds
+of launcher build since netplay-design b87b261 (stage5-release 1a77b00).
 
 On Windows the build folder's path must stay short (MSBuild's 260-character
 limit). Built this way with Flutter 3.47.1 and the VS 2022 Build Tools, the
 launcher and every plugin import only the release runtime (`MSVCP140`,
 `VCRUNTIME140`, `VCRUNTIME140_1` and the system's UCRT), and
-`runner/Release` holds those DLLs. The one exception is the `zlib.dll` that
-media_kit's ANGLE archive puts beside the launcher in every release build: it
-imports `VCRUNTIME140D` and `ucrtbased`, but nothing in the bundle imports it.
+`runner/Release` holds those DLLs. media_kit's ANGLE archive has a debug
+`zlib.dll` that nothing imports, which `windows/CMakeLists.txt` leaves out of
+every release build (README "Packages").
 
 **How it is decided.** `RetroHostBuild.of(debug: kDebugMode)` gives `debug`,
 `test` or `release`. `test` comes only from `RetroHostBuild.testDefined`,
@@ -515,6 +520,54 @@ loaded in `status.core` (protocol.md "status"):
   host's is not read. A match's frame clock follows `fps` in rollback
   ([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md), "Rollback").
 
+## PS2 games
+
+A host that lists `ps2` (`canPlayPs2`) also plays PS2 games, on LRPS2, for
+local players only (host `docs/protocol.md` "Capabilities" and "start", and
+`docs/ps2.md`, both at ps2-design 3cb36d2):
+
+- **Which core.** `RetroHostInstall.ps2Core` is LRPS2 (`pcsx2_libretro.dll`,
+  or `.so`) beside the host. Only a debug or test build's unchecked host can
+  have one: no signed release holds LRPS2 yet (host `docs/ps2.md`
+  "Releases"), so `RetroHostStore.installed` never names one, and a release
+  host still refuses any core but its own SwanStation.
+- **`start`.** `RetroHostStartRequest.console` is `ps2` for a PS2 game and
+  left out for a PS1 one, the host's default, so a PS1 start is the same on
+  every host. The client throws `StateError` before sending a `start` that
+  names `console` to a host without `ps2`, and one for a PS2 game with
+  `lockstep` or `initialDisc`, which the host refuses as argument errors.
+  `RetroHostGame` checks the capability itself once the host has greeted the
+  launcher, and ends a PS2 game it never sent with `consoleRefused`.
+- **`status.console`.** From a host that lists `ps2`, `RetroStatus.console`
+  is `ps1` or `ps2`; a `status` without it, or with another value, is a
+  protocol error. Another host's `console` is not read.
+- **`errorCode` `bios`.** LRPS2 found no BIOS in `pcsx2/bios` of the system
+  directory. The launcher says so in the PS2 game's own words, which send the
+  player to Settings › Emulators (`retroHostErrorKey(..., ps2: true)`).
+- **The BIOS.** `Ps2Bios.check` reads a file as LRPS2's `IsBIOS` does
+  (`pcsx2/ps2/BiosTools.c` at c0d39a58e): 4 MiB to 8 MiB (the folder scan's
+  limits); a ROM directory entry named `RESET` (then a zero) on a 16-byte
+  boundary in the first 8 MiB; then, walking the table from it while each
+  name has a zero in its ten bytes, a `ROMVER` entry whose 14 bytes, at the
+  offset the files before it add up to (each rounded up to 16 bytes, in
+  32-bit arithmetic as LRPS2 does it), are in the file. An `EXTINFO` entry
+  whose serial lies past the end ends the walk, as in LRPS2. The check reads
+  the format, not a list of known dumps. Eleven made-up images (two
+  accepted, eight refused for each rule, and one whose size wraps the
+  rounding) were checked against the real LRPS2 of a 3cb36d2 host, which
+  lists every file it takes in its `pcsx2_bios` option: it took exactly the
+  three `Ps2Bios.check` takes. `Ps2Bios.install` copies a checked file into
+  `pcsx2/bios` under its own name, through a partial file that is checked
+  again before it takes the name, and copies the `.nvm` and `.mec` files of
+  the same name (LRPS2's console settings and drive version) when they are
+  beside the source and the folder has none of its own. Nothing of a BIOS is
+  logged, uploaded or sent to a friend: PS1 online play reads only the
+  512 KiB files at the top of the system directory.
+- **Options.** LRPS2's options are `pcsx2_...`. A value the player kept goes
+  only to a game of its own core (`retroOptionSent`), and `pcsx2_bios`, the
+  file LRPS2 starts with, is never shown in the menu: the launcher gives the
+  BIOS chosen in Settings at every start.
+
 ## Tests
 
 [`test/core/retro_host/retro_host_fixtures_test.dart`](../test/core/retro_host/retro_host_fixtures_test.dart)
@@ -628,6 +681,22 @@ runs the client in lockstep and in rollback with two real hosts, with the same
 `ANYPS5_RETRO_HOST_REAL` file ([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md),
 "Tests").
 
+[`test/core/retro_host/retro_status_ps2_test.dart`](../test/core/retro_host/retro_status_ps2_test.dart)
+replays PS2 messages recorded from a host built from ps2-design 3cb36d2
+([`test/fixtures/retro_host/ps2_lrps2_and_fake_core.json`](../test/fixtures/retro_host/ps2_lrps2_and_fake_core.json)):
+with the real LRPS2 core and no BIOS (a system directory with no `pcsx2`
+folder, and one whose `pcsx2/bios` holds 4 MiB of zeros, both ending with
+`bios` before a first frame, the core named `ParaLLEl PS2` with its build
+identity), and with the host's fake core (`bios`, `core`, a PS2 start with
+`lockstep` refused, a ready PS2 game whose `lockstep` and `saveState` answer
+`false`, and a PS1 game on the same host). It checks the strict
+`status.console` and where LRPS2's 72 options go. The recording used no BIOS
+of any kind. The fixture test also plays the recorded LRPS2 status through
+the client against the fake host, and checks the client's refusals of a PS2
+start. [`test/core/retro_host/ps2_bios_test.dart`](../test/core/retro_host/ps2_bios_test.dart)
+checks each of `IsBIOS`'s rules and the copy with made-up images of a BIOS's
+shape, never a real BIOS.
+
 [`test/core/retro_host/retro_host_environment_test.dart`](../test/core/retro_host/retro_host_environment_test.dart)
 covers how the host's environment is put together, and
 [`test/core/retro_host/retro_host_close_test.dart`](../test/core/retro_host/retro_host_close_test.dart)
@@ -651,14 +720,6 @@ job), against the host repository at the commit named in
 
 ## Not yet
 
-- **protocol.md names debug builds only.** The host repository's protocol.md
-  "Finding and checking the host" says "Debug builds of the launcher MAY run
-  the host named by the environment variable `ANYPS5_RETRO_HOST`" and
-  "Release builds ignore that variable". A test build ("Debug and test builds"
-  above) is compiled in release mode but is no release and is never
-  published; the protocol's text should say "debug or test builds, never a
-  published release" before a host release ships.
-
 - **No signed release yet.** The download reads the host repository's
   GitHub releases, and none is published there yet: until the maintainers
   sign and publish one (that repository's `docs/host.md` "Releases"), a
@@ -670,3 +731,7 @@ job), against the host repository at the commit named in
   player selects the emulator's row in Settings › Emulators, as ffmpeg's
   download works. Nothing asks GitHub unprompted.
 - **No host log.** The host's standard error is not captured.
+- **No PS2 in a release.** PS2 games play only on a debug or test build's
+  host with LRPS2 beside it, until a signed host release holds LRPS2 (host
+  `docs/ps2.md` "Releases"). No PS2 game has booted in the host yet: nothing
+  but the missing BIOS has been seen from the real core.

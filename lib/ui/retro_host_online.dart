@@ -57,8 +57,11 @@ extension RetroHostOnline on AppModel {
   static const ports = 2;
 
   /// Why this game cannot be played online now, as the key of the words to show; null when a
-  /// friend can be invited.
+  /// friend can be invited. A PS2 game never can: LRPS2 is not shown to play the same on two
+  /// computers, and the host has no PS2 lockstep (anyps5-retro-host docs/ps2.md "What stops PS2
+  /// online play").
   String? retroOnlineUnavailable(RetroPlay play) {
+    if (play.game.retro?.platform != RetroPlatform.ps1) return 'retroOnlinePs1Only';
     if (!together.signedIn || !together.connected) return 'retroOnlineSignIn';
     if (!play.host.session.canLockstep) return 'retroOnlineHostOld';
     if (!play.host.session.canIdentifyCore) return 'retroOnlineNoCoreIdentity';

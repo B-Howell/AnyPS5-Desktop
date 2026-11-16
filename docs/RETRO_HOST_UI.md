@@ -1,11 +1,12 @@
 # The emulator host in the launcher's UI
 
 [The emulator host client](RETRO_HOST_CLIENT.md) talks to the emulator host
-(the separate program that runs PS1 games). This page covers the UI built on
-it: a game's picture in the launcher, the object that runs one game in one
-host, the controllers that play it, the model of its in-game menu, and how
-the launcher plays a PS1 disc from its emulator library through all of them
-(behind a setting that is off by default, see "In the launcher").
+(the separate program that runs PS1 games, and PS2 games on a host with
+LRPS2). This page covers the UI built on it: a game's picture in the launcher,
+the object that runs one game in one host, the controllers that play it, the
+model of its in-game menu, and how the launcher plays a PS1 or PS2 disc from
+its emulator library through all of them (behind settings that are off by
+default, see "In the launcher" and "PS2 games").
 
 ## Files
 
@@ -36,7 +37,7 @@ the launcher plays a PS1 disc from its emulator library through all of them
 | [`lib/core/retro_host/retro_host_install.dart`](../lib/core/retro_host/retro_host_install.dart) | `RetroHostInstall`: the host and SwanStation library a build runs, and whether it is checked before each start. |
 | [`lib/ui/retro_host/retro_host_download_model.dart`](../lib/ui/retro_host/retro_host_download_model.dart) | `RetroHostDownloadModel`: Settings › Emulators' row that downloads, updates and repairs the signed host, and what a failed check before a start leaves it saying. |
 | [`lib/core/retro_host/retro_keyboard.dart`](../lib/core/retro_host/retro_keyboard.dart) | `RetroKeyboard`: the keyboard as a PS1 controller, with the keys of a game's Controls. |
-| [`lib/ui/retro_host_play.dart`](../lib/ui/retro_host_play.dart) | `RetroPlay` and the `RetroHostPlaying` part of `AppModel`: the setting, starting a disc in the host, the commands while it plays, the menu's panel rows, closing. |
+| [`lib/ui/retro_host_play.dart`](../lib/ui/retro_host_play.dart) | `RetroPlay` and the `RetroHostPlaying` part of `AppModel`: the settings, the PS2 BIOS row, starting a disc in the host, the commands while it plays, the menu's panel rows, closing. |
 | [`lib/ui/retro_host/retro_play_view.dart`](../lib/ui/retro_host/retro_play_view.dart) | `RetroPlayView`: the game over the whole window, with `RetroGameNotice` for the loading, joining and error screens. |
 | [`lib/ui/retro_host_online.dart`](../lib/ui/retro_host_online.dart) | The game's lobby and PS1 online play with a friend ([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md)). |
 | [`lib/ui/player_slots_strip.dart`](../lib/ui/player_slots_strip.dart) | `PlayerSlotsStrip`: the lobby's Player 1 to 4 cards under a panel row. |
@@ -465,11 +466,12 @@ host** (`Preferences.retroHostPs1`) is off by default. The row shows only
 where a host is found (`AppModel.retroHostInstall`): the downloaded release
 (`RetroHostStore.installed`), or in a debug or test build the host that
 `ANYPS5_RETRO_HOST` names (`RetroHostInstall.locate`), as protocol.md
-"Finding and checking the host" allows: "Debug builds of the launcher MAY run
-the host named by the environment variable `ANYPS5_RETRO_HOST`, and any core,
-without the checks. Release builds ignore that variable." (A test build is a
-release-mode build compiled to allow it, never published:
-[RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md) "Debug and test builds".) That
+"Finding and checking the host" (netplay-design b87b261) allows: "A debug
+build MAY run the host named by `ANYPS5_RETRO_HOST`, and any core, without the
+checks", and a test build "is compiled like a release, with the release's
+runtime libraries, and MAY do what a debug build does", while a release
+"ignores the environment variable `ANYPS5_RETRO_HOST`"
+([RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md) "Debug and test builds"). That
 unchecked host comes first, and while it is used no download row is shown;
 instead **Unchecked PS1 emulator (test build)** says that this build runs it
 without checking its signature or files, and that normal releases only run the
@@ -516,6 +518,38 @@ through Close game. No other game starts while it plays. A host that cannot
 be started at all (a file that is not a program) says so in a toast. Every
 path is sent normalized, so it has no `.` or `..` segment (protocol.md
 "Paths").
+
+**PS2 games.** Where the host found has LRPS2 beside it
+(`RetroHostInstall.ps2Core`, only a debug or test build's host for now),
+Settings › Emulators adds two rows under the PS1 ones, made the same way:
+
+- **Run PS2 games in the separate host** (`Preferences.retroHostPs2`), off by
+  default. With it on, a PS2 disc plays in the launcher's window through the
+  host instead of PCSX2 and needs no PCSX2 (`playsInHost`).
+- **PS2 BIOS**, shown while it is on. LRPS2 boots nothing without the
+  player's own BIOS, which is never shipped or downloaded (host `docs/ps2.md`
+  "The BIOS"). Selecting the row asks for the file (`AppModel.choosePs2Bios`),
+  checks it as LRPS2 does and copies it into `pcsx2/bios` of the system
+  directory ([RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md) "PS2 games"). A
+  file that is not one is refused, and the toast says why: its size, no file
+  list, no version, or that it could not be read. The row then shows what
+  the BIOS's `ROMVER` says: its region, version and year ("USA BIOS, version
+  2.20 (2006)"). `Preferences.retroHostPs2Bios` keeps the file's name and
+  `ROMVER` text only, never its contents or where it came from; a BIOS taken
+  out of the folder is no longer shown as chosen.
+
+A PS2 disc then starts as a PS1 one does, with `console` `ps2`, `core`
+LRPS2, `saves` `AppPaths.retroPs2Saves` (`retro/saves/ps2`, where LRPS2 keeps
+one memory card per game), LRPS2's options the player kept, and `pcsx2_bios`
+naming the chosen BIOS, so LRPS2 starts with it whatever else is in its
+folder. A host that does not list `ps2` is never sent the game: it ends at
+once, saying the emulator host cannot play PS2 games and needs updating. A
+host's `bios` says no PS2 BIOS was found and to choose one in Settings ›
+Emulators. The menu shows LRPS2's options under Advanced (none is a picture
+option the Graphics page knows), without `pcsx2_bios`. The lobby lists the
+seats but invites no one: online play is for PS1 games only, and the lobby
+says so, since a PS2 game cannot yet be kept the same on two computers
+([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md)).
 
 **One host for several games.** A game that is closed, or that ended, leaves
 its host running for the next game when `RetroHostGame.detach()` says no game
@@ -879,6 +913,11 @@ it, so WinLibs' `bin` folder has to be on `PATH` there.
 - **No signed host release yet.** A release build offers the download, but
   the host repository has published no signed release yet, so the row says so
   ([RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md), "Not yet").
+- **PS2 has not booted.** A PS2 game's picture, sound, controllers and
+  memory card are untested in the launcher: only the missing BIOS has been
+  seen from the real LRPS2 (host `docs/ps2.md`), and no signed host release
+  holds LRPS2 yet. LRPS2's options all show under Advanced, with LRPS2's own
+  titles ("Video > Internal Resolution").
 - **No phone pad.** A phone or browser pad (Remote Play's) does not play a
   PS1 game in the host, and does not move the launcher while the game's own
   screen is in front.

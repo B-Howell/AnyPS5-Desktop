@@ -19,7 +19,8 @@ import 'ui_support.dart';
 /// A launcher with one PS1 disc in its games folder, a host where ANYPS5_RETRO_HOST says (or, with
 /// [release], the recorded signed host release downloaded into the launcher's storage and no
 /// variable), and a fake host session for every host started in it: [sessions] in order, a new one
-/// made for a host started once every session there was used.
+/// made for a host started once every session there was used. With `ps2Core` LRPS2 is beside the
+/// host too, and the games folder also has a PS2 disc ([ps2Game]).
 class Ps1Launcher {
   Ps1Launcher._({
     required bool hostFound,
@@ -28,11 +29,16 @@ class Ps1Launcher {
     Future<RetroHardware?> Function()? hardware,
     Uri? together,
     Uri? retroHostApi,
+    bool ps2Core = false,
+    Future<String?> Function(String label, List<String> extensions)? pickFile,
   }) : sessions = [session ?? FakeRetroHostSession()] {
     final temp = temporaryFolder('ps1-host');
     final hostFolder = Directory(p.join(temp.path, 'host'))..createSync();
     host = (File(p.join(hostFolder.path, 'anyps5-retro-host'))..createSync()).path;
     core = (File(p.join(hostFolder.path, RetroHostInstall.coreName(HostSystem.current)))..createSync()).path;
+    ps2CorePath = ps2Core
+        ? (File(p.join(hostFolder.path, RetroHostInstall.ps2CoreName(HostSystem.current)))..createSync()).path
+        : null;
     fixture = makeFixture(
       withToolkit: false,
       environment: {if (hostFound && !release) RetroHostInstall.variable: host},
@@ -40,6 +46,7 @@ class Ps1Launcher {
       together: together,
       retroHostApi: retroHostApi,
       retroHostKeys: release || retroHostApi != null ? retroHostFixtureKeys() : null,
+      pickFile: pickFile,
     );
     folders.add(temp);
     final folder = Directory(p.join(model.root!, 'Night Racer'))..createSync();
@@ -47,8 +54,15 @@ class Ps1Launcher {
     File(p.join(folder.path, 'retro.json')).writeAsStringSync(
       jsonEncode({'platform': 'ps1', 'titleId': 'SLUS00001', 'name': 'Night Racer', 'disc': 'game.cue'}),
     );
+    if (ps2Core) {
+      final ps2Folder = Directory(p.join(model.root!, 'Sky Racer'))..createSync();
+      ps2Disc = (File(p.join(ps2Folder.path, 'Sky Racer.iso'))..createSync()).path;
+      File(p.join(ps2Folder.path, 'retro.json')).writeAsStringSync(
+        jsonEncode({'platform': 'ps2', 'titleId': 'SLUS20001', 'name': 'Sky Racer', 'disc': 'Sky Racer.iso'}),
+      );
+    }
     model.setRetroLibrary(true);
-    game = model.games.singleWhere((game) => game.retro != null);
+    game = model.games.singleWhere((game) => game.retro?.platform == RetroPlatform.ps1);
     model.retroStatusEvery = const Duration(hours: 1);
     model.openRetroHost = (install, {checked, required volume, required muted}) {
       opened.add((install, volume, muted));
@@ -58,13 +72,16 @@ class Ps1Launcher {
     };
   }
 
-  /// A launcher on the debug host [host] (ANYPS5_RETRO_HOST), or none with [hostFound] false.
+  /// A launcher on the debug host [host] (ANYPS5_RETRO_HOST), or none with [hostFound] false; with
+  /// [ps2Core], LRPS2 beside it and a PS2 disc in the games folder.
   Ps1Launcher({
     bool hostFound = true,
     FakeRetroHostSession? session,
     Future<RetroHardware?> Function()? hardware,
     Uri? together,
     Uri? retroHostApi,
+    bool ps2Core = false,
+    Future<String?> Function(String label, List<String> extensions)? pickFile,
   }) : this._(
          hostFound: hostFound,
          release: false,
@@ -72,6 +89,8 @@ class Ps1Launcher {
          hardware: hardware,
          together: together,
          retroHostApi: retroHostApi,
+         ps2Core: ps2Core,
+         pickFile: pickFile,
        );
 
   /// A launcher whose host is the recorded signed release, installed into its storage, as a
@@ -90,6 +109,13 @@ class Ps1Launcher {
   late final String core;
   late final String disc;
   late final Game game;
+
+  /// LRPS2 beside the host and the PS2 disc, when the launcher was made with `ps2Core`.
+  late final String? ps2CorePath;
+  String? ps2Disc;
+
+  /// The PS2 game, when the launcher was made with `ps2Core`.
+  Game get ps2Game => model.games.singleWhere((game) => game.retro?.platform == RetroPlatform.ps2);
   final folders = <Directory>[];
 
   /// The fake hosts, in the order they are started; the first is the one given, if any.

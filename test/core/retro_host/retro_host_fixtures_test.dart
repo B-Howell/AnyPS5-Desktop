@@ -147,6 +147,69 @@ void main() {
     timeout: const Timeout(Duration(seconds: 90)),
   );
   test(
+    'a PS2 game goes only to a host that lists ps2, and never with lockstep or a playlist',
+    () => _playOwn(
+      checkout,
+      python,
+      'A host without ps2 is sent no start.console, and a PS2 start with lockstep or initialDisc is refused '
+          'before it is sent; a status call must still be answered in order.',
+      'clean',
+      [
+        {
+          'from': 'launcher',
+          'message': {'type': 'call', 'id': 2, 'method': 'status', 'args': null},
+          'anyValueFor': ['id'],
+        },
+        {
+          'from': 'host',
+          'message': {'type': 'reply', 'id': 2, 'result': null},
+          'anyValueFor': ['id'],
+        },
+      ],
+      capabilities: const ['ps1', retroCapabilityPs1Lockstep, retroCapabilityCoreIdentity],
+      afterReady: (client) async {
+        expect(client.canPlayPs2, isFalse);
+        final ps2 = {'console': RetroConsole.ps2, 'core': 'c', 'disc': 'd.iso', 'system': 's', 'saves': 'v'};
+        expect(() => client.call('start', ps2), throwsStateError);
+        expect(() => client.call('start', {...ps2, 'console': RetroConsole.ps1}), throwsStateError);
+      },
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    "a PS2 game's start and the recorded LRPS2 status of a missing BIOS pass the client's checks",
+    () => _playOwn(
+      checkout,
+      python,
+      'A host that lists ps2: start with console ps2, the status a host built from ps2-design 3cb36d2 sent '
+          'with the real LRPS2 core and no BIOS, then release.',
+      'clean',
+      _ps2NoBiosSteps(),
+      capabilities: const [
+        'ps1',
+        retroCapabilityPs1Lockstep,
+        retroCapabilityPs1Rollback,
+        retroCapabilityCoreIdentity,
+        retroCapabilityGameTiming,
+        retroCapabilitySyncXxh3,
+        retroCapabilityPs2,
+      ],
+      afterReady: (client) async {
+        expect(client.canPlayPs2, isTrue);
+        final ps2 = {'console': RetroConsole.ps2, 'core': 'c', 'disc': 'd.iso', 'system': 's', 'saves': 'v'};
+        expect(
+          () => client.call('start', {
+            ...ps2,
+            'lockstep': {'check': 1},
+          }),
+          throwsStateError,
+        );
+        expect(() => client.call('start', {...ps2, 'initialDisc': 0}), throwsStateError);
+      },
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
     'a pause with no game does not silence the rumble of the next game',
     () => _playOwn(
       checkout,
@@ -761,6 +824,46 @@ Future<void> _playOwn(
   } finally {
     directory.deleteSync(recursive: true);
   }
+}
+
+/// A PS2 game's `start` and the replies a host built from ps2-design 3cb36d2 sent with the real
+/// LRPS2 core and no BIOS (test/fixtures/retro_host/ps2_lrps2_and_fake_core.json): its first and
+/// ended `status`, then `release`.
+List<Map<String, Object?>> _ps2NoBiosSteps() {
+  final lrps2 =
+      (jsonDecode(File('test/fixtures/retro_host/ps2_lrps2_and_fake_core.json').readAsStringSync())
+              as Map<String, Object?>)['lrps2']!
+          as Map<String, Object?>;
+  final replies = [
+    for (final reply in (lrps2['replies']! as List<Object?>).cast<Map<String, Object?>>())
+      if (reply['game'] == 'noBiosFolder') jsonDecode(reply['reply']! as String) as Map<String, Object?>,
+  ];
+  Map<String, Object?> step(String from, Map<String, Object?> message) => {
+    'from': from,
+    'message': message,
+    'anyValueFor': ['id'],
+  };
+  return [
+    step('launcher', {
+      'type': 'call',
+      'id': 2,
+      'method': 'start',
+      'args': {
+        'console': RetroConsole.ps2,
+        'core': r'${core}',
+        'disc': r'${disc}',
+        'system': r'${system}',
+        'saves': r'${saves}',
+      },
+    }),
+    step('host', replies[0]),
+    step('launcher', {'type': 'call', 'id': 3, 'method': 'status', 'args': null}),
+    step('host', replies[1]),
+    step('launcher', {'type': 'call', 'id': 4, 'method': 'status', 'args': null}),
+    step('host', replies[2]),
+    step('launcher', {'type': 'call', 'id': 5, 'method': 'release', 'args': null}),
+    step('host', replies[3]),
+  ];
 }
 
 /// Steps 4 to 7 of ring-grows: `start`, its reply, a ring, and a frame of the game.

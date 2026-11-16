@@ -1,6 +1,6 @@
 part of 'app_model.dart';
 
-/// A PS1 game playing in the launcher's window through the emulator host: the game, its
+/// A PS1 or PS2 game playing in the launcher's window through the emulator host: the game, its
 /// controllers and its in-game menu.
 class RetroPlay {
   RetroPlay({
@@ -21,7 +21,7 @@ class RetroPlay {
   /// The host executable the game runs in, so its host is kept only for games of the same one.
   final String program;
 
-  /// The SwanStation library the game was started with.
+  /// The core library the game was started with: SwanStation, or LRPS2 for a PS2 game.
   final String core;
   final RetroHostControls controls;
   final RetroGameMenu menu;
@@ -75,28 +75,31 @@ class RetroPlay {
 
   /// Why the game stopped, as the key of the words to show the player; null while it plays, and
   /// for a game that ended without an error or that the player closed.
-  String? get problem => closing ? null : retroHostProblem(host);
+  String? get problem => closing ? null : retroHostProblem(host, ps2: game.retro?.platform == RetroPlatform.ps2);
 }
 
 /// Why [host]'s game stopped, as the key of the words to show the player; null while it plays or
 /// after a clean end. A host that speaks another protocol version "needs updating" (protocol.md
 /// "Host failure"), and one that never greeted the launcher could not be started. A game that
 /// could not be followed (a refused `status` or `pause`) keeps its last status, which says no
-/// error: its [RetroHostGame.failure] makes it one without a known cause.
-String? retroHostProblem(RetroHostGame host) {
+/// error: its [RetroHostGame.failure] makes it one without a known cause. A [ps2] game a host
+/// without `ps2` was never given ([RetroHostGame.consoleRefused]) needs a newer host.
+String? retroHostProblem(RetroHostGame host, {bool ps2 = false}) {
   if (host.phase != RetroHostGamePhase.ended) return null;
   if (host.hostEnd == RetroHostEnd.unsupported) return 'retroHostOutdatedDetail';
+  if (host.consoleRefused) return 'retroHostNoPs2Detail';
   final status = host.endStatus;
   if (status == null) return host.failure == null ? null : 'retroHostNotStartedDetail';
-  return retroHostErrorKey(status.errorCode) ?? (host.failure == null ? null : 'retroHostOtherDetail');
+  return retroHostErrorKey(status.errorCode, ps2: ps2) ?? (host.failure == null ? null : 'retroHostOtherDetail');
 }
 
 /// The words for a status's `errorCode` (protocol.md "status", its `errorCode` table, and "Host
 /// failure"): null for `""`, a game stopped without an error. A code this launcher does not know
-/// is "a game that ended with an error" (protocol.md "Compatibility").
-String? retroHostErrorKey(String errorCode) => switch (errorCode) {
+/// is "a game that ended with an error" (protocol.md "Compatibility"). A [ps2] game's `bios` (LRPS2
+/// found no BIOS in `pcsx2/bios`) sends the player to the PS2 BIOS row in Settings › Emulators.
+String? retroHostErrorKey(String errorCode, {bool ps2 = false}) => switch (errorCode) {
   RetroErrorCode.none => null,
-  RetroErrorCode.bios => 'retroHostBiosDetail',
+  RetroErrorCode.bios => ps2 ? 'retroHostPs2NoBiosDetail' : 'retroHostBiosDetail',
   RetroErrorCode.disc => 'retroHostDiscDetail',
   RetroErrorCode.core => 'retroHostCoreDetail',
   RetroErrorCode.stalled => 'retroHostStalledDetail',
@@ -107,7 +110,7 @@ String? retroHostErrorKey(String errorCode) => switch (errorCode) {
   _ => 'retroHostOtherDetail',
 };
 
-/// Starts one emulator host for PS1 games, with the player's volume: [checked] is the check of a
+/// Starts one emulator host for PS1 and PS2 games, with the player's volume: [checked] is the check of a
 /// signed release's host ([RetroHostInstall.checked]), whose files the host holds until it exits.
 typedef RetroHostOpener = RetroHostSession Function(
   RetroHostInstall install, {
@@ -115,6 +118,29 @@ typedef RetroHostOpener = RetroHostSession Function(
   required double volume,
   required bool muted,
 });
+
+/// What a PS2 BIOS is, in the player's language: its region, version and year, from its `ROMVER`
+/// entry, as LRPS2 describes one.
+String ps2BiosShown(Ps2Bios bios) => T.format('retroHostPs2BiosVersion', [
+  switch (bios.region) {
+    'J' => T.text('retroHostPs2RegionJapan'),
+    'A' => T.text('retroHostPs2RegionUsa'),
+    'E' => T.text('retroHostPs2RegionEurope'),
+    'H' => T.text('retroHostPs2RegionAsia'),
+    'C' => T.text('retroHostPs2RegionChina'),
+    final other => other,
+  },
+  bios.versionNumber,
+  bios.year ?? '?',
+]);
+
+/// The words that say why a file is not a PS2 BIOS.
+String ps2BiosRefusalKey(Ps2BiosRefusal reason) => switch (reason) {
+  Ps2BiosRefusal.size => 'retroHostPs2BiosWrongSize',
+  Ps2BiosRefusal.noDirectory => 'retroHostPs2BiosNoTable',
+  Ps2BiosRefusal.noVersion => 'retroHostPs2BiosNoVersion',
+  Ps2BiosRefusal.unreadable => 'retroHostPs2BiosUnreadable',
+};
 
 /// The menu's sections, in the order its first page lists them. Graphics is on the game's
 /// Graphics page instead.
@@ -134,9 +160,9 @@ const retroMenuSections = [
   RetroOptionSection.advanced => ('retroMenuAdvanced', 'retroMenuAdvancedDetail'),
 };
 
-/// Settings › Emulators › Run PS1 games in the separate host: PS1 discs played in the launcher's
-/// window through the emulator host, with the launcher's controllers and keyboard, and the game's
-/// menu on PS.
+/// Settings › Emulators › Run PS1 (or PS2) games in the separate host: those discs played in the
+/// launcher's window through the emulator host, with the launcher's controllers and keyboard, and
+/// the game's menu on PS.
 extension RetroHostPlaying on AppModel {
   /// The host this build runs: in a debug or test build ([RetroHostBuild]) the one
   /// `ANYPS5_RETRO_HOST` names, unchecked; otherwise the signed host downloaded in Settings ›
@@ -152,10 +178,14 @@ extension RetroHostPlaying on AppModel {
     system: HostSystem.current,
   );
 
-  /// Whether [platform]'s discs play in the emulator host: PS1, with the setting on and a host
-  /// found. Otherwise they go to the emulator chosen in Settings › Emulators, as before.
-  bool playsInHost(RetroPlatform platform) =>
-      platform == RetroPlatform.ps1 && preferences.retroHostPs1 && retroHostInstall != null;
+  /// Whether [platform]'s discs play in the emulator host: PS1 with its setting on and a host found,
+  /// PS2 with its own setting on and a host that has LRPS2 beside it. Otherwise they go to the
+  /// emulator chosen in Settings › Emulators, as before.
+  bool playsInHost(RetroPlatform platform) => switch (platform) {
+    RetroPlatform.ps1 => preferences.retroHostPs1 && retroHostInstall != null,
+    RetroPlatform.ps2 => preferences.retroHostPs2 && retroHostInstall?.ps2Core != null,
+    RetroPlatform.ps3 => false,
+  };
 
   /// Whether [platform]'s discs can be played now: in the host, or in the emulator chosen.
   bool retroPlayable(RetroPlatform platform) => playsInHost(platform) || standaloneEmulator(platform) != null;
@@ -177,12 +207,59 @@ extension RetroHostPlaying on AppModel {
     _changed();
   }
 
+  void setRetroHostPs2(bool enabled) {
+    if (preferences.retroHostPs2 == enabled) return;
+    preferences.retroHostPs2 = enabled;
+    savePreferences();
+    _changed();
+  }
+
+  /// The PS2 BIOS the player chose, while its copy is still in LRPS2's folder; null otherwise.
+  Ps2Bios? get retroPs2Bios {
+    final bios = preferences.retroHostPs2Bios;
+    if (bios == null) return null;
+    final copy = File(p.join(Ps2Bios.folderIn(paths.retroSystem), bios.fileName));
+    return copy.existsSync() ? bios : null;
+  }
+
+  /// Settings › Emulators › PS2 BIOS: asks for the player's own BIOS file, checks it as LRPS2 does
+  /// and copies it into LRPS2's folder ([Ps2Bios.install]). A file that is not one is refused,
+  /// saying why. Its contents never leave the computer and are never logged.
+  Future<void> choosePs2Bios() async {
+    final String? selected;
+    try {
+      selected = await services.pickFile?.call(T.text('retroHostPs2BiosPick'), const []);
+    } on PlatformException {
+      if (!_disposed) show(T.text('retroEmulatorPickerFailed'));
+      return;
+    }
+    if (selected == null || _disposed) return;
+    final Ps2Bios bios;
+    try {
+      bios = await Ps2Bios.install(File(selected), system: paths.retroSystem);
+    } on Ps2BiosRefused catch (refused) {
+      if (!_disposed) show(T.text(ps2BiosRefusalKey(refused.reason)));
+      return;
+    } on FileSystemException {
+      if (!_disposed) show(T.text('retroHostPs2BiosCopyFailed'));
+      return;
+    }
+    if (_disposed) return;
+    preferences.retroHostPs2Bios = bios;
+    savePreferences();
+    show(T.format('retroHostPs2BiosReady', [ps2BiosShown(bios)]));
+    _changed();
+  }
+
   /// Settings › Emulators' rows for the host: its download, or the notice that this build runs an
-  /// unchecked host, and where a host is found, the setting and the BIOS folder.
+  /// unchecked host, and where a host is found, the setting and the BIOS folder; where that host
+  /// has LRPS2 beside it, the same two for PS2, whose BIOS the player chooses as a file.
   List<PanelRow> _retroHostSettingsRows() {
     final unchecked = _uncheckedRetroHost != null;
     final download = retroHostDownload.rows(uncheckedHost: unchecked);
-    if (retroHostInstall == null) return download;
+    final install = retroHostInstall;
+    if (install == null) return download;
+    final ps2Bios = retroPs2Bios;
     return [
       ...download,
       if (unchecked)
@@ -207,10 +284,27 @@ extension RetroHostPlaying on AppModel {
             services.openFolder?.call(paths.retroSystem);
           }),
         ),
+      if (install.ps2Core != null) ...[
+        PanelRow(
+          id: 'retro-host-ps2',
+          title: T.text('retroHostPs2'),
+          detail: T.text('retroHostPs2Detail'),
+          kind: ToggleRow(preferences.retroHostPs2, setRetroHostPs2),
+        ),
+        if (preferences.retroHostPs2)
+          PanelRow(
+            id: 'retro-host-ps2-bios',
+            title: T.text('retroHostPs2Bios'),
+            detail: ps2Bios == null
+                ? T.text('retroHostPs2BiosChoose')
+                : T.format('retroHostPs2BiosChosen', [ps2BiosShown(ps2Bios)]),
+            kind: ActionRow(() => unawaited(choosePs2Bios())),
+          ),
+      ],
     ];
   }
 
-  /// Starts [game]'s PS1 disc in a new emulator host and shows it in the launcher's window, and
+  /// Starts [game]'s PS1 or PS2 disc in a new emulator host and shows it in the launcher's window, and
   /// gives its play once `start` was answered (null when it did not start). An online match's
   /// friend gives the host it opened already ([opened]), the host player's core [options] and a
   /// [saves] folder of the match's own, and starts the game [joining]: muted and not shown until it
@@ -229,7 +323,7 @@ extension RetroHostPlaying on AppModel {
       return null;
     }
     final install = retroHostInstall;
-    if (install == null) return null;
+    if (install == null || (disc.platform == RetroPlatform.ps2 && install.ps2Core == null)) return null;
     final allowed = together.family.beforePlay(game);
     if (!(allowed is bool ? allowed : await allowed) || starting != null || running != null || retroPlay != null) {
       return null;
@@ -275,6 +369,8 @@ extension RetroHostPlaying on AppModel {
     String? saves,
     required bool joining,
   }) async {
+    final ps2 = disc.platform == RetroPlatform.ps2;
+    final core = ps2 ? install.ps2Core! : install.core;
     final volume = preferences.retroHostVolume / 100;
     final muted = joining || preferences.retroHostMuted;
     final recheck = opened == null && install.checked && retroHostKeeper.keeps(program: install.host);
@@ -335,7 +431,7 @@ extension RetroHostPlaying on AppModel {
       monitor: monitor,
       started: DateTime.now(),
       program: install.host,
-      core: install.core,
+      core: core,
     )..joining = joining;
     retroPlay = play;
     host.addListener(_retroChanged);
@@ -346,12 +442,14 @@ extension RetroHostPlaying on AppModel {
     savePreferences();
     _changed();
     _padLog?.call('emulator host: ${install.host} plays ${disc.path}');
+    final bios = ps2 ? retroPs2Bios : null;
     await host.start(
       RetroHostStartRequest(
-        core: install.core,
+        console: ps2 ? RetroConsole.ps2 : null,
+        core: core,
         disc: p.normalize(disc.path),
         system: p.normalize(paths.retroSystem),
-        saves: p.normalize(saves ?? paths.retroSaves),
+        saves: p.normalize(saves ?? (ps2 ? paths.retroPs2Saves : paths.retroSaves)),
         options:
             options ??
             {
@@ -359,7 +457,8 @@ extension RetroHostPlaying on AppModel {
                 ...preferences.retroHostOptions,
                 ...?preferences.retroHostGraphics[game.id]?.options,
               }.entries)
-                if (retroOptionShown(key)) key: value,
+                if (retroOptionSent(key, ps2: ps2)) key: value,
+              if (bios != null) Ps2Bios.option: bios.fileName,
             },
       ),
     );
@@ -697,15 +796,12 @@ extension RetroHostPlaying on AppModel {
     _changed();
   }
 
-  /// The kept host is shut down once the player has left the PS1 games: the game selected is not a
-  /// PS1 disc that plays in the host, or another game starts or runs.
+  /// The kept host is shut down once the player has left the host's games: the game selected is not
+  /// a disc that plays in the host, or another game starts or runs.
   void _letUnwantedRetroHostGo() {
     if (!retroHostKeeper.holding || retroPlay != null) return;
-    final wanted =
-        running == null &&
-        starting == null &&
-        selectedGame?.retro?.platform == RetroPlatform.ps1 &&
-        playsInHost(RetroPlatform.ps1);
+    final platform = selectedGame?.retro?.platform;
+    final wanted = running == null && starting == null && platform != null && playsInHost(platform);
     if (!wanted) unawaited(retroHostKeeper.shutdown());
   }
 

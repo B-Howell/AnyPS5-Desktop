@@ -108,9 +108,11 @@ class AppPaths {
   String get retroHost => p.join(p.dirname(toolkits), 'RetroHost');
 
   /// The emulator host's PS1 BIOS folder (the core's system directory) and memory cards, where
-  /// protocol.md's `start` example keeps them.
+  /// protocol.md's `start` example keeps them. LRPS2 keeps the PS2 BIOS in that system directory's
+  /// `pcsx2/bios` (`Ps2Bios.folderIn`) and PS2 memory cards in [retroPs2Saves].
   String get retroSystem => p.join(config, 'retro', 'system');
   String get retroSaves => p.join(config, 'retro', 'saves', 'ps1');
+  String get retroPs2Saves => p.join(config, 'retro', 'saves', 'ps2');
 
   /// One folder per PS1 online match (its room's ID): the state sent to the friend, and the
   /// friend's memory cards for the match; removed when the match ends.

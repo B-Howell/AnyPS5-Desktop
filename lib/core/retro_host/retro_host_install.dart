@@ -41,13 +41,16 @@ enum RetroHostBuild {
 /// The emulator host and the SwanStation library it loads for a PS1 game: the signed release the
 /// launcher downloaded ([RetroHostStore.installed]), checked before each start, or in a debug or
 /// test build ([RetroHostBuild]) the host `ANYPS5_RETRO_HOST` names ([locate]), which is not.
-/// protocol.md "Finding and checking the host" says "Debug builds of the launcher MAY run the host
-/// named by the environment variable `ANYPS5_RETRO_HOST`, and any core, without the checks.
-/// Release builds ignore that variable." A test build is compiled in release mode but is not a
-/// release, and never published (docs/RETRO_HOST_CLIENT.md "Debug and test builds").
-/// The core is the SwanStation library beside the host, as a host release's zip holds the two.
+/// protocol.md "Finding and checking the host" (netplay-design b87b261) says "A debug build MAY run
+/// the host named by `ANYPS5_RETRO_HOST`, and any core, without the checks", a test build "is
+/// compiled like a release, with the release's runtime libraries, and MAY do what a debug build
+/// does", and a release "ignores the environment variable `ANYPS5_RETRO_HOST`"
+/// (docs/RETRO_HOST_CLIENT.md "Debug and test builds").
+/// The core is the SwanStation library beside the host, as a host release's zip holds the two. A
+/// host built with LRPS2 (anyps5-retro-host docs/ps2.md "The core") has its PS2 core beside it too
+/// ([ps2Core]); no signed release holds one yet (docs/ps2.md "Releases").
 class RetroHostInstall {
-  const RetroHostInstall({required this.host, required this.core, this.checked = false});
+  const RetroHostInstall({required this.host, required this.core, this.ps2Core, this.checked = false});
 
   /// The environment variable that names the host in a debug or test build.
   static const variable = 'ANYPS5_RETRO_HOST';
@@ -58,6 +61,10 @@ class RetroHostInstall {
   /// The SwanStation library, given to the host in `start`.
   final String core;
 
+  /// The LRPS2 library a PS2 game is started with (`start.console` `ps2`), or null when this host
+  /// has none: always for a signed release, whose files are SwanStation's alone.
+  final String? ps2Core;
+
   /// A signed release's host: its files are checked before each start and held until the host
   /// has exited ([RetroHostStore.check], `RetroHostClient.start(checked: ...)`). False for the
   /// host of a debug or test build.
@@ -66,6 +73,11 @@ class RetroHostInstall {
   /// SwanStation's file name on [system], as libretro builds name it.
   static String coreName(HostSystem system) =>
       system == HostSystem.windows ? 'swanstation_libretro.dll' : 'swanstation_libretro.so';
+
+  /// LRPS2's file name on [system], as the host's build names it (`cores/pcsx2_libretro.*`, the
+  /// name libretro gives the PS2 core).
+  static String ps2CoreName(HostSystem system) =>
+      system == HostSystem.windows ? 'pcsx2_libretro.dll' : 'pcsx2_libretro.so';
 
   /// The host's whole environment on [system], from the launcher's [launcher] environment, or
   /// null where the host gets the launcher's own. On Linux it is the launcher's without what the
@@ -76,7 +88,8 @@ class RetroHostInstall {
       system == HostSystem.linux ? GameProcess.withoutAppImage(launcher) : null;
 
   /// The host [environment] names and the SwanStation library beside it, when [build] runs an
-  /// unchecked host and both files are there; null otherwise, and always for a release.
+  /// unchecked host and both files are there; null otherwise, and always for a release. LRPS2 is
+  /// its [ps2Core] when it is beside them too.
   static RetroHostInstall? locate(
     Map<String, String> environment, {
     required RetroHostBuild build,
@@ -89,6 +102,7 @@ class RetroHostInstall {
     if (!File(host).existsSync()) return null;
     final core = p.join(p.dirname(host), coreName(system));
     if (!File(core).existsSync()) return null;
-    return RetroHostInstall(host: host, core: core);
+    final ps2Core = p.join(p.dirname(host), ps2CoreName(system));
+    return RetroHostInstall(host: host, core: core, ps2Core: File(ps2Core).existsSync() ? ps2Core : null);
   }
 }

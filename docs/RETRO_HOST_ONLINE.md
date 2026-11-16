@@ -389,6 +389,12 @@ the other player's.
 
 ## Not yet
 
+- **PS2.** A PS2 game's lobby says online play is for PS1 games only
+  (`retroOnlineUnavailable`, before any other reason), and a friend's invite
+  is only ever matched to a PS1 game. The host has no PS2 lockstep, and
+  LRPS2 is not shown to play the same on two computers (host `docs/ps2.md`
+  "What stops PS2 online play").
+
 - **Two computers.** No match has been played between two PCs through
   AnyTogether. The WebRTC connection is tested with an in-memory link, and the
   rooms with a fake AnyTogether. Direct and relayed connections, and a Windows

@@ -53,6 +53,19 @@ const retroCapabilityCoreIdentity = 'coreIdentity';
 /// game's region (protocol.md "status").
 const retroCapabilityGameTiming = 'gameTiming';
 
+/// The capability that plays PS2 games on LRPS2 for local players: `start.console` and
+/// `status.console` (protocol.md "Capabilities", anyps5-retro-host docs/ps2.md). Lockstep and states
+/// stay PS1 only.
+const retroCapabilityPs2 = 'ps2';
+
+/// The consoles `start.console` names and `status.console` gives (capability [retroCapabilityPs2]).
+abstract final class RetroConsole {
+  static const ps1 = 'ps1';
+  static const ps2 = 'ps2';
+
+  static const all = {ps1, ps2};
+}
+
 /// The `errorCode` values a `status` can carry, and the two the client reports itself after a host
 /// failure (protocol.md "Host failure").
 abstract final class RetroErrorCode {
@@ -277,6 +290,7 @@ class RetroStatus {
     this.discs,
     this.core,
     this.timing,
+    this.console,
   });
 
   /// What the client reports from a host failure until the UI calls `release`.
@@ -292,7 +306,8 @@ class RetroStatus {
       options = const {},
       discs = null,
       core = null,
-      timing = null;
+      timing = null,
+      console = null;
 
   final bool ready;
   final bool ended;
@@ -315,6 +330,10 @@ class RetroStatus {
   /// and from a host without [retroCapabilityGameTiming].
   final RetroTiming? timing;
 
+  /// The console the game was started as ([RetroConsole]); null from a host without
+  /// [retroCapabilityPs2].
+  final String? console;
+
   /// The status as protocol.md "status" writes it.
   Map<String, Object?> toJson() => {
     ...toFailureJson(),
@@ -328,6 +347,7 @@ class RetroStatus {
     'discs': ?discs?.toJson(),
     'core': ?core?.toJson(),
     'timing': ?timing?.toJson(),
+    'console': ?console,
   };
 
   /// The four fields protocol.md "Host failure" gives for a status the client made.
@@ -341,8 +361,14 @@ class RetroStatus {
   /// Reads a `status` result, throwing [RetroProtocolError] for a field out of what protocol.md
   /// allows. Unknown fields are ignored. A host that lists [retroCapabilityCoreIdentity]
   /// ([coreIdentity]) always sends `core`, an object or null; any other host's `core` is ignored.
-  /// The same holds for `timing` and [retroCapabilityGameTiming] ([gameTiming]).
-  static RetroStatus parse(Map<String, Object?> map, {bool coreIdentity = false, bool gameTiming = false}) {
+  /// The same holds for `timing` and [retroCapabilityGameTiming] ([gameTiming]), and for `console`,
+  /// `"ps1"` or `"ps2"`, and [retroCapabilityPs2] ([ps2]).
+  static RetroStatus parse(
+    Map<String, Object?> map, {
+    bool coreIdentity = false,
+    bool gameTiming = false,
+    bool ps2 = false,
+  }) {
     final f = RetroFields(map, 'status');
     final options = <String, RetroOption>{};
     final optionFields = f.object('options');
@@ -401,7 +427,14 @@ class RetroStatus {
       discs: discs,
       core: coreIdentity ? _core(f) : null,
       timing: gameTiming ? _timing(f) : null,
+      console: ps2 ? _console(f) : null,
     );
+  }
+
+  static String _console(RetroFields f) {
+    final console = f.string('console');
+    if (!RetroConsole.all.contains(console)) throw RetroProtocolError('status.console $console is unknown.');
+    return console;
   }
 
   static RetroTiming? _timing(RetroFields f) {

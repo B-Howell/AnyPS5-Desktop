@@ -174,6 +174,10 @@ class FakeRetroHostSession extends FakeFrameSource implements RetroHostSession {
   @override
   bool canHashXxh3 = true;
 
+  /// Whether the host lists `ps2`, so a PS2 game can be started on it.
+  @override
+  bool canPlayPs2 = true;
+
   @override
   String hostVersion = '1.0.0';
 

@@ -56,13 +56,14 @@ import '../core/package_install.dart';
 import '../core/power.dart';
 import '../core/prepare_queue.dart';
 import '../core/relinker_flags.dart';
+import '../core/retro_host/ps2_bios.dart';
 import '../core/retro_host/retro_graphics_catalog.dart';
 import '../core/retro_host/retro_graphics_optimizer.dart';
 import '../core/retro_host/retro_graphics_profile.dart';
 import '../core/retro_host/retro_hardware.dart';
 import '../core/retro_host/retro_host_client.dart' show RetroHostClient, RetroHostEnd;
 import '../core/retro_host/retro_host_install.dart';
-import '../core/retro_host/retro_host_protocol.dart' show RetroErrorCode, RetroOption;
+import '../core/retro_host/retro_host_protocol.dart' show RetroConsole, RetroErrorCode, RetroOption;
 import '../core/retro_host/retro_host_release.dart' show RetroHostChecked, RetroHostReleaseFailure;
 import '../core/retro_host/retro_host_session.dart' show RetroHostSession, RetroHostStartRequest;
 import '../core/retro_host/retro_keyboard.dart';
@@ -185,6 +186,13 @@ class Preferences {
     }
     ..showRetroFolders = json['showRetroFolders'] == true
     ..retroHostPs1 = json['retroHostPs1'] == true
+    ..retroHostPs2 = json['retroHostPs2'] == true
+    ..retroHostPs2Bios = switch (json['retroHostPs2Bios']) {
+      {'file': final String file, 'version': final String version}
+          when p.basename(file) == file && file.isNotEmpty && version.length == 14 =>
+        Ps2Bios(fileName: file, version: version),
+      _ => null,
+    }
     ..retroHostVolume = switch (json['retroHostVolume']) {
       final num value => value.toInt().clamp(0, 100),
       _ => 100,
@@ -326,6 +334,16 @@ class Preferences {
   /// launcher's window through the emulator host (retro_host_play.dart) instead of DuckStation.
   /// Off until turned on; it acts only where a host is found ([RetroHostInstall.locate]).
   bool retroHostPs1 = false;
+
+  /// Settings › Emulators › Run PS2 games in the separate host: a PS2 disc plays in the launcher's
+  /// window through the emulator host instead of PCSX2. Off until turned on; it acts only where a
+  /// host with LRPS2 is found ([RetroHostInstall.ps2Core]).
+  bool retroHostPs2 = false;
+
+  /// The PS2 BIOS the player chose in Settings › Emulators, copied into the host's `pcsx2/bios`
+  /// folder ([Ps2Bios.install]): its file name there, given as LRPS2's `pcsx2_bios` option, and its
+  /// version text, for the row. Never its contents.
+  Ps2Bios? retroHostPs2Bios;
 
   /// The emulator host's volume in percent and whether it is muted, as the player last set them
   /// in the game's menu; every PS1 game in the host starts with them.
@@ -528,6 +546,8 @@ class Preferences {
     if (retroEmulators.isNotEmpty) 'retroEmulators': retroEmulators,
     if (showRetroFolders) 'showRetroFolders': true,
     if (retroHostPs1) 'retroHostPs1': true,
+    if (retroHostPs2) 'retroHostPs2': true,
+    if (retroHostPs2Bios case final bios?) 'retroHostPs2Bios': {'file': bios.fileName, 'version': bios.version},
     if (retroHostVolume != 100) 'retroHostVolume': retroHostVolume,
     if (retroHostMuted) 'retroHostMuted': true,
     if (retroHostOptions.isNotEmpty) 'retroHostOptions': retroHostOptions,
