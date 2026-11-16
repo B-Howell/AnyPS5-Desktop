@@ -52,6 +52,7 @@ class _Pair {
     bool guestRolls = true,
     Future<LockstepHost?> Function(Ps1LockstepHello hello)? prepare,
     double? Function()? frameRate,
+    double? Function()? guestFrameRate,
   }) : work = Directory.systemTemp.createTempSync('lockstep-match-') {
     final (a, b) = TestLink.pair(latency, jitter: jitter, loss: loss);
     hostLink = a;
@@ -81,7 +82,7 @@ class _Pair {
         final game = prepare == null ? guestGame : await prepare(hello);
         return game == null ? null : (host: game, core: guestCore ?? _linuxCore);
       },
-      frameRate: frameRate,
+      frameRate: guestFrameRate ?? frameRate,
     );
   }
 
@@ -343,30 +344,43 @@ void main() {
     // The rates real hosts gave (test/fixtures/retro_host/game_timing_swanstation.json).
     const palFps = 49.74681854248047;
     const ntscFps = 59.81733322143555;
-    var fps = palFps;
+    var hostFps = palFps;
+    var guestFps = palFps;
     final pair = _Pair(
       latency: const Duration(milliseconds: 30),
       hostIdentity: _rollbackIdentity,
       guestIdentity: _guestRollbackIdentity,
-      frameRate: () => fps,
+      frameRate: () => hostFps,
+      guestFrameRate: () => guestFps,
     );
     pair.run();
     await pair.until(() => pair.hostMatch.phase == Ps1LockstepPhase.playing && pair.hostGame.steps.length > 30);
-    int rate(LockstepHost game, Duration span, int before) =>
-        ((game.steps.length - before) / span.inMilliseconds * 1000).round();
-    const span = Duration(seconds: 2);
-    var before = pair.hostGame.steps.length;
-    await Future<void>.delayed(span);
-    final pal = rate(pair.hostGame, span, before);
-    expect(pal, inInclusiveRange(44, 51), reason: 'a PAL game steps about 50 frames a second, not 60');
+
+    /// The frames each game is stepped a second over [span], timed by the steps counted and a
+    /// stopwatch, so a late wake-up does not count as frames.
+    Future<(double, double)> rates(Duration span) async {
+      final watch = Stopwatch()..start();
+      final host = pair.hostGame.steps.length;
+      final guest = pair.guestGame.steps.length;
+      await Future<void>.delayed(span);
+      final seconds = watch.elapsedMicroseconds / Duration.microsecondsPerSecond;
+      return ((pair.hostGame.steps.length - host) / seconds, (pair.guestGame.steps.length - guest) / seconds);
+    }
+
+    final (hostPal, guestPal) = await rates(const Duration(seconds: 2));
+    expect(hostPal, inInclusiveRange(44, 51), reason: 'a PAL game steps about 50 frames a second, not 60');
+    expect(guestPal, inInclusiveRange(44, 51), reason: "the friend's PAL game too");
     expect(pair.hostMatch.frameTime.inMicroseconds, 20102);
-    fps = ntscFps;
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    before = pair.hostGame.steps.length;
-    await Future<void>.delayed(span);
-    final ntscRate = rate(pair.hostGame, span, before);
-    expect(ntscRate, inInclusiveRange(54, 61), reason: 'once the game sets an NTSC mode the clock follows it');
-    expect(pair.hostMatch.lastMatched, isNotNull, reason: 'both games stayed alike through the change');
+    final matched = pair.hostMatch.lastMatched!;
+    hostFps = ntscFps;
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    guestFps = ntscFps;
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    final (hostNtsc, guestNtsc) = await rates(const Duration(seconds: 2));
+    expect(hostNtsc, inInclusiveRange(54, 61), reason: 'once the game sets an NTSC mode the clock follows it');
+    expect(guestNtsc, inInclusiveRange(54, 61), reason: "the friend's clock follows its own host's next status");
+    await pair.until(() => pair.hostMatch.lastMatched! > matched + 120 && pair.guestMatch.lastMatched! > matched + 120);
+    expect(pair.hostMatch.end, isNull, reason: 'both games stayed alike through the change, seen a poll apart');
     await pair.close();
   });
 
