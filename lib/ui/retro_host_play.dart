@@ -275,15 +275,17 @@ extension RetroHostPlaying on AppModel {
       session = kept;
       _padLog?.call('emulator host: the kept ${install.host} plays the next game');
     } else {
-      final RetroHostChecked? checked;
-      try {
-        checked = await _checkRetroHost(install);
-      } on RetroHostReleaseFailure {
-        return null;
-      }
-      if (_disposed || starting != null || running != null || retroPlay != null) {
-        checked?.release();
-        return null;
+      RetroHostChecked? checked;
+      if (install.checked) {
+        try {
+          checked = await _checkRetroHost(install);
+        } on RetroHostReleaseFailure {
+          return null;
+        }
+        if (_disposed || starting != null || running != null || retroPlay != null) {
+          checked?.release();
+          return null;
+        }
       }
       try {
         session = openRetroHost(install, checked: checked, volume: volume, muted: muted);
