@@ -212,10 +212,15 @@ void main() {
     model.preferences.retroHostPs2Bios = const Ps2Bios(fileName: 'console.bin', version: '0220AC20060210');
     model.open(Layer.settings);
     model.selectCategory(model.panelCategories().indexWhere((category) => category.id == 'emulators'));
+    model.panelRow = model.panelCategories()[model.panelCategory].rows.indexWhere(
+      (row) => row.id == 'retro-host-ps2-bios',
+    );
     await pumpLauncher(tester, model);
     expect(find.text('Run PS2 games in the separate host'), findsOneWidget);
     expect(find.text('PS2 BIOS'), findsOneWidget);
     expect(find.text('USA BIOS, version 2.20 (2006). Select to choose another.'), findsOneWidget);
+    await tester.ensureVisible(find.text('PS2 BIOS'));
+    await settle(tester);
     await expectLater(shell, matchesGoldenFile('goldens/settings_emulators_host_ps2_en.png'));
   });
 
