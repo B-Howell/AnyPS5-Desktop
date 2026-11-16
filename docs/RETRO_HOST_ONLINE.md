@@ -7,10 +7,11 @@ and its own copy of the game; only controller input crosses the network, and
 both games run each frame with the same input. This is the launcher's side of
 the host repository's design, `docs/netplay.md`, and of the protocol's
 "Lockstep" and "Rollback" sections (capabilities `ps1Lockstep` and
-`ps1Rollback`), and of the core build identity (`status.core`, capability
-`coreIdentity`, and netplay.md "Core build identity"), all on the
-`netplay-design` branch of
-[anyps5-retro-host](https://github.com/B-Howell/anyps5-retro-host) at fb85606,
+`ps1Rollback`), of the core build identity (`status.core`, capability
+`coreIdentity`, and netplay.md "Core build identity", at fb85606) and of the
+game's frame rate (`status.timing`, capability `gameTiming`, and netplay.md
+"Frame rate", at 098cc0a), all on the `netplay-design` branch of
+[anyps5-retro-host](https://github.com/B-Howell/anyps5-retro-host),
 whose SwanStation patches make the state a friend joins from fit for netplay
 (it names no path, names the disc by its place in the disc list, and carries
 the analog-mode button combination and each controller's mode), make a
@@ -24,8 +25,8 @@ lockstep.
 | File | What it does |
 | --- | --- |
 | [`lib/core/retro_host/retro_lockstep.dart`](../lib/core/retro_host/retro_lockstep.dart) | The protocol's lockstep and rollback messages: `RetroLockstepSettings` (the `lockstep` argument, with the rollback window), `RetroStatePosition` (what `saveState` and `loadState` give, with the `micros` they took), `RetroStateFile` (the state file's header), `RetroStep` (a port null when predicted), `RetroCorrect`, `RetroSync`, `RetroRollback`, and `RetroLockstepTracker`, which holds the client and the host to the order of steps, corrections, syncs and rollbacks. `RetroLockstepHost` is what a match uses of a host. |
-| [`lib/core/retro_host/retro_host_client.dart`](../lib/core/retro_host/retro_host_client.dart) | `lockstep`, `leaveLockstep`, `saveState`, `loadState`, `step`, `correct`, `canRollback`, `canIdentifyCore` and the `syncs` and `rollbacks` streams ([RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md), "Lockstep", "Rollback" and "Core identity"). |
-| [`lib/core/retro_host/retro_host_protocol.dart`](../lib/core/retro_host/retro_host_protocol.dart) | `RetroCore`, the core a game loaded as `status.core` names it, and `RetroCore.playsWith`, the rule two players' cores are compared by (see "The cores"). |
+| [`lib/core/retro_host/retro_host_client.dart`](../lib/core/retro_host/retro_host_client.dart) | `lockstep`, `leaveLockstep`, `saveState`, `loadState`, `step`, `correct`, `canRollback`, `canIdentifyCore`, `canReportTiming` and the `syncs` and `rollbacks` streams ([RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md), "Lockstep", "Rollback" and "Core identity and timing"). |
+| [`lib/core/retro_host/retro_host_protocol.dart`](../lib/core/retro_host/retro_host_protocol.dart) | `RetroCore`, the core a game loaded as `status.core` names it, and `RetroCore.playsWith`, the rule two players' cores are compared by (see "The cores"); `RetroTiming`, the game's frame rate and region from `status.timing` (see "Rollback"). |
 | [`lib/core/online/ps1_netplay_wire.dart`](../lib/core/online/ps1_netplay_wire.dart) | `Ps1InputWire`: the input datagram, up to eight frames of one player's controller with the match's epoch and an acknowledgement. It is the input wire of the launcher's own PS1 online play on the fork's integrated branch, unchanged, as netplay.md asks. |
 | [`lib/core/online/ps1_lockstep_control.dart`](../lib/core/online/ps1_lockstep_control.dart) | The reliable messages between the two launchers: `hello`, `ready`, `ping` and `pong`, `start`, the state's `chunk`s, `loaded`, `hash`, `advantage`, `pause` and `leave`, each read strictly (version 4). |
 | [`lib/core/online/ps1_lockstep_match.dart`](../lib/core/online/ps1_lockstep_match.dart) | `Ps1LockstepMatch`: one match, from the hellos to the end, in plain lockstep or in rollback, with its timing (`timingFor`) and `Ps1RollbackHealth`. `Ps1LockstepIdentity` is what a launcher plays with, `Ps1LockstepGuest` the friend's game once it is ready, and `Ps1LockstepLink` the two channels it needs. |
@@ -193,9 +194,19 @@ launcher:
   and a window of 4. A round trip that would need more than 8 raises the delay
   instead, up to 8 frames, so rollback plays up to about a 430 ms round trip
   where lockstep stops at about 233 ms (`Ps1LockstepMatch.timingFor`).
-- **One clock.** Each launcher steps its host on its own frame clock, one
-  frame each 16.667 ms, and the host runs each step as it comes (`paced`
-  false). A host that also kept to its core's own frame rate would run behind
+- **One clock.** Each launcher steps its host on its own frame clock and the
+  host runs each step as it comes (`paced` false). The clock runs at the
+  game's own frame rate, its host's `status.timing.fps` (`gameTiming`), as
+  protocol.md "Rollback" asks: about 59.82 frames a second in SwanStation's
+  progressive NTSC mode and 49.75 in its PAL mode, so a PAL game runs at 50 as
+  on a console. When a game changes its video mode the next `status` (every
+  poll of the game) gives the new rate, and the frames from the one then due
+  come at it. Both players' hosts give the same rate at the same frame, as it
+  comes from the emulated console. A host without `gameTiming` gives none, and
+  the clock runs at 60 (`Ps1LockstepMatch.defaultFrameTime`). The round trip
+  is counted in frames of that length too, for the delay and the window, in
+  plain lockstep as well, where the host keeps to the same rate itself; so is
+  whether a rollback takes longer than a frame. A host that also kept to its core's own frame rate would run behind
   the steps by however far the two clocks drift apart, and the other player's
   input would then come before the frame ran, so nothing would be predicted:
   measured against two real hosts with a 100 ms round trip, a paced host rolled
@@ -246,6 +257,19 @@ the other player's.
   tests and the media test take their cores from it
   ([`test/core/online/lockstep_test_support.dart`](../test/core/online/lockstep_test_support.dart)
   reads it as the client does).
+- [`test/fixtures/retro_host/game_timing_swanstation.json`](../test/fixtures/retro_host/game_timing_swanstation.json)
+  holds what the Windows x64 and Linux x64 release packages of
+  `netplay-design` at 098cc0a (release workflow run 43792444764) sent about
+  their games' timing: the psyqo hello disc on an auto-detected console
+  (`ntsc`, 59.817 frames a second) and the host's corner program in a PAL
+  video mode on a PAL console (`pal`, 49.747), the same on both systems.
+  [`test/core/retro_host/retro_status_identity_test.dart`](../test/core/retro_host/retro_status_identity_test.dart)
+  reads both fixtures as the client does, and refuses a `core` or `timing`
+  out of what protocol.md allows. In
+  [`test/core/online/ps1_lockstep_match_test.dart`](../test/core/online/ps1_lockstep_match_test.dart)
+  two launchers in rollback step a PAL game about 50 times a second and,
+  once its rate becomes NTSC's, about 60, and a PAL game's round trip is
+  counted in its longer frames.
 - [`test/core/retro_host/retro_lockstep_test.dart`](../test/core/retro_host/retro_lockstep_test.dart)
   replays what real hosts sent:
   [`test/fixtures/retro_host/lockstep_swanstation.json`](../test/fixtures/retro_host/lockstep_swanstation.json),
@@ -332,12 +356,9 @@ the other player's.
   cores"), and a Windows and a Linux release core were recorded naming the
   same identity, but no match has yet been played between a Windows and a
   Linux PC: the RAM checks are what would show their games differ.
-- **The frame rate in rollback.** The launcher's frame clock runs at 60 Hz,
-  and in rollback it is the game's only clock. An NTSC game (59.94 Hz on a
-  console) runs a tenth of a percent fast, and a PAL game would run at 60 Hz
-  instead of 50. The host reports no frame rate (the core's
-  `retro_system_av_info.timing.fps` stays in the host); it would need to give
-  it, for example in the `lockstep` reply, so the clock can follow it.
+- **A real PAL game online.** The frame clock follows `status.timing.fps`,
+  checked with the rates real hosts gave and with test hosts in rollback, but
+  no PAL disc has been played in a match between two real hosts.
 - **Rollback cost.** With a `sync` every 60 frames, a rollback here took 16 to
   21 ms on average against two real hosts (OpenGL, 1x, Windows), for 1.7
   frames run again each; netplay.md's figures for CI runners are 3 to 6 ms a

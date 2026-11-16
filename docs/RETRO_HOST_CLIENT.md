@@ -16,7 +16,7 @@ it, the game's picture and the object that runs one game, is described in
 | [`native/retro_host/anyps5_retro_host.c`](../native/retro_host/anyps5_retro_host.c) | Starts the host with its control stream. Reads and writes whole messages on threads of its own. Watches the host exit. Maps the frame ring after the protocol's memory checks. Built by [`hook/build.dart`](../hook/build.dart). |
 | [`lib/core/retro_host/retro_host_native.dart`](../lib/core/retro_host/retro_host_native.dart) | The Dart bindings for that library. |
 | [`lib/core/retro_host/strict_json.dart`](../lib/core/retro_host/strict_json.dart) | Reads message bodies as the protocol's "Values" section says. `dart:convert` silently keeps the last of two equal keys and keeps lone surrogates; the protocol makes both errors. |
-| [`lib/core/retro_host/retro_host_protocol.dart`](../lib/core/retro_host/retro_host_protocol.dart) | The protocol's values, field checks and the game's `status`, with `RetroCore`, the core a game loaded (see "Core identity"). |
+| [`lib/core/retro_host/retro_host_protocol.dart`](../lib/core/retro_host/retro_host_protocol.dart) | The protocol's values, field checks and the game's `status`, with `RetroCore`, the core a game loaded, and `RetroTiming`, its frame rate and region (see "Core identity and timing"). |
 | [`lib/core/retro_host/frame_ring.dart`](../lib/core/retro_host/frame_ring.dart) | Checks a ring's header and growth. Pins the newest frame and checks its size. |
 | [`lib/core/retro_host/retro_host_client.dart`](../lib/core/retro_host/retro_host_client.dart) | One host process, as described in the sections below. |
 | [`lib/core/retro_host/retro_lockstep.dart`](../lib/core/retro_host/retro_lockstep.dart) | The lockstep and rollback messages and the rules of their order (see "Lockstep" and "Rollback"). |
@@ -396,7 +396,7 @@ ahead of the other player's input (protocol.md "Rollback"):
   changed its window then, is one too, as the host refuses both. A
   `loadState` forgets the frames not confirmed.
 
-## Core identity
+## Core identity and timing
 
 A host that lists `coreIdentity` (`canIdentifyCore`) names the core each game
 loaded in `status.core` (protocol.md "status"):
@@ -413,6 +413,13 @@ loaded in `status.core` (protocol.md "status"):
   SwanStation builds report; `playsWith` is protocol.md's rule: both strings
   equal and the version identified. The client does not judge the value
   itself.
+- **Timing.** A host that lists `gameTiming` (`canReportTiming`) gives
+  `status.timing`, read as `RetroStatus.timing`: `fps`, above 1 and below
+  1000, the rate the host paces the game to, and `region` (`ntsc`, `pal` or
+  `""`); null until the core has loaded the game. A `status` without it, or
+  with a value out of those, is a protocol error from such a host; another
+  host's is not read. A match's frame clock follows `fps` in rollback
+  ([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md), "Rollback").
 
 ## Tests
 

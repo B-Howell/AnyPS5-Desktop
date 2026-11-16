@@ -51,6 +51,7 @@ class _Pair {
     bool hostRolls = true,
     bool guestRolls = true,
     Future<LockstepHost?> Function(Ps1LockstepHello hello)? prepare,
+    double? Function()? frameRate,
   }) : work = Directory.systemTemp.createTempSync('lockstep-match-') {
     final (a, b) = TestLink.pair(latency, jitter: jitter, loss: loss);
     hostLink = a;
@@ -66,6 +67,7 @@ class _Pair {
       paused: () => hostPaused,
       host: hostGame,
       options: const {'swanstation_GPU_ResolutionScale': '4'},
+      frameRate: frameRate,
     );
     guestMatch = Ps1LockstepMatch(
       hosting: false,
@@ -79,6 +81,7 @@ class _Pair {
         final game = prepare == null ? guestGame : await prepare(hello);
         return game == null ? null : (host: game, core: guestCore ?? _linuxCore);
       },
+      frameRate: frameRate,
     );
   }
 
@@ -334,6 +337,48 @@ void main() {
     expect(rollback(430), (delay: 8, window: 8));
     expect(rollback(470), isNull);
     expect(Ps1LockstepMatch.timingFor(const Duration(milliseconds: 100), rollback: false), (delay: 4, window: null));
+  });
+
+  test("in rollback each launcher steps its game at the game's own frame rate, and follows a change", () async {
+    // The rates real hosts gave (test/fixtures/retro_host/game_timing_swanstation.json).
+    const palFps = 49.74681854248047;
+    const ntscFps = 59.81733322143555;
+    var fps = palFps;
+    final pair = _Pair(
+      latency: const Duration(milliseconds: 30),
+      hostIdentity: _rollbackIdentity,
+      guestIdentity: _guestRollbackIdentity,
+      frameRate: () => fps,
+    );
+    pair.run();
+    await pair.until(() => pair.hostMatch.phase == Ps1LockstepPhase.playing && pair.hostGame.steps.length > 30);
+    int rate(LockstepHost game, Duration span, int before) =>
+        ((game.steps.length - before) / span.inMilliseconds * 1000).round();
+    const span = Duration(seconds: 2);
+    var before = pair.hostGame.steps.length;
+    await Future<void>.delayed(span);
+    final pal = rate(pair.hostGame, span, before);
+    expect(pal, inInclusiveRange(44, 51), reason: 'a PAL game steps about 50 frames a second, not 60');
+    expect(pair.hostMatch.frameTime.inMicroseconds, 20102);
+    fps = ntscFps;
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    before = pair.hostGame.steps.length;
+    await Future<void>.delayed(span);
+    final ntscRate = rate(pair.hostGame, span, before);
+    expect(ntscRate, inInclusiveRange(54, 61), reason: 'once the game sets an NTSC mode the clock follows it');
+    expect(pair.hostMatch.lastMatched, isNotNull, reason: 'both games stayed alike through the change');
+    await pair.close();
+  });
+
+  test('a PAL game counts the round trip in its longer frames', () {
+    final pal = const RetroTiming(fps: 49.74681854248047).frame;
+    expect(Ps1LockstepMatch.delayFor(const Duration(milliseconds: 270)), isNull);
+    expect(Ps1LockstepMatch.delayFor(const Duration(milliseconds: 270), frame: pal), 8);
+    expect(Ps1LockstepMatch.delayFor(const Duration(milliseconds: 100), frame: pal), 4);
+    expect(Ps1LockstepMatch.timingFor(const Duration(milliseconds: 200), rollback: true, frame: pal), (
+      delay: 2,
+      window: 6,
+    ));
   });
 
   test('input delay follows the round trip, as netplay.md gives it', () {

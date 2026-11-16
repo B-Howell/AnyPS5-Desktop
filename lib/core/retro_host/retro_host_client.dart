@@ -319,6 +319,10 @@ class RetroHostClient implements RetroHostSession {
   @override
   bool get canIdentifyCore => _capabilities.contains(retroCapabilityCoreIdentity);
 
+  /// Whether the host lists `gameTiming`, so each `status` gives the game's frame rate, which a
+  /// match's frame clock follows in rollback.
+  bool get canReportTiming => _capabilities.contains(retroCapabilityGameTiming);
+
   /// Each `rollback` message of a game in rollback (protocol.md "rollback message"), checked.
   @override
   Stream<RetroRollback> get rollbacks => _rollbacks.stream;
@@ -415,7 +419,7 @@ class RetroHostClient implements RetroHostSession {
     if (RetroStatus.isFailureReport(map)) {
       return RetroStatus.failed(error: map['error']! as String, errorCode: map['errorCode']! as String);
     }
-    return RetroStatus.parse(map, coreIdentity: canIdentifyCore);
+    return RetroStatus.parse(map, coreIdentity: canIdentifyCore, gameTiming: canReportTiming);
   }
 
   static const _stopPoll = Duration(milliseconds: 250);
@@ -729,7 +733,11 @@ class RetroHostClient implements RetroHostSession {
           _lastStatusEnded = false;
           if (afterStop) _stopDeadline = null;
         } else {
-          final status = RetroStatus.parse(_object(result, 'status'), coreIdentity: canIdentifyCore);
+          final status = RetroStatus.parse(
+            _object(result, 'status'),
+            coreIdentity: canIdentifyCore,
+            gameTiming: canReportTiming,
+          );
           if (status.ended && !_lastStatusEnded) _zeroRumble();
           _lastStatusEnded = status.ended;
           if (status.ended && afterStop) _stopDeadline = null;

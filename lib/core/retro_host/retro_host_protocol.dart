@@ -49,6 +49,10 @@ const retroCapabilityPs1 = 'ps1';
 /// (protocol.md "status").
 const retroCapabilityCoreIdentity = 'coreIdentity';
 
+/// The capability that adds `timing` to `status`: the frame rate the host paces the game to and the
+/// game's region (protocol.md "status").
+const retroCapabilityGameTiming = 'gameTiming';
+
 /// The `errorCode` values a `status` can carry, and the two the client reports itself after a host
 /// failure (protocol.md "Host failure").
 abstract final class RetroErrorCode {
@@ -226,6 +230,36 @@ class RetroCore {
   String toString() => '$name $version';
 }
 
+/// A game's frame rate and region, as `status.timing` gives them (capability
+/// [retroCapabilityGameTiming]). Both come from the emulated console, so two players' hosts running
+/// the same disc on the same core build give the same values at the same frame.
+class RetroTiming {
+  const RetroTiming({required this.fps, this.region = ''});
+
+  /// The frames a second the host runs the game at when it keeps its own time: the vertical
+  /// frequency of the video mode the game set, about 60 for NTSC and 50 for PAL.
+  final double fps;
+
+  /// `ntsc`, `pal`, or `""` for a region the core names otherwise.
+  final String region;
+
+  static const regions = {'ntsc', 'pal', ''};
+
+  /// How long one frame lasts at [fps].
+  Duration get frame => Duration(microseconds: (Duration.microsecondsPerSecond / fps).round());
+
+  Map<String, Object?> toJson() => {'fps': fps, 'region': region};
+
+  @override
+  bool operator ==(Object other) => other is RetroTiming && other.fps == fps && other.region == region;
+
+  @override
+  int get hashCode => Object.hash(fps, region);
+
+  @override
+  String toString() => '$fps fps, $region';
+}
+
 /// A loaded game's state, from `status`, or the shorter form the client gives after a host failure.
 class RetroStatus {
   const RetroStatus({
@@ -242,6 +276,7 @@ class RetroStatus {
     this.options = const {},
     this.discs,
     this.core,
+    this.timing,
   });
 
   /// What the client reports from a host failure until the UI calls `release`.
@@ -256,7 +291,8 @@ class RetroStatus {
       progressPercent = null,
       options = const {},
       discs = null,
-      core = null;
+      core = null,
+      timing = null;
 
   final bool ready;
   final bool ended;
@@ -275,6 +311,10 @@ class RetroStatus {
   /// without [retroCapabilityCoreIdentity].
   final RetroCore? core;
 
+  /// The game's frame rate and region; null until the core has loaded the game, when it did not,
+  /// and from a host without [retroCapabilityGameTiming].
+  final RetroTiming? timing;
+
   /// The status as protocol.md "status" writes it.
   Map<String, Object?> toJson() => {
     ...toFailureJson(),
@@ -287,6 +327,7 @@ class RetroStatus {
     'options': {for (final option in options.values) option.key: option.toJson()},
     'discs': ?discs?.toJson(),
     'core': ?core?.toJson(),
+    'timing': ?timing?.toJson(),
   };
 
   /// The four fields protocol.md "Host failure" gives for a status the client made.
@@ -300,7 +341,8 @@ class RetroStatus {
   /// Reads a `status` result, throwing [RetroProtocolError] for a field out of what protocol.md
   /// allows. Unknown fields are ignored. A host that lists [retroCapabilityCoreIdentity]
   /// ([coreIdentity]) always sends `core`, an object or null; any other host's `core` is ignored.
-  static RetroStatus parse(Map<String, Object?> map, {bool coreIdentity = false}) {
+  /// The same holds for `timing` and [retroCapabilityGameTiming] ([gameTiming]).
+  static RetroStatus parse(Map<String, Object?> map, {bool coreIdentity = false, bool gameTiming = false}) {
     final f = RetroFields(map, 'status');
     final options = <String, RetroOption>{};
     final optionFields = f.object('options');
@@ -358,7 +400,19 @@ class RetroStatus {
       options: options,
       discs: discs,
       core: coreIdentity ? _core(f) : null,
+      timing: gameTiming ? _timing(f) : null,
     );
+  }
+
+  static RetroTiming? _timing(RetroFields f) {
+    if (!f.has('timing')) throw const RetroProtocolError('status.timing is missing.');
+    if (f.map['timing'] == null) return null;
+    final t = f.object('timing');
+    final fps = t.number('fps', above: 1);
+    if (fps >= 1000) throw const RetroProtocolError('status.timing.fps must be below 1000.');
+    final region = t.string('region');
+    if (!RetroTiming.regions.contains(region)) throw RetroProtocolError('status.timing.region $region is unknown.');
+    return RetroTiming(fps: fps, region: region);
   }
 
   static RetroCore? _core(RetroFields f) {

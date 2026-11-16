@@ -307,6 +307,7 @@ extension RetroHostOnline on AppModel {
           for (final option in play.host.status?.options.values ?? const <RetroOption>[])
             option.key: option.activeValue,
         },
+        frameRate: () => play.host.status?.timing?.fps,
         onChanged: () => _retroMatchChanged(online, play),
       );
       online.step = RetroOnlineStep.match;
@@ -425,6 +426,7 @@ extension RetroHostOnline on AppModel {
           final core = started.host.status?.core;
           return core == null ? null : (host: started.host.session, core: core);
         }(),
+        frameRate: () => play?.host.status?.timing?.fps,
         onChanged: () {
           if (play case final started?) _retroMatchChanged(online, started);
           _changed();

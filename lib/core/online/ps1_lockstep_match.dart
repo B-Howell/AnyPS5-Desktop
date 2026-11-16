@@ -148,6 +148,7 @@ class Ps1RollbackHealth {
     required this.frames,
     required this.micros,
     required this.waited,
+    this.frame = Ps1LockstepMatch.defaultFrameTime,
   });
 
   /// The match's rollback window in frames.
@@ -166,6 +167,9 @@ class Ps1RollbackHealth {
   /// time sync).
   final int waited;
 
+  /// How long a frame of the game lasts now.
+  final Duration frame;
+
   /// Rollbacks a minute, at the span's rate.
   int get perMinute => (rollbacks * Duration.secondsPerMinute / Ps1LockstepMatch.healthSpan.inSeconds).round();
 
@@ -173,7 +177,7 @@ class Ps1RollbackHealth {
   int get millisEach => rollbacks == 0 ? 0 : (micros / rollbacks / 1000).round();
 
   /// Whether a rollback takes longer than a frame on average, so the game stutters when one comes.
-  bool get slow => rollbacks > 0 && micros / rollbacks > Ps1LockstepMatch.frameTime.inMicroseconds;
+  bool get slow => rollbacks > 0 && micros / rollbacks > frame.inMicroseconds;
 }
 
 /// One PS1 online match between two launchers, each with its own emulator host (anyps5-retro-host
@@ -207,6 +211,7 @@ class Ps1LockstepMatch {
     this.host,
     this.options = const {},
     this.prepareGuest,
+    this.frameRate,
     this.onChanged,
     this.tick = const Duration(milliseconds: 4),
     this.connectLimit = const Duration(seconds: 60),
@@ -227,8 +232,9 @@ class Ps1LockstepMatch {
   /// The most input delay a match plays with; slower connections are refused (netplay.md).
   static const maxDelay = 8;
 
-  /// A frame of a PS1 game at its 60 Hz.
-  static const frameTime = Duration(microseconds: 16667);
+  /// A frame at 60 frames a second: the frame clock of a match whose host gives no frame rate
+  /// (protocol.md "Rollback", "The clock").
+  static const defaultFrameTime = Duration(microseconds: 16667);
 
   /// The input delay a match in rollback plays with when the round trip allows: netplay.md's
   /// "fixed 1 or 2 frames", the rest predicted.
@@ -298,6 +304,18 @@ class Ps1LockstepMatch {
   /// null when it could not.
   final Future<Ps1LockstepGuest?> Function(Ps1LockstepHello theirs)? prepareGuest;
 
+  /// The frame rate of this player's game now, its host's `status.timing.fps` (capability
+  /// `gameTiming`): about 60 in an NTSC video mode and 50 in a PAL one. Null, or a host without
+  /// it, gives [defaultFrameTime]. Both players' hosts give the same rate at the same frame, as it
+  /// comes from the emulated console.
+  final double? Function()? frameRate;
+
+  /// How long a frame of the game lasts now ([frameRate]).
+  Duration get frameTime {
+    final fps = frameRate?.call();
+    return fps == null || !(fps > 1 && fps < 1000) ? defaultFrameTime : RetroTiming(fps: fps).frame;
+  }
+
   /// Something shown changed: the phase, the other player pausing, the end.
   final void Function()? onChanged;
 
@@ -343,6 +361,7 @@ class Ps1LockstepMatch {
       frames: _rollbackLog.fold(0, (sum, entry) => sum + entry.$2.frames),
       micros: _rollbackLog.fold(0, (sum, entry) => sum + entry.$2.micros),
       waited: _waited,
+      frame: frameTime,
     );
   }
 
@@ -404,10 +423,12 @@ class Ps1LockstepMatch {
   int _lastSync = -1;
 
   /// In rollback, the launcher's frame clock: frame [_anchorFrame] was due at [_anchorMicros] of
-  /// [_clock], and each later one a [frameTime] after the one before.
+  /// [_clock], and each later one [_frameMicros] after the one before: a [frameTime] when the clock
+  /// last looked.
   final _clock = Stopwatch();
   int _anchorFrame = 0;
   int _anchorMicros = 0;
+  int _frameMicros = defaultFrameTime.inMicroseconds;
   int _advantageSum = 0;
   int _advantageCount = 0;
   int? _theirAdvantage;
@@ -477,7 +498,11 @@ class Ps1LockstepMatch {
     _roundTripMs = (roundTrip / 1000).round();
     final game = host!;
     _lockstepOnly = _lockstepOnly || !game.canRollback;
-    final timing = timingFor(Duration(microseconds: roundTrip), rollback: !_lockstepOnly);
+    final timing = timingFor(
+      Duration(microseconds: roundTrip),
+      rollback: !_lockstepOnly,
+      frame: frameTime,
+    );
     if (timing == null) throw _finish(Ps1LockstepEnd.tooSlow);
     final delay = _delay = timing.delay;
     _window = timing.window;
@@ -605,11 +630,13 @@ class Ps1LockstepMatch {
   bool _compares(int frame) => (frame - (_window == null ? _first : 0)) % compareEvery == 0;
 
   /// The frames the other player's input comes late by with no delay: half the round trip in
-  /// frames, rounded up, and one more (netplay.md "Lockstep first, rollback after").
-  static int lateFrames(Duration roundTrip) => (roundTrip.inMicroseconds / 2 / frameTime.inMicroseconds).ceil() + 1;
+  /// frames of [frame] each, rounded up, and one more (netplay.md "Lockstep first, rollback after").
+  static int lateFrames(Duration roundTrip, {Duration frame = defaultFrameTime}) =>
+      (roundTrip.inMicroseconds / 2 / frame.inMicroseconds).ceil() + 1;
 
   /// The input delay of plain lockstep for a round trip: [lateFrames]; null above [maxDelay].
-  static int? delayFor(Duration roundTrip) => timingFor(roundTrip, rollback: false)?.delay;
+  static int? delayFor(Duration roundTrip, {Duration frame = defaultFrameTime}) =>
+      timingFor(roundTrip, rollback: false, frame: frame)?.delay;
 
   /// The timing a match plays with for a round trip; null when it is too slow. In plain lockstep
   /// the delay is [lateFrames], at most [maxDelay]. In rollback, as GGPO plays (a fixed input delay
@@ -618,8 +645,8 @@ class Ps1LockstepMatch {
   /// that leaves predicted and two more for input that comes later than usual, at most
   /// [RetroLockstepSettings.maxRollback]. A round trip that would need a wider window raises the
   /// delay instead, up to [maxDelay].
-  static Ps1LockstepTiming? timingFor(Duration roundTrip, {required bool rollback}) {
-    final late = lateFrames(roundTrip);
+  static Ps1LockstepTiming? timingFor(Duration roundTrip, {required bool rollback, Duration frame = defaultFrameTime}) {
+    final late = lateFrames(roundTrip, frame: frame);
     if (!rollback) return late > maxDelay ? null : (delay: late, window: null);
     final delay = max(min(late, rollbackDelay), late - (RetroLockstepSettings.maxRollback - _jitterFrames));
     if (delay > maxDelay) return null;
@@ -643,6 +670,7 @@ class Ps1LockstepMatch {
     _given = _first - 1;
     _lastSync = _first - 1;
     _anchorFrame = _first;
+    _frameMicros = frameTime.inMicroseconds;
     _clock.start();
     _anchorMicros = _lastAdvantageMicros = _clock.elapsedMicroseconds;
     _syncs = host!.syncs.listen(_onSync);
@@ -693,7 +721,8 @@ class Ps1LockstepMatch {
         _given = frame;
       }
       final now = _clock.elapsedMicroseconds;
-      final due = _anchorFrame + (now - _anchorMicros) ~/ frameTime.inMicroseconds;
+      _followFrameRate(now);
+      final due = _anchorFrame + (now - _anchorMicros) ~/ _frameMicros;
       if (_nextStep > due) return;
       final held = paused() || _rollbackBlocked();
       if (_nextStep < due - _catchUp || held) {
@@ -717,6 +746,17 @@ class Ps1LockstepMatch {
     } on Object {
       _finish(Ps1LockstepEnd.hostFailed);
     }
+  }
+
+  /// A new frame rate (the game changed its video mode) takes effect from the frame now due: the
+  /// frames before it keep the time they were due at, the later ones come at the new rate.
+  void _followFrameRate(int now) {
+    final length = frameTime.inMicroseconds;
+    if (length == _frameMicros) return;
+    final passed = max(0, (now - _anchorMicros) ~/ _frameMicros);
+    _anchorFrame += passed;
+    _anchorMicros += passed * _frameMicros;
+    _frameMicros = length;
   }
 
   bool _rollbackBlocked() {
@@ -751,7 +791,7 @@ class Ps1LockstepMatch {
     if (theirs != null && ours < theirs) {
       final wait = min((theirs - ours) ~/ 2, _maxWait);
       if (wait > 0) {
-        _anchorMicros += wait * frameTime.inMicroseconds;
+        _anchorMicros += wait * _frameMicros;
         _waited += wait;
       }
     }
