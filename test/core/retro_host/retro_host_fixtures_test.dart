@@ -6,6 +6,7 @@ import 'package:anyps5_desktop/core/retro_host/checked_file.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_client.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_release.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_lockstep.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -111,6 +112,37 @@ void main() {
         client.call('option', {'key': 'k', 'value': 'x' * 1100000}),
         throwsA(isA<RetroCallError>().having((e) => e.code, 'code', RetroCallError.argument)),
       ),
+    ),
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+  test(
+    'lockstep.state is never sent to a host without syncXxh3, and the next call stays in order',
+    () => _playOwn(
+      checkout,
+      python,
+      'A host with ps1Lockstep but not syncXxh3: a lockstep and a start with state are refused before they '
+          'are sent, then a status call must still be answered in order.',
+      'clean',
+      [
+        {
+          'from': 'launcher',
+          'message': {'type': 'call', 'id': 2, 'method': 'status', 'args': null},
+          'anyValueFor': ['id'],
+        },
+        {
+          'from': 'host',
+          'message': {'type': 'reply', 'id': 2, 'result': null},
+          'anyValueFor': ['id'],
+        },
+      ],
+      capabilities: const ['ps1', retroCapabilityPs1Lockstep, retroCapabilityPs1Rollback],
+      afterReady: (client) async {
+        expect(client.canLockstep, isTrue);
+        expect(client.canHashXxh3, isFalse);
+        const settings = RetroLockstepSettings(check: 60, paced: false, state: false, rollback: 4);
+        await expectLater(() => client.lockstep(settings), throwsStateError);
+        expect(() => client.call('start', {'lockstep': settings.toArgs()}), throwsStateError);
+      },
     ),
     timeout: const Timeout(Duration(seconds: 90)),
   );
@@ -695,14 +727,25 @@ Future<void> _playOwn(
   void Function(_Session session)? check,
   RetroHostChecked Function(String program, Map<String, String> paths)? checkedFor,
   void Function(_Session session, int id)? afterReply,
+  List<String> capabilities = const ['ps1'],
 }) async {
   final directory = Directory.systemTemp.createTempSync('retro-host-own-');
   try {
+    final greeting = [
+      for (final step in _greeting)
+        if ((step['message']! as Map<String, Object?>)['type'] == 'welcome')
+          {
+            ...step,
+            'message': {...step['message']! as Map<String, Object?>, 'capabilities': capabilities},
+          }
+        else
+          step,
+    ];
     final session = <String, Object?>{
       'description': name,
       'tests': ['launcher'],
       'outcome': outcome,
-      'steps': [..._greeting, ...steps],
+      'steps': [...greeting, ...steps],
     };
     final file = File(p.join(directory.path, 'own.json'))..writeAsStringSync(jsonEncode(session));
     await _Session(

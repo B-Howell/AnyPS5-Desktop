@@ -381,7 +381,9 @@ match refuses hosts that differ ([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md),
   whose `state` is null, and the host then does not serialize the core for a
   check, which under a GPU reads the console's video memory back. Null sends
   nothing, which the host takes as true. Sending it to a host without
-  `syncXxh3` is a `StateError`.
+  `syncXxh3` is a `StateError`, in `lockstep` and in `start.lockstep` alike;
+  the conformance test plays this against the fake host, and the next call
+  is still answered in order.
 - **What the launcher reads.** A match compares `RetroSync.ram` alone, so it
   sends `state` false to every host that lists `syncXxh3`. Nothing in the
   launcher reads `RetroSync.state`; the client still checks its form.
