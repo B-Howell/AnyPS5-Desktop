@@ -142,16 +142,15 @@ where the maintainers sign.
   `%LOCALAPPDATA%\AnyPS5\RetroHost` on Windows,
   `~/.local/share/AnyPS5/RetroHost` on Linux). The folder holds the unpacked
   zip, with `SHA256SUMS`, `SHA256SUMS.sig` and this system's `.files` kept
-  beside it. This departs from protocol.md as written (stage5-release
-  15c4f50), which says a release launcher runs "a host it ships with or
-  downloads into its own storage: from its own directory on Windows and
-  Linux", found with `GetModuleFileNameW` or `/proc/self/exe`. The launcher's
-  own directory cannot take a download: the AppImage mounts it read-only, and
-  the Windows installer may put it where the user cannot write. The data
-  folder is the launcher's own storage that only the user can write, which is
-  what the protocol's Linux rule for SwanStation relies on, and the toolkits
-  and ffmpeg already live there. The protocol text needs the same change in the
-  host repository (see "Not yet").
+  beside it. protocol.md "Finding and checking the host" (stage5-release
+  61ef19b, and netplay-design from 098cc0a) lets a release launcher keep a
+  host it downloads in a folder of its own data folder, for this reason: the
+  launcher's own directory often cannot take a download, as the AppImage
+  mounts it read-only and the Windows installer may put it where the user
+  cannot write. The data folder is the launcher's own storage that only the
+  user can write, which is what the protocol's Linux rule for SwanStation
+  relies on, and the toolkits and ffmpeg already live there. The checks are
+  the same wherever the host is kept.
 - **Which files are this system's.** Only the names for `windows-x64`,
   `linux-x64` or `macos-arm64`, by exact name. A release with no `.files` for
   this system, or more than one, is refused. The version is read from that
@@ -564,10 +563,6 @@ job), against the host repository at the commit named in
   host to run. The whole path was tested with a real release that the host
   repository's release workflow packed, signed with the test key
   ([RETRO_HOST_UI.md](RETRO_HOST_UI.md), "Against the real host").
-- **The protocol's storage sentence.** protocol.md still says the host
-  lives in the launcher's own directory; the launcher keeps a downloaded host
-  in its data folder (above). The host repository's text should say "its own
-  storage, which only the user can write" before a host release ships.
 - **No update check on its own.** A newer host is looked for only when the
   player selects the emulator's row in Settings › Emulators, as ffmpeg's
   download works. Nothing asks GitHub unprompted.
