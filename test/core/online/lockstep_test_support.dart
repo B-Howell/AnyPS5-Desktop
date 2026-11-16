@@ -5,8 +5,31 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:anyps5_desktop/core/online/ps1_lockstep_match.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_lockstep.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_pad.dart';
+
+/// What two real hosts sent about the core they loaded:
+/// test/fixtures/retro_host/core_identity_swanstation.json, the Windows and the Linux release
+/// packages of the host's netplay-design fb85606, each with its own SwanStation build.
+Map<String, Object?> recordedCoreIdentity(String system) =>
+    (jsonDecode(File('test/fixtures/retro_host/core_identity_swanstation.json').readAsStringSync())
+            as Map<String, Object?>)[system]!
+        as Map<String, Object?>;
+
+/// The status a real host of [system] (`windows` or `linux`) sent [when] (`first`, `ready` or
+/// `ended`), read as the client reads it from a host that lists `coreIdentity`.
+RetroStatus recordedCoreStatus(String system, String when) {
+  final replies = recordedCoreIdentity(system)['replies']! as List<Object?>;
+  final reply = replies.cast<Map<String, Object?>>().firstWhere(
+    (reply) => reply['method'] == 'status' && reply['when'] == when,
+  );
+  final result = (jsonDecode(reply['reply']! as String) as Map<String, Object?>)['result']! as Map<String, Object?>;
+  return RetroStatus.parse(result, coreIdentity: true);
+}
+
+/// The core a real host of [system] loaded, from its ready status.
+RetroCore recordedCore(String system) => recordedCoreStatus(system, 'ready').core!;
 
 /// A host that runs a lockstep frame for each step as the real one does, with a "RAM" that mixes
 /// every input it was given, as the host repository's test core does: two of them given the same
@@ -54,6 +77,9 @@ class LockstepHost implements RetroLockstepHost {
 
   @override
   bool get canLockstep => true;
+
+  @override
+  bool get canIdentifyCore => true;
 
   @override
   Stream<RetroSync> get syncs => _syncs.stream;

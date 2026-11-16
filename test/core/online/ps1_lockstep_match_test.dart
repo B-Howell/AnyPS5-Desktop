@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:anyps5_desktop/core/online/ps1_lockstep_control.dart';
 import 'package:anyps5_desktop/core/online/ps1_lockstep_match.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_pad.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
@@ -13,23 +14,23 @@ import 'package:test/test.dart';
 
 import 'lockstep_test_support.dart';
 
-const _identity = Ps1LockstepIdentity(
-  hostVersion: '1.0.0',
-  system: 'linux',
-  core: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-  disc: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-  bios: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-);
+/// The host player plays on Windows and the friend on Linux, each with the core their host's
+/// release package ships, as two real hosts reported them.
+final _windowsCore = recordedCore('windows');
+final _linuxCore = recordedCore('linux');
+
+/// What the host player plays with: its game's core is known.
+final _identity = _identityWith(core: _windowsCore);
 
 /// The same, with a host that can roll back.
-const _rollbackIdentity = Ps1LockstepIdentity(
-  hostVersion: '1.0.0',
-  system: 'linux',
-  core: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-  disc: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-  bios: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-  rollback: true,
-);
+final _rollbackIdentity = _identityWith(core: _windowsCore, rollback: true);
+
+/// What the friend plays with: its host loads its core only for the match's game.
+final _guestIdentity = _identityWith();
+final _guestRollbackIdentity = _identityWith(rollback: true);
+
+Ps1LockstepIdentity _identityWith({RetroCore? core, String disc = 'b', bool rollback = false}) =>
+    Ps1LockstepIdentity(hostVersion: '1.0.0', core: core, disc: disc * 64, bios: 'c' * 64, rollback: rollback);
 
 /// A player's controller: a different input every time it is read, so every frame's input is
 /// seen to reach both hosts in the same place.
@@ -43,8 +44,9 @@ class _Pair {
     Duration latency = const Duration(milliseconds: 20),
     Duration jitter = Duration.zero,
     double loss = 0,
-    Ps1LockstepIdentity hostIdentity = _identity,
-    Ps1LockstepIdentity guestIdentity = _identity,
+    Ps1LockstepIdentity? hostIdentity,
+    Ps1LockstepIdentity? guestIdentity,
+    RetroCore? guestCore,
     int guestSalt = 0,
     bool hostRolls = true,
     bool guestRolls = true,
@@ -58,7 +60,7 @@ class _Pair {
     hostMatch = Ps1LockstepMatch(
       hosting: true,
       link: a,
-      identity: hostIdentity,
+      identity: hostIdentity ?? _identity,
       work: Directory(p.join(work.path, 'host')),
       localInput: _pad(1),
       paused: () => hostPaused,
@@ -68,13 +70,14 @@ class _Pair {
     guestMatch = Ps1LockstepMatch(
       hosting: false,
       link: b,
-      identity: guestIdentity,
+      identity: guestIdentity ?? _guestIdentity,
       work: Directory(p.join(work.path, 'guest')),
       localInput: _pad(2),
       paused: () => false,
       prepareGuest: (hello) async {
         guestOptions = hello.options;
-        return prepare == null ? guestGame : await prepare(hello);
+        final game = prepare == null ? guestGame : await prepare(hello);
+        return game == null ? null : (host: game, core: guestCore ?? _linuxCore);
       },
     );
   }
@@ -161,7 +164,7 @@ void main() {
         jitter: const Duration(milliseconds: 20),
         loss: 0.1,
         hostIdentity: _rollbackIdentity,
-        guestIdentity: _rollbackIdentity,
+        guestIdentity: _guestRollbackIdentity,
       );
       pair.run();
       await pair.until(
@@ -215,7 +218,7 @@ void main() {
     for (final (hostRolls, guestRolls) in [(false, true), (true, false)]) {
       final pair = _Pair(
         hostIdentity: hostRolls ? _rollbackIdentity : _identity,
-        guestIdentity: guestRolls ? _rollbackIdentity : _identity,
+        guestIdentity: guestRolls ? _guestRollbackIdentity : _guestIdentity,
         hostRolls: hostRolls,
         guestRolls: guestRolls,
       );
@@ -238,7 +241,7 @@ void main() {
     final pair = _Pair(
       latency: const Duration(milliseconds: 60),
       hostIdentity: _rollbackIdentity,
-      guestIdentity: _rollbackIdentity,
+      guestIdentity: _guestRollbackIdentity,
     );
     pair.run();
     await pair.until(
@@ -254,15 +257,7 @@ void main() {
   });
 
   test("a friend whose disc is not the host player's is told so, and nothing is held", () async {
-    final pair = _Pair(
-      guestIdentity: const Ps1LockstepIdentity(
-        hostVersion: '1.0.0',
-        system: 'linux',
-        core: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        disc: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-        bios: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-      ),
-    );
+    final pair = _Pair(guestIdentity: _identityWith(disc: 'd'));
     pair.run();
     await pair.hostMatch.done;
     await pair.guestMatch.done;
@@ -351,7 +346,7 @@ void main() {
 
   test('a control message of another shape is refused', () {
     Uint8List bytes(Object value) => Uint8List.fromList(utf8.encode(jsonEncode(value)));
-    expect(Ps1LockstepMessage.decode(bytes({'v': 3, 'type': 'pause', 'paused': true})), isA<Ps1LockstepPause>());
+    expect(Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'pause', 'paused': true})), isA<Ps1LockstepPause>());
     expect(
       () => Ps1LockstepMessage.decode(bytes({'v': 1, 'type': 'leave'})),
       throwsFormatException,
@@ -362,17 +357,17 @@ void main() {
       throwsFormatException,
       reason: 'version 2 had no rollback',
     );
-    expect(() => Ps1LockstepMessage.decode(bytes({'v': 3, 'type': 'leave', 'extra': 1})), throwsFormatException);
+    expect(() => Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'leave', 'extra': 1})), throwsFormatException);
     expect(
-      () => Ps1LockstepMessage.decode(bytes({'v': 3, 'type': 'hash', 'frame': 0, 'ram': 'ABC'})),
+      () => Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'hash', 'frame': 0, 'ram': 'ABC'})),
       throwsFormatException,
     );
-    expect(() => Ps1LockstepMessage.decode(bytes({'v': 3, 'type': 'what'})), throwsFormatException);
+    expect(() => Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'what'})), throwsFormatException);
     expect(
-      (Ps1LockstepMessage.decode(bytes({'v': 3, 'type': 'advantage', 'frames': -4})) as Ps1LockstepAdvantage).frames,
+      (Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'advantage', 'frames': -4})) as Ps1LockstepAdvantage).frames,
       -4,
     );
-    expect(() => Ps1LockstepMessage.decode(bytes({'v': 3, 'type': 'advantage', 'frames': 601})), throwsFormatException);
+    expect(() => Ps1LockstepMessage.decode(bytes({'v': 4, 'type': 'advantage', 'frames': 601})), throwsFormatException);
     final hello = _identity.hello(const {'swanstation_GPU_ResolutionScale': '4'});
     expect(jsonDecode(utf8.decode(hello.encode())), isNot(contains('discName')));
     expect((Ps1LockstepMessage.decode(hello.encode()) as Ps1LockstepHello).disc, _identity.disc);
@@ -401,17 +396,97 @@ void main() {
     expect((Ps1LockstepMessage.decode(chunk.encode()) as Ps1LockstepChunk).data, chunk.data);
   });
 
-  test('cores are compared on the same system only, since builds for two systems are different files', () {
-    Ps1LockstepHello theirs(String system, String core) => Ps1LockstepIdentity(
-      hostVersion: '1.0.0',
-      system: system,
-      core: core,
-      disc: _identity.disc,
-      bios: _identity.bios,
-    ).hello(const {});
-    expect(_identity.against(theirs('linux', _identity.core)), isNull);
-    expect(_identity.against(theirs('linux', 'd' * 64)), Ps1LockstepMismatch.core);
-    expect(_identity.against(theirs('windows', 'd' * 64)), isNull);
+  test('the Windows and the Linux release cores have one build identity, so they play together', () {
+    expect(_windowsCore, _linuxCore);
+    expect(_windowsCore.name, 'SwanStation');
+    expect(_windowsCore.identified, isTrue);
+    expect(_windowsCore.playsWith(_linuxCore), isTrue);
+    expect(recordedCoreStatus('windows', 'first').core, isNull, reason: 'no core is loaded before the game');
+    expect(recordedCoreStatus('linux', 'ended').core, _linuxCore, reason: 'the core stays once the game has ended');
+    const stock = RetroCore(name: 'SwanStation', version: '1.0.0 631f0fb');
+    expect(stock.playsWith(stock), isFalse, reason: 'a core built without the host patch script has no identity');
+    final debug = RetroCore(name: 'SwanStation Debug', version: _windowsCore.version);
+    expect(_windowsCore.playsWith(debug), isFalse);
+    final other = RetroCore(name: 'SwanStation', version: 'anyps5-1-${'0' * 64}');
+    expect(_windowsCore.playsWith(other), isFalse);
+    expect(other.playsWith(_windowsCore), isFalse);
+  });
+
+  test('the host player names its core in its hello, the friend once its game is ready', () {
+    final hello = Ps1LockstepMessage.decode(_identity.hello(const {}).encode()) as Ps1LockstepHello;
+    expect(hello.core, _windowsCore);
+    final body = jsonDecode(utf8.decode(_identity.hello(const {}).encode())) as Map<String, Object?>;
+    expect(body, isNot(contains('system')));
+    expect((Ps1LockstepMessage.decode(_guestIdentity.hello(const {}).encode()) as Ps1LockstepHello).core, isNull);
+    final ready = Ps1LockstepMessage.decode(Ps1LockstepReady(_linuxCore).encode()) as Ps1LockstepReady;
+    expect(ready.core, _linuxCore);
+    expect(() => Ps1LockstepMessage.decode(_message({'v': 4, 'type': 'ready', 'core': null})), throwsFormatException);
+    for (final core in [
+      {'name': 'SwanStation'},
+      {'name': 'SwanStation', 'version': 7},
+      {'name': 'SwanStation', 'version': 'x' * 257},
+      {'name': 'Swan\nStation', 'version': _windowsCore.version},
+      {'name': 'SwanStation', 'version': _windowsCore.version, 'extra': ''},
+    ]) {
+      expect(
+        () => Ps1LockstepMessage.decode(_message({...body, 'core': core})),
+        throwsFormatException,
+        reason: '$core',
+      );
+    }
+  });
+
+  test("a friend whose core is another build is told so, and the host player's game is never held", () async {
+    for (final core in [
+      RetroCore(name: 'SwanStation', version: 'anyps5-1-${'0' * 64}'),
+      const RetroCore(name: 'SwanStation', version: '1.0.0 631f0fb'),
+    ]) {
+      final pair = _Pair(guestCore: core);
+      pair.run();
+      await pair.hostMatch.done;
+      await pair.guestMatch.done;
+      expect(pair.hostMatch.end, Ps1LockstepEnd.mismatch, reason: '$core');
+      expect(pair.hostMatch.mismatch, Ps1LockstepMismatch.core);
+      expect(pair.guestMatch.mismatch, Ps1LockstepMismatch.core);
+      expect(pair.hostGame.next, isNull, reason: "the host player's game never entered lockstep");
+      expect(pair.guestGame.next, isNull, reason: "the friend's game never entered lockstep");
+      await pair.close();
+    }
+  });
+
+  test('a hello that names a core from the friend, or none from the host player, is refused', () async {
+    Uint8List? withCore(Uint8List message, Object? core) {
+      final body = jsonDecode(utf8.decode(message)) as Map<String, Object?>;
+      return body['type'] == 'hello' ? _message({...body, 'core': core}) : message;
+    }
+
+    for (final friendSends in [true, false]) {
+      final pair = _Pair();
+      if (friendSends) {
+        pair.guestLink.rewrite = (message) => withCore(message, _linuxCore.toJson());
+      } else {
+        pair.hostLink.rewrite = (message) => withCore(message, null);
+      }
+      pair.run();
+      await pair.hostMatch.done;
+      await pair.guestMatch.done;
+      expect((friendSends ? pair.hostMatch : pair.guestMatch).end, Ps1LockstepEnd.protocol);
+      expect(pair.hostGame.next, isNull);
+      await pair.close();
+    }
+    expect(
+      () => Ps1LockstepMatch(
+        hosting: true,
+        link: TestLink(Duration.zero),
+        identity: _guestIdentity,
+        work: Directory.systemTemp,
+        localInput: _pad(1),
+        paused: () => false,
+        host: LockstepHost(),
+      ),
+      throwsArgumentError,
+      reason: "the host player's launcher knows its game's core",
+    );
   });
 
   test('the state is inflated only up to the size announced', () {
@@ -461,7 +536,7 @@ void main() {
     final pair = _Pair(prepare: (_) => started.future);
     pair.run();
     await pair.until(() => pair.guestMatch.phase == Ps1LockstepPhase.preparing);
-    await pair.until(() => pair.hostMatch.phase == Ps1LockstepPhase.transferring);
+    await pair.until(() => pair.hostMatch.phase == Ps1LockstepPhase.preparing);
     pair.hostLink.drop();
     await pair.guestMatch.done;
     started.complete(pair.guestGame);
@@ -492,3 +567,6 @@ Map<int, List<RetroPadInput?>> _played(LockstepHost game) {
   }
   return played;
 }
+
+/// A control message of [value] as JSON, as another launcher would send it.
+Uint8List _message(Object value) => Uint8List.fromList(utf8.encode(jsonEncode(value)));

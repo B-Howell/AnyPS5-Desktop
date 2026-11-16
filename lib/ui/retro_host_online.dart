@@ -61,8 +61,10 @@ extension RetroHostOnline on AppModel {
   String? retroOnlineUnavailable(RetroPlay play) {
     if (!together.signedIn || !together.connected) return 'retroOnlineSignIn';
     if (!play.host.session.canLockstep) return 'retroOnlineHostOld';
+    if (!play.host.session.canIdentifyCore) return 'retroOnlineNoCoreIdentity';
     if (play.controls.seats.at(1) != null) return 'retroOnlineLocalFull';
     if (play.game.retro == null || play.host.phase != RetroHostGamePhase.playing) return 'retroOnlineNotReady';
+    if (play.host.status?.core?.identified != true) return 'retroOnlineCoreUnknown';
     return null;
   }
 
@@ -255,6 +257,7 @@ extension RetroHostOnline on AppModel {
     final me = together.user?.id;
     if (play == null || me == null || play.game.retro == null || retroOnline != null) return;
     if (retroOnlineUnavailable(play) case final reason?) return show(T.text('${reason}Detail'));
+    final core = play.host.status!.core!;
     final online = retroOnline = RetroOnline(
       hosting: true,
       friendId: friend.person.id,
@@ -267,7 +270,7 @@ extension RetroHostOnline on AppModel {
       final identity = await Ps1LockstepMedia.identify(
         digests: retroDigests,
         hostVersion: play.host.session.hostVersion,
-        core: play.core,
+        core: core,
         files: _retroDiscFiles(play.game),
         system: paths.retroSystem,
         rollback: play.host.session.canRollback,
@@ -345,7 +348,7 @@ extension RetroHostOnline on AppModel {
     Ps1LockstepRoom? room;
     RetroHostSession? opened;
     RetroPlay? play;
-    Future<RetroLockstepHost?>? preparing;
+    Future<Ps1LockstepGuest?>? preparing;
     try {
       final rooms = online.rooms = _retroRooms(me);
       final read = await rooms.readInvite(invite.sessionId, expectedHost: from.id);
@@ -377,10 +380,11 @@ extension RetroHostOnline on AppModel {
       }
       await session.ready;
       if (!session.canLockstep) return show(T.text('retroOnlineHostOldDetail'));
+      if (!session.canIdentifyCore) return show(T.text('retroOnlineNoCoreIdentityDetail'));
       final identity = await Ps1LockstepMedia.identify(
         digests: retroDigests,
         hostVersion: session.hostVersion,
-        core: install.core,
+        core: null,
         files: _retroDiscFiles(game),
         system: paths.retroSystem,
         rollback: session.canRollback,
@@ -418,7 +422,8 @@ extension RetroHostOnline on AppModel {
             if (online.match?.end != null) return null;
             await Future<void>.delayed(const Duration(milliseconds: 100));
           }
-          return started.host.session;
+          final core = started.host.status?.core;
+          return core == null ? null : (host: started.host.session, core: core);
         }(),
         onChanged: () {
           if (play case final started?) _retroMatchChanged(online, started);

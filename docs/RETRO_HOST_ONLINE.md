@@ -7,24 +7,29 @@ and its own copy of the game; only controller input crosses the network, and
 both games run each frame with the same input. This is the launcher's side of
 the host repository's design, `docs/netplay.md`, and of the protocol's
 "Lockstep" and "Rollback" sections (capabilities `ps1Lockstep` and
-`ps1Rollback`), all on the `netplay-design` branch of
-[anyps5-retro-host](https://github.com/B-Howell/anyps5-retro-host) at ce13e07,
+`ps1Rollback`), and of the core build identity (`status.core`, capability
+`coreIdentity`, and netplay.md "Core build identity"), all on the
+`netplay-design` branch of
+[anyps5-retro-host](https://github.com/B-Howell/anyps5-retro-host) at fb85606,
 whose SwanStation patches make the state a friend joins from fit for netplay
 (it names no path, names the disc by its place in the disc list, and carries
-the analog-mode button combination and each controller's mode) and make a
-state loaded in a rollback exact. When both players' hosts can roll back, the
-match plays in rollback (see "Rollback"); otherwise in plain lockstep.
+the analog-mode button combination and each controller's mode), make a
+state loaded in a rollback exact, and give each build of the core an identity
+that is the same on Windows, Linux and macOS. When both players' hosts can
+roll back, the match plays in rollback (see "Rollback"); otherwise in plain
+lockstep.
 
 ## Files
 
 | File | What it does |
 | --- | --- |
 | [`lib/core/retro_host/retro_lockstep.dart`](../lib/core/retro_host/retro_lockstep.dart) | The protocol's lockstep and rollback messages: `RetroLockstepSettings` (the `lockstep` argument, with the rollback window), `RetroStatePosition` (what `saveState` and `loadState` give, with the `micros` they took), `RetroStateFile` (the state file's header), `RetroStep` (a port null when predicted), `RetroCorrect`, `RetroSync`, `RetroRollback`, and `RetroLockstepTracker`, which holds the client and the host to the order of steps, corrections, syncs and rollbacks. `RetroLockstepHost` is what a match uses of a host. |
-| [`lib/core/retro_host/retro_host_client.dart`](../lib/core/retro_host/retro_host_client.dart) | `lockstep`, `leaveLockstep`, `saveState`, `loadState`, `step`, `correct`, `canRollback` and the `syncs` and `rollbacks` streams ([RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md), "Lockstep" and "Rollback"). |
+| [`lib/core/retro_host/retro_host_client.dart`](../lib/core/retro_host/retro_host_client.dart) | `lockstep`, `leaveLockstep`, `saveState`, `loadState`, `step`, `correct`, `canRollback`, `canIdentifyCore` and the `syncs` and `rollbacks` streams ([RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md), "Lockstep", "Rollback" and "Core identity"). |
+| [`lib/core/retro_host/retro_host_protocol.dart`](../lib/core/retro_host/retro_host_protocol.dart) | `RetroCore`, the core a game loaded as `status.core` names it, and `RetroCore.playsWith`, the rule two players' cores are compared by (see "The cores"). |
 | [`lib/core/online/ps1_netplay_wire.dart`](../lib/core/online/ps1_netplay_wire.dart) | `Ps1InputWire`: the input datagram, up to eight frames of one player's controller with the match's epoch and an acknowledgement. It is the input wire of the launcher's own PS1 online play on the fork's integrated branch, unchanged, as netplay.md asks. |
-| [`lib/core/online/ps1_lockstep_control.dart`](../lib/core/online/ps1_lockstep_control.dart) | The reliable messages between the two launchers: `hello`, `ping` and `pong`, `start`, the state's `chunk`s, `loaded`, `hash`, `advantage`, `pause` and `leave`, each read strictly (version 3). |
-| [`lib/core/online/ps1_lockstep_match.dart`](../lib/core/online/ps1_lockstep_match.dart) | `Ps1LockstepMatch`: one match, from the hellos to the end, in plain lockstep or in rollback, with its timing (`timingFor`) and `Ps1RollbackHealth`. `Ps1LockstepIdentity` is what a launcher plays with, and `Ps1LockstepLink` the two channels it needs. |
-| [`lib/core/online/ps1_lockstep_media.dart`](../lib/core/online/ps1_lockstep_media.dart) | `Ps1LockstepMedia`: what two launchers compare. The disc list is each disc's layout (its cue sheet's `FILE`, `TRACK`, `INDEX`, `PREGAP`, `POSTGAP` and `FLAGS` lines, each `FILE` naming its track by its SHA-256 instead of its name) and its tracks' contents, disc by disc in the playlist's order, so file names and remarks do not count but the number of discs, their layout and their order do; the core is its library; the BIOS is its 512 KiB images. A cue sheet that names a track that is not there gives no digest. |
+| [`lib/core/online/ps1_lockstep_control.dart`](../lib/core/online/ps1_lockstep_control.dart) | The reliable messages between the two launchers: `hello`, `ready`, `ping` and `pong`, `start`, the state's `chunk`s, `loaded`, `hash`, `advantage`, `pause` and `leave`, each read strictly (version 4). |
+| [`lib/core/online/ps1_lockstep_match.dart`](../lib/core/online/ps1_lockstep_match.dart) | `Ps1LockstepMatch`: one match, from the hellos to the end, in plain lockstep or in rollback, with its timing (`timingFor`) and `Ps1RollbackHealth`. `Ps1LockstepIdentity` is what a launcher plays with, `Ps1LockstepGuest` the friend's game once it is ready, and `Ps1LockstepLink` the two channels it needs. |
+| [`lib/core/online/ps1_lockstep_media.dart`](../lib/core/online/ps1_lockstep_media.dart) | `Ps1LockstepMedia`: what two launchers compare. The disc list is each disc's layout (its cue sheet's `FILE`, `TRACK`, `INDEX`, `PREGAP`, `POSTGAP` and `FLAGS` lines, each `FILE` naming its track by its SHA-256 instead of its name) and its tracks' contents, disc by disc in the playlist's order, so file names and remarks do not count but the number of discs, their layout and their order do; the BIOS is its 512 KiB images; the core is the build identity its host names (see "The cores"). A cue sheet that names a track that is not there gives no digest. |
 | [`lib/core/online/ps1_file_digests.dart`](../lib/core/online/ps1_file_digests.dart) | `Ps1FileDigests`: the SHA-256 of each file read for a match, kept with its size and modification time in `retro/digests.json` beside the launcher's settings, so a file is read again only once it changed. Files are read on an isolate. |
 | [`lib/core/online/ps1_netplay_state.dart`](../lib/core/online/ps1_netplay_state.dart) | `Ps1NetplayState`: whether a state file may go to another player. It must be a version 2 state file holding a SwanStation state of version 58 or later (the host's patch `swanstation-1-netplay-input-state`), with no title and no disc file name, and a disc trailer marked pathless with no path (patch `swanstation-2-pathless-netplay-state`). |
 | [`lib/core/online/ps1_lockstep_peer.dart`](../lib/core/online/ps1_lockstep_peer.dart) | `Ps1LockstepPeer`: the WebRTC connection of a match over the launcher's `GameLink`, and `Ps1LockstepSignal`, its offer, answer and candidates. |
@@ -53,9 +58,12 @@ match plays in rollback (see "Rollback"); otherwise in plain lockstep.
    SwanStation's Multitap off, so a PS1 game has two ports. A second
    controller on this computer takes Player 2 as before, and while it does, no
    friend can be invited.
-2. **The invite.** Choosing a friend takes the digests of the disc, the core
-   and the BIOS images (read only when `Ps1FileDigests` does not know a file as
-   it is now), makes a private room for two (`Ps1LockstepRooms.host`, with the
+2. **The invite.** A friend can be invited once the host lists `ps1Lockstep`
+   and `coreIdentity` and the game's `status.core` has a build identity; the
+   lobby says which of these is missing otherwise. Choosing a friend takes the
+   digests of the disc and the BIOS images (read only when `Ps1FileDigests`
+   does not know a file as it is now) and the game's core, makes a private
+   room for two (`Ps1LockstepRooms.host`, with the
    SHA-256 and size of the disc's tracks, the room's `titleId` made from the
    digest) and invites the friend. Player 2 shows the friend as Invited. A game
    of its own folder (`retro.json`) has its tracks read from its cue sheet or
@@ -67,45 +75,50 @@ match plays in rollback (see "Rollback"); otherwise in plain lockstep.
    otherwise says "Play PS1 online with …". It shows in Friends as "Play PS1
    online with …". Accepting looks for the disc in the friend's library by the
    size of its tracks, then by its digest, discs whose digests are known first,
-   opens a host, muted, checks it can lockstep, joins the room and connects.
+   opens a host, muted, checks it lists `ps1Lockstep` and `coreIdentity`
+   (saying which it lacks, and joining nothing, when it does not), joins the
+   room and connects.
 4. **The connection.** Each launcher gets the room's STUN and TURN servers and
    makes a `GameLink`. The host player's launcher offers, the friend's answers,
    and the signals go through the room. Signals that come before the
    connection is made are kept for it.
-5. **The hellos.** Each launcher says its host's version, its system, its
-   core, disc and BIOS digests, and whether its host lists `ps1Rollback`
-   (version 3 of the control messages; rooms are `anyps5-ps1-lockstep-v3`). Any difference ends the match with what differs,
-   before the game is held. The disc's file names do not count: the state names
-   the disc by its place in the disc list. The cores are compared only between
-   two launchers on the same system: a Windows and a Linux build of the same
-   SwanStation are different files ("Not yet" says what would close this). A hello can come before the other side's
-   match has taken the connection, so the connection keeps the control messages
-   that come early for it. The host player's hello also carries the
-   core options its game runs with (the status's `activeValue`s).
+5. **The hellos.** Each launcher says its host's version, its disc and BIOS
+   digests, and whether its host lists `ps1Rollback` (version 4 of the control
+   messages; rooms are `anyps5-ps1-lockstep-v4`); the host player's also names
+   its game's core (`status.core`) and carries the core options its game runs
+   with (the status's `activeValue`s). Any difference ends the match with what
+   differs, before the game is held. The disc's file names do not count: the
+   state names the disc by its place in the disc list. A hello can come before
+   the other side's match has taken the connection, so the connection keeps
+   the control messages that come early for it.
 6. **The delay.** The host player's launcher measures the round trip with five
    pings and takes the median. In plain lockstep the delay in frames is half
    the round trip in frames, rounded up, plus one. Above eight frames the match
    ends as too slow, again before the game is held. In rollback the delay and
    the window come from the same round trip ("Rollback").
-7. **The state.** The host player's game enters lockstep and saves its state.
+7. **The friend's game.** Meanwhile the friend's game starts with the host
+   player's options and a memory card folder of the match's own
+   (`retro/online/<room>/saves`), muted and not shown: the screen shows the
+   game's name over black with "Preparing both games" (`RetroPlay.joining`),
+   as netplay.md step 4 asks. Once its `status` is ready, its launcher sends
+   `ready` with the core its host loaded, and both launchers compare the two
+   cores ("The cores"). The host player's game plays on until then; cores that
+   differ end the match on both sides before it is held.
+8. **The state.** The host player's game enters lockstep and saves its state.
    The host saves a file for netplay, so it names no path. The launcher checks
    that (`Ps1NetplayState`) before anything is sent: a state that is not fit
    ends the match as "This emulator host cannot play online", and the host
    player's game goes on alone. The file is compressed and sent in 64 KiB
    chunks with its SHA-256, after a `start` that names the frame, the delay,
-   the rollback window (0 in plain lockstep) and the match's input epoch. Meanwhile the friend's game starts with the host
-   player's options and a memory card folder of the match's own
-   (`retro/online/<room>/saves`), muted and not shown: the screen shows the
-   game's name over black with "Preparing both games" (`RetroPlay.joining`),
-   as netplay.md step 4 asks. The match waits for its `status` to be ready. It
-   then enters lockstep, checks the state the same way, loads it and says
-   `loaded`. The state is inflated only up to the size the `start` announced.
+   the rollback window (0 in plain lockstep) and the match's input epoch. The
+   friend's game then enters lockstep, checks the state the same way, loads it
+   and says `loaded`. The state is inflated only up to the size the `start` announced.
    Once the match plays, the friend's game shows and its sound comes back at the
    player's volume. Meanwhile the menu's Volume and Mute change only what the
    game gets then; it stays muted. A
    match that ends while the friend's game is still starting waits for it and
    closes it.
-8. **Play.** From the state's frame on, the first `delay` frames of both ports
+9. **Play.** From the state's frame on, the first `delay` frames of both ports
    are idle. Each launcher reads its player's controller for the frame `delay`
    past the newest one its host ran, and sends every input the other side has
    not acknowledged: at once when new, again each frame while not
@@ -117,15 +130,53 @@ match plays in rollback (see "Rollback"); otherwise in plain lockstep.
    2 the friend's. While a game is paused (its menu is open, or the window lost
    focus) its host runs no frame, no new input is read, and the other game
    waits; the other player is told and sees "Paused".
-9. **Checks.** Every 60 frames each launcher sends its RAM hash. A difference
+10. **Checks.** Every 60 frames each launcher sends its RAM hash. A difference
    ends the match on both sides as out of sync. A launcher whose hashes stop
    coming while its input still does, or whose input runs further ahead than
    its game could, is not followed: the match ends, or the input is dropped.
-10. **The end.** Leaving from the lobby, or the other player leaving, the
+11. **The end.** Leaving from the lobby, or the other player leaving, the
     connection breaking or 15 seconds without word from the other side, ends
     the match. Each host leaves lockstep: the host player's game goes on alone
     from where the match was, and the friend's game is closed. The room is
     ended or left and the match's folder deleted.
+
+## The cores
+
+Two hosts stay alike only if their cores compute alike, so the cores are
+compared before anything is held, as netplay.md "Joining a running game"
+step 1 and "Core build identity" ask. Each host names the core a game loaded
+in `status.core` (capability `coreIdentity`): the core's `library_name` and
+`library_version`. The host's own SwanStation builds report `SwanStation` and
+`anyps5-1-<SHA-256>` of the build's source (the SwanStation commit and the
+host's patches in the order applied), so a Windows, a Linux and a macOS build
+of one host release name the same identity although their library files
+differ. The two launchers play only when both strings are equal and the
+version has that form (`RetroCore.playsWith`, protocol.md "status"); anything
+else, a core built without the host's patch script or a debug build
+(`SwanStation Debug`), is a different core.
+
+- **When.** The host loads its core only for a game (netplay.md: `hello`
+  cannot carry it), so the host player's launcher names its running game's
+  core in its hello, and the friend's launcher names its own in `ready` once
+  its game has started. Each launcher compares the other's with its own, so
+  both end a match whose cores differ in the same way, with "The PS1 cores
+  are different builds".
+- **What it replaced.** Version 3 of the hellos sent the SHA-256 of the
+  SwanStation library and the launcher's system, and compared the libraries
+  only between two launchers on the same system: Windows and Linux players
+  were never checked, and two copies of one build made by different compilers
+  on one system would be refused. netplay.md rejects a hash of the core file
+  for that reason. The library is still checked against its signed release
+  before every start ([RETRO_HOST_CLIENT.md](RETRO_HOST_CLIENT.md), "Finding
+  and checking the host").
+- **A host without it.** A host that does not list `coreIdentity` cannot be
+  compared, so it cannot play online: the lobby says so instead of offering
+  friends, and a friend whose host lacks it is told so when accepting and
+  joins no room. A game whose core reports no build identity is said to be
+  one in the lobby.
+- **What it does not prove.** The identity is a promise about builds made the
+  way the host's release workflow makes them; the RAM checks of every match
+  find two games that differ anyway.
 
 ## Rollback
 
@@ -185,6 +236,16 @@ the other player's.
 
 ## Tests
 
+- [`test/fixtures/retro_host/core_identity_swanstation.json`](../test/fixtures/retro_host/core_identity_swanstation.json)
+  holds what two real hosts sent about their core: the Windows x64 and the
+  Linux x64 release packages of `netplay-design` at fb85606 (its release
+  workflow run 43769316888), each with its own SwanStation 631f0fb build and
+  the host's six patches, on OpenBIOS and the psyqo hello disc. Both list
+  `coreIdentity`, their first `status` has `core` null, and once ready both
+  name `SwanStation` `anyps5-1-7ae2daee…8db2`. The match tests, the lobby
+  tests and the media test take their cores from it
+  ([`test/core/online/lockstep_test_support.dart`](../test/core/online/lockstep_test_support.dart)
+  reads it as the client does).
 - [`test/core/retro_host/retro_lockstep_test.dart`](../test/core/retro_host/retro_lockstep_test.dart)
   replays what real hosts sent:
   [`test/fixtures/retro_host/lockstep_swanstation.json`](../test/fixtures/retro_host/lockstep_swanstation.json),
@@ -230,7 +291,10 @@ the other player's.
   on both sides over a lossy link, a different disc, a slow connection, RAM
   that stops matching, a pause, a broken connection, and a state that names a
   path, which the host player's launcher does not send and the friend's does
-  not load. In rollback its test hosts predict, correct and run frames again
+  not load. The host player plays the Windows core and the friend the Linux
+  one; a friend whose core is another build, or has no build identity, ends
+  the match on both sides before the host player's game is held, and a hello
+  that names a core from the friend, or none from the host player, is refused. In rollback its test hosts predict, correct and run frames again
   as protocol.md says, and refuse a step or correction that breaks its rules:
   both end with the same input in every confirmed frame, a host that cannot
   roll back makes the match lockstep, the friend waits for the host player as
@@ -264,22 +328,10 @@ the other player's.
   AnyTogether. The WebRTC connection is tested with an in-memory link, and the
   rooms with a fake AnyTogether. Direct and relayed connections, and a Windows
   and a Linux PC together, are still to be tried.
-- **Windows with Linux.** Nothing checks that a Windows and a Linux core are the
-  same SwanStation build: the host version must match (every build says
-  1.0.0), both must save netplay-fit states (the host player's state is
-  checked, and a stock core refuses to load one), and the RAM checks end a
-  match whose games differ. The host reports no build identity: it never calls
-  `retro_get_system_info`, and nothing in `welcome` or `status` names the core's
-  source. To close this the host would need to report, once a game is ready, a
-  field such as `status.core` = `{"name": …, "version": …}` taken from the
-  core's `retro_get_system_info` (`library_name`, `library_version`), behind a
-  capability the launcher can ask for; and its builds would need that
-  `library_version` to name the SwanStation commit and the host's patch set
-  (for example the SHA-256 of `cores/patches/*.patch` in the order they are
-  applied, written in by `cores/apply-swanstation-patches.sh`), so that every
-  operating system's build of one release reports the same string. The hellos
-  would then carry it and compare it across systems, the SHA-256 of the library
-  staying a same-system check.
+- **Windows with Linux.** The two cores are now compared across systems ("The
+  cores"), and a Windows and a Linux release core were recorded naming the
+  same identity, but no match has yet been played between a Windows and a
+  Linux PC: the RAM checks are what would show their games differ.
 - **The frame rate in rollback.** The launcher's frame clock runs at 60 Hz,
   and in rollback it is the game's only clock. An NTSC game (59.94 Hz on a
   console) runs a tenth of a percent fast, and a PAL game would run at 60 Hz

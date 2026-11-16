@@ -7,6 +7,7 @@ import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/launcher.dart';
 import 'package:anyps5_desktop/ui/retro_host/retro_host_game.dart';
 import 'package:anyps5_desktop/ui/strings.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../core/online/lockstep_test_support.dart';
@@ -137,21 +138,15 @@ void main() {
       await tester.runAsync(() async {
         work = Directory.systemTemp.createTempSync('retro-online-row-');
         final (a, b) = TestLink.pair(const Duration(milliseconds: 40), jitter: const Duration(milliseconds: 10));
-        final identity = Ps1LockstepIdentity(
-          hostVersion: '1.0.0',
-          system: 'linux',
-          core: 'a' * 64,
-          disc: 'b' * 64,
-          bios: 'c' * 64,
-          rollback: rollback,
-        );
+        Ps1LockstepIdentity identity({RetroCore? core}) =>
+            Ps1LockstepIdentity(hostVersion: '1.0.0', core: core, disc: 'b' * 64, bios: 'c' * 64, rollback: rollback);
         var count = 0;
         RetroPadInput pad() => RetroPadInput(buttons: ++count & 0xFFFF);
         games = [LockstepHost(), LockstepHost()];
         hosting = Ps1LockstepMatch(
           hosting: true,
           link: a,
-          identity: identity,
+          identity: identity(core: recordedCore('windows')),
           work: Directory('${work.path}/host'),
           localInput: pad,
           paused: () => false,
@@ -160,11 +155,11 @@ void main() {
         joining = Ps1LockstepMatch(
           hosting: false,
           link: b,
-          identity: identity,
+          identity: identity(),
           work: Directory('${work.path}/guest'),
           localInput: pad,
           paused: () => false,
-          prepareGuest: (_) async => games[1],
+          prepareGuest: (_) async => (host: games[1], core: recordedCore('linux')),
         );
         unawaited(hosting.run());
         unawaited(joining.run());

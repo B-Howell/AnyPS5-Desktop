@@ -1,17 +1,22 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../retro_host/retro_host_protocol.dart';
+
 /// The reliable, ordered messages two launchers exchange about one PS1 lockstep match
 /// (anyps5-retro-host docs/netplay.md "Joining a running game"), as JSON on the peer connection's
-/// stream channel. Every message has `v` (the version, 3) and `type`; a message of another version
+/// stream channel. Every message has `v` (the version, 4) and `type`; a message of another version
 /// or shape is refused, and the match ends. Version 2 named the disc by its tracks alone and no
 /// longer by its file name, since the state a friend joins from names no path. Version 3 adds
 /// rollback: whether each launcher's host can roll back (`hello.rollback`), the window a match
 /// plays with (`start.window`), and the frame advantage of GGPO's time sync (`advantage`).
+/// Version 4 compares the cores by their build identity (the host's `status.core`, capability
+/// `coreIdentity`) instead of by the SHA-256 of the library on the same system: the host player's
+/// `hello.core`, and the friend's `ready` once its game has loaded its core.
 sealed class Ps1LockstepMessage {
   const Ps1LockstepMessage();
 
-  static const version = 3;
+  static const version = 4;
 
   /// The largest message read: a state chunk of [Ps1LockstepChunk.maxBytes] in base64 with room
   /// for the rest.
@@ -39,6 +44,7 @@ sealed class Ps1LockstepMessage {
     final type = fields.string('type');
     final message = switch (type) {
       'hello' => Ps1LockstepHello._read(fields),
+      'ready' => Ps1LockstepReady(fields.core('core')!),
       'ping' => Ps1LockstepPing(fields.integer('id', 0, _maxId)),
       'pong' => Ps1LockstepPong(fields.integer('id', 0, _maxId)),
       'start' => Ps1LockstepStart._read(fields),
@@ -66,7 +72,6 @@ sealed class Ps1LockstepMessage {
 final class Ps1LockstepHello extends Ps1LockstepMessage {
   const Ps1LockstepHello({
     required this.hostVersion,
-    required this.system,
     required this.core,
     required this.disc,
     required this.bios,
@@ -77,12 +82,10 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
   /// The emulator host's `welcome.hostVersion`.
   final String hostVersion;
 
-  /// The launcher's system, as Dart names it (`windows`, `linux`, `macos`): the SwanStation
-  /// libraries of two systems are different files.
-  final String system;
-
-  /// SHA-256 of the SwanStation library, 64 lowercase hexadecimal digits.
-  final String core;
+  /// The core the host player's game runs, as its host's `status.core` names it; null from the
+  /// friend, whose host loads its core only when its game starts, and who says it in
+  /// [Ps1LockstepReady].
+  final RetroCore? core;
 
   /// SHA-256 of the disc's tracks ([Ps1LockstepIdentity]).
   final String disc;
@@ -103,8 +106,7 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
   @override
   Map<String, Object?> body() => {
     'hostVersion': hostVersion,
-    'system': system,
-    'core': core,
+    'core': core?.toJson(),
     'disc': disc,
     'bios': bios,
     'options': options,
@@ -113,13 +115,26 @@ final class Ps1LockstepHello extends Ps1LockstepMessage {
 
   static Ps1LockstepHello _read(_Fields fields) => Ps1LockstepHello(
     hostVersion: fields.string('hostVersion', max: 64),
-    system: fields.string('system', max: 16),
-    core: fields.hash('core', 64),
+    core: fields.core('core'),
     disc: fields.hash('disc', 64),
     bios: fields.hash('bios', 64),
     options: fields.options('options'),
     rollback: fields.boolean('rollback'),
   );
+}
+
+/// The friend's game is ready, and its host loaded [core] (its `status.core`). The host player's
+/// game is held only once the two cores are known to be the same build.
+final class Ps1LockstepReady extends Ps1LockstepMessage {
+  const Ps1LockstepReady(this.core);
+
+  final RetroCore core;
+
+  @override
+  String get type => 'ready';
+
+  @override
+  Map<String, Object?> body() => {'core': core.toJson()};
 }
 
 final class Ps1LockstepPing extends Ps1LockstepMessage {
@@ -341,6 +356,21 @@ class _Fields {
     final value = string(key, max: digits);
     if (!RegExp('^[0-9a-f]{$digits}\$').hasMatch(value)) _bad(key, 'must be $digits lowercase hexadecimal digits');
     return value;
+  }
+
+  /// A core as `status.core` gives it ([RetroCore]), or null.
+  RetroCore? core(String key) {
+    final value = _take(key);
+    if (value == null) return null;
+    if (value is! Map<String, Object?> ||
+        value.length != 2 ||
+        value['name'] is! String ||
+        value['version'] is! String ||
+        !RetroCore.valid(value['name']! as String) ||
+        !RetroCore.valid(value['version']! as String)) {
+      _bad(key, 'must be null or the name and version of a core');
+    }
+    return RetroCore(name: value['name']! as String, version: value['version']! as String);
   }
 
   Map<String, String> options(String key) {

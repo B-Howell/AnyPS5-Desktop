@@ -7,6 +7,8 @@ import 'package:anyps5_desktop/core/online/ps1_lockstep_media.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
+import 'lockstep_test_support.dart';
+
 /// What two launchers compare a disc by (lib/core/online/ps1_lockstep_media.dart): its tracks in the
 /// disc list's order, whatever the files are called, and the digests kept so a disc is read once
 /// (lib/core/online/ps1_file_digests.dart).
@@ -194,11 +196,11 @@ void main() {
     expect(Ps1LockstepMedia.biosImages(system.path), isEmpty);
     File(p.join(system.path, 'b.bin')).writeAsBytesSync(List.filled(Ps1LockstepMedia.biosBytes, 1));
     File(p.join(system.path, 'a.bin')).writeAsBytesSync(List.filled(Ps1LockstepMedia.biosBytes, 2));
-    final core = write('core.dll', List.filled(64, 5));
+    final digests = Ps1FileDigests(p.join(folder.path, 'digests.json'));
     final identity = await Ps1LockstepMedia.identify(
-      digests: Ps1FileDigests(p.join(folder.path, 'digests.json')),
+      digests: digests,
       hostVersion: '1.0.0',
-      core: core.path,
+      core: recordedCore('windows'),
       files: [write('game.chd', List.filled(1024, 6)).path],
       system: system.path,
     );
@@ -209,7 +211,15 @@ void main() {
         for (final image in Ps1LockstepMedia.biosImages(system.path).reversed) Ps1FileDigests.fileDigest(image),
       ]),
     );
-    expect(identity.core, Ps1FileDigests.fileDigest(core.path));
-    expect(identity.system, Platform.operatingSystem);
+    expect(identity.core, recordedCore('windows'), reason: 'the core is named by its build identity');
+    final guest = await Ps1LockstepMedia.identify(
+      digests: digests,
+      hostVersion: '1.0.0',
+      core: null,
+      files: [p.join(folder.path, 'game.chd')],
+      system: system.path,
+    );
+    expect(guest.core, isNull, reason: "the friend's core is known only once its game has loaded it");
+    expect(guest.disc, identity.disc);
   });
 }

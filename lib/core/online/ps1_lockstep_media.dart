@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../game_library.dart';
+import '../retro_host/retro_host_protocol.dart';
 
 import 'ps1_file_digests.dart';
 import 'ps1_lockstep_match.dart';
@@ -40,22 +41,22 @@ abstract final class Ps1LockstepMedia {
   }
 
   /// What this launcher plays a disc of [files] with: its disc digest ([discDigestOf]), the
-  /// SHA-256 of the [core] library, that of the BIOS images in [system] ([biosDigestOf]), and
-  /// whether its host can [rollback]. Only files [digests] does not know as they are now are read.
+  /// [core] its host loaded for the game (the host player's; the friend's is not loaded yet), the
+  /// SHA-256 of the BIOS images in [system] ([biosDigestOf]), and whether its host can [rollback].
+  /// Only files [digests] does not know as they are now are read.
   static Future<Ps1LockstepIdentity> identify({
     required Ps1FileDigests digests,
     required String hostVersion,
-    required String core,
+    required RetroCore? core,
     required List<String> files,
     required String system,
     bool rollback = false,
   }) async {
     final bios = biosImages(system);
-    final known = await digests.of([core, ...tracks(files), ...bios]);
+    final known = await digests.of([...tracks(files), ...bios]);
     return Ps1LockstepIdentity(
       hostVersion: hostVersion,
-      system: Platform.operatingSystem,
-      core: known[core]!,
+      core: core,
       disc: discDigestOf(files, known),
       bios: biosDigestOf([for (final image in bios) known[image]!]),
       rollback: rollback,

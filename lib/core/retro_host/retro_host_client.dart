@@ -314,6 +314,11 @@ class RetroHostClient implements RetroHostSession {
   @override
   bool get canRollback => canLockstep && _capabilities.contains(retroCapabilityPs1Rollback);
 
+  /// Whether the host lists `coreIdentity`, so each `status` names the core the game loaded and two
+  /// players' cores can be compared before a match.
+  @override
+  bool get canIdentifyCore => _capabilities.contains(retroCapabilityCoreIdentity);
+
   /// Each `rollback` message of a game in rollback (protocol.md "rollback message"), checked.
   @override
   Stream<RetroRollback> get rollbacks => _rollbacks.stream;
@@ -410,7 +415,7 @@ class RetroHostClient implements RetroHostSession {
     if (RetroStatus.isFailureReport(map)) {
       return RetroStatus.failed(error: map['error']! as String, errorCode: map['errorCode']! as String);
     }
-    return RetroStatus.parse(map);
+    return RetroStatus.parse(map, coreIdentity: canIdentifyCore);
   }
 
   static const _stopPoll = Duration(milliseconds: 250);
@@ -724,7 +729,7 @@ class RetroHostClient implements RetroHostSession {
           _lastStatusEnded = false;
           if (afterStop) _stopDeadline = null;
         } else {
-          final status = RetroStatus.parse(_object(result, 'status'));
+          final status = RetroStatus.parse(_object(result, 'status'), coreIdentity: canIdentifyCore);
           if (status.ended && !_lastStatusEnded) _zeroRumble();
           _lastStatusEnded = status.ended;
           if (status.ended && afterStop) _stopDeadline = null;

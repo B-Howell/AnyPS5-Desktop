@@ -12,6 +12,8 @@ import 'package:anyps5_desktop/core/retro_host/retro_lockstep.dart';
 import 'package:anyps5_desktop/ui/retro_host/retro_host_controls.dart';
 import 'package:ffi/ffi.dart';
 
+import '../../core/online/lockstep_test_support.dart';
+
 /// Pixels in native memory, as a ring slot would hold them, freed by [free].
 class FakeSlot {
   FakeSlot(this.width, this.height) : pixels = calloc<Uint8>(width * height * 4);
@@ -164,6 +166,10 @@ class FakeRetroHostSession extends FakeFrameSource implements RetroHostSession {
   @override
   bool canRollback = true;
 
+  /// Whether the host lists `coreIdentity`, so its status names the core ([fakeStatus]).
+  @override
+  bool canIdentifyCore = true;
+
   @override
   String hostVersion = '1.0.0';
 
@@ -219,8 +225,23 @@ class FakeRetroHostSession extends FakeFrameSource implements RetroHostSession {
   }
 }
 
-RetroStatus fakeStatus({bool ready = true, bool ended = false, double aspect = 4 / 3, String errorCode = ''}) =>
-    RetroStatus(ready: ready, ended: ended, error: '', errorCode: errorCode, aspect: aspect);
+/// A game's status; once it is ready it names the core a real Windows host loaded
+/// ([recordedCore]), unless [core] is false or [loaded] names another.
+RetroStatus fakeStatus({
+  bool ready = true,
+  bool ended = false,
+  double aspect = 4 / 3,
+  String errorCode = '',
+  bool core = true,
+  RetroCore? loaded,
+}) => RetroStatus(
+  ready: ready,
+  ended: ended,
+  error: '',
+  errorCode: errorCode,
+  aspect: aspect,
+  core: ready && core ? loaded ?? recordedCore('windows') : null,
+);
 
 /// Controllers the test holds by hand.
 class FakePads {

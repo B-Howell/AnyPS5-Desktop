@@ -4,6 +4,7 @@ import 'package:anyps5_desktop/core/game_library.dart';
 import 'package:anyps5_desktop/core/online/ps1_file_digests.dart';
 import 'package:anyps5_desktop/core/online/ps1_lockstep_media.dart';
 import 'package:anyps5_desktop/core/online/ps1_lockstep_rooms.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:anyps5_desktop/ui/app_model.dart';
 import 'package:anyps5_desktop/ui/retro_host/retro_host_game.dart';
 import 'package:anyps5_desktop/ui/strings.dart';
@@ -13,6 +14,7 @@ import 'package:path/path.dart' as p;
 
 import '../support/fake_together.dart';
 import '../support/ps1_launcher.dart';
+import 'retro_host/fake_retro_host_session.dart';
 
 const _me = '11111111-1111-4111-8111-111111111111';
 const _ana = '22222222-2222-4222-8222-222222222222';
@@ -117,6 +119,23 @@ void main() {
     expect((lobby()[1].kind as InfoRow).text, T.text('retroOnlineHostOldDetail'));
   });
 
+  test('a host that cannot name its core, or a core without a build identity, is said so', () async {
+    await playing(friends: true);
+    openLobby();
+    launcher.session.canIdentifyCore = false;
+    expect(lobby()[1].id, 'coop-unavailable');
+    expect((lobby()[1].kind as InfoRow).text, T.text('retroOnlineNoCoreIdentityDetail'));
+    launcher.session.canIdentifyCore = true;
+    launcher.session.nextStatus = fakeStatus(
+      loaded: const RetroCore(name: 'SwanStation', version: '1.0.0 631f0fb'),
+    );
+    await launcher.play.host.refresh();
+    expect((lobby()[1].kind as InfoRow).text, T.text('retroOnlineCoreUnknownDetail'));
+    launcher.session.nextStatus = fakeStatus();
+    await launcher.play.host.refresh();
+    expect(lobby()[1].id, 'coop-invite-$_ana');
+  });
+
   test('inviting a friend makes a private room for the disc, invites them and shows them as invited', () async {
     Map<String, dynamic>? made;
     final invited = <Object?>[];
@@ -160,7 +179,7 @@ void main() {
     (invite.kind as ActionRow).run();
     await until(() => invited.isNotEmpty);
     expect(made?['properties'], {
-      'protocol': 'anyps5-ps1-lockstep-v3',
+      'protocol': 'anyps5-ps1-lockstep-v4',
       'discSha256': matches(RegExp(r'^[0-9a-f]{64}$')),
       'discBytes': 4096,
     });
@@ -254,5 +273,57 @@ void main() {
 
     server!.push('game_session.invite', {...invite()});
     await until(() => model.toast == T.format('gameInvitedYou', ['Ana', 'Night Racer']));
+  });
+
+  test('a friend whose host cannot name its core is told so, and joins no room', () async {
+    late String digest;
+    final joins = <Object?>[];
+    await signedIn(
+      serve: (fake) => fake.handlers.add((call) {
+        switch ((call.method, call.path)) {
+          case ('GET', 'game-sessions/$_room'):
+            return (
+              200,
+              {
+                'id': _room,
+                'kind': 'online',
+                'titleId': Ps1LockstepRooms.titleFor(digest),
+                'gameVersion': Ps1LockstepRooms.gameVersion,
+                'engineBuild': Ps1LockstepRooms.protocol,
+                'capacity': 2,
+                'joinable': false,
+                'endedAt': null,
+                'host': {'userId': _ana},
+                'properties': {'protocol': Ps1LockstepRooms.protocol, 'discSha256': digest, 'discBytes': 8192},
+                'members': const [],
+              },
+            );
+          case ('POST', 'game-sessions/$_room/join'):
+            joins.add(call.body);
+            return (404, {'status': 404, 'code': 'not_found', 'title': 'The game ended'});
+        }
+        return null;
+      }),
+    );
+    final bin = track(8192);
+    digest = Ps1LockstepMedia.discDigestOf(GameLibrary.discFiles(launcher.disc), {bin: Ps1FileDigests.fileDigest(bin)});
+    final model = launcher.model;
+    server!.push('game_session.invite', {
+      'sessionId': _room,
+      'titleId': Ps1LockstepRooms.titleFor(digest),
+      'gameVersion': Ps1LockstepRooms.gameVersion,
+      'engineBuild': Ps1LockstepRooms.protocol,
+      'from': FakeTogether.card(_ana, 'ana', 'Ana'),
+    });
+    await until(() => model.together.hub.games.invites.isNotEmpty);
+    final joining = model.joinRetroOnline(model.together.hub.games.invites.single);
+    await until(() => launcher.opened.isNotEmpty);
+    launcher.session.canIdentifyCore = false;
+    launcher.session.readyCompleter.complete();
+    await joining;
+    expect(model.toast, T.text('retroOnlineNoCoreIdentityDetail'));
+    expect(joins, isEmpty, reason: 'nothing is joined before both cores can be compared');
+    expect(launcher.session.shutdownAsked, isTrue, reason: 'the host opened for the match is let go');
+    expect(model.retroOnline, isNull);
   });
 }

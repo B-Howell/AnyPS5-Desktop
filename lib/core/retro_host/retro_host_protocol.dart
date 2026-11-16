@@ -45,6 +45,10 @@ const retroProtocolVersion = 1;
 /// The capability every method of version 1 needs.
 const retroCapabilityPs1 = 'ps1';
 
+/// The capability that adds `core` to `status`: the loaded core's name and build identity
+/// (protocol.md "status").
+const retroCapabilityCoreIdentity = 'coreIdentity';
+
 /// The `errorCode` values a `status` can carry, and the two the client reports itself after a host
 /// failure (protocol.md "Host failure").
 abstract final class RetroErrorCode {
@@ -181,6 +185,47 @@ class RetroDiscs {
   };
 }
 
+/// The core a game loaded, as `status.core` gives it (capability [retroCapabilityCoreIdentity]): the
+/// `library_name` and `library_version` the core reports, each `""` when the host could not pass
+/// it on as printable ASCII of at most 256 bytes.
+class RetroCore {
+  const RetroCore({required this.name, required this.version});
+
+  final String name;
+  final String version;
+
+  /// The longest name or version a host sends.
+  static const maxBytes = 256;
+
+  static final _printable = RegExp(r'^[ -~]*$');
+
+  /// The form of the core build identity the host's own SwanStation builds report: `anyps5-1-`
+  /// and the SHA-256 of the build's source manifest (anyps5-retro-host docs/netplay.md "Core build
+  /// identity").
+  static final _identity = RegExp(r'^anyps5-1-[0-9a-f]{64}$');
+
+  /// Whether [version] is a core build identity, so the core can be compared with a friend's.
+  bool get identified => _identity.hasMatch(version);
+
+  /// Whether a match may be played between this core and [theirs]: both identified and the same,
+  /// as protocol.md "status" asks. Anything else is a different core.
+  bool playsWith(RetroCore theirs) => identified && name == theirs.name && version == theirs.version;
+
+  /// Whether [value] is a name or version a host may send.
+  static bool valid(String value) => value.length <= maxBytes && _printable.hasMatch(value);
+
+  Map<String, Object?> toJson() => {'name': name, 'version': version};
+
+  @override
+  bool operator ==(Object other) => other is RetroCore && other.name == name && other.version == version;
+
+  @override
+  int get hashCode => Object.hash(name, version);
+
+  @override
+  String toString() => '$name $version';
+}
+
 /// A loaded game's state, from `status`, or the shorter form the client gives after a host failure.
 class RetroStatus {
   const RetroStatus({
@@ -196,6 +241,7 @@ class RetroStatus {
     this.progressPercent,
     this.options = const {},
     this.discs,
+    this.core,
   });
 
   /// What the client reports from a host failure until the UI calls `release`.
@@ -209,7 +255,8 @@ class RetroStatus {
       progressLabel = null,
       progressPercent = null,
       options = const {},
-      discs = null;
+      discs = null,
+      core = null;
 
   final bool ready;
   final bool ended;
@@ -224,6 +271,10 @@ class RetroStatus {
   final Map<String, RetroOption> options;
   final RetroDiscs? discs;
 
+  /// The core the game loaded; null until it is loaded, when it could not be, and from a host
+  /// without [retroCapabilityCoreIdentity].
+  final RetroCore? core;
+
   /// The status as protocol.md "status" writes it.
   Map<String, Object?> toJson() => {
     ...toFailureJson(),
@@ -235,6 +286,7 @@ class RetroStatus {
     'progressPercent': progressPercent,
     'options': {for (final option in options.values) option.key: option.toJson()},
     'discs': ?discs?.toJson(),
+    'core': ?core?.toJson(),
   };
 
   /// The four fields protocol.md "Host failure" gives for a status the client made.
@@ -246,8 +298,9 @@ class RetroStatus {
       map.length == 4 && (map['errorCode'] == RetroErrorCode.hostExited || map['errorCode'] == RetroErrorCode.hostHung);
 
   /// Reads a `status` result, throwing [RetroProtocolError] for a field out of what protocol.md
-  /// allows. Unknown fields are ignored.
-  static RetroStatus parse(Map<String, Object?> map) {
+  /// allows. Unknown fields are ignored. A host that lists [retroCapabilityCoreIdentity]
+  /// ([coreIdentity]) always sends `core`, an object or null; any other host's `core` is ignored.
+  static RetroStatus parse(Map<String, Object?> map, {bool coreIdentity = false}) {
     final f = RetroFields(map, 'status');
     final options = <String, RetroOption>{};
     final optionFields = f.object('options');
@@ -304,6 +357,19 @@ class RetroStatus {
       progressPercent: percent as int?,
       options: options,
       discs: discs,
+      core: coreIdentity ? _core(f) : null,
     );
+  }
+
+  static RetroCore? _core(RetroFields f) {
+    if (!f.has('core')) throw const RetroProtocolError('status.core is missing.');
+    if (f.map['core'] == null) return null;
+    final c = f.object('core');
+    final name = c.string('name');
+    final version = c.string('version');
+    if (!RetroCore.valid(name) || !RetroCore.valid(version)) {
+      throw const RetroProtocolError('status.core must be printable ASCII of at most 256 bytes.');
+    }
+    return RetroCore(name: name, version: version);
   }
 }

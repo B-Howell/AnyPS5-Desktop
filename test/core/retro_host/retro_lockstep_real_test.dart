@@ -7,6 +7,7 @@ import 'package:anyps5_desktop/core/online/ps1_netplay_state.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_host_client.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_lockstep.dart';
 import 'package:anyps5_desktop/core/retro_host/retro_pad.dart';
+import 'package:anyps5_desktop/core/retro_host/retro_host_protocol.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -214,10 +215,11 @@ Future<void> _match(String configPath, {required bool rollback}) async {
     final guest = await open();
     final guestDisc = disc('guest');
     if (rollback) expect(host.canRollback, isTrue, reason: 'the host lists ps1Rollback');
-    final identity = Ps1LockstepIdentity(
+    expect(host.canIdentifyCore, isTrue, reason: 'the host lists coreIdentity');
+    final hostCore = (await host.status())!.core!;
+    Ps1LockstepIdentity identity({RetroCore? core}) => Ps1LockstepIdentity(
       hostVersion: host.hostVersion,
-      system: 'linux',
-      core: 'a' * 64,
+      core: core,
       disc: 'b' * 64,
       bios: 'c' * 64,
       rollback: rollback,
@@ -239,7 +241,7 @@ Future<void> _match(String configPath, {required bool rollback}) async {
     final hosting = Ps1LockstepMatch(
       hosting: true,
       link: a,
-      identity: identity,
+      identity: identity(core: hostCore),
       work: Directory(p.join(work.path, 'match-host')),
       localInput: () => pad(1),
       paused: () => false,
@@ -249,7 +251,7 @@ Future<void> _match(String configPath, {required bool rollback}) async {
     final joining = Ps1LockstepMatch(
       hosting: false,
       link: b,
-      identity: identity,
+      identity: identity(),
       work: Directory(p.join(work.path, 'match-guest')),
       localInput: () => pad(2),
       paused: () => false,
@@ -263,7 +265,7 @@ Future<void> _match(String configPath, {required bool rollback}) async {
           'options': hello.options,
         });
         await ready(guest);
-        return guest;
+        return (host: guest, core: (await guest.status())!.core!);
       },
     );
     unawaited(hosting.run());

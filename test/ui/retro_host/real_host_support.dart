@@ -105,6 +105,8 @@ class RecordingSession implements RetroHostSession {
   @override
   bool get canRollback => client.canRollback;
   @override
+  bool get canIdentifyCore => client.canIdentifyCore;
+  @override
   Stream<RetroSync> get syncs => client.syncs;
   @override
   Stream<RetroRollback> get rollbacks => client.rollbacks;

@@ -16,7 +16,7 @@ it, the game's picture and the object that runs one game, is described in
 | [`native/retro_host/anyps5_retro_host.c`](../native/retro_host/anyps5_retro_host.c) | Starts the host with its control stream. Reads and writes whole messages on threads of its own. Watches the host exit. Maps the frame ring after the protocol's memory checks. Built by [`hook/build.dart`](../hook/build.dart). |
 | [`lib/core/retro_host/retro_host_native.dart`](../lib/core/retro_host/retro_host_native.dart) | The Dart bindings for that library. |
 | [`lib/core/retro_host/strict_json.dart`](../lib/core/retro_host/strict_json.dart) | Reads message bodies as the protocol's "Values" section says. `dart:convert` silently keeps the last of two equal keys and keeps lone surrogates; the protocol makes both errors. |
-| [`lib/core/retro_host/retro_host_protocol.dart`](../lib/core/retro_host/retro_host_protocol.dart) | The protocol's values, field checks and the game's `status`. |
+| [`lib/core/retro_host/retro_host_protocol.dart`](../lib/core/retro_host/retro_host_protocol.dart) | The protocol's values, field checks and the game's `status`, with `RetroCore`, the core a game loaded (see "Core identity"). |
 | [`lib/core/retro_host/frame_ring.dart`](../lib/core/retro_host/frame_ring.dart) | Checks a ring's header and growth. Pins the newest frame and checks its size. |
 | [`lib/core/retro_host/retro_host_client.dart`](../lib/core/retro_host/retro_host_client.dart) | One host process, as described in the sections below. |
 | [`lib/core/retro_host/retro_lockstep.dart`](../lib/core/retro_host/retro_lockstep.dart) | The lockstep and rollback messages and the rules of their order (see "Lockstep" and "Rollback"). |
@@ -395,6 +395,24 @@ ahead of the other player's input (protocol.md "Rollback"):
   is not confirmed, or a `lockstep` result that turned rollback on or off or
   changed its window then, is one too, as the host refuses both. A
   `loadState` forgets the frames not confirmed.
+
+## Core identity
+
+A host that lists `coreIdentity` (`canIdentifyCore`) names the core each game
+loaded in `status.core` (protocol.md "status"):
+
+- **Reading it.** `RetroStatus.core` is a `RetroCore`, the core's
+  `library_name` and `library_version`, or null until the core is loaded and
+  when it could not be. From a host that lists the capability, a `status`
+  without `core`, or with a name or version that is not printable ASCII of at
+  most 256 bytes, is a protocol error. Another host's `core` is not read.
+- **What it is for.** Two players' launchers compare it before a match
+  ([RETRO_HOST_ONLINE.md](RETRO_HOST_ONLINE.md), "The cores").
+  `RetroCore.identified` says whether the version is a core build identity,
+  `anyps5-1-` and 64 lowercase hexadecimal digits, which the host's own
+  SwanStation builds report; `playsWith` is protocol.md's rule: both strings
+  equal and the version identified. The client does not judge the value
+  itself.
 
 ## Tests
 

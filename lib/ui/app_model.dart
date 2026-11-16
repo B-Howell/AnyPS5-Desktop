@@ -98,7 +98,6 @@ import '../core/online/ps1_lockstep_match.dart';
 import '../core/online/ps1_lockstep_media.dart';
 import '../core/online/ps1_lockstep_peer.dart';
 import '../core/online/ps1_lockstep_rooms.dart';
-import '../core/retro_host/retro_lockstep.dart' show RetroLockstepHost;
 import '../core/retro_host/retro_pad.dart' show RetroPadInput;
 import '../core/together/game_sessions.dart' show GameInvite;
 import '../core/together/people.dart' show Friend;

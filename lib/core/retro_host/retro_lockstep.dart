@@ -522,6 +522,10 @@ abstract interface class RetroLockstepHost {
   /// Whether the host lists [retroCapabilityPs1Rollback] as well.
   bool get canRollback;
 
+  /// Whether the host lists [retroCapabilityCoreIdentity], so its `status` names the core a game
+  /// loaded ([RetroStatus.core]); a match needs it of both hosts.
+  bool get canIdentifyCore;
+
   /// Each `sync`, checked and in frame order.
   Stream<RetroSync> get syncs;
 

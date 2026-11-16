@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import '../retro_host/retro_host_protocol.dart';
 import '../retro_host/retro_lockstep.dart';
 import '../retro_host/retro_pad.dart';
 import 'ps1_lockstep_control.dart';
@@ -36,7 +37,8 @@ enum Ps1LockstepPhase {
   /// Each launcher says what it plays with, and the host player's measures the round trip.
   checking,
 
-  /// The friend's launcher starts the game; the host player's game waits.
+  /// The friend's launcher starts the game and says which core its host loaded; the host player's
+  /// game plays on until the two cores are known to be the same build.
   preparing,
 
   /// The host player's game is held and its state goes to the friend.
@@ -85,14 +87,14 @@ enum Ps1LockstepEnd {
   protocol,
 }
 
-/// What two launchers' hellos disagree on, first in this order.
+/// What two launchers disagree on: their hellos, first in the order host, disc, BIOS, and then the
+/// cores, once the friend's game has loaded its own ([Ps1LockstepReady]).
 enum Ps1LockstepMismatch { host, core, disc, bios }
 
 /// What this launcher plays the match with ([Ps1LockstepHello] without the options).
 class Ps1LockstepIdentity {
   const Ps1LockstepIdentity({
     required this.hostVersion,
-    required this.system,
     required this.core,
     required this.disc,
     required this.bios,
@@ -101,9 +103,9 @@ class Ps1LockstepIdentity {
 
   final String hostVersion;
 
-  /// The system the launcher runs on, as `Platform.operatingSystem` names it.
-  final String system;
-  final String core;
+  /// The core of the host player's game, from its host's `status.core`; null for the friend,
+  /// whose host loads its core only for the game the match starts.
+  final RetroCore? core;
   final String disc;
   final String bios;
 
@@ -112,7 +114,6 @@ class Ps1LockstepIdentity {
 
   Ps1LockstepHello hello(Map<String, String> options) => Ps1LockstepHello(
     hostVersion: hostVersion,
-    system: system,
     core: core,
     disc: disc,
     bios: bios,
@@ -120,19 +121,20 @@ class Ps1LockstepIdentity {
     rollback: rollback,
   );
 
-  /// The first thing [theirs] plays with differently, or null when both match. The SwanStation
-  /// libraries are compared only on the same system: a Windows and a Linux build of the same
-  /// source are different files, and the host names no build identity that is the same on both
-  /// (docs/RETRO_HOST_ONLINE.md "Not yet"). The disc's file names do not count: the state names
-  /// the disc by its place in the disc list.
+  /// The first thing [theirs] plays with differently, or null when both match. The disc's file
+  /// names do not count: the state names the disc by its place in the disc list. The cores are
+  /// compared once the friend's is known ([RetroCore.playsWith]), on any two systems: the host's
+  /// SwanStation builds name the same build identity on Windows, Linux and macOS.
   Ps1LockstepMismatch? against(Ps1LockstepHello theirs) => switch (theirs) {
     _ when theirs.hostVersion != hostVersion => Ps1LockstepMismatch.host,
-    _ when theirs.system == system && theirs.core != core => Ps1LockstepMismatch.core,
     _ when theirs.disc != disc => Ps1LockstepMismatch.disc,
     _ when theirs.bios != bios => Ps1LockstepMismatch.bios,
     _ => null,
   };
 }
+
+/// The friend's game once it is ready for the match: its host, and the core that host loaded.
+typedef Ps1LockstepGuest = ({RetroLockstepHost host, RetroCore core});
 
 /// The input delay a match plays with and, in rollback, its window.
 typedef Ps1LockstepTiming = ({int delay, int? window});
@@ -177,7 +179,8 @@ class Ps1RollbackHealth {
 /// One PS1 online match between two launchers, each with its own emulator host (anyps5-retro-host
 /// docs/netplay.md): the host player (port 1) holds the game they are playing, saves its state and
 /// sends it; the friend (port 2) starts the same game with the host player's options and loads
-/// that state. Main RAM hashes are compared every [compareEvery] frames, and the match ends at the
+/// that state. The host player's game is held only once the friend's game is ready and both hosts
+/// loaded the same core build (protocol.md "status", `core`). Main RAM hashes are compared every [compareEvery] frames, and the match ends at the
 /// first difference.
 ///
 /// When both launchers' hosts can roll back (`ps1Rollback`), the match plays in rollback, GGPO's
@@ -213,6 +216,11 @@ class Ps1LockstepMatch {
     Random? random,
   }) : _random = random ?? Random.secure() {
     if (hosting && host == null) throw ArgumentError('The host player needs the running game.');
+    if (hosting != (identity.core != null)) {
+      throw ArgumentError(
+        "Only the host player's identity names a core: the friend's is known once its game is ready.",
+      );
+    }
     if (!hosting && prepareGuest == null) throw ArgumentError('The friend needs a way to start the game.');
   }
 
@@ -286,8 +294,9 @@ class Ps1LockstepMatch {
   final Map<String, String> options;
 
   /// Starts the friend's game with the host player's hello (its options), with a `saves` folder
-  /// of the match's own, and gives its host once its `status` is ready; null when it could not.
-  final Future<RetroLockstepHost?> Function(Ps1LockstepHello theirs)? prepareGuest;
+  /// of the match's own, and gives its host and the core it loaded once its `status` is ready;
+  /// null when it could not.
+  final Future<Ps1LockstepGuest?> Function(Ps1LockstepHello theirs)? prepareGuest;
 
   /// Something shown changed: the phase, the other player pausing, the end.
   final void Function()? onChanged;
@@ -357,6 +366,7 @@ class Ps1LockstepMatch {
   final _done = Completer<void>();
 
   final _theirHello = Completer<Ps1LockstepHello>();
+  final _guestReady = Completer<RetroCore>();
   final _ending = <Completer<Object?>>[];
   final _pongs = <int, Completer<void>>{};
   final _chunks = <Uint8List>[];
@@ -471,6 +481,9 @@ class Ps1LockstepMatch {
     if (timing == null) throw _finish(Ps1LockstepEnd.tooSlow);
     final delay = _delay = timing.delay;
     _window = timing.window;
+    _setPhase(Ps1LockstepPhase.preparing);
+    final theirCore = await _within(_guestReady.future);
+    if (!identity.core!.playsWith(theirCore)) throw _mismatched(Ps1LockstepMismatch.core);
     _setPhase(Ps1LockstepPhase.transferring);
     final frame = await _guard(game.lockstep(_settings));
     if (frame == null) throw _finish(Ps1LockstepEnd.hostFailed);
@@ -512,15 +525,18 @@ class Ps1LockstepMatch {
 
   Future<void> _joinMatch(Ps1LockstepHello theirs) async {
     _setPhase(Ps1LockstepPhase.preparing);
-    final prepared = prepareGuest!(theirs)..ignore();
+    final guest = await _within(prepareGuest!(theirs));
+    if (guest == null) throw _finish(Ps1LockstepEnd.hostFailed);
+    final game = host = guest.host;
+    _send(Ps1LockstepReady(guest.core));
+    if (!guest.core.playsWith(theirs.core!)) throw _mismatched(Ps1LockstepMismatch.core);
     final start = await _within(_startCame.future);
     if (start.window != 0 && _lockstepOnly) throw _finish(Ps1LockstepEnd.protocol);
     _delay = start.delay;
     _window = start.window == 0 ? null : start.window;
     _epoch = start.epoch;
     _first = start.frame;
-    final game = host = await _within(prepared);
-    if (game == null || (_window != null && !game.canRollback)) throw _finish(Ps1LockstepEnd.hostFailed);
+    if (_window != null && !game.canRollback) throw _finish(Ps1LockstepEnd.hostFailed);
     _setPhase(Ps1LockstepPhase.transferring);
     final packed = await _within(_stateCame.future);
     final state = inflate(packed, start.bytes);
@@ -906,12 +922,14 @@ class Ps1LockstepMatch {
     _heard = DateTime.now();
     switch (message) {
       case Ps1LockstepHello() when !_theirHello.isCompleted:
-        _theirHello.complete(message);
-        final mismatch = identity.against(message);
-        if (mismatch != null) {
-          _mismatch = mismatch;
-          _finish(Ps1LockstepEnd.mismatch);
+        if (hosting != (message.core == null)) {
+          _finish(Ps1LockstepEnd.protocol);
+          return;
         }
+        _theirHello.complete(message);
+        if (identity.against(message) case final mismatch?) _mismatched(mismatch);
+      case Ps1LockstepReady(:final core) when hosting && _theirHello.isCompleted && !_guestReady.isCompleted:
+        _guestReady.complete(core);
       case Ps1LockstepPing(:final id) when !hosting:
         _send(Ps1LockstepPong(id));
       case Ps1LockstepPong(:final id) when hosting && _pongs[id]?.isCompleted == false:
@@ -951,6 +969,12 @@ class Ps1LockstepMatch {
       default:
         _finish(Ps1LockstepEnd.protocol);
     }
+  }
+
+  /// Ends the match because the two launchers do not play with the same [what].
+  _Ended _mismatched(Ps1LockstepMismatch what) {
+    if (_end == null) _mismatch = what;
+    return _finish(Ps1LockstepEnd.mismatch);
   }
 
   void _send(Ps1LockstepMessage message) {
