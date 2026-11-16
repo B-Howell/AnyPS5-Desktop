@@ -7,7 +7,7 @@
 param([string]$Path = (Join-Path $PSScriptRoot "..\..\build\windows\x64\runner\Release"))
 $ErrorActionPreference = "Stop"
 
-$debugRuntime = '^(msvcp|vcruntime|msvcr|concrt|vcomp|vccorlib|vcamp)\d{2,3}(_\d)?d(_[a-z_]+)?\.dll$|^mfcm?\d{2,3}u?d\.dll$|^ucrtbased\.dll$'
+$debugRuntime = '^(msvcp|vcruntime|msvcr|concrt|vcomp|vccorlib|vcamp)\d{2,3}(_\d)?d(_[a-z_]+)?\.dll$|^mfcm?\d{2,3}u?d\.dll$|^msvcrtd\.dll$|^ucrtbased\.dll$'
 
 function Get-PeImports([byte[]]$bytes) {
   if ($bytes.Length -lt 64 -or [BitConverter]::ToUInt16($bytes, 0) -ne 0x5A4D) { throw "not a PE file" }
@@ -22,22 +22,27 @@ function Get-PeImports([byte[]]$bytes) {
     default { throw "unknown optional header" }
   }
   $directoryCount = [BitConverter]::ToUInt32($bytes, $directories - 4)
+  $headersSize = [BitConverter]::ToUInt32($bytes, $optional + 60)
   $sections = $optional + $optionalSize
   $toOffset = {
     param([uint32]$rva)
-    for ($i = 0; $i -lt $sectionCount; $i++) {
+    $offset = -1
+    if ($rva -lt $headersSize) { $offset = [int64]$rva }
+    for ($i = 0; $offset -lt 0 -and $i -lt $sectionCount; $i++) {
       $s = $sections + 40 * $i
       $va = [BitConverter]::ToUInt32($bytes, $s + 12)
       $size = [Math]::Max([BitConverter]::ToUInt32($bytes, $s + 8), [BitConverter]::ToUInt32($bytes, $s + 16))
-      if ($rva -ge $va -and $rva -lt $va + $size) { return [int64]$rva - $va + [BitConverter]::ToUInt32($bytes, $s + 20) }
+      if ($rva -ge $va -and $rva -lt $va + $size) { $offset = [int64]$rva - $va + [BitConverter]::ToUInt32($bytes, $s + 20) }
     }
-    throw "RVA 0x{0:X} is in no section" -f $rva
+    if ($offset -lt 0 -or $offset -ge $bytes.Length) { throw "RVA 0x{0:X} is outside the file" -f $rva }
+    $offset
   }
   $readName = {
     param([uint32]$rva)
     $start = & $toOffset $rva
     $end = $start
-    while ($bytes[$end] -ne 0) { $end++ }
+    while ($end -lt $bytes.Length -and $bytes[$end] -ne 0) { $end++ }
+    if ($end -ge $bytes.Length) { throw "an imported library name at RVA 0x{0:X} has no end" -f $rva }
     [Text.Encoding]::ASCII.GetString($bytes, $start, $end - $start)
   }
   $names = @()
@@ -47,6 +52,7 @@ function Get-PeImports([byte[]]$bytes) {
     if ($rva -eq 0) { continue }
     $entry = & $toOffset $rva
     while ($true) {
+      if ($entry + $table.Size -gt $bytes.Length) { throw "the import table at RVA 0x{0:X} has no end" -f $rva }
       $nameRva = [uint64][BitConverter]::ToUInt32($bytes, $entry + $table.Name)
       if ($nameRva -eq 0) { break }
       # Delay-load entries without the RVA attribute (bit 0), from old linkers, hold addresses.
