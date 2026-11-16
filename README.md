@@ -416,6 +416,13 @@ use those once changed in the game.
   copies the build machine's libmpv and the libraries it needs that the launcher does not link
   already into the bundle's `lib/`, with their packages' copyright files in `lib/licenses/`, so
   the bundle, the AppImage and the .deb start on systems with another libmpv or none.
+- No Windows binary may need the Visual C++ debug runtime (`MSVCP140D.dll`, `VCRUNTIME140D.dll`,
+  `ucrtbased.dll`): only Visual Studio installs it and it may not be shipped.
+  media_kit_libs_windows_video 1.0.11 (also its main branch in November 2026) bundles the
+  `zlib.dll` of its ANGLE archive, a debug build that nothing imports or loads, so
+  `windows/CMakeLists.txt` leaves it out. `packaging/windows/check-debug-runtime.ps1` reads the
+  imports of every .exe and .dll in the release folder and fails on a debug runtime;
+  `build-installer.ps1` and CI run it.
 
 ## Credits
 

@@ -14,6 +14,7 @@ if (-not $SkipBuild) {
 }
 $release = Join-Path $root "build\windows\x64\runner\Release"
 if (-not (Test-Path (Join-Path $release "anyps5_desktop.exe"))) { throw "no release build in $release" }
+& (Join-Path $PSScriptRoot "check-debug-runtime.ps1") -Path $release
 
 $iscc = @(
   "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
