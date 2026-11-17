@@ -7,6 +7,7 @@ area: documentation home
 # AnyPS5 Desktop documentation home
 
 <!-- BEGIN DOCUMENTATION HUB LINKS -->
+- [PS4 library](<AnyPS5 Desktop - PS4 Library.md>) covers PS4 dumps in the library: how their param.sfo, updates and add-ons are read, the PS4 chip, and why they are not playable yet.
 - [Standalone emulator library](<AnyPS5 Desktop - Standalone Emulator Library.md>) covers library discovery, console folders and starting installed emulators.
 - [Emulator host client](<AnyPS5 Desktop - Emulator Host Client.md>) covers how the launcher starts the separate PS1 emulator host, talks to it and reads its frames, and how it checks the signed host release before it is installed and before each start.
 - [Emulator host UI](<AnyPS5 Desktop - Emulator Host UI.md>) covers PS1 games played in the launcher's window through the emulator host: the picture, the controls, the in-game menu and the Settings › Emulators rows, including the signed host's download, behind a setting that is off by default.

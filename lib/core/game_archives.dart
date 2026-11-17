@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
@@ -7,6 +6,7 @@ import 'dart:typed_data';
 import 'package:archive/archive_io.dart';
 import 'package:path/path.dart' as p;
 
+import 'dump_parameters.dart';
 import 'ffpfsc.dart';
 
 export 'ffpfsc.dart' show ArchiveProblem, Ffpfsc;
@@ -68,15 +68,16 @@ class ArchivePlan {
   /// the zip is the dump itself. Empty when the files are not all in one folder.
   final String strip;
 
-  /// Whether it holds a dump: an eboot.bin and a sce_sys/param.json.
+  /// Whether it holds a dump: an eboot.bin and a sce_sys/param.json (PS5) or param.sfo (PS4).
   final bool looksLikeGame;
 
   /// The names that would land outside the folder (an absolute path, a drive, "..", a name
   /// Windows cannot make). An archive with any is never unpacked.
   final List<String> refused;
 
-  /// The dump's title ID and contentVersion from its param.json, null when it has none that
-  /// reads: what tells an update for a game in the library from a game of its own.
+  /// The dump's title ID and version from its parameter file (param.json's contentVersion,
+  /// param.sfo's APP_VER), null when it has none that reads: what tells an update for a game in
+  /// the library from a game of its own.
   final String? titleId;
   final String? version;
 
@@ -244,7 +245,7 @@ abstract final class GameArchives {
       // A dump at the top, or in a folder or two below it.
       if (parts.length <= 3 && parts.last.toLowerCase() == 'eboot.bin') eboot = true;
       final last = parts.length;
-      if (last >= 2 && last <= 4 && parts[last - 2] == 'sce_sys' && parts[last - 1] == 'param.json') {
+      if (last >= 2 && last <= 4 && parts[last - 2] == 'sce_sys' && DumpParameters.files.contains(parts[last - 1])) {
         parameters = true;
         if (last < parameterDepth && entry.size < 1024 * 1024) {
           parameterFile = entry;
@@ -259,18 +260,15 @@ abstract final class GameArchives {
       strip: strip,
       looksLikeGame: eboot && parameters,
       refused: List.unmodifiable(refused),
-      titleId: about?['titleId'] is String ? about!['titleId'] as String : null,
-      version: about?['contentVersion'] is String ? about!['contentVersion'] as String : null,
+      titleId: about?.titleId,
+      version: about?.version,
     );
   }
 
-  static Map<String, dynamic>? _parameters(ArchiveFile? file) {
+  static DumpParameters? _parameters(ArchiveFile? file) {
     if (file == null) return null;
     try {
-      var bytes = file.readBytes() ?? Uint8List(0);
-      if (bytes.length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) bytes = bytes.sublist(3);
-      final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: true));
-      return decoded is Map<String, dynamic> ? decoded : null;
+      return DumpParameters.parse(file.name, file.readBytes() ?? Uint8List(0));
     } on Object {
       return null;
     }

@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "%@ sudah sedia. Beberapa failnya tidak dapat ditukar dan telah ditinggalkan.",
   "unlocking": "Sedang membuka kunci",
   "unreadableDump": "'Dump' ini disulitkan atau rosak dan tidak boleh dibuka.",
+  "notPlayableYet": "Belum boleh dimainkan",
+  "notPlayableYetDetail": "AnyPS5 belum boleh menjalankan permainan %@. Permainan ini kekal dalam pustaka anda sehingga ia boleh.",
   "update": "Kemas kini",
   "updateAndPlay": "Kemas kini dan Main",
   "updateAndPlayDetail": "Membawa pembaikan terkini daripada AnyPS5; Data simpanan dan trofi anda akan kekal.",

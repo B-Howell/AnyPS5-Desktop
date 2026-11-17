@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "%@ ist bereit. Einige Dateien konnten nicht umgewandelt werden und wurden ausgelassen.",
   "unlocking": "Wird entsperrt",
   "unreadableDump": "Dieser Dump ist verschlüsselt oder beschädigt und kann nicht geöffnet werden.",
+  "notPlayableYet": "Noch nicht spielbar",
+  "notPlayableYetDetail": "AnyPS5 kann %@-Spiele noch nicht ausführen. Das Spiel bleibt in deiner Bibliothek, bis es so weit ist.",
   "update": "Aktualisieren",
   "updateAndPlay": "Aktualisieren und spielen",
   "updateAndPlayDetail": "Enthält die neuesten AnyPS5-Korrekturen; Spielstände und Trophäen bleiben erhalten.",

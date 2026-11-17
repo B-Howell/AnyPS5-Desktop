@@ -94,6 +94,7 @@ Future<int> runCli(
       _glibcWarning(toolkit, host, env, output);
       final game = GameLibrary.inspect(arguments[1]);
       if (game == null) return fail('not a game folder: ${arguments[1]}');
+      if (!game.platform.runs) return fail('${game.titleId}: AnyPS5 does not run ${game.platform.label} games yet');
       final plan = Installer.plan(game, arguments[2]);
       if (plan.copies) {
         output.writeln(

@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "Er klar. Noen av filene kunne ikke konverteres og ble utelatt %@.",
   "unlocking": "Låser opp",
   "unreadableDump": "Denne dumpen er kryptert eller skadet og kan ikke åpnes.",
+  "notPlayableYet": "Kan ikke spilles ennå",
+  "notPlayableYetDetail": "AnyPS5 kan ikke kjøre %@-spill ennå. Spillet blir værende i biblioteket ditt til det kan.",
   "update": "Oppdater",
   "updateAndPlay": "Oppdater og spill",
   "updateAndPlayDetail": "Inneholder de nyeste rettelsene for AnyPS5; lagringsfiler og trofeer beholdes.",

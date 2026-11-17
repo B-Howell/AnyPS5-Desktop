@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'dump_parameters.dart';
 import 'game_library.dart';
 
 /// Which games a scan of the games folder found that the launcher had not seen before, for the
@@ -261,7 +262,7 @@ class LibraryWatcher {
           folder,
           stamp(folder),
           stamp(p.join(folder, 'sce_sys')),
-          stamp(p.join(folder, 'sce_sys', 'param.json')),
+          for (final name in DumpParameters.files) stamp(p.join(folder, 'sce_sys', name)),
           stamp(p.join(folder, 'eboot.bin')),
         ].join('|'),
     ].join('\n');

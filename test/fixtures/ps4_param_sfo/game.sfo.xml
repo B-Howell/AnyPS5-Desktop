@@ -1,0 +1,17 @@
+<?xml version="1.0" ?>
+<sfo>
+	<value name="APP_TYPE" type="integer">0</value>
+	<value name="APP_VER" type="string">01.00</value>
+	<value name="ATTRIBUTE" type="integer">0</value>
+	<value name="CATEGORY" type="string">gd</value>
+	<value name="CONTENT_ID" type="string">IV0000-ANPS40001_00-ANYPS5FIXTURE001</value>
+	<value name="DOWNLOAD_DATA_SIZE" type="integer">0</value>
+	<value name="FORMAT" type="string">obs</value>
+	<value name="PARENTAL_LEVEL" type="integer">1</value>
+	<value name="SYSTEM_VER" type="integer">0</value>
+	<value name="TITLE" type="string">Orbis Fixture</value>
+	<value name="TITLE_01" type="string">Orbis Fixture</value>
+	<value name="TITLE_02" type="string">Orbis Exemple</value>
+	<value name="TITLE_ID" type="string">ANPS40001</value>
+	<value name="VERSION" type="string">01.00</value>
+</sfo>

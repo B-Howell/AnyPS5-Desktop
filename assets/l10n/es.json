@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "%@ está listo. No se pudieron convertir algunos archivos y se omitieron.",
   "unlocking": "Desbloqueando",
   "unreadableDump": "Este volcado está cifrado o dañado y no se puede abrir.",
+  "notPlayableYet": "Aún no se puede jugar",
+  "notPlayableYetDetail": "AnyPS5 todavía no ejecuta juegos de %@. Este juego sigue en tu biblioteca para cuando lo haga.",
   "update": "Actualizar",
   "updateAndPlay": "Actualizar y jugar",
   "updateAndPlayDetail": "Incluye las correcciones más recientes de AnyPS5; tus datos guardados y trofeos se conservan.",

@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "Handa na ang%@. Ang ilan sa mga file nito ay hindi ma-convert at hindi kasama.",
   "unlocking": "Pag-unlock",
   "unreadableDump": "Ang dump na ito ay naka-encrypt o nasira at hindi mabubuksan.",
+  "notPlayableYet": "Hindi pa malalaro",
+  "notPlayableYetDetail": "Hindi pa kayang patakbuhin ng AnyPS5 ang mga larong %@. Mananatili ang larong ito sa iyong library hanggang sa kaya na.",
   "update": "Update",
   "updateAndPlay": "Update at I-play",
   "updateAndPlayDetail": "Nagdadala ng mga pinakabagong pag-aayos ng AnyPS5; Mananatili ang iyong mga na-save at tropeo.",

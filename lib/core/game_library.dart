@@ -6,10 +6,13 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import 'binary.dart';
+import 'dump_parameters.dart';
 import 'family/family_rules.dart' show AgeLevels;
 import 'game_addons.dart';
 import 'ps3_disc.dart';
 import 'self_unwrap.dart';
+
+export 'dump_parameters.dart' show DumpPlatform;
 
 /// What a dump's eboot.bin is.
 enum ExecutableKind {
@@ -42,7 +45,8 @@ enum RetroPlatform {
 /// playlist, image or PS3_DISC.SFB).
 typedef RetroDisc = ({RetroPlatform platform, String path});
 
-/// A PS5 game dump found in the games folder: a folder with sce_sys/param.json and an eboot.bin.
+/// A game found in the games folder: a dump (a folder with an eboot.bin and sce_sys/param.json
+/// for a PS5 game, sce_sys/param.sfo for a PS4 one), or a disc an emulator plays ([retro]).
 class Game {
   Game({
     required this.folder,
@@ -61,6 +65,7 @@ class Game {
     this.addons = const [],
     this.libraryId,
     this.files,
+    this.platform = DumpPlatform.ps5,
   });
 
   /// The dump's folder, as the scan found it.
@@ -76,13 +81,17 @@ class Game {
   final String version;
   final ExecutableKind executable;
 
-  /// sce_sys/icon0.png, pic0.png and snd0.at9 when the dump has them.
+  /// sce_sys/icon0.png, the background (pic0.png for a PS5 dump, pic1.png for a PS4 one) and
+  /// snd0.at9 when the dump has them.
   final String? icon;
   final String? background;
   final String? music;
 
-  /// The disc an emulator plays, for a game that is not a PS5 dump; null for a dump.
+  /// The disc an emulator plays, for a game that is not a dump; null for a dump.
   final RetroDisc? retro;
+
+  /// The console the dump was made for, from its parameter file; a disc's is in [retro].
+  final DumpPlatform platform;
 
   /// param.json's age ratings (`ageLevel`): "default" or a region such as "US", to an age; null
   /// when the dump has none.
@@ -239,6 +248,7 @@ abstract final class GameLibrary {
           a.executable != b.executable ||
           a.id != b.id ||
           a.retro != b.retro ||
+          a.platform != b.platform ||
           !_sameFiles(a.files, b.files) ||
           a.icon != b.icon ||
           a.background != b.background ||
@@ -471,31 +481,10 @@ abstract final class GameLibrary {
     if (!File(eboot).existsSync()) {
       return includeRetro ? _inspectRetro(folder, root) ?? _inspectPs3(folder, root, cache ?? retroCache) : null;
     }
-    final Map<String, dynamic> parameters;
-    try {
-      final decoded = jsonDecode(_text(File(p.join(system, 'param.json')).readAsBytesSync()));
-      if (decoded is! Map<String, dynamic>) return null;
-      parameters = decoded;
-    } on FileSystemException {
-      return null;
-    } on FormatException {
-      return null;
-    }
-    final titleId = _string(parameters['titleId']) ?? p.basename(folder);
-    final localized = parameters['localizedParameters'] is Map<String, dynamic>
-        ? parameters['localizedParameters'] as Map<String, dynamic>
-        : <String, dynamic>{};
-    final language = _string(localized['defaultLanguage']) ?? _string(parameters['defaultLanguage']) ?? 'en-US';
-    final names = <String, String>{};
-    for (final entry in localized.entries) {
-      final value = entry.value;
-      if (value is Map<String, dynamic>) {
-        final title = _string(value['titleName']);
-        if (title != null) names[entry.key] = title;
-      }
-    }
-    final name = names[language] ?? names['en-US'] ?? titleId;
-    final version = _string(parameters['contentVersion']) ?? '1.0';
+    final parameters = DumpParameters.read(folder);
+    if (parameters == null) return null;
+    final titleId = parameters.titleId ?? p.basename(folder);
+    final ps4 = parameters.platform == DumpPlatform.ps4;
     String? existing(String name) {
       final path = p.join(system, name);
       return File(path).existsSync() ? path : null;
@@ -513,15 +502,16 @@ abstract final class GameLibrary {
     return Game(
       folder: folder,
       titleId: titleId,
-      name: name,
-      names: names,
-      defaultLanguage: language,
-      version: version,
+      name: parameters.title ?? titleId,
+      names: parameters.names,
+      defaultLanguage: parameters.defaultLanguage,
+      version: parameters.version ?? '1.0',
       executable: executable,
+      platform: parameters.platform,
       icon: existing('icon0.png'),
-      background: existing('pic0.png'),
+      background: existing(ps4 ? 'pic1.png' : 'pic0.png'),
       music: existing('snd0.at9'),
-      ageLevels: AgeLevels.parse(parameters['ageLevel']),
+      ageLevels: AgeLevels.parse(parameters.ageLevel),
       update: beside.update,
       addons: beside.addons,
     );

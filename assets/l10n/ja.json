@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "%@ の準備ができました。いくつかのファイルは変換できず、残されました。",
   "unlocking": "ロック解除",
   "unreadableDump": "このダンプは暗号化されているか破損しているため、開くことができません。",
+  "notPlayableYet": "まだプレイできません",
+  "notPlayableYetDetail": "AnyPS5 はまだ %@ のゲームを実行できません。実行できるようになるまで、このゲームはライブラリに残ります。",
   "update": "アップデート",
   "updateAndPlay": "アップデートしてプレイ",
   "updateAndPlayDetail": "AnyPS5 の最新の修正をもたらします。セーブとトロフィーはそのまま残ります。",

@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "%@ este pregătit. Unele dintre fișierele sale nu au putut fi convertite și au fost omise.",
   "unlocking": "Deblocare",
   "unreadableDump": "Acest dump este criptat sau deteriorat și nu poate fi deschis.",
+  "notPlayableYet": "Încă nu se poate juca",
+  "notPlayableYetDetail": "AnyPS5 nu rulează încă jocuri %@. Jocul rămâne în biblioteca ta până când va fi posibil.",
   "update": "Actualizare",
   "updateAndPlay": "Actualizare și redare",
   "updateAndPlayDetail": "Include cele mai recente remedieri pentru AnyPS5; salvările și trofeele tale rămân intacte.",

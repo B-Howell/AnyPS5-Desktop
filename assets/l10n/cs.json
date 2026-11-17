@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "Položka je připravena.Některé soubory nebylo možné převést, a proto byly vynechány %@.",
   "unlocking": "Odemknutí",
   "unreadableDump": "Tento dump je zašifrovaný nebo poškozený a nelze jej otevřít.",
+  "notPlayableYet": "Zatím nelze hrát",
+  "notPlayableYetDetail": "AnyPS5 zatím nespouští hry pro %@. Hra zůstane ve vaší knihovně, dokud to nebude možné.",
   "update": "Aktualizace",
   "updateAndPlay": "Aktualizovat a hrát",
   "updateAndPlayDetail": "Obsahuje nejnovější opravy pro AnyPS5; vaše uložené pozice a trofeje zůstanou zachovány.",

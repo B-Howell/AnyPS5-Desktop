@@ -19,6 +19,7 @@ import 'glass.dart';
 import 'level_badge.dart';
 import 'padlock.dart';
 import 'panels.dart' show StatusDot;
+import 'platform_chip.dart';
 import 'profiles_view.dart' show ProfileSwitcherList, ProfileTile;
 import 'retro_folder_tile.dart';
 import 'startup_intro.dart';
@@ -1091,6 +1092,8 @@ class GameTile extends StatelessWidget {
               else
                 Icon(Icons.sports_esports_rounded, size: size * 0.32, color: Colors.white.withValues(alpha: 0.5)),
               ..._overlay(state, accent),
+              if (game.retro == null && game.platform != DumpPlatform.ps5)
+                PlatformChip(label: game.platform.label, size: size),
             ],
           ),
         ),
@@ -1149,7 +1152,7 @@ class GameTile extends StatelessWidget {
     return switch (state) {
       Locked() => [dim, lock],
       FamilyLocked() => [dim, badge(Icons.family_restroom_rounded)],
-      Unreadable() => [dim, badge(Icons.block_rounded)],
+      Unreadable() || NotPlayableYet() => [dim, badge(Icons.block_rounded)],
       Failed() => [dim, badge(Icons.warning_rounded)],
       NeedsEmulator() => [dim, badge(Icons.settings_rounded)],
       Installing(:final overall, :final updating) => [
@@ -1260,6 +1263,7 @@ class StateLabel extends StatelessWidget {
         Palette.warning,
       ),
       Unreadable() => (Icons.block_rounded, T.text('unreadableDump'), Palette.danger),
+      NotPlayableYet() => (Icons.block_rounded, T.text('notPlayableYet'), dim),
       Queued(waitingForEngine: true) => (
         Icons.hourglass_top_rounded,
         T.text(compact ? 'stateWaitingEngineShort' : 'waitingForEngine'),

@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "%@ جاهز. لا يمكن تحويل عدد قليل من ملفاته وتم استبعادها.",
   "unlocking": "فتح",
   "unreadableDump": "هذا التفريغ مشفر أو تالف ولا يمكن فتحه.",
+  "notPlayableYet": "غير قابلة للعب بعد",
+  "notPlayableYetDetail": "لا يشغّل AnyPS5 ألعاب %@ بعد. تبقى هذه اللعبة في مكتبتك إلى أن يصبح ذلك ممكنًا.",
   "update": "تحديث",
   "updateAndPlay": "التحديث والتشغيل",
   "updateAndPlayDetail": "جلب أحدث إصلاحات AnyPS5؛ تبقى حفظاتك وجوائزك.",

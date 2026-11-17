@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "%@ hazır. Birkaç dosyası dönüştürülemediği için dışarıda bırakıldı.",
   "unlocking": "Kilit açılıyor",
   "unreadableDump": "Bu dump şifreli ya da bozuk, açılamaz.",
+  "notPlayableYet": "Henüz oynanamıyor",
+  "notPlayableYetDetail": "AnyPS5 henüz %@ oyunlarını çalıştıramıyor. Bu oyun, çalıştırılabilene kadar kütüphanende kalır.",
   "update": "Güncelle",
   "updateAndPlay": "Güncelle ve oyna",
   "updateAndPlayDetail": "AnyPS5'in yeni düzeltmeleri gelir; kayıtların ve kupaların korunur.",

@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+<sfo>
+	<value name="ATTRIBUTE" type="integer">0</value>
+	<value name="CATEGORY" type="string">ac</value>
+	<value name="CONTENT_ID" type="string">IV0000-ANPS40001_00-EXTRASOUNDTRACK1</value>
+	<value name="FORMAT" type="string">obs</value>
+	<value name="TITLE" type="string">Fixture Soundtrack</value>
+	<value name="TITLE_ID" type="string">ANPS40001</value>
+	<value name="VERSION" type="string">01.00</value>
+</sfo>

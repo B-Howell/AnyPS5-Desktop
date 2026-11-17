@@ -1,7 +1,8 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+
+import 'dump_parameters.dart';
 
 /// An add-on (DLC) the player dumped beside a game: a folder the engine mounts as /addcontN.
 class GameAddon {
@@ -12,7 +13,7 @@ class GameAddon {
   /// The entitlement label the game asks for (16 letters and digits at most).
   final String label;
 
-  /// The name in the add-on's param.json, else its label.
+  /// The name in the add-on's param.json or param.sfo, else its label.
   final String name;
 
   @override
@@ -31,7 +32,7 @@ class GameUpdate {
 
   final String folder;
 
-  /// param.json's contentVersion, such as 01.004.000.
+  /// param.json's contentVersion, such as 01.004.000, or param.sfo's APP_VER, such as 01.09.
   final String version;
 
   /// The version as the game page shows it: 01.004.000 is 01.004.
@@ -51,8 +52,8 @@ class GameUpdate {
 ///     PPSA01234-DLC/<label>/         one folder per add-on, named by its label or content ID
 ///     UP0000-PPSA01234_00-<label>/   an add-on in a folder named by its content ID
 ///
-/// The game's own folder name or its title ID both work before the suffix. Only what is on the
-/// disk is reported.
+/// The same for a PS4 game (CUSA01234), whose dumps have param.sfo for param.json. The game's own
+/// folder name or its title ID both work before the suffix. Only what is on the disk is reported.
 abstract final class GameAddons {
   static const updateSuffixes = ['-update', '-patch'];
   static const addonSuffixes = ['-dlc'];
@@ -109,9 +110,9 @@ abstract final class GameAddons {
 
     GameUpdate? update;
     for (final candidate in named(updateSuffixes)) {
-      final parameters = _parameters(candidate.path);
+      final parameters = DumpParameters.read(candidate.path);
       if (parameters == null) continue;
-      update = GameUpdate(folder: candidate.path, version: _string(parameters['contentVersion']) ?? '');
+      update = GameUpdate(folder: candidate.path, version: parameters.version ?? '');
       break;
     }
     final addons = <GameAddon>[];
@@ -144,11 +145,11 @@ abstract final class GameAddons {
 
   /// The add-on in [folder], null when no entitlement label can be told from it.
   static GameAddon? addon(String folder) {
-    final parameters = _parameters(folder);
-    final fromId = parameters == null ? null : labelOfContentId(_string(parameters['contentId']) ?? '');
+    final parameters = DumpParameters.read(folder);
+    final fromId = labelOfContentId(parameters?.contentId ?? '');
     final label = fromId ?? labelOfFolderNamed(p.basename(folder));
     if (label == null) return null;
-    return GameAddon(folder: folder, label: label, name: (parameters == null ? null : _title(parameters)) ?? label);
+    return GameAddon(folder: folder, label: label, name: parameters?.title ?? label);
   }
 
   /// The label of a folder named by its content ID or by the label itself.
@@ -168,30 +169,4 @@ abstract final class GameAddons {
   /// 01.004.000 is 01.004; a version without a trailing .000 stays as it is.
   static String shortVersion(String version) =>
       version.endsWith('.000') && '.'.allMatches(version).length == 2 ? version.substring(0, version.length - 4) : version;
-
-  /// The dump's sce_sys/param.json in [folder], null when it has none that reads.
-  static Map<String, dynamic>? parameters(String folder) => _parameters(folder);
-
-  static Map<String, dynamic>? _parameters(String folder) {
-    try {
-      var bytes = File(p.join(folder, 'sce_sys', 'param.json')).readAsBytesSync();
-      if (bytes.length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) bytes = bytes.sublist(3);
-      final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: true));
-      return decoded is Map<String, dynamic> ? decoded : null;
-    } on FileSystemException {
-      return null;
-    } on FormatException {
-      return null;
-    }
-  }
-
-  static String? _title(Map<String, dynamic> parameters) {
-    final localized = parameters['localizedParameters'];
-    if (localized is! Map<String, dynamic>) return null;
-    final language = _string(localized['defaultLanguage']) ?? 'en-US';
-    final names = localized[language] ?? localized['en-US'];
-    return names is Map<String, dynamic> ? _string(names['titleName']) : null;
-  }
-
-  static String? _string(Object? value) => value is String && value.isNotEmpty ? value : null;
 }

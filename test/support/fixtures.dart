@@ -58,3 +58,29 @@ String makeDump(
   }
   return folder;
 }
+
+/// The PS4 parameter files of test/fixtures/ps4_param_sfo (made by PSL1GHT's sfo.py from the
+/// .sfo.xml beside each): a game (CATEGORY gd, APP_VER 01.00), its update (gp, 01.02) and an
+/// add-on (ac), all of title ANPS40001.
+List<int> ps4ParamSfo(String kind) =>
+    File(p.join('test', 'fixtures', 'ps4_param_sfo', '$kind.param.sfo')).readAsBytesSync();
+
+/// Writes a PS4 dump: sce_sys/param.sfo from the fixture [kind], an eboot.bin starting with
+/// [eboot] (a SELF by default, as a PS4 dump keeps it) unless [eboot] is null, and the pictures
+/// named in [pictures].
+String makePs4Dump(
+  String parent,
+  String folderName, {
+  String kind = 'game',
+  List<int>? eboot = selfHead,
+  List<String> pictures = const [],
+}) {
+  final folder = p.join(parent, folderName);
+  Directory(p.join(folder, 'sce_sys')).createSync(recursive: true);
+  File(p.join(folder, 'sce_sys', 'param.sfo')).writeAsBytesSync(ps4ParamSfo(kind));
+  if (eboot != null) File(p.join(folder, 'eboot.bin')).writeAsBytesSync([...eboot, ...List.filled(60, 0)]);
+  for (final picture in pictures) {
+    File(p.join(folder, 'sce_sys', picture)).writeAsBytesSync([0x89, 0x50, 0x4E, 0x47]);
+  }
+  return folder;
+}

@@ -86,13 +86,16 @@ The Scoop manifest and the Arch package follow the latest stable release by them
 scheduled workflow in each repository moves them within six hours of a release.
 
 The [standalone emulator library](<docs/AnyPS5 Desktop - Standalone Emulator Library.md>)
-can open PS1, PS2 and PS3 games in an emulator you have already installed.
+can open PS1, PS2 and PS3 games in an emulator you have already installed. PS4 dumps are listed
+beside PS5 ones, and marked not playable until the engine runs them
+([PS4 library](<docs/AnyPS5 Desktop - PS4 Library.md>)).
 
 ## Layout
 
 - `lib/core/` platform-independent logic in pure Dart (no Flutter), unit tested:
-  - `game_library.dart` dumps in a games folder (param.json names per language, version,
-    icon0/pic0/snd0, executable kind)
+  - `game_library.dart` dumps in a games folder (names per language, version, icon0, pic0 or
+    pic1, snd0, executable kind), read by `dump_parameters.dart` from a PS5 dump's param.json or
+    a PS4 dump's param.sfo (`param_sfo.dart`)
   - `self_unwrap.dart` SELF/fSELF to ELF, byte-identical to upstream `tools/unwrap_self.py`
   - `installer.dart`, `toolkit.dart`, `file_links.dart`, `host.dart` unwrap, relink, lay out
     (links through FFI: `link(2)` / `CreateHardLinkW` / `CreateSymbolicLinkW`), carry saves
@@ -439,6 +442,7 @@ Games/
   UP0000-PPSA01234_00-SOUNDTRACK000003/   or beside the game, named by its content ID
 ```
 
+A PS4 game (CUSA01234) uses the same layout, its dumps' `param.sfo` read for `param.json`.
 The game's folder name or its title ID goes before `-UPDATE`, `-patch` and `-DLC`, in any case
 (`lib/core/game_addons.dart`). The game page shows **DLC (n)** and **Update v01.004 applied**;
 an update dumped after the unlock says **unlock to apply**, since its `eboot.bin` and modules are

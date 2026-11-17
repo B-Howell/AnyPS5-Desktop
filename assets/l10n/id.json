@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "%@ sudah siap. Beberapa filenya tidak dapat dikonversi dan ditinggalkan.",
   "unlocking": "Membuka kunci",
   "unreadableDump": "Dump ini dienkripsi atau rusak dan tidak dapat dibuka.",
+  "notPlayableYet": "Belum bisa dimainkan",
+  "notPlayableYetDetail": "AnyPS5 belum bisa menjalankan game %@. Game ini tetap ada di pustaka Anda sampai bisa.",
   "update": "Pembaruan",
   "updateAndPlay": "Perbarui dan Mainkan",
   "updateAndPlayDetail": "Membawa perbaikan terbaru AnyPS5; simpanan dan piala Anda tetap ada.",

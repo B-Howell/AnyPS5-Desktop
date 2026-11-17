@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "%@ 已就緒。部分檔案無法轉換，因此已略過。",
   "unlocking": "正在解鎖",
   "unreadableDump": "此轉儲檔已加密或損毀，無法開啟。",
+  "notPlayableYet": "暫不可玩",
+  "notPlayableYetDetail": "AnyPS5 目前還無法執行 %@ 遊戲。在可以執行之前，這款遊戲會保留在你的遊戲庫中。",
   "update": "更新",
   "updateAndPlay": "更新並遊玩",
   "updateAndPlayDetail": "取得 AnyPS5 的最新修正；存檔和獎盃會保留。",

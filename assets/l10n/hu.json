@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "A játék készen áll.Néhány fájlt nem sikerült konvertálni, ezért ezek kimaradtak %@.",
   "unlocking": "A(z)",
   "unreadableDump": "Ez a dump titkosított vagy sérült, ezért nem nyitható meg.",
+  "notPlayableYet": "Még nem játszható",
+  "notPlayableYetDetail": "Az AnyPS5 még nem futtat %@-játékokat. A játék a könyvtáradban marad, amíg ez lehetővé nem válik.",
   "update": "Frissítés",
   "updateAndPlay": "Frissítés és játékindítás",
   "updateAndPlayDetail": "Tartalmazza a(z) AnyPS5 legújabb javításait; a mentések és a trófeák megmaradnak.",

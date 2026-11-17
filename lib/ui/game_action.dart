@@ -28,6 +28,7 @@ class GameAction {
     Installed() => GameAction(T.text('play'), Icons.play_arrow_rounded),
     NeedsEmulator() => GameAction(T.text('retroChooseEmulator'), Icons.settings_rounded),
     Locked() || Unreadable() => GameAction(T.text('unlock'), Icons.lock_open_rounded),
+    NotPlayableYet() => GameAction(T.text('notPlayableYet'), Icons.block_rounded),
     Failed() => GameAction(T.text('retry'), Icons.refresh_rounded),
     Installing(cancelling: true) => GameAction(
       T.text('unlockCancelling'),

@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "%@ ዝግጁ ነው። አንዳንድ ፋይሎቹ ሊለወጡ ስላልቻሉ ተዘልለዋል።",
   "unlocking": "መክፈት",
   "unreadableDump": "ይህ ዳምፕ (dump) የተመሰጠረ ወይም የተበላሸ ስለሆነ ሊከፈት አይችልም።",
+  "notPlayableYet": "ገና መጫወት አይቻልም",
+  "notPlayableYetDetail": "AnyPS5 የ%@ ጨዋታዎችን ገና ማሄድ አይችልም። ይህ ጨዋታ ማሄድ እስኪቻል ድረስ በቤተ-መጽሐፍትዎ ውስጥ ይቆያል።",
   "update": "ዝማኔ",
   "updateAndPlay": "አዘምን እና ተጫወት",
   "updateAndPlayDetail": "የPS5 የቅርብ ጊዜ ማሻሻያዎችን ያግኙ፤ ያስቀመጧቸው መረጃዎች (saves) እና ዋንጫዎች (trophies) ግን እንደነበሩ ይቆያሉ።",

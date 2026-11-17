@@ -1514,6 +1514,8 @@
   "unlockLeftOutNotRelinked": "%@ 준비 완료. 일부 파일을 변환할 수 없어 제외되었습니다.",
   "unlocking": "잠금 해제 중",
   "unreadableDump": "이 덤프 파일은 암호화되어 있거나 손상되어 열 수 없습니다.",
+  "notPlayableYet": "아직 플레이할 수 없음",
+  "notPlayableYetDetail": "AnyPS5는 아직 %@ 게임을 실행할 수 없습니다. 실행할 수 있을 때까지 이 게임은 라이브러리에 남아 있습니다.",
   "update": "업데이트",
   "updateAndPlay": "업데이트 후 플레이",
   "updateAndPlayDetail": "AnyPS5의 최신 수정 사항을 적용합니다. 저장 데이터와 트로피는 그대로 유지됩니다.",

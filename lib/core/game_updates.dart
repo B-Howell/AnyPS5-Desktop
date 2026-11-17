@@ -4,13 +4,14 @@ import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 
+import 'dump_parameters.dart';
 import 'game_addons.dart';
 import 'game_archives.dart' show UnpackCancel, UnpackCancelled;
 import 'game_library.dart';
 
 /// Why a folder cannot be a game's update.
 enum UpdateProblem {
-  /// No eboot.bin and sce_sys/param.json in it.
+  /// No eboot.bin and sce_sys/param.json (or param.sfo) in it.
   notADump,
 
   /// The dump of another title.
@@ -33,7 +34,7 @@ class UpdateCandidate {
   final String folder;
   final String titleId;
 
-  /// param.json's contentVersion, such as 01.005.000.
+  /// param.json's contentVersion, such as 01.005.000, or param.sfo's APP_VER, such as 01.09.
   final String version;
 
   String get shortVersion => GameAddons.shortVersion(version);
@@ -80,13 +81,13 @@ abstract final class GameUpdates {
     if (p.equals(folder, game.folder) || p.isWithin(folder, game.folder) || p.isWithin(game.folder, folder)) {
       return (update: null, problem: UpdateProblem.notNewer);
     }
-    final parameters = GameAddons.parameters(folder);
+    final parameters = DumpParameters.read(folder);
     if (parameters == null || !File(p.join(folder, 'eboot.bin')).existsSync()) {
       return (update: null, problem: UpdateProblem.notADump);
     }
-    final titleId = parameters['titleId'];
-    final version = parameters['contentVersion'];
-    if (titleId is! String || version is! String) return (update: null, problem: UpdateProblem.notADump);
+    final titleId = parameters.titleId;
+    final version = parameters.version;
+    if (titleId == null || version == null) return (update: null, problem: UpdateProblem.notADump);
     final problem = problemWith(game, titleId: titleId, version: version);
     if (problem != null) return (update: null, problem: problem);
     return (update: UpdateCandidate(folder: folder, titleId: titleId, version: version), problem: null);

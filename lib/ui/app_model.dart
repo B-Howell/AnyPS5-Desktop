@@ -643,6 +643,13 @@ class Unreadable extends GameState {
   const Unreadable();
 }
 
+/// A dump of a console the engine does not run yet ([DumpPlatform.runs]): listed with what its
+/// files say, never unlocked.
+class NotPlayableYet extends GameState {
+  const NotPlayableYet(this.platform);
+  final DumpPlatform platform;
+}
+
 class Queued extends GameState {
   const Queued({this.updating = false, this.waitingForEngine = false});
 
@@ -3344,6 +3351,7 @@ class AppModel extends ChangeNotifier {
       return stopping ? Stopping(run.pid) : Running(run.pid);
     }
     if (starting?.id == game.id) return const Starting();
+    if (game.retro == null && !game.platform.runs) return NotPlayableYet(game.platform);
     if (together.family.ageLock(game) case final FamilyLocked lock) return lock;
     if (game.retro case final RetroDisc disc) {
       return retroPlayable(disc.platform) ? const Installed() : const NeedsEmulator();
@@ -3589,6 +3597,8 @@ class AppModel extends ChangeNotifier {
         cancelUnlock(game);
       case Unreadable():
         show(T.text('unreadableDump'));
+      case NotPlayableYet(:final platform):
+        show(T.format('notPlayableYetDetail', [platform.label]));
       // The game back in front, as on the Mac; Stop is in the game's menu and the quick menu.
       case Running():
         if (running?.$2 case final RunningGame run) unawaited(_showGame(run));
@@ -3616,7 +3626,7 @@ class AppModel extends ChangeNotifier {
   /// Queues [game]'s unlock; when its files would be copied (the games folder cannot link to the
   /// dump) and [copy] does not say so already, asks first.
   void unlock(Game game, {bool copy = false}) {
-    if (game.retro != null) return;
+    if (game.retro != null || !game.platform.runs) return;
     final folder = rootOf(game);
     if (folder == null) return;
     final kit = toolkitFor(game);
@@ -8505,7 +8515,7 @@ class AppModel extends ChangeNotifier {
               Queued() || Installing() || WaitingForEngine() => RemoteGameState.installing,
               Starting() => RemoteGameState.starting,
               Running() || Stopping() => RemoteGameState.running,
-              Unreadable() || NeedsEmulator() => RemoteGameState.unavailable,
+              Unreadable() || NeedsEmulator() || NotPlayableYet() => RemoteGameState.unavailable,
             },
             trophies: switch (trophies[game.id]) {
               final TrophySet set => '${set.unlockedCount}/${set.trophies.length}',
