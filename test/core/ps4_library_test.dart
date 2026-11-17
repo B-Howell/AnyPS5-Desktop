@@ -112,4 +112,20 @@ void main() {
     expect(plan.titleId, 'ANPS40001');
     expect(plan.version, '01.02');
   });
+
+  test('a zip with both parameter files reads param.json first, whatever their order, as a folder does', () {
+    const json = '{"titleId": "PPSA07007", "contentVersion": "01.003.000"}';
+    for (final (order, broken) in [(true, false), (false, false), (true, true)]) {
+      final jsonFile = ArchiveFile.bytes('Game/sce_sys/param.json', broken ? [0x7B] : json.codeUnits);
+      final sfoFile = ArchiveFile.bytes('Game/sce_sys/param.sfo', ps4ParamSfo('game'));
+      final archive = Archive()..addFile(ArchiveFile.bytes('Game/eboot.bin', [...selfHead, ...List.filled(60, 0)]));
+      for (final file in order ? [sfoFile, jsonFile] : [jsonFile, sfoFile]) {
+        archive.addFile(file);
+      }
+      final path = p.join(root, 'Both.zip');
+      File(path).writeAsBytesSync(ZipEncoder().encodeBytes(archive));
+      final plan = GameArchives.plan(path);
+      expect(plan.titleId, broken ? 'ANPS40001' : 'PPSA07007', reason: 'sfo first: $order, broken json: $broken');
+    }
+  });
 }

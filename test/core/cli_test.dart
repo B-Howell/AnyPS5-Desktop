@@ -72,6 +72,16 @@ void main() {
     expect((await run(['scan', root, second])).$2, contains('PPSA08008\tEight\telf\tinstalled'));
   });
 
+  test('install refuses a PS4 dump while the engine does not run PS4 games', () async {
+    final toolkit = makeFakeToolkit(p.join(temp.path, 'toolkit'));
+    final root = p.join(temp.path, 'Games');
+    final game = makePs4Dump(root, 'ANPS40001');
+    final refused = await run(['install', game, root], environment: {'HOME': temp.path, 'ANYPS5_TOOLKIT': toolkit});
+    expect(refused.$1, isNot(0));
+    expect(refused.$3, contains('ANPS40001: AnyPS5 does not run PS4 games yet'));
+    expect(Directory(p.join(root, GameLibrary.storeName)).existsSync(), isFalse);
+  });
+
   test('install with the toolkit from ANYPS5_TOOLKIT, then play', () async {
     final toolkit = makeFakeToolkit(p.join(temp.path, 'toolkit'));
     final root = p.join(temp.path, 'Games');

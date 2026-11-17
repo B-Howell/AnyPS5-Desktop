@@ -230,8 +230,9 @@ abstract final class GameArchives {
     var size = 0;
     var eboot = false;
     var parameters = false;
-    ArchiveFile? parameterFile;
-    var parameterDepth = 99;
+    // The shallowest of each parameter file, read as a folder's are: param.json, then param.sfo.
+    final parameterFiles = <String, ArchiveFile>{};
+    final parameterDepths = <String, int>{};
     final refused = <String>[];
     for (final entry in entries) {
       final parts = safeParts(entry.name, strip: strip);
@@ -247,13 +248,18 @@ abstract final class GameArchives {
       final last = parts.length;
       if (last >= 2 && last <= 4 && parts[last - 2] == 'sce_sys' && DumpParameters.files.contains(parts[last - 1])) {
         parameters = true;
-        if (last < parameterDepth && entry.size < 1024 * 1024) {
-          parameterFile = entry;
-          parameterDepth = last;
+        final name = parts[last - 1];
+        if (last < (parameterDepths[name] ?? 99) && entry.size < 1024 * 1024) {
+          parameterFiles[name] = entry;
+          parameterDepths[name] = last;
         }
       }
     }
-    final about = _parameters(parameterFile);
+    final depth = parameterDepths.values.fold(99, (least, depth) => depth < least ? depth : least);
+    final about = [
+      for (final name in DumpParameters.files)
+        if (parameterDepths[name] == depth) _parameters(parameterFiles[name]),
+    ].nonNulls.firstOrNull;
     return ArchivePlan(
       files: files,
       size: size,
